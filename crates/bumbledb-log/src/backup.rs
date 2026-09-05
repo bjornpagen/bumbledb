@@ -17,9 +17,11 @@
 //! database-only and say so, rather than implying arbitrary URLs in facts
 //! were copied.
 
+use crate::certainty::AdminCertainty;
 use crate::codec::{self, StreamLimits};
 use crate::history::command::Limits;
 use crate::history::decision;
+use crate::history::locator::ChainVisitor;
 use crate::history::{
     DatabaseId, DatabaseIdentity, DecisionDigest, DecisionStamp, FrameError, IncarnationId,
     OperationId, SchemaId, StateStamp,
@@ -27,9 +29,9 @@ use crate::history::{
 use crate::manifest::RecoveryRoot;
 use crate::manifest::wire::{self, Reader};
 use crate::store::{
-    BackendError, ConditionalOutcome, ConditionalStore, HeadRead, ObjectError, ObjectKind,
-    ObjectRef, backend as backend_error, decision_key, fetch_decision, get_verified, hex32,
-    object_digest,
+    BackendError, ChargedBytes, ConditionalOutcome, ObjectError, ObjectKind, ObjectRef,
+    ObservedError, ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext,
+    backend as backend_error, get_verified, hex32, read_head_bounded,
 };
 
 use bumbledb::{WorkContext, WorkError};
@@ -254,70 +256,131 @@ fn copy_verified<Src, Dst>(
     work: &WorkContext,
 ) -> Result<u64, BackupError>
 where
-    Src: ConditionalStore,
-    Src::Error: BackendError,
-    Dst: ConditionalStore,
-    Dst::Error: BackendError,
+    Src: ReceivingStore,
+    Src::Error: BackendError + ObservedError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
 {
     work.checkpoint()?;
-    let bytes = get_verified(source, source_prefix, reference)?;
+    let transport = TransportContext::new(work, ReceiveLimits::exact(reference.length));
+    let bytes = get_verified(source, source_prefix, reference, transport)?;
     let key = reference.key(dest_prefix);
     // put_object is idempotent for identical bytes and refuses conflicts.
     destination
-        .put_object(&key, &bytes)
+        .put_object(&key, bytes.as_bytes())
         .map_err(backend_error)
         .map_err(BackupError::Object)?;
     // Verified bytes: read back from the destination, not trust in the PUT.
-    let copied = get_verified(destination, dest_prefix, reference)
-        .map_err(|_| BackupError::Incomplete { key: key.clone() })?;
-    if copied != bytes {
+    let copied = get_verified(
+        destination,
+        dest_prefix,
+        reference,
+        TransportContext::new(work, ReceiveLimits::exact(reference.length)),
+    )
+    .map_err(|_| BackupError::Incomplete { key: key.clone() })?;
+    if copied.as_bytes() != bytes.as_bytes() {
         return Err(BackupError::Incomplete { key });
     }
-    Ok(bytes.len() as u64)
+    let length = bytes.len() as u64;
+    drop(copied.into_owner());
+    drop(bytes.into_owner());
+    Ok(length)
 }
 
-/// Copy one decision object (content-addressed under the decision digest
-/// domain, epoch-named) and verify it from the destination.
-#[expect(clippy::too_many_arguments, reason = "one bounded decision copy")]
-fn copy_decision<Src, Dst>(
+/// Copy one decision object by authenticated locator and verify it from the
+/// destination.
+fn copy_decision_by_ref<Src, Dst>(
     source: &Src,
     source_prefix: &str,
     destination: &Dst,
     dest_prefix: &str,
-    epoch_floor: u64,
-    epoch_ceiling: u64,
-    digest: &DecisionDigest,
+    reference: &ObjectRef,
     work: &WorkContext,
 ) -> Result<CopiedDecision, BackupError>
 where
-    Src: ConditionalStore,
-    Src::Error: BackendError,
-    Dst: ConditionalStore,
-    Dst::Error: BackendError,
+    Src: ReceivingStore,
+    Src::Error: BackendError + ObservedError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
 {
     work.checkpoint()?;
-    let (epoch, bytes) = fetch_decision(source, source_prefix, epoch_floor, epoch_ceiling, digest)?;
-    let key = decision_key(dest_prefix, epoch, digest);
+    let transport = TransportContext::new(work, ReceiveLimits::exact(reference.length));
+    let bytes = get_verified(source, source_prefix, reference, transport)?;
+    let key = reference.key(dest_prefix);
     destination
-        .put_object(&key, &bytes)
+        .put_object(&key, bytes.as_bytes())
         .map_err(backend_error)
         .map_err(BackupError::Object)?;
-    let copied = match destination
-        .get_object(&key)
-        .map_err(backend_error)
-        .map_err(BackupError::Object)?
-    {
-        crate::store::ObjectRead::Present { body } => body,
-        crate::store::ObjectRead::Absent => return Err(BackupError::Incomplete { key }),
-    };
-    if object_digest(ObjectKind::Decision, &copied) != *digest.as_bytes() {
+    let copied = get_verified(
+        destination,
+        dest_prefix,
+        reference,
+        TransportContext::new(work, ReceiveLimits::exact(reference.length)),
+    )
+    .map_err(|_| BackupError::Incomplete { key: key.clone() })?;
+    if copied.as_bytes() != bytes.as_bytes() {
         return Err(BackupError::Incomplete { key });
     }
+    drop(copied.into_owner());
+    drop(bytes.into_owner());
     Ok(CopiedDecision {
-        epoch,
-        digest: *digest,
-        length: bytes.len() as u64,
+        epoch: reference.epoch,
+        digest: DecisionDigest::from_bytes(reference.digest),
+        length: reference.length,
     })
+}
+
+/// Stream-copy one tail decision while walking. Newest-first; the caller
+/// reverses metadata after the walk.
+struct CopyTail<'a, Src, Dst> {
+    source: std::marker::PhantomData<&'a Src>,
+    destination: &'a Dst,
+    dest_prefix: &'a str,
+    work: &'a WorkContext,
+    objects: &'a mut u64,
+    bytes: &'a mut u64,
+    decisions: &'a mut Vec<CopiedDecision>,
+}
+
+impl<Src, Dst> ChainVisitor for CopyTail<'_, Src, Dst>
+where
+    Src: ReceivingStore,
+    Src::Error: BackendError + ObservedError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
+{
+    type Error = ObjectError;
+
+    fn visit(
+        &mut self,
+        _stamp: crate::history::DecisionStamp,
+        bytes: &[u8],
+        reference: ObjectRef,
+    ) -> Result<bool, ObjectError> {
+        let key = reference.key(self.dest_prefix);
+        self.destination
+            .put_object(&key, bytes)
+            .map_err(crate::store::backend)?;
+        let copied = get_verified(
+            self.destination,
+            self.dest_prefix,
+            &reference,
+            TransportContext::new(self.work, ReceiveLimits::exact(reference.length)),
+        )
+        .map_err(|_| ObjectError::Missing { key: key.clone() })?;
+        if copied.as_bytes() != bytes {
+            return Err(ObjectError::WrongDigest { key });
+        }
+        drop(copied.into_owner());
+        *self.bytes += reference.length;
+        *self.objects += 1;
+        self.decisions.push(CopiedDecision {
+            epoch: reference.epoch,
+            digest: crate::history::DecisionDigest::from_bytes(reference.digest),
+            length: reference.length,
+        });
+        Ok(true)
+    }
 }
 
 /// Stream one recovery root's complete declared dependency closure into the
@@ -327,7 +390,9 @@ where
 ///
 /// The caller must already hold this root against GC — a named restore point
 /// for a hosted source ([`crate::admin::add_named_root_hosted`]); local
-/// points are self-contained directories that need no pin.
+/// points are self-contained directories that need no pin. The public
+/// hosted operation is [`backup_pinned_hosted`], which acquires and
+/// releases the pin around this copy.
 ///
 /// # Errors
 /// Copy/verify refusals leave an incomplete, unlisted operation. A lost
@@ -353,10 +418,10 @@ pub fn backup_root<Src, Dst>(
     work: &WorkContext,
 ) -> Result<BackupReport, BackupError>
 where
-    Src: ConditionalStore,
-    Src::Error: BackendError,
-    Dst: ConditionalStore,
-    Dst::Error: BackendError,
+    Src: ReceivingStore,
+    Src::Error: BackendError + ObservedError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
 {
     let mut objects = 0u64;
     let mut bytes = 0u64;
@@ -364,8 +429,14 @@ where
     //    destination after the copy.
     let (checkpoint, application_digest, system_digest) = match root.checkpoint {
         Some(reference) => {
-            let manifest_bytes = get_verified(source, source_prefix, &reference)?;
-            let checkpoint_manifest = codec::decode_manifest(&manifest_bytes, stream)?;
+            let charged = get_verified(
+                source,
+                source_prefix,
+                &reference,
+                TransportContext::new(work, ReceiveLimits::exact(reference.length)),
+            )?;
+            let checkpoint_manifest = codec::decode_manifest(charged.as_bytes(), stream)?;
+            drop(charged.into_owner());
             if checkpoint_manifest.identity != identity {
                 return Err(BackupError::Corrupt("checkpoint names a foreign identity"));
             }
@@ -400,44 +471,37 @@ where
             codec::empty_system_digest(),
         ),
     };
-    // 2. The exact bounded tail (base, tip], copied oldest-first.
-    let mut stamps: Vec<DecisionStamp> = Vec::new();
-    let mut cursor = root.tip;
-    while cursor != root.base {
-        work.checkpoint()?;
-        if cursor.seq == 0 || cursor.seq <= root.base.seq {
-            return Err(BackupError::Corrupt("tail walk left the root boundary"));
-        }
-        stamps.push(cursor);
-        let (_, decision_bytes) = fetch_decision(
-            source,
-            source_prefix,
-            root.epoch_floor,
-            epoch_ceiling,
-            &cursor.hash,
-        )?;
-        let envelope = decision::decode_decision(&decision_bytes, limits)
-            .map_err(|_| BackupError::Corrupt("tail decision malformed"))?;
-        if envelope.stamp() != cursor {
-            return Err(BackupError::Corrupt("tail decision digest mismatch"));
-        }
-        cursor = envelope.parent;
-    }
-    let mut decisions = Vec::with_capacity(stamps.len());
-    for stamp in stamps.into_iter().rev() {
-        let copied = copy_decision(
-            source,
-            source_prefix,
+    // 2. The exact bounded tail (base, tip], copied newest-first then
+    //    reversed so the manifest records oldest-first. One object at a
+    //    time — no whole-tail body Vec.
+    let mut decisions = Vec::new();
+    if root.tip != root.base {
+        let tip_object = root.tip_object.ok_or(BackupError::Corrupt(
+            "suffix root missing tip ObjectRef",
+        ))?;
+        let mut walk_budget = root.tail_count().saturating_add(8);
+        let mut copier = CopyTail {
+            source: std::marker::PhantomData,
             destination,
             dest_prefix,
-            root.epoch_floor,
-            epoch_ceiling,
-            &stamp.hash,
             work,
-        )?;
-        bytes += copied.length;
-        objects += 1;
-        decisions.push(copied);
+            objects: &mut objects,
+            bytes: &mut bytes,
+            decisions: &mut decisions,
+        };
+        crate::history::locator::walk_decision_chain(
+            source,
+            source_prefix,
+            root.tip,
+            root.base,
+            Some(tip_object),
+            limits,
+            &mut walk_budget,
+            work,
+            &mut copier,
+        )
+        .map_err(BackupError::Object)?;
+        decisions.reverse();
     }
     // 3. The complete manifest, LAST, no-overwrite.
     let manifest = BackupManifest {
@@ -463,14 +527,19 @@ where
         ConditionalOutcome::Published { .. } => true,
         ConditionalOutcome::PreconditionFailed | ConditionalOutcome::Indeterminate => {
             // Resolve by operation identity and manifest digest.
-            match destination
-                .read_head(&key)
-                .map_err(backend_error)
-                .map_err(BackupError::Object)?
+            match read_head_bounded(
+                destination,
+                &key,
+                TransportContext {
+                    work: Some(work),
+                    receive: ReceiveLimits::capped(MANIFEST_CAP as u64),
+                },
+            )
+            .map_err(BackupError::Object)?
             {
-                HeadRead::Present { body, .. } if *body == *encoded => false,
-                HeadRead::Present { .. } => return Err(BackupError::ConflictingOperation),
-                HeadRead::Absent => return Err(BackupError::CompletionUnresolved),
+                ReceivedHead::Present { body, .. } if body.as_bytes() == encoded => false,
+                ReceivedHead::Present { .. } => return Err(BackupError::ConflictingOperation),
+                ReceivedHead::Absent => return Err(BackupError::CompletionUnresolved),
             }
         }
     };
@@ -483,6 +552,149 @@ where
     })
 }
 
+/// A pin-scoped backup refusal: the pin (named-root) machinery's or the
+/// copy/verify pipeline's.
+#[derive(Debug)]
+pub enum PinnedBackupError {
+    Admin(crate::admin::AdminError),
+    Backup(BackupError),
+}
+
+impl From<crate::admin::AdminError> for PinnedBackupError {
+    fn from(error: crate::admin::AdminError) -> Self {
+        Self::Admin(error)
+    }
+}
+impl From<BackupError> for PinnedBackupError {
+    fn from(error: BackupError) -> Self {
+        Self::Backup(error)
+    }
+}
+
+/// What one completed pin-scoped backup established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedBackupReport {
+    pub report: BackupReport,
+    /// The full destination-only verification pass that gated release.
+    pub objects_verified: u64,
+    pub bytes_verified: u64,
+    /// The operation-scoped named restore point the copy ran under.
+    pub root: crate::manifest::NamedRoot,
+    /// Whether the pin was released after verification (the caller's
+    /// policy); `false` leaves the named restore point held.
+    pub released: bool,
+}
+
+/// The complete hosted backup operation (chapter 22 backup steps 1–4;
+/// BACKUP-01, audit-log #3): acquire an OPERATION-SCOPED named restore point
+/// against the exact current head — the durable pin that keeps the captured
+/// closure protected while checkpoints advance the recovery base and GC
+/// barriers/sweeps run — copy the PINNED closure into the destination,
+/// verify the completed backup entirely from the destination, then release
+/// the pin per `release_pin`.
+///
+/// Evidence-idempotent under `operation`: a retry recognizes the held pin
+/// (same root ID) and resolves an already-installed manifest by digest. A
+/// failed copy or verification returns with the pin still held, so the
+/// retry copies a still-protected closure; the pin is released only after
+/// the destination-only verification passes.
+///
+/// Local (`LocalHistory`) sources need no head pin: a local named restore
+/// point ([`crate::local_roots::create_restore_point`]) is already a
+/// complete self-contained directory.
+///
+/// # Errors
+/// Pin registration (capacity refusals discard nothing), copy/verify and
+/// release refusals; an incomplete operation is never listed as a backup.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one bounded pin-copy-verify-release pipeline"
+)]
+pub fn backup_pinned_hosted<Src, Dst>(
+    source: &Src,
+    source_prefix: &str,
+    destination: &Dst,
+    dest_prefix: &str,
+    operation: OperationId,
+    label: &str,
+    release_pin: bool,
+    limits: Limits,
+    stream: StreamLimits,
+    root_policy: &crate::manifest::RootPolicy,
+    head_cap: usize,
+    work: &WorkContext,
+) -> Result<PinnedBackupReport, PinnedBackupError>
+where
+    Src: ReceivingStore,
+    Src::Error: BackendError + ObservedError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
+{
+    // 1. The operation-scoped pin: a named restore point registered against
+    //    the exact current head (retries recognize the recorded root).
+    let root = match crate::admin::add_named_root_hosted(
+        source,
+        source_prefix,
+        operation,
+        crate::manifest::RootKind::RestorePoint,
+        label,
+        operation,
+        root_policy,
+        head_cap,
+        work,
+    ) {
+        AdminCertainty::Completed { value } => value,
+        AdminCertainty::NotStarted { error } | AdminCertainty::OutcomeUnknown { error } => {
+            return Err(PinnedBackupError::Admin(error));
+        }
+    };
+    // The head names the identity and the epoch ceiling for tail-decision
+    // probes; every object of the pinned closure lives at an epoch at or
+    // below the current one, and the pin keeps it protected from here on.
+    let (head, _) = crate::checkpointer::read_live_head(source, source_prefix, head_cap, work)
+        .map_err(crate::admin::AdminError::from)?;
+    // 2. Copy the PINNED closure — not the moving live recovery root.
+    let report = backup_root(
+        source,
+        source_prefix,
+        destination,
+        dest_prefix,
+        head.control.identity,
+        root.state,
+        &root.recovery,
+        head.object_epoch,
+        operation,
+        limits,
+        stream,
+        work,
+    )?;
+    // 3. Verify the completed backup from the destination only.
+    let verified = verify_backup(destination, dest_prefix, operation, limits, stream, work)?;
+    // 4. Release the pin per policy — only after verification passed.
+    if release_pin {
+        match crate::admin::release_named_root_hosted(
+            source,
+            source_prefix,
+            operation,
+            true,
+            head_cap,
+            work,
+        ) {
+            AdminCertainty::Completed { .. } => {}
+            AdminCertainty::NotStarted { error } | AdminCertainty::OutcomeUnknown { error } => {
+                return Err(PinnedBackupError::Admin(error));
+            }
+        }
+    }
+    Ok(PinnedBackupReport {
+        report,
+        objects_verified: verified.objects_verified,
+        bytes_verified: verified.bytes_verified,
+        root,
+        released: release_pin,
+    })
+}
+
 /// Read one completed backup's manifest from the destination ONLY.
 ///
 /// # Errors
@@ -491,25 +703,31 @@ pub fn read_backup_manifest<Dst>(
     destination: &Dst,
     dest_prefix: &str,
     operation: OperationId,
+    work: &WorkContext,
 ) -> Result<(BackupManifest, [u8; 32]), BackupError>
 where
-    Dst: ConditionalStore,
-    Dst::Error: BackendError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
 {
+    work.checkpoint()?;
     let key = backup_manifest_key(dest_prefix, operation);
-    let bytes = match destination
-        .read_head(&key)
-        .map_err(backend_error)
-        .map_err(BackupError::Object)?
+    let charged = match read_head_bounded(
+        destination,
+        &key,
+        TransportContext::new(work, ReceiveLimits::capped(MANIFEST_CAP as u64)),
+    )
+    .map_err(BackupError::Object)?
     {
-        HeadRead::Present { body, .. } => body,
-        HeadRead::Absent => return Err(BackupError::Incomplete { key }),
+        ReceivedHead::Present { body, .. } => body,
+        ReceivedHead::Absent => return Err(BackupError::Incomplete { key }),
     };
-    let manifest = decode_backup_manifest(&bytes)?;
+    let manifest = decode_backup_manifest(charged.as_bytes())?;
+    let digest = *blake3::hash(charged.as_bytes()).as_bytes();
+    drop(charged);
     if manifest.operation != operation {
         return Err(BackupError::ConflictingOperation);
     }
-    Ok((manifest, *blake3::hash(&bytes).as_bytes()))
+    Ok((manifest, digest))
 }
 
 /// What a full verification pass established, from the destination only.
@@ -537,15 +755,22 @@ pub fn verify_backup<Dst>(
     work: &WorkContext,
 ) -> Result<VerifyReport, BackupError>
 where
-    Dst: ConditionalStore,
-    Dst::Error: BackendError,
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
 {
-    let (manifest, _) = read_backup_manifest(destination, dest_prefix, operation)?;
+    let (manifest, _) = read_backup_manifest(destination, dest_prefix, operation, work)?;
     let mut objects = 0u64;
     let mut bytes = 0u64;
     if let Some(reference) = manifest.checkpoint {
-        let manifest_bytes = get_verified(destination, dest_prefix, &reference)?;
-        let checkpoint_manifest = codec::decode_manifest(&manifest_bytes, stream)?;
+        let charged = get_verified(
+            destination,
+            dest_prefix,
+            &reference,
+            TransportContext::new(work, ReceiveLimits::exact(reference.length)),
+        )?;
+        let checkpoint_manifest = codec::decode_manifest(charged.as_bytes(), stream)?;
+        let manifest_len = charged.len() as u64;
+        drop(charged.into_owner());
         if checkpoint_manifest.identity != manifest.identity
             || checkpoint_manifest.decision != manifest.base
             || checkpoint_manifest.application_digest != manifest.application_digest
@@ -556,12 +781,18 @@ where
             ));
         }
         objects += 1;
-        bytes += manifest_bytes.len() as u64;
+        bytes += manifest_len;
         for chunk in &checkpoint_manifest.chunks {
             work.checkpoint()?;
-            let chunk_bytes = get_verified(destination, dest_prefix, chunk)?;
+            let chunk_bytes = get_verified(
+                destination,
+                dest_prefix,
+                chunk,
+                TransportContext::new(work, ReceiveLimits::exact(chunk.length)),
+            )?;
             objects += 1;
             bytes += chunk_bytes.len() as u64;
+            drop(chunk_bytes.into_owner());
         }
     }
     // The tail chain must connect tip back to base through exactly the
@@ -574,21 +805,22 @@ where
                 "tail order disagrees with the tip chain",
             ));
         }
-        let key = decision_key(dest_prefix, copied.epoch, &copied.digest);
-        let body = match destination
-            .get_object(&key)
-            .map_err(backend_error)
-            .map_err(BackupError::Object)?
-        {
-            crate::store::ObjectRead::Present { body } => body,
-            crate::store::ObjectRead::Absent => return Err(BackupError::Incomplete { key }),
+        let reference = ObjectRef {
+            epoch: copied.epoch,
+            kind: ObjectKind::Decision,
+            digest: *copied.digest.as_bytes(),
+            length: copied.length,
         };
-        if body.len() as u64 != copied.length
-            || object_digest(ObjectKind::Decision, &body) != *copied.digest.as_bytes()
-        {
-            return Err(BackupError::Incomplete { key });
-        }
-        let envelope = decision::decode_decision(&body, limits)
+        let body = get_verified(
+            destination,
+            dest_prefix,
+            &reference,
+            TransportContext::new(work, ReceiveLimits::exact(copied.length)),
+        )
+        .map_err(|_| BackupError::Incomplete {
+            key: reference.key(dest_prefix),
+        })?;
+        let envelope = decision::decode_decision(body.as_bytes(), limits)
             .map_err(|_| BackupError::Corrupt("backed-up decision malformed"))?;
         if envelope.stamp() != expected {
             return Err(BackupError::Corrupt("backed-up decision stamp mismatch"));
@@ -596,6 +828,7 @@ where
         objects += 1;
         bytes += body.len() as u64;
         expected = envelope.parent;
+        drop(body.into_owner());
     }
     if expected != manifest.base {
         return Err(BackupError::Corrupt("tail chain does not reach the base"));
@@ -607,42 +840,102 @@ where
     })
 }
 
-/// The backed-up tail's decision bytes, oldest first, each fetched and
-/// verified from the destination — the restore pipeline's input.
-///
-/// # Errors
-/// Missing/mismatched decisions refuse.
-pub fn read_backup_tail<Dst>(
-    destination: &Dst,
-    dest_prefix: &str,
-    manifest: &BackupManifest,
+/// Streaming iterator over a backup's relocated decision bodies, oldest
+/// first. Consumes the manifest's ordered relocated refs and verifies
+/// unchanged historical decision commitments. Does not rewrite parent
+/// bytes or follow source-location refs (C6).
+pub struct RelocatedTail<'a, Dst> {
+    destination: &'a Dst,
+    dest_prefix: &'a str,
+    remaining: std::slice::Iter<'a, CopiedDecision>,
+    expected: crate::history::DecisionStamp,
     limits: Limits,
-    work: &WorkContext,
-) -> Result<Vec<Vec<u8>>, BackupError>
-where
-    Dst: ConditionalStore,
-    Dst::Error: BackendError,
-{
-    let mut tail = Vec::with_capacity(manifest.decisions.len());
-    for copied in &manifest.decisions {
-        work.checkpoint()?;
-        let key = decision_key(dest_prefix, copied.epoch, &copied.digest);
-        let body = match destination
-            .get_object(&key)
-            .map_err(backend_error)
-            .map_err(BackupError::Object)?
-        {
-            crate::store::ObjectRead::Present { body } => body,
-            crate::store::ObjectRead::Absent => return Err(BackupError::Incomplete { key }),
-        };
-        if object_digest(ObjectKind::Decision, &body) != *copied.digest.as_bytes() {
-            return Err(BackupError::Incomplete { key });
-        }
-        decision::decode_decision(&body, limits)
-            .map_err(|_| BackupError::Corrupt("backed-up decision malformed"))?;
-        tail.push(body.into_vec());
+    work: &'a WorkContext,
+    done: bool,
+}
+
+/// Walk the destination-only relocated tail. One decision body is live
+/// at a time.
+#[must_use]
+pub fn relocated_tail<'a, Dst>(
+    destination: &'a Dst,
+    dest_prefix: &'a str,
+    manifest: &'a BackupManifest,
+    limits: Limits,
+    work: &'a WorkContext,
+) -> RelocatedTail<'a, Dst> {
+    RelocatedTail {
+        destination,
+        dest_prefix,
+        remaining: manifest.decisions.iter(),
+        expected: manifest.base,
+        limits,
+        work,
+        done: false,
     }
-    Ok(tail)
+}
+
+impl<Dst> Iterator for RelocatedTail<'_, Dst>
+where
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
+{
+    type Item = Result<ChargedBytes, BackupError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        let Some(copied) = self.remaining.next() else {
+            self.done = true;
+            return None;
+        };
+        if let Err(error) = self.work.checkpoint() {
+            self.done = true;
+            return Some(Err(BackupError::Work(error)));
+        }
+        let reference = ObjectRef {
+            epoch: copied.epoch,
+            kind: ObjectKind::Decision,
+            digest: *copied.digest.as_bytes(),
+            length: copied.length,
+        };
+        let body = match get_verified(
+            self.destination,
+            self.dest_prefix,
+            &reference,
+            TransportContext::new(self.work, ReceiveLimits::exact(copied.length)),
+        ) {
+            Ok(body) => body,
+            Err(error) => {
+                self.done = true;
+                return Some(Err(BackupError::Object(error)));
+            }
+        };
+        let envelope = match decision::decode_decision(body.as_bytes(), self.limits) {
+            Ok(envelope) => envelope,
+            Err(_) => {
+                self.done = true;
+                return Some(Err(BackupError::Corrupt("backed-up decision malformed")));
+            }
+        };
+        if envelope.parent != self.expected {
+            self.done = true;
+            return Some(Err(BackupError::Corrupt(
+                "relocated decision parent commitment mismatch",
+            )));
+        }
+        if envelope.stamp().hash != copied.digest {
+            self.done = true;
+            return Some(Err(BackupError::Corrupt(
+                "backed-up decision stamp mismatch",
+            )));
+        }
+        // Advance along the recorded parent-stamp chain — never follow a
+        // source-location ObjectRef. The charged owner is the item.
+        self.expected = envelope.stamp();
+        Some(Ok(body))
+    }
 }
 
 #[cfg(test)]

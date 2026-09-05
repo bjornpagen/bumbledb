@@ -184,7 +184,7 @@ key this plan prices — the statement's target key — so "the plan is
 sealable" is what acceptance checks, and the `Bridge.lean`
 acceptance row cites the plan theorem). The Rust CHECKER runs the
 plan as stated: `capacityPlan`'s per-touched-parent child-group walk
-is `storage/commit/judgment.rs::Checker::check_capacity` — the
+is `schema/judge.rs::capacity` — the
 enforcement discharge row cites the delta-restriction theorem this
 plan decides. The FD, containment, and coverage plans price
 mechanisms the ledger already carries (`Applier`, `judgment.rs`, the

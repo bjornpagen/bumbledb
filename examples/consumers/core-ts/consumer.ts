@@ -1,11 +1,11 @@
 /**
- * Chapter 34 core-TypeScript consumer fixture (API-12 / PKG-03): the
- * shared `Learning` schema, reusable typed queries including composition,
- * one scoped ChangeSet helper, the shared QueryReader read helper, direct
- * local admission and a witnessed correction — compiled by a strict
- * downstream tsc against the STAGED `@bjornpagen/bumbledb` tarball and
- * the exact Effect 4.0.0-rc.112 peer. Everything here is a lazy Effect
- * description; importing this module performs no native work.
+ * Packed core-TypeScript consumer (D07/D22/D27): the shared `Learning`
+ * schema, reusable typed queries, one scoped ChangeSet, the shared
+ * QueryReader helper, direct local admission, a witnessed correction,
+ * field-arithmetic backfill metadata, scoped collect/pages, and joined
+ * close. Importing this module performs no native work.
+ *
+ * Verification: NotRun until packed-consumer qualification.
  */
 import {
 	capacity,
@@ -26,6 +26,7 @@ import {
 	type QueryReader,
 	ref,
 	relation,
+	Scalar,
 	schema,
 	span,
 	str,
@@ -34,9 +35,7 @@ import {
 	weigh,
 	within
 } from "@bjornpagen/bumbledb"
-import { Effect, Option, Stream } from "effect"
-
-// ── The same schema in both languages (chapter 34) ──────────────────────────
+import { Effect, ManagedRuntime, Option, Stream } from "effect"
 
 export const Student = relation("Student", { id: id128, name: str, budget: u64 })
 export const Attempt = relation("Attempt", {
@@ -58,7 +57,9 @@ export const Learning = schema("Learning", { Student, Attempt }, [
 	})
 ])
 
-// ── Queries are reusable typed values, including their intermediate results ─
+/** D27: unresolved field arithmetic authors synchronously. No native load. */
+export const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
+export const incrementUnitsAsF64 = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
 
 export const attemptsFor = query(Learning).rule((r) => {
 	const { id, student, score, units, active } = v(Attempt)
@@ -84,8 +85,6 @@ export const studentSummary = query(Learning).rule((r) => {
 		.find({ student, name, total, mean })
 })
 
-// ── One TypeScript change, usable by either product ─────────────────────────
-
 export const newAttempt = Effect.fn("newAttempt")(function* (
 	studentId: Id128,
 	attemptId: Id128,
@@ -100,17 +99,14 @@ export const newAttempt = Effect.fn("newAttempt")(function* (
 	return yield* draft.finish()
 })
 
-// ── One Effect read helper for core and log ─────────────────────────────────
-
+/** Same helper on a core snapshot and a published log snapshot — no adapter. */
 export const readAttempts = Effect.fn("readAttempts")(
 	function* (reader: QueryReader<typeof Learning>, student: Id128, work: ExecutionPolicy) {
 		const result = yield* reader.execute(attemptsFor, { student }, work)
-		return yield* result.collect({ maxBytes: work.resultBytes })
+		return yield* result.collect({ maxBytes: work.resultBytes }, work)
 	},
 	Effect.scoped
 )
-
-// ── Core: direct local admission, no receipt ceremony ───────────────────────
 
 export const runtimePolicy: NativeRuntimeOptions = {
 	workers: 2,
@@ -136,6 +132,16 @@ export const work: ExecutionPolicy = {
 	timeout: "10 seconds"
 }
 
+/** D07: a delivery budget that cannot pay for a completed attempt row. */
+export const tinyDelivery: ExecutionPolicy = {
+	...work,
+	resultBytes: 8n,
+	timeout: "2 seconds"
+}
+
+/** One process-lifetime runtime. Request code must not construct another. */
+export const makeConsumerRuntime = () => ManagedRuntime.make(NativeRuntime.layer(runtimePolicy))
+
 export const coreProgram = (localPath: string) =>
 	Effect.scoped(
 		Effect.gen(function* () {
@@ -145,14 +151,15 @@ export const coreProgram = (localPath: string) =>
 			const changes = yield* newAttempt(studentId, attemptId, work)
 			const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
 			if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
-				return { outcome, rows: [] as const }
+				const closed = yield* db.close()
+				return { outcome, rows: [] as const, closed }
 			}
 			const snapshot = yield* db.snapshot(work)
-			return { outcome, rows: yield* readAttempts(snapshot, studentId, work) }
+			const rows = yield* readAttempts(snapshot, studentId, work)
+			const closed = yield* db.close()
+			return { outcome, rows, closed }
 		})
-	).pipe(Effect.provide(NativeRuntime.layer(runtimePolicy)))
-
-// ── Witnessed correction: keep the read scope short ─────────────────────────
+	)
 
 export const correctScore = (localPath: string, attemptId: Id128) =>
 	Effect.scoped(
@@ -172,18 +179,30 @@ export const correctScore = (localPath: string, attemptId: Id128) =>
 			yield* draft.delete(Attempt, [observed.previous])
 			yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.95 }])
 			const changes = yield* draft.finish()
-			return yield* db.apply(changes, { ...work, expected: { kind: "exact", at: observed.at } })
+			const outcome = yield* db.apply(changes, { ...work, expected: { kind: "exact", at: observed.at } })
+			const closed = yield* db.close()
+			return { outcome, closed }
 		})
-	).pipe(Effect.provide(NativeRuntime.layer(runtimePolicy)))
+	)
 
-// ── Large completed answers stream owned pages after complete evaluation ────
-
-export const drainPages = (reader: QueryReader<typeof Learning>, student: Id128) =>
+export const drainPages = (reader: QueryReader<typeof Learning>, student: Id128, delivery: ExecutionPolicy) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const result = yield* reader.execute(attemptsFor, { student }, work)
-			return yield* result.pages({ pageBytes: 65_536n }).pipe(
+			return yield* result.pages({ pageBytes: 65_536n }, delivery).pipe(
 				Stream.runFold(0, (rows, page) => rows + page.length)
 			)
+		})
+	)
+
+/** D07: collect under a result-bytes cap that a real row cannot fit. */
+export const collectUnderTinyBudget = (
+	reader: QueryReader<typeof Learning>,
+	student: Id128
+) =>
+	Effect.scoped(
+		Effect.gen(function* () {
+			const result = yield* reader.execute(attemptsFor, { student }, work)
+			return yield* result.collect({ maxBytes: tinyDelivery.resultBytes }, tinyDelivery)
 		})
 	)

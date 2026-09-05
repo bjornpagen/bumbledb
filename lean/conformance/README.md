@@ -203,13 +203,17 @@ so no count is pinned here):
 
 ## Judgment cases — the write-side third oracle
 
-A judgment case compares COMMIT VERDICTS instead of answer sets: the
-Lean side decodes `(theory, instance, delta)`, applies the delta by
-row-set arithmetic (deletes removed, inserts added, no-ops cancelling
-— `NaiveDb::staged`'s arithmetic), and runs the PROVED executable
-judge `Txn.judgeB` (`Bumbledb/Decide.lean`), which agrees with the
-model's `Txn.judge` verdict and violation sets phase for phase
-(`Txn.judgeB_agrees`). The Rust serializer
+A judgment case compares incremental verdicts instead of answer sets:
+the Lean side decodes `(theory, instance, delta)`, applies the delta
+by row-set arithmetic (deletes removed, inserts added, no-ops
+cancelling — `NaiveDb::staged`'s arithmetic), and runs the PROVED
+executable judge `Txn.judgeB` (`Bumbledb/Decide.lean`), which agrees
+with the model's `Txn.judge` verdict and violation sets phase for
+phase (`Txn.judgeB_agrees`). That Lean judge is the streaming
+reference for a **green parent**; it is not the production planner.
+The current Rust incremental constructor is
+`judge_incremental(LawfulParent, …)` — the parent must already
+model the theory. The serializer
 (`crates/bumbledb-bench/src/conformance/judgment.rs`) writes each
 document only after the ENGINE and the NAIVE MODEL agreed on the
 verdict, so the corpus run is the full three-way comparison. Every
@@ -294,14 +298,18 @@ verdict, but `instance` **is the candidate** — no green pre-state,
 no incremental shortcut. The document reuses the judgment shape
 (`kind` is `"complete"`; `delta` is empty). `finalWorld` is the
 candidate, and `completeAdmissionB` is `judgeB` over it
-(`Txn.completeAdmissionB_eq_judgeB`). The incremental lane's
-recorded scope fences exclude fixture classes — closed-source
-containments among them — because a whole-state oracle would
-mismatch a correct delta-restricted engine. Those fences **lift**
-here: generated worlds including closed-source containment fixtures
-run through complete admission against `judgeB`. One of the
-instance-lifetime proposal's four motivating shapes lives in that
-formerly fenced class (`complete-closed-source-missing-target`).
+(`Txn.completeAdmissionB_eq_judgeB`). Current Rust constructor:
+`judge_complete` / `judge_final_state` over the populated candidate.
+`UnreadyStore` cannot mint `LawfulParent`; empty-delta incremental
+is not complete validation (`lean/correspondence.md` C-D26-*). The
+incremental lane's recorded scope fences exclude fixture classes —
+closed-source containments among them — because a whole-state
+oracle would mismatch a correct delta-restricted engine. Those
+fences **lift** here: generated worlds including closed-source
+containment fixtures run through complete admission against
+`judgeB`. One of the instance-lifetime proposal's four motivating
+shapes lives in that formerly fenced class
+(`complete-closed-source-missing-target`).
 
 The Rust half (`crates/bumbledb-bench/src/conformance/complete.rs`)
 records the verdict both Rust oracles agreed on:

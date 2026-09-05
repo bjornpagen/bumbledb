@@ -9,9 +9,9 @@ algorithmic essence: a covered-frontier fold over a start-ordered
 segment list. Two Rust consumers drive the one walk, and both get
 their theorems here:
 
-* **`storage/commit/judgment.rs::check_coverage`** — the containment
+* **`schema/judge.rs::containment_pointwise`** — the containment
  judgment's coverage walk, which consumes a
- `DisjointDeterminantProof` token before walking.
+ pointwise-key witness before walking.
  `sweep_covered_sound_complete` IS that token's theorem: under
  `Ordered ∧ Disjoint` — exactly what a pointwise key guarantees per
  prefix group (`pointwise_key_disjoint`, plus the
@@ -69,8 +69,7 @@ semantics.
  rather than widening the class.
 * **The σ conjunct rides ABOVE the fold.** `check_coverage`'s full
  verdict is coverage AND every consumed segment satisfies ψ
- (`storage/commit/judgment.rs::GapAt::segment` delegating to
- `storage/commit/judgment.rs::check_segment`; the hook is
+ (`schema/judge.rs::containment_pointwise`; the hook is
  `interval/sweep.rs::Continuation::segment`); `sweepCovered` models
  pure coverage. The σ semantics belong to the `Coverage` denotation
  (`Dependencies.lean`, which carries ψ); this file's fold is the
@@ -85,8 +84,8 @@ semantics.
  windowed continuation that declined to convict would make `sweep`
  return accept on a gap (the windowed early return in
  `interval/sweep.rs::sweep`) where `sweepFrom`
- hard-codes `false`; the only windowed continuation, `GapAt`, always
- errs (`storage/commit/judgment.rs::GapAt::maximal`), so the
+ hard-codes `false`; the only windowed continuation always
+ errs (`schema/judge.rs` coverage gap), so the
  divergence is unreachable —
  the spec does not determine `sweep` for a non-convicting windowed
  caller.

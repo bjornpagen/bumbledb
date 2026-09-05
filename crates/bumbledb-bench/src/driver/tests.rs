@@ -18,7 +18,7 @@ fn scratch(tag: &str) -> PathBuf {
 
 const CFG: GenConfig = GenConfig {
     seed: 1,
-    scale: Scale::S,
+    scale: Scale::Tiny,
 };
 
 #[test]
@@ -38,7 +38,7 @@ fn the_digest_directory_is_reused() {
         &dir,
         GenConfig {
             seed: 2,
-            scale: Scale::S,
+            scale: CFG.scale,
         },
     );
     assert_ne!(first.root, other.root);
@@ -70,7 +70,7 @@ fn bench_refuses_without_a_stamp() {
     let dir = scratch("refuse");
     let args = BenchArgs {
         corpus: CorpusArgs {
-            scale: Scale::S,
+            scale: CFG.scale,
             seed: 1,
             dir: dir.clone(),
         },
@@ -145,7 +145,7 @@ fn trace_without_obs_refuses_on_every_traced_command() {
 fn verify_store_exits_zero_on_a_clean_corpus() {
     let dir = scratch("verify-store-clean");
     let corpus = CorpusArgs {
-        scale: Scale::S,
+        scale: CFG.scale,
         seed: 1,
         dir: dir.clone(),
     };
@@ -158,7 +158,7 @@ fn verify_store_exits_zero_on_a_clean_corpus() {
 fn verify_store_refusal_names_gen() {
     let dir = scratch("verify-store-missing");
     let corpus = CorpusArgs {
-        scale: Scale::S,
+        scale: CFG.scale,
         seed: 1,
         dir: dir.clone(),
     };
@@ -168,10 +168,10 @@ fn verify_store_refusal_names_gen() {
 }
 
 #[test]
-fn the_full_sequence_runs_at_s() {
+fn the_full_sequence_runs_at_tiny() {
     let dir = scratch("e2e");
     let corpus = CorpusArgs {
-        scale: Scale::S,
+        scale: CFG.scale,
         seed: 1,
         dir: dir.clone(),
     };

@@ -8,8 +8,10 @@ use std::time::Duration;
 
 use bumbledb::Theory as _;
 use bumbledb::work::ExecutionPolicy;
+use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
 
 use super::*;
+use super::admin;
 use crate::runtime::{CloseReport, Options};
 
 bumbledb::schema! {
@@ -85,6 +87,7 @@ fn open_spec(directory: &std::path::Path, create: bool, seed: u8) -> OpenSpec {
         }),
         descriptor,
         attrs: Vec::new(),
+        tail_policy: bumbledb_log::manifest::TailPolicy::UNBOUNDED,
     }
 }
 
@@ -372,8 +375,8 @@ fn submit_decides_and_identity_mismatch_is_not_submitted() {
         &work,
     )
     .expect("seals");
-    match kind.submit_with(&command, SubmitOptions::DEFAULT, &work) {
-        SubmitOutcome::Decided { receipt, .. } => {
+    match kind.submit_certain_with(&command, SubmitOptions::DEFAULT, &work) {
+        SubmitCertainty::Decided { receipt, .. } => {
             assert_eq!(receipt.command.identity, opened.resource.identity);
         }
         other => panic!("an in-scope command decides, got {other:?}"),
@@ -398,8 +401,13 @@ fn submit_decides_and_identity_mismatch_is_not_submitted() {
         &work,
     )
     .expect("seals");
-    match kind.submit_with(&foreign, SubmitOptions::DEFAULT, &work) {
-        SubmitOutcome::NotSubmitted { error, .. } => {
+    let foreign_certainty = kind.submit_certain_with(&foreign, SubmitOptions::DEFAULT, &work);
+    assert_eq!(
+        foreign_certainty.publication_phase(),
+        PublicationPhase::Prepared
+    );
+    match foreign_certainty {
+        SubmitCertainty::NotSubmitted { error, .. } => {
             assert!(matches!(
                 fail_of_log(error),
                 LogFail::Protocol {
@@ -426,7 +434,7 @@ fn published_snapshots_pin_provenance_and_consistency_refusals_are_typed() {
 
     let opened = open_history(&runtime, &open_spec(&dir, true, 11), &work).expect("creates");
     let (kind, lease) = opened.resource.kind_and_lease().expect("live");
-    let snapshot = open_published_snapshot(
+    let mut snapshot = open_published_snapshot(
         &opened.resource,
         &kind,
         lease,
@@ -441,6 +449,7 @@ fn published_snapshots_pin_provenance_and_consistency_refusals_are_typed() {
     snapshot.session.drain(Box::new(move |report| {
         tx.send(report).unwrap();
     }));
+    snapshot.transferred = true;
     assert_eq!(
         rx.recv_timeout(Duration::from_secs(10)).expect("drain"),
         CloseReport::Closed
@@ -536,8 +545,13 @@ fn per_call_submit_options_cross_verbatim_and_local_accepts_and_ignores_them() {
     )
     .expect("seals");
     let narrowed = submit_options_of(Some(1), Some(1), Some(1));
-    match kind.submit_with(&command, narrowed, &work) {
-        SubmitOutcome::Decided { receipt, .. } => {
+    let submit_certainty = kind.submit_certain_with(&command, narrowed, &work);
+    assert_eq!(
+        submit_certainty.publication_phase(),
+        PublicationPhase::Confirmed
+    );
+    match submit_certainty {
+        SubmitCertainty::Decided { receipt, .. } => {
             assert_eq!(receipt.command.identity, opened.resource.identity);
         }
         other => panic!("local submit ignores per-call options and decides, got {other:?}"),
@@ -638,4 +652,147 @@ fn planned_target_incarnations_are_deterministic_and_operation_scoped() {
         planned_target_incarnation(b),
         "distinct operations never share a planned target"
     );
+}
+
+fn inspect_via_verb(resource: &Arc<HistoryResource>, work: &bumbledb::work::WorkContext) -> InspectionOwned {
+    match run_history_verb(resource, HistoryVerb::Inspect, work) {
+        Ok(Output::Machine(MachineOutput::Inspect(owned))) => *owned,
+        other => panic!("inspect verb must produce inspect output, got ok={}", other.is_ok()),
+    }
+}
+
+fn empty_manifest_for(descriptor: &bumbledb::SchemaDescriptor) -> String {
+    let id = bumbledb_log::schema_file::schema_id(descriptor).expect("schema id");
+    let prefix = bumbledb_log::migration::manifest::base_prefix_digest(&id, LIMITS.envelope_bytes)
+        .expect("empty-base prefix");
+    format!(
+        "{{\n  \"manifestVersion\": 1,\n  \"planVersion\": 1,\n  \"baseSchemaId\": \"{}\",\n  \
+         \"basePrefixDigest\": \"{}\",\n  \"entries\": []\n}}\n",
+        hex32(&id.0),
+        hex32(&prefix)
+    )
+}
+
+#[test]
+fn d13_diagnostic_failure_preserves_decided_and_does_not_invent_corruption() {
+    let stamp = DecisionStamp {
+        seq: 1,
+        hash: bumbledb_log::history::DecisionDigest::from_bytes([7; 32]),
+    };
+    let health = local_health_after_decode_failure(
+        LocalHealth::Ready { at: stamp },
+        protocol(
+            "Backend",
+            "English text must not choose publication phase or health",
+        ),
+    );
+    assert!(
+        matches!(
+            health,
+            LocalHealth::Unavailable {
+                error: LogError::IncompleteRejectionEvidence
+            }
+        ),
+        "optional diagnostics become named incomplete health, not generic Corruption"
+    );
+
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("d13-found");
+    std::fs::create_dir_all(&base).unwrap();
+    let dir = base.join("tenant");
+    let work = policy().start().unwrap();
+    let opened = open_history(&runtime, &open_spec(&dir, true, 71), &work).expect("creates");
+    let inspection = inspect_via_verb(&opened.resource, &work);
+    assert_eq!(
+        inspection.health, "empty",
+        "a fresh local authority is L08 Empty, never invented idle"
+    );
+    assert!(
+        inspection.tail_count.is_none(),
+        "local inspect does not invent tail zeros"
+    );
+    assert!(
+        inspection.gc.is_none(),
+        "local inspect does not invent idle gc"
+    );
+
+    assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d18_abandoned_snapshot_output_drains_its_session() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("d18-abandon");
+    std::fs::create_dir_all(&base).unwrap();
+    let dir = base.join("tenant");
+    let work = policy().start().unwrap();
+    let opened = open_history(&runtime, &open_spec(&dir, true, 19), &work).expect("creates");
+    let (kind, lease) = opened.resource.kind_and_lease().expect("live");
+    let snapshot = open_published_snapshot(
+        &opened.resource,
+        &kind,
+        lease,
+        ConsistencySpec::Latest,
+        &work,
+    )
+    .expect("snapshot output");
+    drop(snapshot);
+    let inspection = inspect_via_verb(&opened.resource, &work);
+    assert_eq!(inspection.health, "empty");
+    assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d17_restore_streams_chunks_and_relocated_tail() {
+    let _ = admin::verified_checkpoint_chunks::<bumbledb_log::store::fs::FsStore>;
+}
+
+#[test]
+fn d20_admin_missing_and_foreign_snapshots_refuse_before_side_effects() {
+    let work = policy().start().unwrap();
+    let missing = admin::PlansSpec::test_chain(
+        empty_manifest_for(&Mini.descriptor()),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    match missing.test_verify(&work) {
+        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "UnsupportedArtifact"),
+        other => panic!("missing snapshots refuse before verify, got {other:?}"),
+    }
+
+    let foreign = bumbledb_log::schema_file::render(&Other.descriptor());
+    let foreign_plans = admin::PlansSpec::test_chain(
+        empty_manifest_for(&Mini.descriptor()),
+        Vec::new(),
+        vec![foreign],
+        Vec::new(),
+    );
+    match foreign_plans.test_verify(&work) {
+        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "MigrationDrift"),
+        other => panic!("a foreign base snapshot refuses, got {other:?}"),
+    }
+
+    let snapshot = bumbledb_log::schema_file::render(&Mini.descriptor());
+    let mappings = br#"{"kind":"field","name":"units","result":"unresolved"}"#.to_vec();
+    let mapped = admin::PlansSpec::test_chain(
+        empty_manifest_for(&Mini.descriptor()),
+        Vec::new(),
+        vec![snapshot],
+        mappings,
+    );
+    match mapped.test_verify(&work) {
+        Err(LogFail::Protocol { code, detail }) => {
+            assert_eq!(code, "MigrationUnsupported");
+            assert!(
+                detail.contains("units"),
+                "invalid hashed mapping names the missing field: {detail}"
+            );
+        }
+        other => panic!("invalid mapping on empty source refuses, got {other:?}"),
+    }
 }

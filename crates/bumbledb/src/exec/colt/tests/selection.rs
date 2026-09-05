@@ -7,13 +7,16 @@ fn selection_levels_probe_to_the_filtered_subtrie() {
     let view = view_of(&schema, &rows);
 
     let mut colt = Colt::new(all(&view), &scalars(&[0]), vec![vec![1]]);
-    let cursor = colt.select(&[vec![7]]).expect("key 7 exists");
+    let cursor = colt
+        .select(&[vec![7]])
+        .expect("select")
+        .expect("key 7 exists");
     assert_eq!(colt.start(), cursor);
     let entries = drain(&mut colt, cursor, 0);
     assert_eq!(entries.len(), 100, "exactly k = 7's positions");
     assert!(entries.iter().all(|(key, _)| key[0] % 10 == 7));
 
-    assert!(colt.select(&[vec![42]]).is_none());
+    assert!(colt.select(&[vec![42]]).expect("select").is_none());
 }
 
 #[test]
@@ -23,11 +26,18 @@ fn chained_selections_intersect_and_contradict() {
     let view = view_of(&schema, &rows);
 
     let mut colt = Colt::new(all(&view), &scalars(&[0, 1]), vec![vec![]]);
-    let cursor = colt.select(&[vec![3], vec![13]]).expect("(3, 13) exists");
+    let cursor = colt
+        .select(&[vec![3], vec![13]])
+        .expect("select")
+        .expect("(3, 13) exists");
     let entries = drain(&mut colt, cursor, 0);
     assert_eq!(entries.len(), 1, "one fact carries (3, 13)");
 
-    assert!(colt.select(&[vec![3], vec![14]]).is_none());
+    assert!(
+        colt.select(&[vec![3], vec![14]])
+            .expect("select")
+            .is_none()
+    );
 }
 
 #[test]
@@ -38,7 +48,10 @@ fn zero_selection_tries_are_the_old_tries() {
     let mut plain = Colt::new(all(&view), &scalars(&[]), vec![vec![0], vec![1]]);
     let mut selected = Colt::new(all(&view), &scalars(&[]), vec![vec![0], vec![1]]);
     assert_eq!(selected.start(), Colt::root());
-    let cursor = selected.select(&[]).expect("no selections always hit");
+    let cursor = selected
+        .select(&[])
+        .expect("select")
+        .expect("no selections always hit");
     assert_eq!(cursor, Colt::root());
     let a = drain(&mut plain, Colt::root(), 0);
     let b = drain(&mut selected, cursor, 0);
@@ -55,11 +68,14 @@ fn key_count_labels_below_selections() {
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &scalars(&[0]), vec![vec![1]]);
-    let cursor = colt.select(&[vec![7]]).expect("key 7 exists");
+    let cursor = colt
+        .select(&[vec![7]])
+        .expect("select")
+        .expect("key 7 exists");
 
     assert_eq!(colt.key_count(cursor), KeyCount::Estimate(100));
 
-    colt.ensure_forced(cursor, 0);
+    colt.ensure_forced(cursor, 0).expect("force");
     assert_eq!(colt.key_count(cursor), KeyCount::Exact(100));
 }
 
@@ -69,11 +85,21 @@ fn reset_retains_selection_capacity() {
     let rows: Vec<(u64, u64)> = (0..500).map(|i| (i % 5, i)).collect();
     let image = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&image), &scalars(&[0]), vec![vec![1]]);
-    colt.select(&[vec![3]]).expect("key 3 exists");
+    colt.select(&[vec![3]])
+        .expect("select")
+        .expect("key 3 exists");
     let first = colt.watermark();
-    colt.reset(apply(&image, &[], &[], Vec::new()));
+    colt.reset(apply(
+        &image,
+        &[],
+        &[],
+        Vec::new(),
+        image.generation().text_eq(None),
+    ));
     assert_eq!(colt.watermark(), 1, "reset empties the pools");
-    colt.select(&[vec![3]]).expect("key 3 exists");
+    colt.select(&[vec![3]])
+        .expect("select")
+        .expect("key 3 exists");
     assert_eq!(colt.watermark(), first, "same shape, same footprint");
 }
 
@@ -101,7 +127,10 @@ fn set_probes_union_survivors_per_element() {
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i % 10, i)).collect();
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &set_level(0), vec![vec![1]]);
-    let cursor = colt.select(&[vec![3, 7]]).expect("both keys exist");
+    let cursor = colt
+        .select(&[vec![3, 7]])
+        .expect("select")
+        .expect("both keys exist");
     let entries = drain(&mut colt, cursor, 0);
     assert_eq!(entries.len(), 200, "the union of k = 3 and k = 7");
     assert!(
@@ -110,12 +139,18 @@ fn set_probes_union_survivors_per_element() {
             .all(|(key, _)| key[0] % 10 == 3 || key[0] % 10 == 7)
     );
 
-    let cursor = colt.select(&[vec![7]]).expect("key 7 exists");
+    let cursor = colt
+        .select(&[vec![7]])
+        .expect("select")
+        .expect("key 7 exists");
     assert_eq!(drain(&mut colt, cursor, 0).len(), 100);
 
-    let cursor = colt.select(&[vec![7, 42]]).expect("key 7 exists");
+    let cursor = colt
+        .select(&[vec![7, 42]])
+        .expect("select")
+        .expect("key 7 exists");
     assert_eq!(drain(&mut colt, cursor, 0).len(), 100);
-    assert!(colt.select(&[vec![41, 42]]).is_none());
+    assert!(colt.select(&[vec![41, 42]]).expect("select").is_none());
 }
 
 #[test]
@@ -123,7 +158,10 @@ fn a_single_position_union_pins_a_row() {
     let schema = schema();
     let view = view_of(&schema, &[(1, 10), (2, 20), (3, 30)]);
     let mut colt = Colt::new(all(&view), &set_level(0), vec![vec![1]]);
-    let cursor = colt.select(&[vec![2, 9]]).expect("key 2 exists");
+    let cursor = colt
+        .select(&[vec![2, 9]])
+        .expect("select")
+        .expect("key 2 exists");
     assert!(matches!(cursor, Cursor::Row(_)), "one survivor pins");
     let entries = drain(&mut colt, cursor, 0);
     assert_eq!(entries.len(), 1);
@@ -147,10 +185,15 @@ fn set_levels_chain_with_scalar_levels() {
 
     let cursor = colt
         .select(&[vec![7], vec![7, 40, 47, 87]])
+        .expect("select")
         .expect("hits exist");
     assert_eq!(drain(&mut colt, cursor, 0).len(), 3);
 
-    assert!(colt.select(&[vec![7], vec![40, 50]]).is_none());
+    assert!(
+        colt.select(&[vec![7], vec![40, 50]])
+            .expect("select")
+            .is_none()
+    );
 }
 
 #[test]
@@ -160,9 +203,9 @@ fn set_rebinds_reach_a_pool_fixpoint() {
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &set_level(0), vec![vec![1]]);
     let run = |colt: &mut Colt, words: Vec<u64>| {
-        let cursor = colt.select(&[words]).expect("keys exist");
+        let cursor = colt.select(&[words]).expect("select").expect("keys exist");
 
-        colt.ensure_forced(cursor, 0);
+        colt.ensure_forced(cursor, 0).expect("force");
         colt.watermark()
     };
     let first_a = run(&mut colt, vec![3, 7]);

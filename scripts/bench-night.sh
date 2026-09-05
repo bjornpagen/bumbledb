@@ -52,25 +52,27 @@ case "$OUT_ARG" in
     *) OUT="$PWD/$OUT_ARG" ;;
 esac
 
-PROBED=" storage curves writes crud lawful adversarial churn heap "
+# Compact L20 scorecard. Overlapping curves/heap/primerlane/adversarial
+# timing jobs are not default qualification. verify + storage are semantic;
+# app-perf timing is G15-only on a quiet host. Three-way / C-* cargo tests
+# live in the bench crate (not scripts/lean.sh) and stay NotRun here.
+PROBED=" storage "
 
 lane_table() {
     cat <<EOF
-gen|SETUP|"$BIN" gen
+scorecard-plan|SETUP|"$BIN" app-perf --plan
 verify|SETUP|"$BIN" verify
-bench-durable-r1|$OUT/bench-durable-r1/report.json|"$BIN" bench --out "$OUT/bench-durable-r1"
-bench-durable-r2|$OUT/bench-durable-r2/report.json|"$BIN" bench --out "$OUT/bench-durable-r2"
-bench-durable-r3|$OUT/bench-durable-r3/report.json|"$BIN" bench --out "$OUT/bench-durable-r3"
-scenarios|$OUT/scenarios/scenarios.md|"$BIN" scenarios --out "$OUT/scenarios"
-sweep-commit|$OUT/sweep-commit/sweep.md|mkdir -p "$OUT/sweep-commit" && "$OBS_BIN" sweep-commit > "$OUT/sweep-commit/sweep.md"
-storage|$OUT/storage/storage-report.json|"$BIN" storage --out "$OUT/storage"
-curves|$OUT/curves/curves-report.json|"$BIN" curves --warmth --out "$OUT/curves"
-writes|$OUT/writes/writes-report.json|"$BIN" writes --out "$OUT/writes"
-crud|$OUT/crud/crud.json|"$BIN" crud --out "$OUT/crud"
-lawful|$OUT/lawful/lawful.json|"$BIN" lawful --out "$OUT/lawful"
-adversarial|$OUT/adversarial/report.json|"$BIN" adversarial --out "$OUT/adversarial"
-churn|$OUT/churn/churn-report.json|"$BIN" churn --out "$OUT/churn"
-heap|$OUT/heap/heap-report.json|"$BIN" heap --out "$OUT/heap"
+correspondence-oracles|PREREQ|echo "NotRun: cargo test -p bumbledb-bench correspondence (C-D04/C-D19/C-G03; judge_final_state)"
+three-way-conformance|PREREQ|echo "NotRun: cargo test -p bumbledb-bench three_way_conformance -- --ignored (not lean.sh)"
+storage|$OUT/storage/storage-report.json|"$BIN" storage --scales S,M --out "$OUT/storage"
+app-perf-warm|$OUT/app-perf-warm/app-perf.json|"$BIN" app-perf --regimes warm --out "$OUT/app-perf-warm"
+app-perf-cold|$OUT/app-perf-cold/app-perf.json|"$BIN" app-perf --regimes cold-open,post-write --out "$OUT/app-perf-cold"
+app-perf-tenants|$OUT/app-perf-tenants/app-perf.json|"$BIN" app-perf --regimes tenant-churn --out "$OUT/app-perf-tenants"
+hash-probe|$OUT/hash-probe/hash-probe.json|"$BIN" hash-probe --out "$OUT/hash-probe"
+hosted-decision|PREREQ|echo "NotRun: real S3/IAM required (PERF-003); see app-perf --plan"
+large-populated|PREREQ|echo "NotRun: >40 GiB allocated blocks + cgroup memory.max (not a sparse map)"
+graviton-arm64|PREREQ|echo "NotRun unless this host is real Graviton Linux ARM64"
+x86-node|PREREQ|echo "NotRun unless this host is linux-x86-64 Node with the native addon"
 EOF
 }
 
@@ -87,6 +89,10 @@ lane_available() {
 }
 
 nonsetup_status() { 
+    if [ "$2" = "PREREQ" ]; then
+        echo "NOTRUN-PREREQ"
+        return
+    fi
     if [ -e "$2" ]; then
         echo "SKIP-EXISTING"
     elif is_probed "$1" && ! lane_available "$1"; then
@@ -135,7 +141,7 @@ fi
 
 ANY_RUN=0
 while IFS='|' read -r id artifact command; do
-    if [ "$artifact" = "SETUP" ]; then
+    if [ "$artifact" = "SETUP" ] || [ "$artifact" = "PREREQ" ]; then
         continue
     fi
     if [ "$(nonsetup_status "$id" "$artifact")" = "RUN" ]; then

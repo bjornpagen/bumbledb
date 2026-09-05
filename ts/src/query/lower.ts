@@ -54,8 +54,9 @@ import type {
 	RuleItem
 } from "#query/atom.ts"
 import { allen, and, eq, ge, gt, le, lt, ne, not, or, pointIn } from "#query/atom.ts"
-import type { ComputeData } from "#query/compute.ts"
+import type { QueryNode } from "#query/compute.ts"
 import { computeFieldOf, computeVarsOf, isComputeExpr, MAX_COMPUTE_DEPTH } from "#query/compute.ts"
+import { literalWireOf } from "#scalar.ts"
 import type { CheckFind, CheckRecFind, FindShape, HeadRecordOf, RowOfFind } from "#query/find.ts"
 import { count, max, mean, min, pack, sum } from "#query/find.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
@@ -825,7 +826,7 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 	if (isComputeExpr(entry)) {
 		return Object.freeze({
 			name,
-			entry: Object.freeze({ kind: "compute" as const, expr: entry.node, result: entry.result }),
+			entry: Object.freeze({ kind: "compute" as const, expr: entry, result: entry.result }),
 			closed: undefined,
 			slot: undefined
 		})
@@ -2177,39 +2178,44 @@ function lowerCondition(ctx: LowerContext, cond: CondData, ids: VarIds): Conditi
 
 /**
  * Lowers one computed scalar node to the C05 wire (`#native.ts`'s
- * `ScalarExprIr` — the `FindTermIr` compute arm's payload): variables
- * resolve through the rule's first-use `VarId` table like every other
- * term position; literals are already tagged; the operator arms pass
- * through 1:1 onto `bumbledb::ScalarExpr`. The depth wall mirrors the
- * bridge/engine 128-node scalar bound (held at construction; re-judged
- * here so structurally-forged data cannot bypass it).
+ * `ScalarExprIr`): the shared grammar arms pass through 1:1. Cached
+ * construction depth is the bound; this walk emits wire only and does
+ * not re-judge kinds (L14/native compile owns binding).
  */
-function lowerComputeNode(node: ComputeData, ids: VarIds, depth: number): ScalarExprIr {
-	if (depth > MAX_COMPUTE_DEPTH) {
+function lowerComputeNode(node: QueryNode, ids: VarIds): ScalarExprIr {
+	if (node.depth > MAX_COMPUTE_DEPTH) {
 		throw new AuthoringError({
 			message: `query lowering: a compute expression is deeper than ${MAX_COMPUTE_DEPTH} nodes (the engine's scalar depth bound)`
 		})
 	}
+	return lowerComputeGrammar(node, ids)
+}
+
+function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 	switch (node.kind) {
 		case "var":
-			return { kind: "var", var: ids.of(node.ref) }
+			return { kind: "var", var: ids.of(node.ref as AnyVar) }
 		case "literal":
-			return { kind: "literal", value: node.value }
+			return { kind: "literal", value: literalWireOf(node.value) }
 		case "negate":
 		case "isNaN":
 		case "isFinite":
-			return { kind: node.kind, expr: lowerComputeNode(node.expr, ids, depth + 1) }
+			return { kind: node.kind, expr: lowerComputeGrammar(node.expr, ids) }
 		case "cast":
-			return { kind: "cast", cast: node.cast, expr: lowerComputeNode(node.expr, ids, depth + 1) }
+			return { kind: "cast", cast: node.cast, expr: lowerComputeGrammar(node.expr, ids) }
 		case "add":
 		case "subtract":
 		case "multiply":
 		case "divide":
 			return {
 				kind: node.kind,
-				left: lowerComputeNode(node.left, ids, depth + 1),
-				right: lowerComputeNode(node.right, ids, depth + 1)
+				left: lowerComputeGrammar(node.left, ids),
+				right: lowerComputeGrammar(node.right, ids)
 			}
+		default:
+			throw new AuthoringError({
+				message: "query lowering: a query-var tree cannot carry a source-field leaf — use Compute over bound variables"
+			})
 	}
 }
 
@@ -2218,7 +2224,7 @@ function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
 		return { kind: "var", var: ids.of(entry.over) }
 	}
 	if (entry.kind === "compute") {
-		return { kind: "compute", expr: lowerComputeNode(entry.expr, ids, 1) }
+		return { kind: "compute", expr: lowerComputeNode(entry.expr, ids) }
 	}
 	const agg = entry.agg
 	switch (agg.op) {

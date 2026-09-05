@@ -15,6 +15,11 @@
  * last arm). The legal pairs stay legal: the measure against a u64 var, a
  * bigint literal, a param; bool against bool; open sides (params,
  * integer literals) typed by their siblings.
+ *
+ * D19 twin of the shared scalar grammar: query I64/U64 pairing refuses
+ * here without any/casts; arithmetic mixing is authored in
+ * `scalar-algebra.test.ts` / `computed-find.test.ts`.
+ * Verification: NotRun
  */
 
 import assert from "node:assert/strict"

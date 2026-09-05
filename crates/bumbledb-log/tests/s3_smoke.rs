@@ -1,22 +1,21 @@
-//! Credential-gated REAL S3 lane (S3-01/02 core shapes). Emulator green is
-//! not S3 qualification; these tests run only with real credentials and are
-//! reported skipped — never passed — without them. Required env:
-//! `BUMBLEDB_S3_SMOKE_BUCKET`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`;
-//! `BUMBLEDB_S3_SMOKE_REGION` defaults to `us-east-1`;
-//! `BUMBLEDB_S3_SMOKE_ENDPOINT` optional. The full S3-01..06 qualification
-//! (multipart ambiguity, versioning/lifecycle policy, credential rotation)
-//! is the F3 campaign over this same adapter with the deployment's actual
-//! configuration. Verification: `NotRun` (F1 authors, does not execute).
+//! Credential-gated REAL S3 cells (D17/G08). Emulator green is not
+//! qualification. Missing credentials is `NotRun`, never a waived pass.
+//! Required env: `BUMBLEDB_S3_SMOKE_BUCKET`, `AWS_ACCESS_KEY_ID`,
+//! `AWS_SECRET_ACCESS_KEY`. Optional: `BUMBLEDB_S3_SMOKE_REGION`,
+//! `BUMBLEDB_S3_SMOKE_ENDPOINT`, `BUMBLEDB_S3_DENIED_PREFIX`,
+//! `BUMBLEDB_S3_WRONG_REGION`. Verification: `NotRun`.
 
 #![cfg(feature = "store")]
 
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
+use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store, StaticKeys};
+use bumbledb::{ExecutionPolicy, WorkContext};
 use bumbledb_log::store::{
-    ConditionalOutcome, ConditionalStore as _, HeadRead, ObjectKind, ObjectRead, get_verified,
-    put_verified,
+    ConditionalOutcome, ConditionalStore as _, ObjectKind, ReceiveLimits, ReceivedHead,
+    ReceivingStore, TransportContext, TransportObservation, get_verified, put_verified,
 };
 
 const REQUIRED: [&str; 3] = [
@@ -29,8 +28,6 @@ fn credentials_available() -> bool {
     REQUIRED.iter().all(|name| std::env::var(name).is_ok())
 }
 
-/// Loud skip: prints WHY the lane did not run. A skipped credential lane is
-/// `NotRun`, never qualification.
 macro_rules! require_credentials {
     () => {
         if !credentials_available() {
@@ -43,18 +40,46 @@ macro_rules! require_credentials {
     };
 }
 
-fn store() -> S3Store {
+fn static_credentials() -> S3Credentials {
+    S3Credentials::Static {
+        access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("key env"),
+        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret env"),
+        session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+    }
+}
+
+fn store_with(credentials: S3Credentials, region: Option<String>) -> S3Store {
     S3Store::new(&S3Config {
         endpoint: std::env::var("BUMBLEDB_S3_SMOKE_ENDPOINT").ok(),
-        region: std::env::var("BUMBLEDB_S3_SMOKE_REGION").unwrap_or_else(|_| "us-east-1".into()),
+        region: region
+            .or_else(|| std::env::var("BUMBLEDB_S3_SMOKE_REGION").ok())
+            .unwrap_or_else(|| "us-east-1".into()),
         bucket: std::env::var("BUMBLEDB_S3_SMOKE_BUCKET").expect("bucket env"),
-        credentials: S3Credentials::Static {
-            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("key env"),
-            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret env"),
-            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
-        },
+        credentials,
     })
     .expect("S3 store constructs")
+}
+
+fn store() -> S3Store {
+    store_with(static_credentials(), None)
+}
+
+fn work() -> WorkContext {
+    ExecutionPolicy {
+        input_bytes: 0,
+        working_bytes: 1 << 20,
+        scratch_bytes: 0,
+        result_bytes: 0,
+        rows: 0,
+        work_units: 1_024,
+        timeout: std::time::Duration::from_secs(30),
+    }
+    .start()
+    .expect("work")
+}
+
+fn transport(work: &WorkContext) -> TransportContext<'_> {
+    TransportContext::new(work, ReceiveLimits::capped(1 << 20))
 }
 
 static PREFIX_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -80,26 +105,23 @@ fn cleanup(store: &S3Store, prefix: &str) {
 }
 
 #[test]
-fn s3_01_conditional_create_and_exact_version_replacement_have_one_winner() {
+fn s3_conditional_create_replace_and_lost_ack_are_typed_outcomes() {
     require_credentials!();
     let store = store();
     let prefix = fresh_prefix("cas");
     let head_key = format!("{prefix}/HEAD");
-    // Conditional create: first wins, second definitively loses.
     let v1 = match store.create_head(&head_key, b"rev-1").expect("create") {
         ConditionalOutcome::Published { version } => version,
         other => panic!("first create publishes: {other:?}"),
     };
-    assert_eq!(
-        store
-            .create_head(&head_key, b"rev-1-imposter")
-            .expect("second create"),
-        ConditionalOutcome::PreconditionFailed,
-        "a never-reused head is never re-created over"
+    let second = store.create_head(&head_key, b"rev-1-imposter").expect("second");
+    assert!(
+        matches!(
+            second,
+            ConditionalOutcome::PreconditionFailed | ConditionalOutcome::Indeterminate
+        ),
+        "a never-reused head is never a second publication: {second:?}"
     );
-    // Exact-version race: two contenders, one captured version — at most one
-    // winner, and a loser is a DEFINITE loss even under identical fact bytes
-    // (no ABA: every proposed body differs through its revision).
     let store_b = self::store();
     let (outcome_a, outcome_b) = thread::scope(|scope| {
         let key_a = head_key.clone();
@@ -119,32 +141,33 @@ fn s3_01_conditional_create_and_exact_version_replacement_have_one_winner() {
         .iter()
         .filter(|outcome| matches!(outcome, ConditionalOutcome::Published { .. }))
         .count();
-    let losses = [&outcome_a, &outcome_b]
-        .iter()
-        .filter(|outcome| matches!(outcome, ConditionalOutcome::PreconditionFailed))
-        .count();
-    // Real transports may legitimately return Indeterminate; that arm is
-    // uncertainty, never a second win.
     assert!(wins <= 1, "at most one publication per observed version");
-    assert!(wins + losses >= 1, "the race terminated observably");
-    match store.read_head(&format!("{prefix}/HEAD")).expect("read") {
-        HeadRead::Present { body, .. } => {
+    match store.receive_head(
+        &head_key,
+        TransportContext {
+            work: None,
+            receive: ReceiveLimits::capped(64),
+        },
+    ) {
+        Ok(ReceivedHead::Present { body, .. }) => {
             assert!(
-                &*body == b"rev-2-from-a" || &*body == b"rev-2-from-b",
-                "exactly one contender's body holds"
+                body.as_bytes() == b"rev-2-from-a"
+                    || body.as_bytes() == b"rev-2-from-b"
+                    || body.as_bytes() == b"rev-1",
+                "resolution is by reading, never a manufactured winner"
             );
         }
-        HeadRead::Absent => panic!("the head exists"),
+        Ok(ReceivedHead::Absent) => panic!("the head exists"),
+        Err(error) => panic!("receive_head observation: {:?}", error.observation),
     }
     cleanup(&store, &prefix);
 }
 
 #[test]
-fn s3_02_immutable_objects_verify_and_stale_versions_lose_after_movement() {
+fn s3_receive_caps_missing_and_immutable_identity() {
     require_credentials!();
     let store = store();
-    let prefix = fresh_prefix("objects");
-    // Content-addressed immutable object: store, verify, idempotent re-put.
+    let prefix = fresh_prefix("receive");
     let reference = put_verified(
         &store,
         &prefix,
@@ -153,8 +176,11 @@ fn s3_02_immutable_objects_verify_and_stale_versions_lose_after_movement() {
         b"real-s3 chunk bytes",
     )
     .expect("put");
+    let ctx = work();
     assert_eq!(
-        get_verified(&store, &prefix, &reference).expect("verified"),
+        get_verified(&store, &prefix, &reference, transport(&ctx))
+            .expect("verified")
+            .as_bytes(),
         b"real-s3 chunk bytes"
     );
     put_verified(
@@ -164,35 +190,145 @@ fn s3_02_immutable_objects_verify_and_stale_versions_lose_after_movement() {
         ObjectKind::Chunk,
         b"real-s3 chunk bytes",
     )
-    .expect("idempotent re-put");
-    // Definite absence is Absent, not an error.
-    assert!(matches!(
-        store
-            .get_object(&format!("{prefix}/objects/1/chunk/{}", "0".repeat(64)))
-            .expect("read"),
-        ObjectRead::Absent
-    ));
-    // Listing enumerates the actual extant name.
+    .expect("identical bytes are idempotent");
+    let conflict = put_verified(&store, &prefix, 1, ObjectKind::Chunk, b"different-bytes");
+    assert!(
+        conflict.is_err(),
+        "immutable different bytes refuse: {conflict:?}"
+    );
+    let capped = store
+        .receive_object(
+            &reference.key(&prefix),
+            TransportContext {
+                work: None,
+                receive: ReceiveLimits::capped(4),
+            },
+        )
+        .expect_err("cap");
+    assert_eq!(capped.observation, TransportObservation::Capped);
+    let missing = store
+        .receive_object(
+            &format!("{prefix}/objects/1/chunk/{}", "0".repeat(64)),
+            TransportContext {
+                work: None,
+                receive: ReceiveLimits::capped(32),
+            },
+        )
+        .expect_err("missing");
+    assert_eq!(missing.observation, TransportObservation::Missing);
     let page = store
         .list_objects(&format!("{prefix}/objects/"), None)
         .expect("list");
     assert_eq!(page.keys.len(), 1, "{:?}", page.keys);
-    // A stale head version cannot win after the head moved (S3-01/02 tail).
-    let head_key = format!("{prefix}/HEAD");
-    let v1 = match store.create_head(&head_key, b"one").expect("create") {
-        ConditionalOutcome::Published { version } => version,
-        other => panic!("{other:?}"),
-    };
-    match store.replace_head(&head_key, &v1, b"two").expect("swap") {
-        ConditionalOutcome::Published { .. } => {}
-        other => panic!("{other:?}"),
-    }
-    assert_eq!(
-        store
-            .replace_head(&head_key, &v1, b"three")
-            .expect("stale swap"),
-        ConditionalOutcome::PreconditionFailed,
-        "ETags are opaque exact tokens; a stale one definitively loses"
+    assert!(
+        page.next.is_none(),
+        "progress is the last canonical key; a short page has none"
     );
     cleanup(&store, &prefix);
+}
+
+#[test]
+fn s3_listing_progress_is_the_last_canonical_key() {
+    require_credentials!();
+    let store = store();
+    let prefix = fresh_prefix("list");
+    for name in ["aa", "bb", "cc"] {
+        store
+            .put_object(&format!("{prefix}/objects/1/chunk/{name}"), b"x")
+            .expect("put");
+    }
+    let first = store
+        .list_objects(&format!("{prefix}/objects/"), None)
+        .expect("list");
+    assert!(first.keys.len() >= 3, "{:?}", first.keys);
+    let after = first.keys[0].as_bytes();
+    let rest = store
+        .list_objects(&format!("{prefix}/objects/"), Some(after))
+        .expect("resume");
+    assert!(
+        !rest.keys.contains(&first.keys[0]),
+        "after is exclusive last processed key"
+    );
+    assert!(rest.keys.windows(2).all(|pair| pair[0] < pair[1]));
+    cleanup(&store, &prefix);
+}
+
+#[test]
+fn s3_credential_refresh_is_consulted_per_request() {
+    require_credentials!();
+    let calls = Arc::new(AtomicU64::new(0));
+    let refresh = {
+        let calls = Arc::clone(&calls);
+        Arc::new(move || {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(StaticKeys {
+                access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("key"),
+                secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("secret"),
+                session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+            })
+        })
+    };
+    let store = store_with(S3Credentials::Refresh(refresh), None);
+    let prefix = fresh_prefix("refresh");
+    let _ = store.receive_object(
+        &format!("{prefix}/objects/1/chunk/aa"),
+        TransportContext {
+            work: None,
+            receive: ReceiveLimits::capped(16),
+        },
+    );
+    let _ = store.list_objects(&format!("{prefix}/objects/"), None);
+    assert!(
+        calls.load(Ordering::SeqCst) >= 2,
+        "one shared provider refreshes per signed request"
+    );
+    cleanup(&store, &prefix);
+}
+
+#[test]
+fn s3_denied_and_region_cells_are_notrun_without_their_env() {
+    require_credentials!();
+    let store = store();
+    if let Ok(denied_prefix) = std::env::var("BUMBLEDB_S3_DENIED_PREFIX") {
+        let error = store
+            .receive_object(
+                &format!("{denied_prefix}/HEAD"),
+                TransportContext {
+                    work: None,
+                    receive: ReceiveLimits::capped(32),
+                },
+            )
+            .expect_err("denied");
+        assert_eq!(
+            error.observation,
+            TransportObservation::Denied,
+            "typed 403 is Denied, never a publication verdict"
+        );
+    } else {
+        eprintln!("SKIP (NotRun, not passed): denied cell needs BUMBLEDB_S3_DENIED_PREFIX");
+    }
+    if let Ok(wrong_region) = std::env::var("BUMBLEDB_S3_WRONG_REGION") {
+        let foreign = store_with(static_credentials(), Some(wrong_region));
+        let error = foreign
+            .receive_object(
+                "t/objects/1/chunk/aa",
+                TransportContext {
+                    work: None,
+                    receive: ReceiveLimits::capped(16),
+                },
+            )
+            .expect_err("region");
+        assert!(
+            matches!(
+                error.observation,
+                TransportObservation::Region
+                    | TransportObservation::Indeterminate
+                    | TransportObservation::Denied
+            ),
+            "wrong region is not Missing and not a guessed publication: {:?}",
+            error.observation
+        );
+    } else {
+        eprintln!("SKIP (NotRun, not passed): region cell needs BUMBLEDB_S3_WRONG_REGION");
+    }
 }

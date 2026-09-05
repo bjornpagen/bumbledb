@@ -6,8 +6,11 @@ impl Colt {
     #[cfg(test)]
     pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
         self.get_prehashed(cursor, level, key, hash_words(key))
+            .expect("test COLT has no refusing work ledger")
     }
 
+    /// # Errors
+    /// Returns the force/growth refusal. A miss is `Ok(None)`, never an error.
     #[inline(always)]
     pub fn get_prehashed(
         &mut self,
@@ -15,7 +18,7 @@ impl Colt {
         level: usize,
         key: &[u64],
         hash: u64,
-    ) -> Option<Cursor> {
+    ) -> Result<Option<Cursor>, crate::work::WorkError> {
         self.probe_child_at(cursor, self.join_index(level), key, hash)
     }
 
@@ -26,32 +29,38 @@ impl Colt {
         level: usize,
         key: &[u64],
         hash: u64,
-    ) -> Option<Cursor> {
+    ) -> Result<Option<Cursor>, crate::work::WorkError> {
         debug_assert_eq!(key.len(), self.arity_at(level));
         match cursor {
-            Cursor::Row(position) => self
+            Cursor::Row(position) => Ok(self
                 .position_matches(level, position, key)
-                .then_some(Cursor::Row(position)),
+                .then_some(Cursor::Row(position))),
             Cursor::Node(node) => {
-                let map = self.force(node, level);
-
+                let map = self.force(node, level)?;
                 let m = &self.maps[map as usize];
                 let (found, idx) = self.probe_hashed(m, key, hash);
                 if !found {
-                    return None;
+                    return Ok(None);
                 }
-                match unpack_child(self.buckets[m.child_at(idx)]) {
+                Ok(match unpack_child(self.buckets[m.child_at(idx)]) {
                     Slot::Single(position) => Some(Cursor::Row(position)),
                     Slot::Node(child) => Some(Cursor::Node(child)),
-                }
+                })
             }
         }
     }
 
-    pub fn ensure_forced(&mut self, cursor: Cursor, level: usize) {
+    /// # Errors
+    /// Returns the force/growth refusal before the node is marked forced.
+    pub fn ensure_forced(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+    ) -> Result<(), crate::work::WorkError> {
         if let Cursor::Node(node) = cursor {
-            self.force(node, self.join_index(level));
+            self.force(node, self.join_index(level))?;
         }
+        Ok(())
     }
 
     #[inline(always)]

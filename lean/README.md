@@ -75,8 +75,10 @@ project needs no build programmability.
   link is empirical: the differential and exhaustive estates,
   plus the executable-denotation conformance lane.
 
-`Bridge.lean` is the obligation ledger (each Lean premise ↔ the Rust
-mechanism that discharges it); `Countermodels.lean` is the design
+`Bridge.lean` maps each Lean premise to the current Rust constructor
+that must discharge it (`judge_complete` / `judge_incremental` +
+`LawfulParent` / `judge_final_state`); `lean/correspondence.md` names
+independent expected results. `Countermodels.lean` is the design
 scratchpad — anything refused or bounded gets its countermodel there.
 `Bumbledb.lean` imports everything; building it builds the tree.
 
@@ -91,11 +93,12 @@ scratchpad — anything refused or bounded gets its countermodel there.
    "means/denotes/iff/exactly when" sentence that does not carry a
    theorem citation. Mechanically: deleting any semantic sentence from
    the docs must lose nothing that `lean/` does not already state.
-   The census (PRD 14) greps for the banned forms.
+   `scripts/spec-census.sh` resolves current constructor tokens; it
+   does not ban wording or count `dyn`.
 2. **The gate law.** A change to accepted schemas, query denotation,
    or execution semantics is not done until the Lean side moves in the
-   same commit; the CI lean lane enforces buildability, the census
-   enforces citation integrity.
+   same commit; qualification runs `scripts/lean.sh` (kernel +
+   correspondence). Verification is NotRun during fanout.
 3. **The mechanism fence.** Level 1 models the algorithmic essence
    ONLY: a sweep is a fold, grounding is substitution, dedup is set
    union. The moment a Lean file mentions batching, buffers, scratch,
@@ -153,9 +156,8 @@ which imported `DependencyTheory`) were supplied by the audit
 environment and were never in this repository, so the artifact did not
 check standalone here. The campaign REBUILT the base definitions
 in-tree (PRDs 02–05) and PORTED the artifact's theorem statements and
-proofs onto them, adapting names to the language law; the census
-(PRD 14) verified every artifact theorem against the tree and retired
-the byte-pinned seed (SHA-256
+proofs onto them, adapting names to the language law. The retired
+byte-pinned seed (SHA-256
 `e1f09501079feb23ad93be9ab98aeba3b6b5f50a6a84cbbbf78af095c048a576`,
 byte-identical to the source artifact) remains reachable in git
 history forever. The one recorded semantic

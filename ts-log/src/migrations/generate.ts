@@ -1,5 +1,5 @@
 /**
- * `makeGenerator(codec)` — the Drizzle-shaped repo-local generation workflow
+ * `makeGenerator(codec, exclusion)` — the Drizzle-shaped repo-local generation workflow
  * (chapter 33, C11): `generateMigrations` / `checkMigrations`. Generation
  * evaluates the ordinary typed schema value, compares its NATIVE canonical
  * identity/snapshot against the recorded chain, applies declared typed intent
@@ -13,26 +13,39 @@
  * type/data intent is either declared as typed metadata or generation
  * refuses with the complete finite requirement list.
  *
- * The codec seam (`#migrations/codec.ts`) is the ONLY injected boundary: the
- * production binding (`#migrations/workflow.ts`) uses the native codec, and
- * authored tests use a scripted codec because digest bytes stay provisional
- * until the F3 format freeze. Core schema lowering and the core row-cell
- * codec are imported literally — never doubled in production.
+ * The codec and repository-exclusion seams are the injected boundaries: the
+ * production binding uses the native codec and kernel lock; authored language
+ * tests may script the codec. Acceptance of exclusion/compile uses the native
+ * stamped lock (no TS ownership table) and the full compiled chain. Core
+ * schema lowering and the core row-cell codec are imported literally.
  */
 import * as path from "node:path"
 import { cellBytes, cellOf, lower } from "@bjornpagen/bumbledb"
-import type { AnyRelation, ExecutionPolicy, RelationData, SchemaSpec } from "@bjornpagen/bumbledb"
+import type { AnyRelation, ExecutionPolicy, NativeRuntime, RelationData, SchemaSpec } from "@bjornpagen/bumbledb"
+import type { LogError } from "#errors.ts"
 import { Effect } from "effect"
-import { planJson, renderContract, renderIndex } from "#migrations/canonical.ts"
+import type { Scope } from "effect"
+import { compiledMappingsJson, planJson, renderContract, renderIndex, renderSnapshots } from "#migrations/canonical.ts"
 import { bytesHex, f64Bits } from "#migrations/canonical.ts"
 import type { JsonValue } from "#migrations/canonical.ts"
-import type { ChainPayload, MigrationCodec } from "#migrations/codec.ts"
+import type { ChainPayload, CompiledChainInput, MigrationCodec } from "#migrations/codec.ts"
+import { decodePlanData } from "#migrations/decode.ts"
 import { diffSchemas } from "#migrations/diff.ts"
 import type { DiffResult } from "#migrations/diff.ts"
 import { budget, drift, intentRequired, unsupported } from "#migrations/fail.ts"
-import { ensureDirectory, removeFile, writeAtomic } from "#migrations/fsops.ts"
-import type { MigrationIntentEntry } from "#migrations/intent.ts"
 import {
+	ensureDirectory,
+	joinPendingIo,
+	readBounded,
+	removeFile,
+	writeDerived,
+	writeImmutable,
+	writeManifest
+} from "#migrations/fsops.ts"
+import type { MigrationIntentEntry } from "#migrations/intent.ts"
+import type { RepositoryExclusion } from "#migrations/lock.ts"
+import {
+	baseSnapshotPath,
 	contractPath,
 	indexPath,
 	latestSnapshot,
@@ -40,9 +53,10 @@ import {
 	planId,
 	planPath,
 	readRepository,
-	snapshotPath
+	snapshotPath,
+	snapshotsSidecarPath
 } from "#migrations/repo.ts"
-import { EMPTY_THEORY, parseTheory } from "#migrations/theory.ts"
+import { parseTheory } from "#migrations/theory.ts"
 import type {
 	CheckOptions,
 	CheckReport,
@@ -55,7 +69,6 @@ import type {
 	RuntimeContract,
 	TheorySnapshot
 } from "#migrations/types.ts"
-import { readBounded } from "#migrations/fsops.ts"
 import type { SchemaRelations } from "@bjornpagen/bumbledb"
 
 const EMPTY_SPEC: SchemaSpec = { relations: [], statements: [] }
@@ -119,10 +132,13 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 		case "f64":
 			return { $f64: f64Bits(typeof cell === "number" ? cell : Number.NaN) }
 		case "id128": {
-			if (!(cell instanceof Uint8Array)) {
-				throw new Error(`relation ${relation.name}.${declared.name}: id128 cell did not lower to bytes`)
+			// The core row-cell codec lowers id128 to its canonical
+			// 32-lowercase-hex string (chapter 35) — already the plan wire
+			// spelling.
+			if (typeof cell !== "string" || cell.length !== 32) {
+				throw new Error(`relation ${relation.name}.${declared.name}: id128 cell did not lower to canonical hex`)
 			}
-			return { id128: bytesHex(cell) }
+			return { id128: cell }
 		}
 		case "str":
 			return { string: String(cell) }
@@ -230,6 +246,10 @@ interface Analysis {
 	readonly manifestTree: JsonValue | null
 	readonly entries: readonly ManifestEntry[]
 	readonly planTrees: readonly JsonValue[]
+	readonly snapshotTrees: readonly JsonValue[]
+	readonly planTexts: readonly string[]
+	readonly snapshotTexts: readonly string[]
+	readonly emptySnapshot: string
 	readonly baseSchemaId: string
 	readonly headPrefixDigest: string
 	readonly currentSchemaId: string
@@ -240,9 +260,61 @@ interface Analysis {
 	readonly hasSeeds: boolean
 	readonly seedIntents: readonly MigrationIntentEntry[]
 	readonly staleDrafts: readonly string[]
+	/** Empty-base first, then every recorded target — never an empty list. */
+	readonly snapshotChain: readonly JsonValue[]
 }
 
-export function makeGenerator(codec: MigrationCodec) {
+function parseTree(operation: string, label: string, text: string): Effect.Effect<JsonValue, LogError> {
+	return Effect.try({
+		try: () => JSON.parse(text) as JsonValue,
+		catch: () => drift(operation, `${label} is not JSON`)
+	})
+}
+
+function mappingsFromTrees(trees: readonly JsonValue[]): string {
+	const plans: MigrationPlan[] = []
+	for (const tree of trees) {
+		const decoded = decodePlanData(tree)
+		if (decoded.ok) {
+			plans.push(decoded.value)
+		}
+	}
+	return compiledMappingsJson(plans)
+}
+
+function compiledChain(
+	emptySnapshot: string,
+	snapshotTexts: readonly string[],
+	planTexts: readonly string[],
+	append: { readonly snapshot: string; readonly plan: MigrationPlan } | null
+): CompiledChainInput {
+	const baseSnapshot = snapshotTexts[0] ?? emptySnapshot
+	const recordedTargets = snapshotTexts.length > 0 ? snapshotTexts.slice(1) : []
+	const intermediateSnapshots =
+		append === null ? recordedTargets : [...recordedTargets, append.snapshot]
+	const appendTree = append === null ? null : planJson(append.plan)
+	const mappingTrees: JsonValue[] = []
+	for (const text of planTexts) {
+		try {
+			mappingTrees.push(JSON.parse(text) as JsonValue)
+		} catch {
+			// decodePlanData skips malformed trees; native still sees orderedPlans.
+		}
+	}
+	if (appendTree !== null) {
+		mappingTrees.push(appendTree)
+	}
+	const orderedPlans =
+		appendTree === null ? [...planTexts] : [...planTexts, JSON.stringify(appendTree)]
+	return {
+		baseSnapshot,
+		intermediateSnapshots,
+		orderedPlans,
+		compiledMappings: mappingsFromTrees(mappingTrees)
+	}
+}
+
+export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclusion) {
 	const analyze = Effect.fn("bumbledb-log.migrations.analyze")(function* <Rels extends SchemaRelations>(
 		options: CheckOptions<Rels>
 	) {
@@ -255,48 +327,50 @@ export function makeGenerator(codec: MigrationCodec) {
 	const repoState = yield* readRepository(options.repository)
 	// Recorded texts become parsed trees for the bridge; identity is judged
 	// from canonical frames natively, never from this formatting.
-	const parseTree = (label: string, text: string) =>
-		Effect.try({
-			try: () => JSON.parse(text) as JsonValue,
-			catch: () => drift(operation, `${label} is not JSON`)
-		})
-	const manifestTree = repoState.manifestText === null ? null : yield* parseTree("manifest.json", repoState.manifestText)
+	const manifestTree =
+		repoState.manifestText === null ? null : yield* parseTree(operation, "manifest.json", repoState.manifestText)
+	const snapshotTrees: JsonValue[] = []
+	for (const [index, text] of repoState.snapshotTexts.entries()) {
+		snapshotTrees.push(yield* parseTree(operation, `snapshot ${index}`, text))
+	}
 	const planTrees: JsonValue[] = []
 	for (const [index, text] of repoState.planTexts.entries()) {
-		planTrees.push(yield* parseTree(`plan ${index}`, text))
+		planTrees.push(yield* parseTree(operation, `plan ${index}`, text))
 	}
 	const currentSpec = lower(options.schema)
 	const identity = yield* codec.schemaIdentity(currentSpec, options.work)
-	// Root schema id: recorded base, or the canonical empty-schema identity.
-	let baseSchemaId: string
-	if (repoState.manifest !== null) {
-		baseSchemaId = repoState.manifest.baseSchemaId
-	} else {
-		const empty = yield* codec.schemaIdentity(EMPTY_SPEC, options.work)
-		baseSchemaId = empty.schemaId
-	}
-	// Native chain verification of everything recorded (digest-exact).
+	// Empty-base snapshot is always compiled — empty source is not a shortcut.
+	const emptyIdentity = yield* codec.schemaIdentity(EMPTY_SPEC, options.work)
+	const baseSchemaId = repoState.manifest === null ? emptyIdentity.schemaId : repoState.manifest.baseSchemaId
+	const emptySnapshotTree = yield* parseTree(operation, "empty-base snapshot", emptyIdentity.snapshot)
+	const snapshotChain = snapshotTrees.length > 0 ? snapshotTrees : [emptySnapshotTree]
+	const compiled = compiledChain(emptyIdentity.snapshot, repoState.snapshotTexts, repoState.planTexts, null)
 	const chain = yield* codec.verifyChain(
 		{
 			manifest: manifestTree,
 			baseSchemaId: manifestTree === null ? baseSchemaId : null,
+			snapshots: snapshotChain,
 			plans: planTrees,
 			append: null,
-			planSet: null
+			planSet: null,
+			compiled
 		},
 		options.work
 	)
 	const previousText = latestSnapshot(repoState)
-	let prevTheory: TheorySnapshot
-	if (previousText === null) {
-		prevTheory = EMPTY_THEORY
-	} else {
-		const parsed = parseTheory(previousText)
-		if (!parsed.ok) {
-			return yield* Effect.fail(drift(operation, `recorded snapshot is not the canonical theory grammar: ${parsed.detail}`))
-		}
-		prevTheory = parsed.snapshot
+	const prevSource = previousText === null ? emptyIdentity.snapshot : previousText
+	const parsedPrev = parseTheory(prevSource)
+	if (!parsedPrev.ok) {
+		return yield* Effect.fail(
+			drift(
+				operation,
+				previousText === null
+					? `empty-base snapshot is not the canonical theory grammar: ${parsedPrev.detail}`
+					: `recorded snapshot is not the canonical theory grammar: ${parsedPrev.detail}`
+			)
+		)
 	}
+	const prevTheory = parsedPrev.snapshot
 	const currentParsed = parseTheory(identity.snapshot)
 	if (!currentParsed.ok) {
 		return yield* Effect.fail(drift(operation, `native snapshot is not the canonical theory grammar: ${currentParsed.detail}`))
@@ -309,16 +383,21 @@ export function makeGenerator(codec: MigrationCodec) {
 		manifestTree,
 		entries,
 		planTrees,
+		snapshotTrees,
+		planTexts: repoState.planTexts,
+		snapshotTexts: repoState.snapshotTexts,
+		emptySnapshot: emptyIdentity.snapshot,
 		baseSchemaId,
 		headPrefixDigest: chain.headPrefixDigest,
 		currentSchemaId: identity.schemaId,
 		currentSnapshot: identity.snapshot,
 		prevSchemaId,
 		diff,
-		changed: prevSchemaId !== identity.schemaId,
+		changed: prevSchemaId !== identity.schemaId || !diff.identity,
 		hasSeeds: diff.seedRelations.length > 0,
 		seedIntents: intents,
-		staleDrafts: repoState.staleDrafts
+		staleDrafts: repoState.staleDrafts,
+		snapshotChain
 	}
 	return analysis
 })
@@ -344,10 +423,42 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 	// generateMigrations
 	// -------------------------------------------------------------------------
 
+	function exclusive<A, E>(
+		operation: string,
+		directory: string,
+		work: ExecutionPolicy,
+		body: Effect.Effect<A, E, NativeRuntime | Scope.Scope>
+	): Effect.Effect<A, E | LogError, NativeRuntime> {
+		return Effect.uninterruptibleMask((restore) =>
+			Effect.scoped(
+				Effect.gen(function* () {
+					// L16 `internalAcquireRepositoryLock` registers
+					// `RepositoryLock.release` (`logRepositoryLockRelease`)
+					// before its interruptible mint. After the lease exists,
+					// cancel/defect/success must join host I/O first; Scope
+					// then runs that release. Do not call `lock.release`
+					// here — L16 does not consume the slot on explicit
+					// release (request: clear `slot.owner` after
+					// `joinLockRelease` so `joinPendingIo.andThen(lock.release)`
+					// is the one close).
+					yield* restore(exclusion.acquire(operation, directory, work))
+					return yield* restore(body).pipe(Effect.ensuring(joinPendingIo))
+				})
+			)
+		)
+	}
+
 	const generateMigrations = Effect.fn("bumbledb-log.generateMigrations")(function* <
 		Rels extends SchemaRelations
 	>(options: GenerateOptions<Rels>) {
 	const operation = "migrations.generate"
+	const directory = options.repository.directory
+	return yield* exclusive(
+		operation,
+		directory,
+		options.work,
+		Effect.gen(function* () {
+	yield* ensureDirectory(operation, directory)
 	if (options.label !== undefined && !validLabel(options.label)) {
 		return yield* Effect.fail(
 			unsupported(operation, `label must be 1..${MAX_LABEL} characters of [a-z0-9-]`)
@@ -357,7 +468,6 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 	if (analysis.diff.requirements.length > 0) {
 		return yield* Effect.fail(intentRequired(operation, analysis.diff.requirements))
 	}
-	const directory = options.repository.directory
 	if (!analysis.changed && !analysis.hasSeeds) {
 		// Nothing to record. Remove interrupted-generation leftovers and repair
 		// derived files only when they drifted from the recorded chain (never
@@ -373,13 +483,19 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 			const wantIndex = renderIndex(analysis.entries)
 			const haveIndex = yield* readBounded(operation, indexPath(directory), MAX_DERIVED_BYTES)
 			if (haveIndex !== wantIndex) {
-				yield* writeAtomic(operation, indexPath(directory), wantIndex)
+				yield* writeDerived(operation, indexPath(directory), wantIndex)
 				files.push("index.ts")
+			}
+			const wantSnapshots = renderSnapshots(analysis.snapshotTexts)
+			const haveSnapshots = yield* readBounded(operation, snapshotsSidecarPath(directory), MAX_DERIVED_BYTES)
+			if (haveSnapshots !== wantSnapshots) {
+				yield* writeDerived(operation, snapshotsSidecarPath(directory), wantSnapshots)
+				files.push("snapshots.json")
 			}
 			const wantContract = renderContract(contract)
 			const haveContract = yield* readBounded(operation, contractPath(options.repository), MAX_DERIVED_BYTES)
 			if (haveContract !== wantContract) {
-				yield* writeAtomic(operation, contractPath(options.repository), wantContract)
+				yield* writeDerived(operation, contractPath(options.repository), wantContract)
 				files.push(path.basename(contractPath(options.repository)))
 			}
 		}
@@ -414,13 +530,20 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 		destructive: analysis.diff.destructive
 	}
 	// Native validation + canonical rendering + digest + manifest append.
-	const chain = yield* verifyChain(
+	const compiled = compiledChain(analysis.emptySnapshot, analysis.snapshotTexts, analysis.planTexts, {
+		snapshot: analysis.currentSnapshot,
+		plan
+	})
+	const currentTree = yield* parseTree(operation, "current snapshot", analysis.currentSnapshot)
+	const chain = yield* codec.verifyChain(
 		{
 			manifest: analysis.manifestTree,
 			baseSchemaId: analysis.manifestTree === null ? analysis.baseSchemaId : null,
+			snapshots: [...analysis.snapshotChain, currentTree],
 			plans: analysis.planTrees,
 			append: planJson(plan),
-			planSet: null
+			planSet: null,
+			compiled
 		},
 		options.work
 	)
@@ -434,9 +557,12 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 	// previously interrupted generation under a different derived label are
 	// removed first — they were never recorded, and leaving them would read
 	// as drift once the manifest advances past their sequence.
-	yield* ensureDirectory(operation, directory)
 	yield* ensureDirectory(operation, path.join(directory, "meta"))
-	const written = new Set([`${id}.plan.json`, `meta/${sequence.toString(10).padStart(4, "0")}.schema.json`])
+	const written = new Set([
+		`${id}.plan.json`,
+		`meta/${sequence.toString(10).padStart(4, "0")}.schema.json`,
+		"meta/base.schema.json"
+	])
 	const removed: string[] = []
 	for (const draft of analysis.staleDrafts) {
 		if (written.has(draft)) {
@@ -445,25 +571,35 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 		yield* removeFile(operation, path.join(directory, draft))
 		removed.push(draft)
 	}
-	yield* writeAtomic(operation, snapshotPath(directory, sequence), analysis.currentSnapshot)
-	yield* writeAtomic(operation, planPath(directory, id), chain.appended.planText)
-	yield* writeAtomic(operation, manifestPath(directory), chain.appended.manifestText)
-	yield* writeAtomic(operation, indexPath(directory), renderIndex([...analysis.entries, chain.appended.entry]))
-	yield* writeAtomic(operation, contractPath(options.repository), renderContract(contract))
+	const uniqueSnapshots =
+		analysis.snapshotTexts.length > 0
+			? [...analysis.snapshotTexts, analysis.currentSnapshot]
+			: [analysis.emptySnapshot, analysis.currentSnapshot]
+	yield* writeImmutable(operation, baseSnapshotPath(directory), analysis.emptySnapshot)
+	yield* writeImmutable(operation, snapshotPath(directory, sequence), analysis.currentSnapshot)
+	yield* writeImmutable(operation, planPath(directory, id), chain.appended.planText)
+	yield* writeManifest(operation, manifestPath(directory), chain.appended.manifestText)
+	yield* writeDerived(operation, indexPath(directory), renderIndex([...analysis.entries, chain.appended.entry]))
+	yield* writeDerived(operation, snapshotsSidecarPath(directory), renderSnapshots(uniqueSnapshots))
+	yield* writeDerived(operation, contractPath(options.repository), renderContract(contract))
 	const report: GenerationReport = {
 		status: "generated",
 		planId: id,
 		contract,
 		files: [
+			"meta/base.schema.json",
 			`meta/${sequence.toString(10).padStart(4, "0")}.schema.json`,
 			`${id}.plan.json`,
 			"manifest.json",
 			"index.ts",
+			"snapshots.json",
 			path.basename(contractPath(options.repository))
 		],
 		removed
 	}
 	return report
+		})
+	)
 	})
 
 	// -------------------------------------------------------------------------
@@ -474,6 +610,12 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 		options: CheckOptions<Rels>
 	) {
 	const operation = "migrations.check"
+	const directory = options.repository.directory
+	return yield* exclusive(
+		operation,
+		directory,
+		options.work,
+		Effect.gen(function* () {
 	const analysis = yield* analyze(options)
 	if (analysis.diff.requirements.length > 0) {
 		return yield* Effect.fail(intentRequired(operation, analysis.diff.requirements))
@@ -485,9 +627,11 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 			detail:
 				analysis.changed && analysis.hasSeeds
 					? "the schema and declared seed data have changes with no recorded plan"
-					: analysis.changed
+					: analysis.prevSchemaId !== analysis.currentSchemaId
 						? "the schema differs from the latest recorded snapshot"
-						: "declared seed data has no recorded plan",
+						: analysis.changed
+							? "declared field conversions have no recorded plan"
+							: "declared seed data has no recorded plan",
 			contract
 		}
 		return report
@@ -502,12 +646,16 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 	}
 	// Recorded chain verified natively in analyze; now hold the derived files
 	// and the latest snapshot to their recorded meaning, byte for byte.
-	const directory = options.repository.directory
 	if (analysis.entries.length > 0) {
 		const wantIndex = renderIndex(analysis.entries)
 		const haveIndex = yield* readBounded(operation, indexPath(directory), MAX_DERIVED_BYTES)
 		if (haveIndex !== wantIndex) {
 			return yield* Effect.fail(drift(operation, "index.ts does not match the recorded manifest"))
+		}
+		const wantSnapshots = renderSnapshots(analysis.snapshotTexts)
+		const haveSnapshots = yield* readBounded(operation, snapshotsSidecarPath(directory), MAX_DERIVED_BYTES)
+		if (haveSnapshots !== wantSnapshots) {
+			return yield* Effect.fail(drift(operation, "snapshots.json does not match the recorded snapshot chain"))
 		}
 		const wantContract = renderContract(contract)
 		const haveContract = yield* readBounded(operation, contractPath(options.repository), MAX_DERIVED_BYTES)
@@ -517,6 +665,8 @@ function contractOf(analysis: Analysis, appended: ChainPayload["appended"]): Run
 	}
 	const report: CheckReport = { status: "clean", detail: "recorded chain verified; schema unchanged", contract }
 	return report
+		})
+	)
 	})
 
 	return { generateMigrations, checkMigrations }

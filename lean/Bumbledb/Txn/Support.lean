@@ -134,9 +134,10 @@ def stmtRels : Statement → List RelId
 consulted relations that are NOT closed under the theory. This is the
 support the Rust derivation actually computes — closed (ground-axiom)
 relations denote theory constants and contribute no mutable edge.
-Bridge: the successor support derivation in core admission planning
-(chapter 13 §4); the old `ComponentClosed` premise over all consulted
-relations is retired. -/
+Bridge: `schema/compiled.rs::delta_local_statements` and the
+independent `mutable_support` bench model; the old `ComponentClosed`
+premise over all consulted relations is retired and cannot certify
+the current log. -/
 def mutableRels (T : Theory) (st : Statement) : List RelId :=
   (stmtRels st).filter (fun R => (T.closed R).isNone)
 

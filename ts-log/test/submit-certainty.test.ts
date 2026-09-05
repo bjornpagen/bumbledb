@@ -2,18 +2,19 @@
  * Submission certainty. `submit` is `Effect<SubmitOutcome, never>`: every
  * ordinary failure lives inside the union — pre-dispatch refusals become
  * `not-submitted` (with the authentic ref), post-dispatch decode loss
- * becomes `outcome-unknown` — while fiber interruption stays in Cause and
- * is NEVER rewritten into an arm. The retained ref resolves after reopen.
+ * becomes `outcome-unknown`. Fiber interruption after dispatch is
+ * `outcome-unknown` (or `decided` if the receipt already decoded) under
+ * that same ref — never a new ID — and joins the native cancel drain
+ * before the lease is released. The retained ref resolves after reopen.
  * Maps to the chapter 35 rows "interruption after publication" and
  * "retained ref resolution after reopen"; API-04, PROTO-02/04/05 (layer
- * side), OPS-006.
+ * side), OPS-006. D13/D15 Effect-layer discriminators.
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 import type { AnySchema } from "@bjornpagen/bumbledb"
 import { Effect, Exit, Fiber } from "effect"
 import { makeLogMachine } from "#machine.ts"
-import type { SubmitOutcome } from "#outcome.ts"
 import type { Command, CommandInput } from "#surface.ts"
 import {
 	handleWire,
@@ -86,7 +87,8 @@ describe("submit certainty arms", function suite() {
 								outcome: {
 									kind: "decided",
 									receipt: receiptWire,
-									localHealth: { kind: "ready", at: receiptWire.decisionAt }
+									localHealth: { kind: "ready", at: receiptWire.decisionAt },
+									publicationPhase: "confirmed"
 								}
 							}
 						})
@@ -99,6 +101,7 @@ describe("submit certainty arms", function suite() {
 		if (outcome.kind === "decided") {
 			assert.equal(outcome.receipt.outcome.kind, "no-change")
 			assert.equal(outcome.localHealth.kind, "ready")
+			assert.equal(outcome.phase, "confirmed")
 			assert.equal(outcome.receipt.decisionAt.seq, 7n)
 		}
 	})
@@ -223,16 +226,17 @@ describe("submit certainty arms", function suite() {
 })
 
 describe("interruption after publication", function suite() {
-	test("interrupt leaves Cause interruption, joins the native drain and fabricates no arm", async function interrupted() {
+	test("interrupt after dispatch is outcome-unknown under the original ref and joins the native drain", async function interrupted() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
 
-		const observed: SubmitOutcome[] = []
 		const program = provideRuntime(
 			Effect.scoped(
 				Effect.gen(function* () {
 					const history = yield* plannedOpen(double, machine)
 					const command = yield* plannedSeal(double, machine)
+					assert.equal(command.ref.digest, refWire.digest)
+					assert.equal(command.ref.id.requestId, refWire.requestId)
 					// Publication response is withheld: the operation dispatched and
 					// the native machine may already have published.
 					double.plan("logHistoryCall", {
@@ -242,13 +246,12 @@ describe("interruption after publication", function suite() {
 							outcome: {
 								kind: "decided",
 								receipt: receiptWire,
-								localHealth: { kind: "ready", at: receiptWire.decisionAt }
+								localHealth: { kind: "ready", at: receiptWire.decisionAt },
+								publicationPhase: "confirmed"
 							}
 						}
 					})
-					const outcome = yield* history.submit(command, submitOptions)
-					observed.push(outcome)
-					return outcome
+					return yield* history.submit(command, submitOptions)
 				})
 			)
 		)
@@ -259,20 +262,28 @@ describe("interruption after publication", function suite() {
 		await Effect.runPromise(Fiber.interrupt(fiber))
 		const exit = await Effect.runPromise(Fiber.await(fiber))
 
-		// No SubmitOutcome was delivered or fabricated; interruption is Cause.
-		assert.equal(observed.length, 0)
-		assert.ok(Exit.isFailure(exit))
-		assert.ok(Exit.hasInterrupts(exit))
-		// The cancellation joined the native drain for the in-flight lease.
+		assert.ok(Exit.isSuccess(exit))
+		const outcome = Exit.getSuccess(exit)
+		assert.ok(outcome._tag === "Some")
+		assert.equal(outcome.value.kind, "outcome-unknown")
+		if (outcome.value.kind === "outcome-unknown") {
+			assert.equal(outcome.value.command.digest, refWire.digest)
+			assert.equal(outcome.value.command.id.requestId, refWire.requestId)
+			assert.equal(outcome.value.phase, "dispatchedUnresolved")
+			assert.equal(outcome.value.error.code, "Cancelled")
+		}
 		assert.ok(double.cancelCount() >= 1)
 
-		// A late native completion after interruption resumes nothing.
+		// A late native completion after the arm settled does not mint a new ref.
 		double.releaseHeld()
 		await ticks(1)
-		assert.equal(observed.length, 0)
+		assert.equal(outcome.value.kind, "outcome-unknown")
+		if (outcome.value.kind === "outcome-unknown") {
+			assert.equal(outcome.value.command.digest, refWire.digest)
+		}
 	})
 
-	test("the retained ref resolves after reopen even though the fiber saw no outcome", async function retainedRef() {
+	test("the retained original ref resolves after reopen; retry never seals a new id", async function retainedRef() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
 		// The app retained command.ref (fixture refWire). Reopen and resolve

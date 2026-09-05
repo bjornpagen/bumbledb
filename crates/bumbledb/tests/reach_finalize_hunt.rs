@@ -132,14 +132,14 @@ fn answer_pairs(answers: &Answers) -> BTreeSet<(u64, u64)> {
 fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     const CHAIN: u64 = 48;
     let dir = common::TempDir::new("hunt-deep-chain");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
     let mut edges: BTreeSet<(u64, u64)> = (0..CHAIN).map(|n| (n, n + 1)).collect();
     edges.insert((10, 3)); // a back edge: a cycle inside the chain
     edges.insert((7, 7));
     edges.insert((5, 30));
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for &(src, dst) in &edges {
             tx.insert([&Edge { src, dst }])?;
         }
@@ -150,7 +150,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
 
     let expected = naive_closure(&edges);
     let mut prepared = db.prepare(&closure_query()).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for run in 0..3 {
             let got =
                 answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
@@ -170,7 +170,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
         more.insert((n, n + 1));
     }
     more.insert((CHAIN + 16, 0));
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for &(src, dst) in more.difference(&edges) {
             tx.insert([&Edge { src, dst }])?;
         }
@@ -179,7 +179,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     .expect("write")
     .unwrap();
     let expected = naive_closure(&more);
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for run in 0..2 {
             let got =
                 answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
@@ -196,7 +196,7 @@ fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
 #[test]
 fn a_finished_interior_feeds_a_linear_rec() {
     let dir = common::TempDir::new("hunt-interior-then-rec");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
     let edges: BTreeSet<(u64, u64)> = (0..12)
@@ -204,7 +204,7 @@ fn a_finished_interior_feeds_a_linear_rec() {
         .chain([(12, 4), (2, 9)])
         .collect();
     let links: BTreeSet<(u64, u64)> = [(100, 0), (101, 6), (3, 3), (200, 100)].into();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for &(src, dst) in &edges {
             tx.insert([&Edge { src, dst }])?;
         }
@@ -263,7 +263,7 @@ fn a_finished_interior_feeds_a_linear_rec() {
         rules: vec![pair_rule((0, 1), vec![interior_atom(1, 0, 1)])],
     };
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for run in 0..3 {
             let got =
                 answer_pairs(&snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?);
@@ -280,11 +280,11 @@ fn a_finished_interior_feeds_a_linear_rec() {
 #[test]
 fn a_fold_over_the_finished_closure_matches_naive_counts() {
     let dir = common::TempDir::new("hunt-fold");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
     let edges: BTreeSet<(u64, u64)> = [(1, 0), (2, 1), (3, 1), (4, 2), (4, 3), (0, 5)].into();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for &(src, dst) in &edges {
             tx.insert([&Edge { src, dst }])?;
         }
@@ -325,7 +325,7 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
         }],
     };
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for run in 0..2 {
             let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
             let got: std::collections::BTreeMap<u64, u64> = answers
@@ -359,13 +359,13 @@ fn a_fold_over_the_finished_closure_matches_naive_counts() {
 )]
 fn typed_payload_propagates_through_the_recursive_accumulator() {
     let dir = common::TempDir::new("hunt-typed-payload");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
     let rows = item_rows();
     // A path 1 → 2 → 3 → 4 plus a shortcut: rows blend at shared nodes.
     let edges: BTreeSet<(u64, u64)> = [(1, 2), (2, 3), (3, 4), (1, 3)].into();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for row in &rows {
             tx.insert([row])?;
         }
@@ -450,7 +450,7 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
         .collect();
 
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for run in 0..3 {
             let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
             let got: BTreeSet<(u64, String, bool, (u64, u64))> = answers
@@ -485,10 +485,10 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
 fn a_budget_abort_leaves_the_prepared_handle_correct() {
     const CHAIN: u64 = 66_000;
     let dir = common::TempDir::new("hunt-budget-abort");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for n in 0..CHAIN {
             tx.insert([&Edge { src: n, dst: n + 1 }])?;
         }
@@ -498,7 +498,7 @@ fn a_budget_abort_leaves_the_prepared_handle_correct() {
     .unwrap();
     let mut prepared = db.prepare(&single_source_chain_query()).expect("prepare");
     for run in 0..2 {
-        db.read(|snap| {
+        db.read(common::work(), |snap| {
             let err = snap
                 .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
                 .expect_err("66k hops exceed the default 2^16-round budget");
@@ -557,7 +557,7 @@ fn single_source_chain_query() -> Query {
 fn alternating_param_envelopes_reuse_the_pools_correctly() {
     use bumbledb::ir::ParamId;
     let dir = common::TempDir::new("hunt-param-envelopes");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
 
@@ -565,7 +565,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
         .map(|n| (n, n + 1))
         .chain([(50, 51), (51, 52)])
         .collect();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for &(src, dst) in &edges {
             tx.insert([&Edge { src, dst }])?;
         }
@@ -612,7 +612,7 @@ fn alternating_param_envelopes_reuse_the_pools_correctly() {
         }],
     };
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         // big → small → empty → big → small: every transition where a
 
         for &src in &[0u64, 50, 90, 0, 50, 90, 0] {
@@ -688,11 +688,11 @@ type ResolvedRow = (String, (u64, u64), i64, String, bool, Vec<u8>, u64);
 #[test]
 fn resolving_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-resolved");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
     let rows = item_rows();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for row in &rows {
             tx.insert([row])?;
         }
@@ -733,7 +733,7 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
         })
         .collect();
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for run in 0..2 {
             let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
             let got: BTreeSet<ResolvedRow> = answers
@@ -781,11 +781,11 @@ fn resolving_columnar_finalize_reproduces_every_cell() {
 #[test]
 fn word_columnar_finalize_reproduces_every_cell() {
     let dir = common::TempDir::new("hunt-finalize-words");
-    let db = Db::create(dir.path(), Hunt)
+    let db = Db::create(dir.path(), Hunt, common::work())
         .expect("create")
         .expect("accepted");
     let rows = item_rows();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for row in &rows {
             tx.insert([row])?;
         }
@@ -820,7 +820,7 @@ fn word_columnar_finalize_reproduces_every_cell() {
         })
         .collect();
     let mut prepared = db.prepare(&query).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         let got: BTreeSet<(u64, (u64, u64), bool, i64)> = answers
             .answers()

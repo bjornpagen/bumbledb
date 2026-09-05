@@ -21,12 +21,12 @@ bumbledb::schema! {
 #[test]
 fn point_reads_observe_the_final_state_before_commit() {
     let dir = common::TempDir::new("points-read-your-writes");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
     let id = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = AccountId(1);
             let acct = Account {
                 id,
@@ -61,7 +61,7 @@ fn point_reads_observe_the_final_state_before_commit() {
         holder: "ada",
         balance: 42,
     };
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         assert!(tx.contains(&survivor)?);
         assert!(!tx.contains(&Account {
             balance: 10,
@@ -73,7 +73,7 @@ fn point_reads_observe_the_final_state_before_commit() {
     .expect("post-commit point reads")
     .unwrap();
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
         assert_eq!(facts, vec![survivor]);
         Ok(())
@@ -84,11 +84,11 @@ fn point_reads_observe_the_final_state_before_commit() {
 #[test]
 fn point_reads_fall_through_to_committed_state() {
     let dir = common::TempDir::new("points-committed-fallthrough");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let id = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = AccountId(1);
             tx.insert([&Account {
                 id,
@@ -101,7 +101,7 @@ fn point_reads_fall_through_to_committed_state() {
         .unwrap()
         .value;
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let other = AccountId(2);
         tx.insert([&Account {
             id: other,
@@ -138,11 +138,11 @@ fn point_reads_fall_through_to_committed_state() {
 #[test]
 fn a_cancelled_insert_never_shadows_the_committed_row() {
     let dir = common::TempDir::new("points-cancelled-insert");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let id = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = AccountId(1);
             tx.insert([&Account {
                 id,
@@ -155,7 +155,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
         .unwrap()
         .value;
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         assert_eq!(
             tx.insert([&Account {
                 id,
@@ -207,7 +207,7 @@ fn a_cancelled_insert_never_shadows_the_committed_row() {
     .expect("the composed upsert commits cleanly")
     .unwrap();
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
         assert_eq!(
             facts,
@@ -256,11 +256,11 @@ fn every_declared_key_is_its_own_typed_key() {
     );
 
     let dir = common::TempDir::new("points-multi-fresh-keys");
-    let db = Db::create(dir.path(), Registry)
+    let db = Db::create(dir.path(), Registry, common::work())
         .expect("create")
         .expect("accepted");
     let (left, right) = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let left = LeftId(1);
             let right = RightId(1);
             tx.insert([&Pair { left, right }])?;
@@ -271,7 +271,7 @@ fn every_declared_key_is_its_own_typed_key() {
         .expect("seed")
         .unwrap()
         .value;
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         assert_eq!(snap.get(PairByLeft { left })?, Some(Pair { left, right }));
         assert_eq!(snap.get(PairByRight { right })?, Some(Pair { left, right }));
         assert_eq!(
@@ -288,11 +288,11 @@ fn every_declared_key_is_its_own_typed_key() {
 #[test]
 fn snapshot_get_reads_committed_state_through_the_declared_key() {
     let dir = common::TempDir::new("points-snapshot-get");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let id = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = AccountId(1);
             tx.insert([&Account {
                 id,
@@ -305,7 +305,7 @@ fn snapshot_get_reads_committed_state_through_the_declared_key() {
         .unwrap()
         .value;
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         assert_eq!(
             snap.get(AccountById { id })?,
             Some(Account {
@@ -324,7 +324,7 @@ fn snapshot_get_reads_committed_state_through_the_declared_key() {
 /// ownership is an explicit host act — copy the fields out before mutating the
 /// transaction again.
 fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let old = tx
             .get(AccountById { id })?
             .map(|old| (old.holder.to_owned(), old.balance));
@@ -358,7 +358,7 @@ fn add(db: &Db<Ledger>, id: AccountId, x: i64) -> bumbledb::Result<()> {
 #[test]
 fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     let dir = common::TempDir::new("points-upsert-counter");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
@@ -367,7 +367,7 @@ fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
     add(&db, id, 10).expect("second upsert increments");
     add(&db, id, 100).expect("third upsert increments");
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let facts: Vec<Account> = snap.scan_facts()?.collect::<bumbledb::Result<_>>()?;
         assert_eq!(
             facts,
@@ -385,11 +385,11 @@ fn the_upsert_idiom_round_trips_a_counter_across_three_transactions() {
 #[test]
 fn snapshot_contains_answers_typed_membership_against_committed_state() {
     let dir = common::TempDir::new("points-snap-contains");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let id = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = AccountId(1);
             tx.insert([&Account {
                 id,
@@ -401,7 +401,7 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
         .expect("write")
         .unwrap()
         .value;
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let committed = Account {
             id,
             holder: "ada",
@@ -428,12 +428,12 @@ fn snapshot_contains_answers_typed_membership_against_committed_state() {
 )]
 fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
     let dir = common::TempDir::new("points-snap-generation");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let before = db.read(|snap| snap.generation()).expect("read");
+    let before = db.read(common::work(), |snap| snap.generation()).expect("read");
     let committed = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = AccountId(1);
             tx.insert([&Account {
                 id,
@@ -444,7 +444,7 @@ fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
         })
         .expect("write")
         .unwrap();
-    let after = db.read(|snap| snap.generation()).expect("read");
+    let after = db.read(common::work(), |snap| snap.generation()).expect("read");
     assert_eq!(after, committed.generation);
     assert_ne!(before, after);
 }

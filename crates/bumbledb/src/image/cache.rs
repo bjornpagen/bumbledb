@@ -1,31 +1,28 @@
-//! The prepared query's image cache: one [`RelationSlot`] per relation,
-//! indexed by [`RelationId`], plus the one execution-scoped text interner
-//! every image build, param bind, literal latch and answer resolution
-//! shares (token equality is text equality — `image/intern.rs`).
+//! The database-owned relation-image cache: one [`RelationSlot`] per
+//! relation and one synchronized [`GenerationProtocol`]. Map entries are
+//! eviction references to [`RelationImage`] owners; slab charge and the
+//! resolver live inside the shared allocation / generation handle.
 //!
-//! The schema-body partition is parsed once at construction: a closed
-//! relation is a generation-free [`OnceLock`], an ordinary store relation
-//! is a [`GenerationCache`]. A store generation on a closed image is
-//! unrepresentable — the closed arm has no generation field. Heap-instance
-//! executions never enter the generation map (their `ViewEpoch::Heap`
-//! ticks are per-execution; images rebuild each run because a heap
-//! instance carries no durable identity to key a memo by).
+//! Prepared query state (selection, trie, COLT pools) stays separate; only
+//! immutable relation images and text tokens are shared here. An execution
+//! that interprets tokens holds a [`GenerationHandle`]. Pressure detaches
+//! map membership and rotates the current generation; live owners keep
+//! exact old meanings and their charges.
 //!
-//! Invalidation is generation-keyed: building at a newer generation
-//! retains only entries at or above it, so a write's next read pays one
-//! full rebuild per touched relation and old pinned snapshots keep their
-//! old images (charged to their owners). The old write-path `advance`
-//! lineage hook (append bases, dirty-relation eviction) is deleted with
-//! the transitional storage; per-relation change tracking for
-//! untouched-relation reuse across generations is a recorded C04 seam
-//! request to P02R (see `implementation/packets/P03.md`).
+//! Invalidation is keyed by (relation, relation change version): the store
+//! advances a relation's version exactly when a committed transaction
+//! changed that relation's rows, so a write to relation A never invalidates
+//! relation B's image, and a host-record/attachment-only generation bump
+//! invalidates nothing (PERF-001 / APP-MUTATE — audit-core #1).
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::image::RelationImage;
-use crate::image::intern::TextInterner;
+use crate::image::epoch::{CacheGeneration, TextGeneration};
 use crate::schema::RelationBody;
-use crate::storage::GenerationId;
+use crate::storage::store::RelationVersion;
+use crate::work::CacheLedger;
+use crate::work::cache::{GenerationHandle, GenerationProtocol, WeakGenerationHandle};
 use bumbledb_theory::schema::RelationId;
 
 mod get_or_build;
@@ -43,61 +40,58 @@ pub mod stats;
 #[cfg(test)]
 mod tests;
 
+/// Eviction reference only. Charge lives on [`RelationImage`].
 struct Cached {
     image: Arc<RelationImage>,
 }
 
-pub(crate) struct GenerationCache {
-    inner: Mutex<GenerationInner>,
+pub(crate) struct VersionCache {
+    inner: Mutex<VersionInner>,
 }
 
-struct GenerationInner {
-    map: HashMap<GenerationId, Cached>,
+struct VersionInner {
+    map: HashMap<RelationVersion, Cached>,
 
-    newest: GenerationId,
+    newest: RelationVersion,
 }
 
 pub(crate) enum RelationSlot {
     Closed(OnceLock<Arc<RelationImage>>),
-    Ordinary(GenerationCache),
+    Ordinary(VersionCache),
 }
 
 impl RelationSlot {
     pub(crate) fn for_store(body: &RelationBody) -> Self {
         match body {
             RelationBody::Closed { .. } => Self::Closed(OnceLock::new()),
-            RelationBody::Ordinary => Self::Ordinary(GenerationCache::new()),
+            RelationBody::Ordinary => Self::Ordinary(VersionCache::new()),
         }
     }
 }
 
-impl GenerationCache {
+impl VersionCache {
     fn new() -> Self {
         Self {
-            inner: Mutex::new(GenerationInner {
+            inner: Mutex::new(VersionInner {
                 map: HashMap::new(),
-                newest: GenerationId::initial(),
+                newest: RelationVersion::initial(),
             }),
         }
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, GenerationInner> {
+    fn lock(&self) -> std::sync::MutexGuard<'_, VersionInner> {
         self.inner.lock().expect("cache mutex")
     }
 }
 
-/// The prepared query's relation-image cache plus the shared text
-/// interner. One [`RelationSlot`] per schema relation. The mutex on each
-/// slot's critical section is panic-free (map probes, Arc clones,
-/// generation compares), so the `expect("cache mutex")` unwraps can
-/// never observe poison from this module's own code. Keep it that way:
-/// builds, decodes, and anything else that can panic stay outside the
-/// lock. Closed slots are [`OnceLock`]s — first touch builds, never
-/// evicted, never rebuilt.
+/// The database-owned bounded relation-image cache plus generation-owned
+/// text resolution. One instance per database; prepared programs hold
+/// `Arc<ImageCache>` handles to the same owner.
 pub struct ImageCache {
     slots: Box<[RelationSlot]>,
-    interner: Mutex<TextInterner>,
     counters: stats::CacheCounters,
+    cache: CacheLedger,
+    protocol: GenerationProtocol,
 }
 
 impl ImageCache {
@@ -105,41 +99,52 @@ impl ImageCache {
         &self.slots[relation.0 as usize]
     }
 
-    /// The one text→token map this cache's images and binds share.
-    pub(crate) fn interner(&self) -> &Mutex<TextInterner> {
-        &self.interner
+    /// The shared retained-cache ledger every image and text token charges.
+    pub(crate) fn cache_ledger(&self) -> &CacheLedger {
+        &self.cache
     }
 
-    /// Retained cache bytes: every resident image slab plus the interner's
-    /// text (a host budgeting figure, not an allocator measurement).
+    /// Acquire the current generation. Every token-bearing consumer holds
+    /// this handle (directly or through its image) for the execution.
+    #[must_use]
+    pub fn acquire(&self) -> GenerationHandle {
+        self.protocol.acquire()
+    }
+
+    /// Weak/versioned current generation for idle prepared memo caches.
+    #[must_use]
+    pub fn weak_current(&self) -> WeakGenerationHandle {
+        self.protocol.acquire().downgrade()
+    }
+
+    /// The current whole-cache generation identity.
+    #[must_use]
+    pub fn cache_generation(&self) -> CacheGeneration {
+        self.protocol.identity()
+    }
+
+    #[must_use]
+    pub fn text_generation(&self) -> TextGeneration {
+        TextGeneration::of(self.cache_generation())
+    }
+
+    /// Retained cache bytes: the ledger, not map membership. Images held
+    /// only by executions still count until their last strong owner drops.
     #[must_use]
     pub fn retained_bytes(&self) -> usize {
-        let images: usize = self
-            .slots
-            .iter()
-            .map(|slot| match slot {
-                RelationSlot::Closed(slot) => slot.get().map_or(0, |image| image.byte_size()),
-                RelationSlot::Ordinary(cache) => cache
-                    .lock()
-                    .map
-                    .values()
-                    .map(|cached| cached.image.byte_size())
-                    .sum(),
-            })
-            .sum();
-        images
-            + self
-                .interner
-                .lock()
-                .expect("interner mutex")
-                .retained_bytes()
+        usize::try_from(self.cache.used()).unwrap_or(usize::MAX)
     }
 
-    /// Drop every generation-keyed image (memory-pressure trim). Closed
-    /// images and the interner stay: token stability is the cache's
-    /// invariant, and the trim unit for text is dropping the whole cache
-    /// (re-prepare). The next execution rebuilds what it touches.
+    /// Detach version-keyed map entries and rotate the current generation.
+    /// Live image / handle owners keep their resolver and slab charge.
+    /// The cache's previous current handle is dropped here so idle
+    /// generations are not preserved forever.
     pub fn trim(&self) {
+        self.detach_map_entries();
+        let _ = self.protocol.rotate(&self.cache);
+    }
+
+    fn detach_map_entries(&self) {
         for slot in &self.slots {
             if let RelationSlot::Ordinary(cache) = slot {
                 let mut inner = cache.lock();
@@ -151,13 +156,20 @@ impl ImageCache {
     }
 }
 
-#[cfg(feature = "trace")]
+#[cfg(any(test, feature = "trace"))]
 impl ImageCache {
+    /// The rebuild/hit counters: the deterministic regression hook for the
+    /// per-relation invalidation contract (test builds), and the trace-mode
+    /// read side whose recorded reader is the benchmark report (P14
+    /// `--features obs`).
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "trace-mode counter read side; the recorded reader is the \
-                  benchmark report (P14 `--features obs`)"
+    #[cfg_attr(
+        all(feature = "trace", not(test)),
+        expect(
+            dead_code,
+            reason = "trace-mode counter read side; the recorded reader is \
+                      the benchmark report (P14 `--features obs`)"
+        )
     )]
     pub fn stats(&self) -> stats::CacheStats {
         self.counters.read()

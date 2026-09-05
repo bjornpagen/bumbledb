@@ -1,20 +1,16 @@
 /**
- * P12 adversarial integration: hostile capability inputs across the ACTUAL
- * Rust/Node boundary (not mocked helpers). Forged and kind-confused
- * externals, one-shot take discipline, retained wrappers after close,
- * close/drain under load and retained owned results — FFI-01/02/05/07,
- * RUN-04/05, SDK-004/SDK-007 boundary halves, G11/G14.
- *
- * Every attack must surface as a TYPED refusal (`_tag`-shaped error) or an
- * honest report — never a crash, an alias into another slot, or a silent
- * success. Verification: NotRun (F2 authors; runs at F3 against the fresh
- * addon built by the package test command).
+ * Hostile capability inputs across the actual Rust/Node boundary.
+ * Forged and kind-confused tokens, one-shot take, retained wrappers after
+ * close, close/drain under load. Deleted writer/parked-session verbs are
+ * not part of this roster — snapshot/session attacks use the db-native
+ * capability path. Verification: NotRun
  */
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
+import { dbNative } from "#db-native.ts"
 import { u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
@@ -24,10 +20,10 @@ import type {
 	OperationHandle,
 	OptionsWire,
 	PolicyWire,
-	RuntimeHandle,
-	SessionHandle
+	RuntimeHandle
 } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
+import type { SnapshotHandle } from "#db-native.ts"
 import { schema } from "#schema.ts"
 
 const wire: OptionsWire = {
@@ -79,7 +75,6 @@ function started<Value>(
 test("forged and kind-confused externals refuse typed, never alias or crash", async () => {
 	const runtime = runtimeNative.runtimeOpen(wire)
 	try {
-		// Plain-object forgeries in every handle position.
 		const forgedRuntime = { __runtime: Symbol("forged") } as unknown as RuntimeHandle
 		assert.throws(() => runtimeNative.runtimeInspect(forgedRuntime), typedRefusal)
 		assert.throws(
@@ -88,12 +83,11 @@ test("forged and kind-confused externals refuse typed, never alias or crash", as
 		)
 		const forgedOperation = {} as unknown as OperationHandle
 		assert.throws(() => runtimeNative.runtimeTake(forgedOperation), typedRefusal)
-		const forgedSession = {} as unknown as SessionHandle
+		const forgedSnapshot = {} as unknown as SnapshotHandle
 		assert.throws(
-			() => runtimeNative.runtimeSessionCount(forgedSession, policy, 0, () => {}),
+			() => dbNative.runtimeSnapshotGet(forgedSnapshot, policy, 0, 0, [], () => {}),
 			typedRefusal
 		)
-		// Kind confusion: a REAL external of the wrong kind in a take slot.
 		const dir = tempDir("kind")
 		const acquire = started((callback) => runtimeNative.runtimeDirectoryAcquire(runtime, policy, dir, callback))
 		await acquire.done
@@ -104,12 +98,11 @@ test("forged and kind-confused externals refuse typed, never alias or crash", as
 			"a directory owner is not an operation lease"
 		)
 		assert.throws(
-			() => runtimeNative.runtimeSessionCount(owner as unknown as SessionHandle, policy, 0, () => {}),
+			() => dbNative.runtimeSnapshotGet(owner as unknown as SnapshotHandle, policy, 0, 0, [], () => {}),
 			typedRefusal,
-			"a directory owner is not a session"
+			"a directory owner is not a snapshot"
 		)
 		await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(owner, false, resolve))
-		// The runtime survived every attack.
 		assert.equal(runtimeNative.runtimeInspect(runtime).phase, "open")
 	} finally {
 		await close(runtime)
@@ -124,7 +117,6 @@ test("takes are one-shot: a completed operation yields its value exactly once", 
 		await hash.done
 		const first = runtimeNative.runtimeTake(hash.lease)
 		assert.ok(first instanceof Uint8Array && first.length > 0, "the completed take yields the digest")
-		// The second take must not yield the value again: null or typed.
 		let second: Uint8Array | null | "refused" = "refused"
 		try {
 			second = runtimeNative.runtimeTake(hash.lease)
@@ -151,18 +143,15 @@ test("retained wrappers cannot reach native resources after close", async () => 
 	if (outcome.tag !== "accepted") return
 	const db = outcome.db
 
-	// Deterministic teardown: db child, then owner, then the runtime.
 	await new Promise((resolve) => runtimeNative.runtimeManagedDbClose(db, resolve))
 	await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(owner, false, resolve))
 	const report = await close(runtime)
 	assert.deepEqual(report, { kind: "closed" }, "the drained close reports real reclamation")
 
-	// Every retained wrapper is now a typed refusal, not a live capability.
-	assert.throws(() => runtimeNative.runtimeDbSession(db, policy, () => {}), typedRefusal)
+	assert.throws(() => dbNative.runtimeDbSnapshot(db, policy, () => {}), typedRefusal)
 	assert.throws(() => runtimeNative.runtimeDirectoryBegin(owner, policy), typedRefusal)
 	assert.throws(() => runtimeNative.runtimeInspect(runtime), typedRefusal)
 
-	// Real release: a successor owns the same directory immediately.
 	const successor = runtimeNative.runtimeOpen(wire)
 	try {
 		const reacquire = started((callback) =>
@@ -193,17 +182,9 @@ test("close under load drains in-flight operations and refuses new admission", a
 	for (let index = 0; index < 6; index++) {
 		leases.push(started((callback) => runtimeNative.runtimeHash(runtime, policy, input, callback)))
 	}
-	// Close while the pool is saturated: the report arrives only when the
-	// native work is actually drained or accounted, never a false quiescence.
 	const report = (await close(runtime)) as { kind: string }
-	assert.ok(
-		report.kind === "closed" || report.kind === "incomplete",
-		"close reports reality under load"
-	)
-	// New admission is revoked either way.
+	assert.ok(report.kind === "closed" || report.kind === "incomplete", "close reports reality under load")
 	assert.throws(() => runtimeNative.runtimeHash(runtime, policy, input, () => {}), typedRefusal)
-	// Every callback settles (drained or cancelled) — no operation leaks a
-	// pending JS continuation forever.
 	await Promise.race([
 		Promise.allSettled(leases.map((entry) => entry.done)),
 		new Promise((_, reject) => setTimeout(() => reject(new Error("in-flight callbacks never settled")), 30_000))
@@ -222,9 +203,9 @@ test("owned results taken before close are frozen against native teardown", asyn
 	assert.deepEqual(digest, copy, "the owned result is untouched by teardown")
 })
 
-test("a stale prepared id and a foreign relation id miss typed inside a live session", async () => {
+test("a stale snapshot handle and a foreign relation id miss typed on the live db", async () => {
 	const runtime = runtimeNative.runtimeOpen(wire)
-	const dir = tempDir("session")
+	const dir = tempDir("snapshot")
 	try {
 		const acquire = started((callback) => runtimeNative.runtimeDirectoryAcquire(runtime, policy, dir, callback))
 		await acquire.done
@@ -236,41 +217,29 @@ test("a stale prepared id and a foreign relation id miss typed inside a live ses
 		const outcome = runtimeNative.runtimeDbTake(open.lease)
 		assert.equal(outcome.tag, "accepted")
 		if (outcome.tag !== "accepted") return
-		const sessionOp = started((callback) => runtimeNative.runtimeDbSession(outcome.db, policy, callback))
-		await sessionOp.done
-		const opened = runtimeNative.runtimeSessionTake(sessionOp.lease)
+		const snapOp = started((callback) => dbNative.runtimeDbSnapshot(outcome.db, policy, callback))
+		await snapOp.done
+		const opened = dbNative.runtimeSnapshotTake(snapOp.lease)
 
-		// A never-installed prepared id can only miss — typed, no alias.
-		let staleRefused = false
-		try {
-			const execute = started((callback) =>
-				runtimeNative.runtimeSessionExecute(opened.session, policy, 999n, [], callback)
-			)
-			await execute.done
-			runtimeNative.runtimeRowsTake(execute.lease)
-		} catch (error) {
-			staleRefused = typedRefusal(error)
-		}
-		assert.ok(staleRefused, "a stale prepared id refuses typed")
-
-		// A relation id outside the schema is a typed refusal, not a read of
-		// arbitrary native memory.
 		let foreignRefused = false
 		try {
-			const count = started((callback) => runtimeNative.runtimeSessionCount(opened.session, policy, 4096, callback))
-			await count.done
-			runtimeNative.runtimeCountTake(count.lease)
+			const get = started((callback) =>
+				dbNative.runtimeSnapshotGet(opened.snapshot, policy, 4096, 0, [], callback)
+			)
+			await get.done
+			dbNative.runtimeRowTake(get.lease)
 		} catch (error) {
 			foreignRefused = typedRefusal(error)
 		}
 		assert.ok(foreignRefused, "a foreign relation id refuses typed")
 
-		// The session survived both attacks and still answers.
-		const count = started((callback) => runtimeNative.runtimeSessionCount(opened.session, policy, 0, callback))
-		await count.done
-		assert.equal(runtimeNative.runtimeCountTake(count.lease), 0n)
+		const live = started((callback) =>
+			dbNative.runtimeSnapshotGet(opened.snapshot, policy, 0, 0, [0n], callback)
+		)
+		await live.done
+		assert.equal(dbNative.runtimeRowTake(live.lease), null)
 
-		await new Promise((resolve) => runtimeNative.runtimeSessionClose(opened.session, resolve))
+		await new Promise((resolve) => dbNative.runtimeSnapshotClose(opened.snapshot, resolve))
 		await new Promise((resolve) => runtimeNative.runtimeManagedDbClose(outcome.db, resolve))
 		await new Promise((resolve) => runtimeNative.runtimeDirectoryClose(owner, false, resolve))
 	} finally {

@@ -149,14 +149,17 @@ fn colts_with_params(
                         .collect()
                 })
                 .collect();
+            let image = &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
+                .expect("small")];
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
-                        .expect("small")],
+                    image,
                     &occurrence.filters,
                     params,
                     Vec::new(),
-                ),
+                    image.generation().text_eq(None),
+                )
+                .expect("fixture apply"),
                 &[],
                 columns,
             )
@@ -352,3 +355,5 @@ mod negation;
 mod pinned_run;
 mod pipeline;
 mod scan;
+mod spill_bounded;
+mod work_ledger;

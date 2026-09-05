@@ -52,7 +52,7 @@ fn small_fanouts_reserve_small_first_chunks() {
     let rows: Vec<(u64, u64)> = (0..1000).map(|i| (i / 2, i)).collect();
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
-    colt.ensure_forced(Colt::root(), 0);
+    colt.ensure_forced(Colt::root(), 0).expect("force");
     assert_eq!(colt.chunks.len(), 500, "one small frame per fanout-2 key");
     assert_eq!(
         colt.chunk_positions.len(),
@@ -63,7 +63,7 @@ fn small_fanouts_reserve_small_first_chunks() {
     let rows: Vec<(u64, u64)> = (0..100).map(|i| (0, i)).collect();
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
-    colt.ensure_forced(Colt::root(), 0);
+    colt.ensure_forced(Colt::root(), 0).expect("force");
     assert_eq!(colt.chunks.len(), 3);
     assert_eq!(colt.chunk_positions.len(), 8 + 64 + 64);
     let child = colt.get(Colt::root(), 0, &[0]).expect("hit");

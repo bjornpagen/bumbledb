@@ -8,7 +8,7 @@ import { EFFECT_PIN } from "./pin.ts"
 
 /**
  * The affirmative product-deletion gate (PKG-06 / SDK-013 / ARCH-005 /
- * chapter 32 "Delete the whole C surface"). Deleting a product is proved
+ * docs/reference/packaging.md PKG-06). Deleting a product is proved
  * by checks that FAIL if it comes back, not by its absence from a diff:
  *
  *  1. No C product anywhere in the release tree: no `bumbledb-c` crate,

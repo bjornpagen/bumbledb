@@ -33,6 +33,15 @@ export function snapshotPath(directory: string, sequence: number): string {
 	return path.join(directory, "meta", `${sequence.toString(10).padStart(4, "0")}.schema.json`)
 }
 
+/** Empty-base schema snapshot — first row of the mandatory compile chain. */
+export function baseSnapshotPath(directory: string): string {
+	return path.join(directory, "meta", "base.schema.json")
+}
+
+export function snapshotsSidecarPath(directory: string): string {
+	return path.join(directory, "snapshots.json")
+}
+
 export function indexPath(directory: string): string {
 	return path.join(directory, "index.ts")
 }
@@ -52,7 +61,7 @@ export interface RepositoryState {
 	readonly manifest: MigrationManifest | null
 	/** Recorded plan file texts, in manifest order. */
 	readonly planTexts: readonly string[]
-	/** Recorded snapshot file texts, in manifest order (targets). */
+	/** Recorded snapshot texts: empty-base first, then each entry's target. */
 	readonly snapshotTexts: readonly string[]
 	/**
 	 * Unrecorded files whose name matches the NEXT sequence — leftovers of an
@@ -130,7 +139,7 @@ export const readRepository = Effect.fn("bumbledb-log.migrations.readRepository"
 			if (!name.endsWith(".schema.json")) {
 				continue
 			}
-			if (name === "0000.schema.json") {
+			if (name === "base.schema.json" || name === "0000.schema.json") {
 				staleDrafts.push(`meta/${name}`)
 				continue
 			}
@@ -185,6 +194,9 @@ export const readRepository = Effect.fn("bumbledb-log.migrations.readRepository"
 		if (!name.endsWith(".schema.json")) {
 			continue
 		}
+		if (name === "base.schema.json") {
+			continue
+		}
 		const stem = name.slice(0, -".schema.json".length)
 		const ordinal = Number.parseInt(stem, 10)
 		if (Number.isSafeInteger(ordinal) && ordinal >= 0 && ordinal < manifest.entries.length) {
@@ -198,6 +210,11 @@ export const readRepository = Effect.fn("bumbledb-log.migrations.readRepository"
 	}
 	const planTexts: string[] = []
 	const snapshotTexts: string[] = []
+	const baseSnapshot = yield* readBounded(operation, baseSnapshotPath(directory), MAX_SNAPSHOT_BYTES)
+	if (baseSnapshot === null) {
+		return yield* Effect.fail(drift(operation, "recorded chain is missing meta/base.schema.json"))
+	}
+	snapshotTexts.push(baseSnapshot)
 	for (const [index, entry] of manifest.entries.entries()) {
 		const plan = yield* readBounded(operation, planPath(directory, entry.id), MAX_PLAN_BYTES)
 		if (plan === null) {

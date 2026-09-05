@@ -6,8 +6,9 @@
 # the userspace, glibc 2.34 is Lambda's floor. No step on that job
 # executes in the host's Ubuntu userspace. Publishing stays owner
 # ceremony — the runner uploads artifacts and stops.
-# Correctness is scripts/battery.sh. The S3 smoke is a nextest filter
-# over the workspace, not a second manifest.
+# Correctness is scripts/battery.sh. The gated S3 cell is a nextest
+# filter over the workspace, not a second manifest, and missing
+# credentials remain NotRun — never Passed.
 name: bumbledb-log
 
 on:
@@ -133,17 +134,19 @@ jobs:
       - name: Build the napi .node
         run: node scripts/build.ts
         working-directory: ts
+      - name: stamp native provenance
+        run: node scripts/release-results.mjs --write-native-provenance
       - name: Build the duty binary
         run: cargo build --release --bin duty
       - name: Install ts-log/ (frozen lockfile)
         # lane_b_interop.rs spawns ts-log/test/interop-child.ts, which
         # resolves @bjornpagen/bumbledb from this install. nextest is
-        # battery lane 3, ahead of the ts/ trio.
+        # after the one current-addon build.
         run: pnpm install --frozen-lockfile
         working-directory: ts-log
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: scripts/battery.sh
+      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
       - name: Stage the linux-arm64 artifacts
         run: |
           mkdir -p /tmp/grail-artifacts
@@ -159,7 +162,7 @@ jobs:
           name: bumbledb-log-duty
           path: /tmp/grail-artifacts/bumbledb-log-duty
           if-no-files-found: error
-      - name: Gated S3 smoke
+      - name: Gated S3 cell (NotRun without credentials)
         env:
           BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
           BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
@@ -172,10 +175,10 @@ jobs:
           [ -n "${AWS_ACCESS_KEY_ID:-}" ] || missing="$missing AWS_ACCESS_KEY_ID"
           [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] || missing="$missing AWS_SECRET_ACCESS_KEY"
           if [ -n "$missing" ]; then
-            echo "SKIPPED S3 smoke: credential-gated lane not run (missing$missing)"
+            echo "real-s3-iam NotRun: missing$missing (not qualification; do not record Passed)"
             exit 0
           fi
-          echo "S3 smoke credentials present; running the crate's gated smoke"
+          echo "S3 credentials present; running the crate's gated backend cell (still not a Passed evidence row until release-results.mjs validates it)"
           cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate
 
   linux-x64:
@@ -268,17 +271,16 @@ jobs:
       - name: Build the napi .node
         run: node scripts/build.ts
         working-directory: ts
+      - name: stamp native provenance
+        run: node scripts/release-results.mjs --write-native-provenance
       - name: Build the duty binary
         run: cargo build --release --bin duty
       - name: Install ts-log/ (frozen lockfile)
-        # lane_b_interop.rs spawns ts-log/test/interop-child.ts, which
-        # resolves @bjornpagen/bumbledb from this install. nextest is
-        # battery lane 3, ahead of the ts/ trio.
         run: pnpm install --frozen-lockfile
         working-directory: ts-log
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: scripts/battery.sh
+      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
       - name: Stage the linux-x64 artifacts
         run: |
           mkdir -p /tmp/grail-artifacts
@@ -294,7 +296,7 @@ jobs:
           name: bumbledb-log-duty-linux-x64
           path: /tmp/grail-artifacts/bumbledb-log-duty-linux-x64
           if-no-files-found: error
-      - name: Gated S3 smoke
+      - name: Gated S3 cell (NotRun without credentials)
         env:
           BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
           BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
@@ -307,10 +309,10 @@ jobs:
           [ -n "${AWS_ACCESS_KEY_ID:-}" ] || missing="$missing AWS_ACCESS_KEY_ID"
           [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] || missing="$missing AWS_SECRET_ACCESS_KEY"
           if [ -n "$missing" ]; then
-            echo "SKIPPED S3 smoke: credential-gated lane not run (missing$missing)"
+            echo "real-s3-iam NotRun: missing$missing (not qualification; do not record Passed)"
             exit 0
           fi
-          echo "S3 smoke credentials present; running the crate's gated smoke"
+          echo "S3 credentials present; running the crate's gated backend cell (still not a Passed evidence row until release-results.mjs validates it)"
           cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate
 
   darwin:
@@ -370,6 +372,8 @@ jobs:
       - name: Build the napi .node (ts-log's dependency, not the ts/ suite)
         run: node scripts/build.ts
         working-directory: ts
+      - name: stamp native provenance
+        run: node scripts/release-results.mjs --write-native-provenance
       - name: Install ts-log/ (frozen lockfile)
         # Same reason as the linux-arm64 job: nextest's interop lane
         # resolves @bjornpagen/bumbledb from this tree.
@@ -377,8 +381,8 @@ jobs:
         working-directory: ts-log
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: scripts/battery.sh
-      - name: Gated S3 smoke
+      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
+      - name: Gated S3 cell (NotRun without credentials)
         env:
           BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
           BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
@@ -391,8 +395,8 @@ jobs:
           [ -n "${AWS_ACCESS_KEY_ID:-}" ] || missing="$missing AWS_ACCESS_KEY_ID"
           [ -n "${AWS_SECRET_ACCESS_KEY:-}" ] || missing="$missing AWS_SECRET_ACCESS_KEY"
           if [ -n "$missing" ]; then
-            echo "SKIPPED S3 smoke: credential-gated lane not run (missing$missing)"
+            echo "real-s3-iam NotRun: missing$missing (not qualification; do not record Passed)"
             exit 0
           fi
-          echo "S3 smoke credentials present; running the crate's gated smoke"
+          echo "S3 credentials present; running the crate's gated backend cell (still not a Passed evidence row until release-results.mjs validates it)"
           cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate

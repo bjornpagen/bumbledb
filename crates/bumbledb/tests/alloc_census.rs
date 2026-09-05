@@ -382,7 +382,7 @@ fn wide_schema(n: u16) -> SchemaDescriptor {
 const CHAIN: u64 = 64;
 
 fn populate(db: &Db<SchemaDescriptor>) {
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for account in 0..20u64 {
             tx.insert_dyn(ACCOUNT, [&[Value::U64(account), Value::U64(account % 5)]])?;
         }
@@ -783,14 +783,14 @@ bumbledb::schema! {
 
 fn flow_open() {
     let dir = common::TempDir::new("census-open");
-    let db = measured("open", "Db::create(fixture schema)", true, || {
-        Db::create(dir.path(), schema())
+    let db = measured("open", "Db::create(fixture schema, common::work())", true, || {
+        Db::create(dir.path(), schema(), common::work())
             .expect("create")
             .expect("accepted")
     });
     drop(db);
-    let db = measured("open", "Db::open(existing)", true, || {
-        Db::open(dir.path(), schema()).expect("open")
+    let db = measured("open", "Db::open(existing, common::work())", true, || {
+        Db::open(dir.path(), schema(), common::work()).expect("open")
     });
     drop(db);
 
@@ -798,10 +798,10 @@ fn flow_open() {
         let wdir = common::TempDir::new(&format!("census-wide-{n}"));
         let db = measured(
             "open",
-            &format!("Db::create(wide schema, {n} relations)"),
+            &format!("Db::create(wide schema, {n} relations, common::work())"),
             false,
             || {
-                Db::create(wdir.path(), wide_schema(n))
+                Db::create(wdir.path(), wide_schema(n), common::work())
                     .expect("create wide")
                     .expect("accepted")
             },
@@ -825,27 +825,27 @@ fn flow_prepare(db: &Db<SchemaDescriptor>) {
         ("dnf k=8", dnf_query(8)),
     ] {
         for _ in 0..2 {
-            drop(db.prepare(&q).expect("prepare"));
+            drop(db.prepare(&q, common::work()).expect("prepare"));
         }
         measured("prepare", label, false, || {
-            drop(db.prepare(&q).expect("prepare"));
+            drop(db.prepare(&q, common::work()).expect("prepare"));
         });
     }
 
     let q = chain_query(4, 2, 2);
     measured("prepare", "chain a=4 c=2 r=2 (attributed)", true, || {
-        drop(db.prepare(&q).expect("prepare"));
+        drop(db.prepare(&q, common::work()).expect("prepare"));
     });
     let p = recursive_query();
     for _ in 0..2 {
-        drop(db.prepare(&p).expect("prepare"));
+        drop(db.prepare(&p, common::work()).expect("prepare"));
     }
     measured("prepare", "recursive query (attributed)", true, || {
-        drop(db.prepare(&p).expect("prepare"));
+        drop(db.prepare(&p, common::work()).expect("prepare"));
     });
     let q = join_query();
     measured("prepare", "join (2 atoms, 1 param cond)", false, || {
-        drop(db.prepare(&q).expect("prepare"));
+        drop(db.prepare(&q, common::work()).expect("prepare"));
     });
 }
 
@@ -868,9 +868,9 @@ fn commit_shape(db: &Db<SchemaDescriptor>, label: &str, next_id: &mut u64, k: u6
             Ok(())
         };
         if round == 2 {
-            measured("commit", label, attrib, || db.write(body).expect("commit")).unwrap();
+            measured("commit", label, attrib, || db.write(common::work(), body).expect("commit")).unwrap();
         } else {
-            db.write(body).expect("commit").unwrap();
+            db.write(common::work(), body).expect("commit").unwrap();
         }
     }
 }
@@ -894,11 +894,11 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
                     label,
                     label.starts_with("windowed append"),
                     || {
-                        db.write(|tx| f(tx)).expect("windowed commit").unwrap();
+                        db.write(common::work(), |tx| f(tx)).expect("windowed commit").unwrap();
                     },
                 );
             } else {
-                db.write(|tx| f(tx)).expect("windowed commit").unwrap();
+                db.write(common::work(), |tx| f(tx)).expect("windowed commit").unwrap();
             }
         };
         let append = move |tx: &mut bumbledb::WriteTx<'_, SchemaDescriptor>| {
@@ -951,10 +951,10 @@ fn flow_commit(db: &Db<SchemaDescriptor>) {
         };
         if round == 2 {
             measured("commit", "determinant overwrite (8 tuples)", true, || {
-                db.write(seeded).expect("fd overwrite").unwrap();
+                db.write(common::work(), seeded).expect("fd overwrite").unwrap();
             });
         } else {
-            db.write(seeded).expect("fd overwrite").unwrap();
+            db.write(common::work(), seeded).expect("fd overwrite").unwrap();
         }
     }
 }
@@ -966,8 +966,8 @@ fn cold_and_warm(
     params: &[BindValue<'_>],
     attrib_cold: bool,
 ) {
-    db.read(|snap| {
-        let mut prepared = db.prepare(q)?;
+    db.read(common::work(), |snap| {
+        let mut prepared = db.prepare(q, common::work())?;
         let mut out = Answers::new();
         measured(
             "execute",
@@ -1017,8 +1017,8 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
 
     let query = recursive_query();
     for cap in [110u64, 120, 140, 164] {
-        db.read(|snap| {
-            let mut prepared = db.prepare(&query)?;
+        db.read(common::work(), |snap| {
+            let mut prepared = db.prepare(&query, common::work())?;
             let mut out = Answers::new();
             let rounds = cap.saturating_sub(100).max(1);
             measured(
@@ -1049,16 +1049,16 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
 
     // measure the first execution after the commit (image rebuild).
     let q = join_query();
-    let mut prepared = db.prepare(&q).expect("prepare");
+    let mut prepared = db.prepare(&q, common::work()).expect("prepare");
     let mut out = Answers::new();
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for _ in 0..4 {
             snap.execute(&mut prepared, &[BindValue::I64(0)], &mut out)?;
         }
         Ok(())
     })
     .expect("warm");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert_dyn(
             POSTING,
             [&[
@@ -1072,7 +1072,7 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
     })
     .expect("commit")
     .unwrap();
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         measured(
             "execute",
             "join REBUILD (first execution post-commit)",
@@ -1093,7 +1093,7 @@ fn flow_execute(db: &Db<SchemaDescriptor>) {
 
 fn flow_insert_and_scan() {
     let dir = common::TempDir::new("census-insert");
-    let db = Db::create(dir.path(), schema())
+    let db = Db::create(dir.path(), schema(), common::work())
         .expect("create")
         .expect("accepted");
     let rows: Vec<Vec<Value>> = (0..10_000u64)
@@ -1101,7 +1101,7 @@ fn flow_insert_and_scan() {
         .collect();
     measured("insert", "insert_dyn 10k Item rows", true, || {
         let n = db
-            .write(|tx| {
+            .write(common::work(), |tx| {
                 tx.insert_dyn(ITEM, rows.clone())
                     .map(bumbledb::MutationReport::changed)
             })
@@ -1111,7 +1111,7 @@ fn flow_insert_and_scan() {
         assert_eq!(n, 10_000);
     });
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         measured(
             "scan",
             "ReadInstance::scan 10k rows (dyn export)",
@@ -1131,13 +1131,13 @@ fn flow_insert_and_scan() {
     drop(db);
 
     let tdir = common::TempDir::new("census-insert-typed");
-    let tdb = Db::create(tdir.path(), CensusLedger)
+    let tdb = Db::create(tdir.path(), CensusLedger, common::work())
         .expect("create typed")
         .expect("accepted");
     let memos: Vec<String> = (0..64).map(|i| format!("memo-{i}")).collect();
     measured("insert", "typed insert 10k str facts", true, || {
         let n = tdb
-            .write(|tx| {
+            .write(common::work(), |tx| {
                 let rows: Vec<_> = (0..10_000u64)
                     .map(|i| CItem {
                         id: CItemId(i),
@@ -1151,7 +1151,7 @@ fn flow_insert_and_scan() {
             .value;
         assert_eq!(n, 10_000);
     });
-    tdb.read(|snap| {
+    tdb.read(common::work(), |snap| {
         measured("scan", "scan_facts 10k typed str facts", true, || {
             let n = snap.scan_facts::<CItem>().expect("scan").count();
             assert_eq!(n, 10_000);
@@ -1168,7 +1168,7 @@ fn allocation_deep_census() {
     flow_open();
 
     let dir = common::TempDir::new("census-main");
-    let db = Db::create(dir.path(), schema())
+    let db = Db::create(dir.path(), schema(), common::work())
         .expect("create")
         .expect("accepted");
     measured("commit", "populate (fixture world, one tx)", false, || {

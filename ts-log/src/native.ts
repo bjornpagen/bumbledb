@@ -15,7 +15,7 @@
  * `logErrorCodes()`.
  */
 import type { OperationHandle, RuntimeHandle, PolicyWire, CloseWire, Violation } from "@bjornpagen/bumbledb"
-import { runtimeNative } from "@bjornpagen/bumbledb"
+import { runtimeNative } from "@bjornpagen/bumbledb/internal/log"
 
 // ── Handles ────────────────────────────────────────────────────────────────
 
@@ -139,10 +139,21 @@ export type HealthWire =
 	| { readonly kind: "ready"; readonly at: StampWire }
 	| { readonly kind: "unavailable"; readonly error: ErrorWire }
 
+export type PublicationPhaseWire =
+	| "prepared"
+	| "dispatchedUnresolved"
+	| "confirmed"
+	| "provedNonpublication"
+
 export type SubmitWire =
-	| { readonly kind: "decided"; readonly receipt: ReceiptWire; readonly localHealth: HealthWire }
-	| { readonly kind: "not-submitted"; readonly error: ErrorWire }
-	| { readonly kind: "outcome-unknown"; readonly error: ErrorWire }
+	| {
+			readonly kind: "decided"
+			readonly receipt: ReceiptWire
+			readonly localHealth: HealthWire
+			readonly publicationPhase: PublicationPhaseWire
+	  }
+	| { readonly kind: "not-submitted"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
+	| { readonly kind: "outcome-unknown"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
 
 export type ResolveWire =
 	| { readonly kind: "found"; readonly receipt: ReceiptWire }
@@ -274,7 +285,7 @@ export interface PlansWire {
 	 * (migration-initialize/migration-migrate: digests alone cannot
 	 * reconstruct descriptors); absent ⇒ a typed native not-started refusal.
 	 */
-	readonly snapshots?: readonly string[]
+	readonly snapshots: readonly string[]
 }
 
 export interface ActivationRefWire {
@@ -487,9 +498,9 @@ export type MigrationStatusWire =
 	| { readonly kind: "database-ahead"; readonly detail: string }
 
 export type AdminResultWire =
-	| { readonly certainty: "completed"; readonly value: AdminValueWire }
-	| { readonly certainty: "not-started"; readonly error: ErrorWire }
-	| { readonly certainty: "outcome-unknown"; readonly error: ErrorWire }
+	| { readonly certainty: "completed"; readonly value: AdminValueWire; readonly publicationPhase: PublicationPhaseWire }
+	| { readonly certainty: "not-started"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
+	| { readonly certainty: "outcome-unknown"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
 	| { readonly certainty: "report"; readonly value: AdminValueWire }
 
 // ── The verb roster ────────────────────────────────────────────────────────

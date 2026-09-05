@@ -27,7 +27,8 @@ fn walk(bytes: &[u8]) -> Result<Vec<u64>, Error> {
         bytes,
         &mut text,
         &mut out,
-    )?;
+    )?
+    .expect_ready("lookup never spills");
     Ok(out)
 }
 
@@ -118,7 +119,8 @@ fn noncanonical_floats_and_inverted_intervals_refuse() {
             bytes,
             &mut text,
             &mut out,
-        )?;
+        )?
+        .expect_ready("lookup never spills");
         Ok(out)
     };
     assert!(walk_f(&healthy).is_ok());
@@ -134,4 +136,43 @@ fn noncanonical_floats_and_inverted_intervals_refuse() {
     inverted[12..20].copy_from_slice(&9u64.to_be_bytes());
     inverted[20..28].copy_from_slice(&3u64.to_be_bytes());
     assert!(matches!(walk_f(&inverted), Err(Error::Corruption(_))));
+}
+
+#[test]
+fn f64_interval_with_nan_endpoint_refuses_like_strict_decode() {
+    let float_schema =
+        crate::schema::ValidateDescriptor::validate(bumbledb_theory::schema::SchemaDescriptor {
+            relations: vec![bumbledb_theory::schema::RelationDescriptor {
+                extension: None,
+                name: "F".into(),
+                fields: vec![bumbledb_theory::schema::FieldDescriptor {
+                    name: "span".into(),
+                    value_type: bumbledb_theory::schema::ValueType::Interval {
+                        element: bumbledb_theory::schema::IntervalElement::F64,
+                    },
+                }],
+            }],
+            statements: vec![],
+        })
+        .expect("valid fixture");
+    let work = crate::api::prepared::source::unbounded_work().expect("ledger");
+    let nan = bumbledb_theory::F64::NAN;
+    let finite = bumbledb_theory::F64::from(1.0);
+    let mut bytes = vec![0, 1, 9];
+    bytes.extend_from_slice(&finite.to_be_bytes());
+    bytes.extend_from_slice(&nan.to_be_bytes());
+    assert!(matches!(
+        crate::canonical::decode(float_schema.relation(super::R).fields(), &bytes, &work),
+        Err(crate::canonical::RowError::InvalidInterval { field: 0 })
+    ));
+    let interner = TextInterner::default();
+    let mut text = TextWords::Lookup(&interner);
+    let mut out = Vec::new();
+    assert!(row_words(
+        float_schema.relation(super::R).fields(),
+        &bytes,
+        &mut text,
+        &mut out
+    )
+    .is_err());
 }

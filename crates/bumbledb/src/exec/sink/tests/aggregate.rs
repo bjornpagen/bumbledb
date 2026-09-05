@@ -585,13 +585,13 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
     );
 }
 
-/// The DNF-derived union regime re-keys on the SHARED SLOT ARRAYS (ruled
-/// 2026-07-23, R2): the disjuncts of one written rule share one variable scope,
-/// so the `VarId`-ordered spans read the same binding tuple through each
-/// clone's own layout — a cross-disjunct re-derivation is absorbed, while
-/// distinct full bindings projecting to EQUAL head rows all fold (the
-/// head-projection key would eat them; the or-transparency law forbids exactly
-/// that — `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+/// The DNF-derived union regime re-keys on the shared slot arrays: the
+/// disjuncts of one written rule share one variable scope, so the
+/// `VarId`-ordered spans read the same binding tuple through each clone's
+/// own layout — a cross-disjunct re-derivation is absorbed, while distinct
+/// full bindings projecting to equal head rows all fold (the head-projection
+/// key would eat them; the or-transparency law forbids exactly that —
+/// `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
 #[test]
 fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     use crate::exec::run::{Bindings, Sink};
@@ -855,6 +855,49 @@ fn spilled_partition_merge_refuses_cardinality_overflow() {
     bindings.set(1, 1);
     sink.emit(&bindings);
     assert_eq!(sink.into_answers().unwrap(), vec![vec![9, 1]]);
+}
+
+/// Legal multi-word Pack group heads must spill under pressure — spill is
+/// not disabled for large groups (CORE-023). Ten words remain the narrow
+/// (inline-key) regime; token tables start only past MAX_INLINE_KEY.
+#[test]
+fn wide_pack_group_heads_spill_under_a_zero_ram_allowance() {
+    use crate::exec::run::{Bindings, Sink as _};
+
+    // Ten u64 group-key words plus interval endpoints still fit inline.
+    let finds = vec![
+        FindSpec::Var {
+            slot: 0,
+            width: 10,
+        },
+        FindSpec::Pack { slot: 10 },
+    ];
+    let work = crate::api::prepared::source::UNBOUNDED_POLICY
+        .start()
+        .expect("unbounded ledger");
+    let mut sink = AggregateSink::new(finds, 12);
+    sink.begin(Some(crate::exec::sink::SinkBudget {
+        work,
+        ram_bytes: 0,
+    }));
+    let mut bindings = Bindings::new(12);
+    for word in 0..10 {
+        bindings.set(word, word as u64 + 1);
+    }
+    bindings.set(10, 5);
+    bindings.set(11, 20);
+    sink.emit(&bindings);
+    assert!(
+        sink.group_state_spilled(),
+        "wide Pack must not opt out of spill"
+    );
+    assert_eq!(
+        sink.pack_wide_mode(),
+        Some(false),
+        "10 group words plus endpoints still fit the inline key bound"
+    );
+    let answers = sink.into_answers().expect("wide pack spill");
+    assert_eq!(answers, vec![vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 5, 20]]);
 }
 
 #[test]

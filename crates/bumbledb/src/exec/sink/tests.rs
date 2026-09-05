@@ -18,8 +18,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod aggregate;
+mod pack;
 mod projection;
 mod semantics;
+mod stage_spill;
 
 fn schema() -> Schema {
     SchemaDescriptor {
@@ -164,13 +166,15 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
                         .collect()
                 })
                 .collect();
+            let image = &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
+                .expect("small")];
             Colt::new(
                 apply(
-                    &images[usize::try_from(occurrence.bind.edb().expect("fixture").0)
-                        .expect("small")],
+                    image,
                     &[],
                     &[],
                     Vec::new(),
+                    image.generation().text_eq(None),
                 ),
                 &[],
                 columns,

@@ -32,7 +32,7 @@ ACCEPTED by the engine at declaration
 (`StatementDescriptor::Capacity`, `crates/bumbledb-theory/src/schema.rs`;
 the gate arm in `schema/validate.rs` implements the acceptance rules
 named above) and JUDGED per commit
-(`storage/commit/judgment.rs::check_capacity`). The discharge record
+(`schema/judge.rs::capacity`). The discharge record
 lives in `Capacity.lean`'s module doc. The sharing this module
 licenses is spent conservatively: a floored statement MAY share the
 containment's probe machinery — capacity edges are written exactly as

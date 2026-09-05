@@ -503,6 +503,7 @@ fn parse_app_perf(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
                 }
             }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
+            "--plan" => args.plan = true,
             _ => return Err(unknown("app-perf", &flag)),
         }
     }

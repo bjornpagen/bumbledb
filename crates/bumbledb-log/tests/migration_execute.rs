@@ -10,8 +10,11 @@ mod support;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
-use bumbledb::{ChangeSet, Db, Id128, RelationId, Value};
+use bumbledb::schema::{
+    FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
+    StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
+};
+use bumbledb::{ChangeSet, Db, Id128, Value};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{
@@ -117,7 +120,7 @@ fn request<'a>(
 
 fn scan_all(db: &Db<SchemaDescriptor>, relation: RelationId) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
-    db.read(|read| {
+    db.read(work(), |read| {
         for row in read.scan(relation)? {
             rows.push(row?);
         }
@@ -202,7 +205,7 @@ fn whole_suffix_executes_into_one_frozen_verified_target() {
         .join(hex_name(incarnation(0xe1).as_core().as_bytes()));
     {
         // (Scoped so the handle closes before any later open of this env.)
-        let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema()).unwrap();
+        let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
         let notes = scan_all(&target, RelationId(0));
         assert_eq!(notes.len(), 2);
         for row in &notes {
@@ -239,7 +242,7 @@ fn whole_suffix_executes_into_one_frozen_verified_target() {
     ));
 
     // The activated target's own status is UpToDate against the manifest.
-    let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema()).unwrap();
+    let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     let target_history = LocalHistory::open(Arc::new(target), LIMITS).unwrap();
     let target_runner = LocalMigration::new(&target_history, &root.join("targets2"), LIMITS);
     assert!(matches!(
@@ -438,7 +441,7 @@ fn initialization_runs_the_chain_and_seeds_exactly_once() {
     let target_dir = root
         .join("targets")
         .join(hex_name(incarnation(0xe5).as_core().as_bytes()));
-    let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema()).unwrap();
+    let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     assert_eq!(scan_all(&target, RelationId(1)).len(), 1, "one seed row");
     assert_eq!(
         scan_all(&target, RelationId(0)).len(),
@@ -499,7 +502,7 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
     let mid_dir = root_b
         .join("targets")
         .join(hex_name(incarnation(0xe7).as_core().as_bytes()));
-    let mid: Arc<Db<SchemaDescriptor>> = Arc::new(Db::open(&mid_dir, pinned_schema()).unwrap());
+    let mid: Arc<Db<SchemaDescriptor>> = Arc::new(Db::open(&mid_dir, pinned_schema(), work()).unwrap());
     let mid_history = LocalHistory::open(Arc::clone(&mid), LIMITS).unwrap();
     let second_steps = vec![StepInput {
         plan: plan_tagged(),
@@ -526,8 +529,8 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
     let stepwise_dir = root_b.join("targets").join(hex_name(
         second_ref.target.incarnation_id.as_core().as_bytes(),
     ));
-    let fused: Db<SchemaDescriptor> = Db::open(&fused_dir, tagged_schema()).unwrap();
-    let stepwise: Db<SchemaDescriptor> = Db::open(&stepwise_dir, tagged_schema()).unwrap();
+    let fused: Db<SchemaDescriptor> = Db::open(&fused_dir, tagged_schema(), work()).unwrap();
+    let stepwise: Db<SchemaDescriptor> = Db::open(&stepwise_dir, tagged_schema(), work()).unwrap();
     assert_eq!(
         scan_all(&fused, RelationId(0)),
         scan_all(&stepwise, RelationId(0))
@@ -588,10 +591,10 @@ fn history_chain_flattens_to_the_exact_manifest_prefix() {
     let target_dir = root
         .join("targets")
         .join(hex_name(incarnation(0xea).as_core().as_bytes()));
-    let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema()).unwrap();
+    let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     let mut chain_rows = Vec::new();
     target
-        .read(|read| {
+        .read(work(), |read| {
             let mut index = 0u64;
             while let Some(bytes) = read
                 .integration_host_record(&bumbledb_log::migration::history::history_key(index))
@@ -620,4 +623,160 @@ fn history_chain_flattens_to_the_exact_manifest_prefix() {
     );
     // The target's own descriptor validates: the recorded schema is real.
     tagged_schema().validate().unwrap();
+}
+
+/// Legal target whose empty state violates a capacity floor (closed parent
+/// group, zero children). Incremental mapped rows can repair it.
+fn nonempty_required() -> SchemaDescriptor {
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Slot".into(),
+                fields: vec![],
+                extension: Some(Box::new([Row {
+                    handle: "slot0".into(),
+                    values: Box::new([]),
+                }])),
+            },
+            RelationDescriptor {
+                name: "Note".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                    },
+                    FieldDescriptor {
+                        name: "body".into(),
+                        value_type: ValueType::String,
+                    },
+                    FieldDescriptor {
+                        name: "slot".into(),
+                        value_type: ValueType::U64,
+                    },
+                ],
+                extension: None,
+            },
+        ],
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: Box::new([FieldId(0)]),
+            },
+            StatementDescriptor::Capacity {
+                target: Side {
+                    relation: RelationId(0),
+                    projection: Box::new([FieldId(0)]),
+                    selection: Box::new([]),
+                },
+                weight: Weight::Unit,
+                lo: 1,
+                hi: None,
+                source: Side {
+                    relation: RelationId(1),
+                    projection: Box::new([FieldId(2)]),
+                    selection: Box::new([]),
+                },
+            },
+        ],
+    }
+}
+
+fn plan_nonempty_required() -> Plan {
+    Plan {
+        sequence: 0,
+        label: bumbledb_log::migration::plan::StepLabel::new("0000-nonempty-required").unwrap(),
+        from_schema: schema_id(&base_schema()).unwrap(),
+        to_schema: schema_id(&nonempty_required()).unwrap(),
+        operations: vec![
+            Operation::MapRelation {
+                source: "Note".into(),
+                target: "Note".into(),
+                fields: vec![
+                    copy_field("id"),
+                    copy_field("body"),
+                    FieldMap {
+                        target: "slot".into(),
+                        expression: PlanExpr::Literal(Value::U64(0)),
+                    },
+                ],
+            },
+            Operation::ValidateSchema {
+                schema: schema_id(&nonempty_required()).unwrap(),
+            },
+        ],
+        destructive: vec![],
+    }
+}
+
+fn target_entries(root: &std::path::Path) -> usize {
+    std::fs::read_dir(root.join("targets"))
+        .map(|listing| listing.filter_map(Result::ok).count())
+        .unwrap_or(0)
+}
+
+/// D20/D26: compile every expression under verified schemas before freeze
+/// or install, including zero source rows. Empty nonempty-required target
+/// stays absent; the same plan with valid rows admits. Verification: NotRun.
+#[test]
+fn d20_d26_compile_before_effects_and_invalid_target_stays_absent() {
+    let plan = plan_nonempty_required();
+    nonempty_required().validate().expect("target validates");
+    let compiled = bumbledb_log::migration::compile::compile(
+        &plan,
+        &base_schema(),
+        &nonempty_required(),
+    )
+    .expect("empty-input compile binds every field before effects");
+    assert!(
+        !compiled.actions.is_empty(),
+        "compiled actions exist even for zero rows"
+    );
+
+    let (empty_db, empty_root) = fresh_source("d26-empty");
+    let empty_history = open_history(&empty_db);
+    let mut empty_manifest = Manifest {
+        base_schema: schema_id(&base_schema()).unwrap(),
+        entries: vec![],
+    };
+    bumbledb_log::migration::manifest::append_entry(&mut empty_manifest, &plan, CAP).unwrap();
+    let empty_steps = [StepInput {
+        plan: plan.clone(),
+        to_descriptor: nonempty_required(),
+    }];
+    let empty_runner = LocalMigration::new(&empty_history, &empty_root.join("targets"), LIMITS);
+    let empty_request = request(&empty_manifest, &empty_steps, 0xd6, 0xe6);
+    match empty_runner.migrate(&empty_request, &work()) {
+        Err(MigrationError::State(StateError::Rejected { .. }))
+        | Err(MigrationError::AdmissionRejected(_))
+        | Err(MigrationError::Hydration(_)) => {}
+        other => panic!("empty nonempty-required target must refuse, got {other:?}"),
+    }
+    assert_eq!(
+        target_entries(&empty_root),
+        0,
+        "D26: empty capacity-floor target never becomes ready"
+    );
+
+    let (filled_db, filled_root) = fresh_source("d26-filled");
+    let filled_history = open_history(&filled_db);
+    insert_notes(&filled_history, &[(1, "a"), (2, "b")], 1);
+    let mut filled = Manifest {
+        base_schema: schema_id(&base_schema()).unwrap(),
+        entries: vec![],
+    };
+    bumbledb_log::migration::manifest::append_entry(&mut filled, &plan, CAP).unwrap();
+    let filled_steps = [StepInput {
+        plan,
+        to_descriptor: nonempty_required(),
+    }];
+    let filled_runner = LocalMigration::new(&filled_history, &filled_root.join("targets"), LIMITS);
+    let filled_request = request(&filled, &filled_steps, 0xd7, 0xe7);
+    match filled_runner.migrate(&filled_request, &work()) {
+        Ok(MigrateOutcome::ReadyToSwitch { .. }) => {}
+        other => panic!("populated nonempty-required target must admit, got {other:?}"),
+    }
+    assert!(
+        target_entries(&filled_root) > 0,
+        "D26: valid rows across the mapped batch admit and install"
+    );
 }

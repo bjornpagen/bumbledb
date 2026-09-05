@@ -25,6 +25,7 @@ mod answers;
 mod bind;
 mod build;
 pub(crate) mod computed;
+pub(crate) mod derived;
 mod either_sink;
 mod execute;
 mod fallback;
@@ -35,13 +36,17 @@ mod resolve_memo;
 pub(crate) mod result;
 mod run_join;
 pub(crate) mod source;
+mod text;
+pub(crate) use self::text::{decode_row, intern_admitted, owned_text, text_tokens_equal};
 mod view_memo;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use self::build::{prepare_on, prepare_owned};
-pub use self::result::{CompleteResult, ResultCursor, ResultIdentity, ResultPage};
+pub use self::result::{
+    CompleteResult, DeliveryTicket, ResultCursor, ResultIdentity, ResultPage,
+};
 
 /// One bound scalar payload: the bind surface's value vocabulary. Variable-width
 /// payloads are **borrowed** — the engine only hashes and probes them
@@ -218,30 +223,19 @@ pub struct Answers {
     blob: Vec<u8>,
 }
 
-/// The intern-resolution memo, two tiers by lifetime:
-/// - **Per prepared query** (never cleared): the text arena and its
-///   word→arena-range map. The dictionary is append-only, so a resolved
-///   (word → text) pair is final — each distinct intern word pays its
-///   LMDB descent and UTF-8 parse exactly once over the prepared
-///   query's lifetime.
-/// - **Per finalize** (cleared at entry): word→range into that call's
-///   answer carrier, so K answers sharing one string cost one byte copy.
+/// Per-finalize intern resolution. Text is copied only into the answer
+/// heap (result-charged). Scratch mappings are valid only while
+/// [`PreparedQuery::nonresident`] is the store that minted them
+/// (`scratch_epoch` is [`NonresidentTextStore::epoch`], the instance
+/// owner id — not the 31-bit field packed into tokens).
 #[derive(Debug)]
 struct ResolveMemo {
-    /// word → packed `(start, len)` into the buffer's text heap
-    /// (per finalize).
+    /// word → packed `(start, len)` into this finalize's answer heap.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
-    /// The last resolution: run-coherent columns
-    /// (few distinct interns, clustered answers) skip even the map probe.
+    /// The last resolution: run-coherent columns skip even the map probe.
     last: Option<(u64, (usize, usize))>,
-    /// word → packed `(start, len)` into [`Self::arena`] (per prepared
-    /// query — append-only, like the dictionary it caches).
-    arena_ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
-    /// The persistent text arena: whole UTF-8-validated strings appended
-    /// end-to-end, once per distinct intern, ever — every range is a
-    /// char boundary by construction (the answer heap's proof, one tier
-    /// up).
-    arena: String,
+    /// Owner id of the live scratch store, if any mappings named its tokens.
+    scratch_epoch: Option<crate::image::TextStoreEpoch>,
 }
 
 /// One query answer, borrowed from [`Answers`].
@@ -363,12 +357,9 @@ pub struct PreparedQuery<S> {
     /// and final.
     latch: Latch,
     /// Per param slot: the last successful String resolution — the
-    /// bound text and its dictionary word (`bind.rs`). A HIT is final
-    /// (the dictionary is append-only: a text's word never changes), so
-    /// re-binding the same text skips the LMDB descent entirely; a MISS
-    /// is NOT final (a later write may intern the text) and invalidates
-    /// the slot. Pooled: the text buffer's capacity survives re-binds.
-    /// Non-String slots never touch theirs.
+    /// bound text and its word (`bind.rs`). A resident intern HIT is
+    /// final (append-only). A scratch word is bound to
+    /// [`NonresidentTextStore::epoch`] and forgotten when the store is dropped.
     param_word_memo: Vec<ParamWordMemo>,
     /// Per param: whether this execution's value missed the dictionary
     /// (String/Bytes only; for a set, whether NO element survived — the
@@ -385,17 +376,26 @@ pub struct PreparedQuery<S> {
     /// projected tuples, or head projections under the multi-rule
     /// aggregate regime — so the seen-set spanning rules is the union.
     sink: EitherSink,
-    /// The rule-shared binding-slot scratch
-    /// 40-execution.md § the rule loop): written in place by each rule's
-    /// recursion, re-sized to the rule's slot layout at rule entry —
-    /// capacity is the high-water across all rules.
+    /// The rule-shared binding-slot scratch (`40-execution.md` § the
+    /// rule loop): written in place by each rule's recursion, re-sized
+    /// to the rule's slot layout at rule entry — capacity is the
+    /// high-water across all rules.
     bindings: Bindings,
     /// Aggregate-finalization answer scratch.
     answer_scratch: Vec<u64>,
-    /// The per-finalize intern-resolution memo .
+    /// The per-finalize intern-resolution memo.
     resolve_memo: ResolveMemo,
     /// `KeyProbe` resolved-key word scratch.
     key_scratch: Vec<u64>,
+    /// Scratch-backed text resolver. Opened only on
+    /// [`crate::image::ResidentAdmit::BeyondMemory`] via
+    /// [`crate::image::ResidentTextExhausted::open_nonresident`].
+    nonresident: Option<crate::image::NonresidentTextStore>,
+    /// Source-visit census of the last execute (D10).
+    #[cfg(test)]
+    last_visits: usize,
+    #[cfg(test)]
+    used_nonresident_text: bool,
     /// `Some(first computed find)` when any rule carries a computed
     /// scalar output: execution enters ONE [`NumericalGuard`] for the
     /// whole engine operation (chapter 11 §3 — never per tuple). The
@@ -427,10 +427,6 @@ pub(crate) struct PreparedInterior {
     pub(super) sink: EitherSink,
     pub(super) field_types: Vec<bumbledb_theory::schema::ValueType>,
     pub(super) units: usize,
-    /// Flat finalized-row scratch for aggregate/computed stages
-    /// (`reach::stash_finished` refills the transient image from it);
-    /// empty and unread for projection stages.
-    pub(super) row_scratch: Vec<u64>,
 }
 
 /// One prepared pipeline. Interiors are data in Cq and Reach (the CQ
@@ -704,6 +700,32 @@ impl<S> PreparedQuery<S> {
         self.cache.retained_bytes()
     }
 
+    #[cfg(test)]
+    pub(crate) fn open_from_exhausted(
+        exhausted: &crate::image::ResidentTextExhausted,
+        work: &crate::work::WorkContext,
+    ) -> crate::error::Result<crate::image::NonresidentTextStore> {
+        text::open_from_exhausted(exhausted, work)
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn last_visits(&self) -> usize {
+        self.last_visits
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn used_nonresident_text(&self) -> bool {
+        self.used_nonresident_text
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn uncharged_copy_bytes(&self) -> usize {
+        self.resolve_memo.uncharged_copy_bytes()
+    }
+
     fn visit_free_join(&self, mut visit: impl FnMut(&FreeJoinRule)) {
         self.visit_rules(|rule| {
             if let PreparedRule::FreeJoin(fj) = rule {
@@ -766,13 +788,16 @@ enum ParamSpec {
 }
 
 /// One scalar param slot's memoized String resolution
-/// ([`PreparedQuery::param_word_memo`]): the bound text and its word,
-/// `None` after a dictionary miss (misses never memoize — the
-/// append-only dictionary makes only HITS final).
+/// ([`PreparedQuery::param_word_memo`]): the bound text and its word.
+/// Resident intern HITS are final. Scratch words carry
+/// [`NonresidentTextStore::epoch`] (instance owner id) and must not
+/// outlive that store.
 #[derive(Debug, Default, Clone)]
 struct ParamWordMemo {
     text: String,
     word: Option<u64>,
+    /// `None` = resident intern. `Some` = the minting store's owner epoch.
+    epoch: Option<crate::image::TextStoreEpoch>,
 }
 
 /// Whether every symbolic filter/selection slot was written by a complete

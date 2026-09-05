@@ -167,14 +167,31 @@ fn there_is_no_dictionary_database_in_the_successor_store() {
     let snapshot = store.snapshot(&work()).expect("snapshot");
     // Repeated text is stored inline per row — set semantics still hold.
     assert_eq!(snapshot.row_count(NOTE).expect("count"), 2);
-    // No `_dict` database exists in the environment.
+    // No `_dict` database exists in the environment. Probing a third named
+    // database by name would exhaust the two-slot `max_dbs` table
+    // (`MDB_DBS_FULL`) before answering, so enumerate the unnamed main
+    // database — its keys ARE the named-database roster.
     let rtxn = store.inner.env.read_txn().expect("read txn");
-    let dict: Option<heed::Database<heed::types::Bytes, heed::types::Bytes>> = store
+    let main: heed::Database<heed::types::Bytes, heed::types::Bytes> = store
         .inner
         .env
-        .open_database(&rtxn, Some("_dict"))
-        .expect("open probe");
-    assert!(dict.is_none());
+        .open_database(&rtxn, None)
+        .expect("open probe")
+        .expect("the main database exists");
+    let mut names = Vec::new();
+    for entry in main.iter(&rtxn).expect("iterate main") {
+        let (name, _) = entry.expect("main entry");
+        names.push(String::from_utf8_lossy(name).into_owned());
+    }
+    assert!(
+        names.iter().any(|name| name == "_core_meta")
+            && names.iter().any(|name| name == "_core_data"),
+        "the successor roster is exactly the two core databases: {names:?}"
+    );
+    assert!(
+        !names.iter().any(|name| name == "_dict"),
+        "no dictionary database may exist: {names:?}"
+    );
 }
 
 #[test]

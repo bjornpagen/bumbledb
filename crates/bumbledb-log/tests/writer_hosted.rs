@@ -23,7 +23,7 @@ use bumbledb_log::history::{
 use bumbledb_log::manifest::{self, RecoveryRoot, TailPolicy};
 use bumbledb_log::store::mem::{Behavior, MemStore, Op};
 use bumbledb_log::store::{ObjectKind, ObjectRef, parse_object_key};
-use bumbledb_log::writer::verbs::{ConditionalStore as _, HeadRead};
+use bumbledb_log::store::{ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext};
 use bumbledb_log::writer::{HostedHistory, LogError, ResolveOutcome, SubmitOptions, SubmitOutcome};
 
 const LIMITS: Limits = Limits {
@@ -69,7 +69,7 @@ fn theory() -> SchemaDescriptor {
 fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
     let dir = temp_dir(tag).join("db");
     Arc::new(
-        Db::create(&dir, theory())
+        Db::create(&dir, theory(), work())
             .expect("create store")
             .expect("empty store admits"),
     )
@@ -89,6 +89,15 @@ fn policy() -> ExecutionPolicy {
 
 fn work() -> WorkContext {
     policy().start().unwrap()
+}
+
+fn receive_head(store: &MemStore, key: &str, work: &WorkContext) -> ReceivedHead {
+    store
+        .receive_head(
+            key,
+            TransportContext::new(work, ReceiveLimits::capped(LIMITS.envelope_bytes as u64)),
+        )
+        .expect("bounded head receive")
 }
 
 fn identity(db: &Db<SchemaDescriptor>) -> DatabaseIdentity {
@@ -192,11 +201,13 @@ fn single_writer_publishes_composed_heads_and_deduplicates_retries() {
     // control projection: it decodes through the manifest grammar, embeds the
     // advanced control, preserves the recovery root at the new tip and grows
     // the tail accounting (2 decisions: the commit and the no-op).
-    let body = match store.read_head("tenants/happy/HEAD").unwrap() {
-        HeadRead::Present { body, .. } => body,
-        HeadRead::Absent => panic!("head must exist"),
+    let ctx = work();
+    let body = match receive_head(&store, "tenants/happy/HEAD", &ctx) {
+        ReceivedHead::Present { body, .. } => body,
+        ReceivedHead::Absent => panic!("head must exist"),
     };
-    let record = manifest::decode_head(&body, LIMITS.envelope_bytes).unwrap();
+    let record = manifest::decode_head(body.as_bytes(), LIMITS.envelope_bytes).unwrap();
+    drop(body);
     assert_eq!(record.object_epoch, EPOCH);
     let recovery = record.recovery.expect("live head names its recovery root");
     assert_eq!(recovery.tail_count(), 2, "commit + durable no-op");
@@ -337,17 +348,23 @@ fn read_side_catch_up_advances_a_stale_local_materialization() {
 
     // The public read-side verb advances the local materialization to the
     // verified tip WITHOUT submitting, initializing or thawing anything.
-    let version_before = match store.read_head("tenants/catchup/HEAD").unwrap() {
-        HeadRead::Present { version, .. } => version,
-        HeadRead::Absent => panic!("head must exist"),
+    let ctx = work();
+    let version_before = match receive_head(&store, "tenants/catchup/HEAD", &ctx) {
+        ReceivedHead::Present { version, body } => {
+            drop(body);
+            version
+        }
+        ReceivedHead::Absent => panic!("head must exist"),
     };
     let tip = history.catch_up(&work()).unwrap();
-    let record = match store.read_head("tenants/catchup/HEAD").unwrap() {
-        HeadRead::Present { version, body } => {
+    let record = match receive_head(&store, "tenants/catchup/HEAD", &ctx) {
+        ReceivedHead::Present { version, body } => {
             assert_eq!(version, version_before, "catch-up never writes the head");
-            manifest::decode_head(&body, LIMITS.envelope_bytes).unwrap()
+            let record = manifest::decode_head(body.as_bytes(), LIMITS.envelope_bytes).unwrap();
+            drop(body);
+            record
         }
-        HeadRead::Absent => panic!("head must exist"),
+        ReceivedHead::Absent => panic!("head must exist"),
     };
     assert_eq!(tip, record.control.live().unwrap().decision);
     assert_eq!(tip.seq, 1, "genesis plus exactly one decision");
@@ -355,7 +372,7 @@ fn read_side_catch_up_advances_a_stale_local_materialization() {
     let mut rows = 0;
     history
         .db()
-        .read(|read| {
+        .read(work(), |read| {
             rows = read.count(RelationId(0))?;
             Ok(())
         })
@@ -396,6 +413,7 @@ fn read_side_catch_up_routes_stale_caches_and_tombstones_typed() {
             }),
             base: tip,
             tip,
+            tip_object: None,
             tail_bytes: 0,
             epoch_floor: EPOCH,
         });
@@ -473,4 +491,21 @@ fn per_call_submit_options_never_consume_or_widen_the_machine() {
         history.submit_with(&second, wide, &work()),
         SubmitOutcome::Decided { .. }
     ));
+}
+
+#[test]
+fn submit_certain_is_one_attempt_sum_with_derived_phase() {
+    use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
+
+    let store = MemStore::new();
+    let (history, identity) = create("certain", &store);
+    let cmd = command(history.db(), identity, 1, 3);
+    let certainty = history.submit_certain(&cmd, &work());
+    match &certainty {
+        SubmitCertainty::Decided { receipt, .. } => {
+            assert!(matches!(receipt.outcome, TerminalOutcome::Committed { .. }));
+        }
+        other => panic!("expected decided certainty: {other:?}"),
+    }
+    assert_eq!(certainty.publication_phase(), PublicationPhase::Confirmed);
 }

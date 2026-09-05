@@ -14,7 +14,9 @@ use std::time::{Duration, Instant};
 
 use bumbledb_log::store::fence::{acquire_directory, acquire_mutation};
 use bumbledb_log::store::fs::{FsStore, Inject, Phase};
-use bumbledb_log::store::{ConditionalOutcome, ConditionalStore as _, HeadRead};
+use bumbledb_log::store::{
+    ConditionalOutcome, ConditionalStore as _, ReceivedHead, ReceivingStore, TransportContext,
+};
 
 const CHILD_ENV: &str = "BDB_P05_OWNERSHIP_CHILD";
 const DIR_ENV: &str = "BDB_P05_OWNERSHIP_DIR";
@@ -60,7 +62,12 @@ fn await_marker(child: &mut Child, marker: &str) {
         line.clear();
         let read = reader.read_line(&mut line).expect("read child line");
         assert!(read > 0, "child stdout closed before {marker}");
-        if line.trim() == marker {
+        // Suffix match, not equality: libtest prints `test <name> ... `
+        // WITHOUT a trailing newline before the test body runs, so the
+        // child's FIRST marker glues onto that line. Markers are distinct
+        // uppercase tokens the children print alone, never suffixes of one
+        // another or of ordinary output.
+        if line.trim().ends_with(marker) {
             return;
         }
     }
@@ -179,8 +186,10 @@ fn fs01b_a_held_mutation_lock_bounds_the_waiter_without_takeover() {
     );
     // Nothing was mutated: no head exists.
     assert!(matches!(
-        store.read_head("t/HEAD").expect("read"),
-        HeadRead::Absent
+        store
+            .receive_head("t/HEAD", TransportContext::limited(64))
+            .expect("read"),
+        ReceivedHead::Absent
     ));
     // Death releases; the same operation then succeeds.
     child.kill().expect("kill");
@@ -202,12 +211,15 @@ fn fs02_a_kill_mid_replacement_leaves_the_old_complete_head() {
     // Reopen: the old complete bytes hold; the staged temp is owned scratch
     // under ~tmp, never a readable head; a fresh mutation succeeds.
     let store = FsStore::new(&root);
-    let version = match store.read_head("t/HEAD").expect("read") {
-        HeadRead::Present { version, body } => {
-            assert_eq!(&*body, b"old-complete", "never a torn head");
+    let version = match store
+        .receive_head("t/HEAD", TransportContext::limited(64))
+        .expect("read")
+    {
+        ReceivedHead::Present { version, body } => {
+            assert_eq!(body.as_bytes(), b"old-complete", "never a torn head");
             version
         }
-        HeadRead::Absent => panic!("the old head survives the kill"),
+        ReceivedHead::Absent => panic!("the old head survives the kill"),
     };
     assert!(matches!(
         store
@@ -215,5 +227,47 @@ fn fs02_a_kill_mid_replacement_leaves_the_old_complete_head() {
             .expect("swap"),
         ConditionalOutcome::Published { .. }
     ));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn d28_successor_reuses_the_persistent_lock_inode_without_deleting_it() {
+    use bumbledb_log::store::fence::acquire_repository_lock;
+    use std::os::unix::fs::MetadataExt;
+    let root = fresh_root("d28");
+    let tenant = root.join("tenant");
+    let mut child = spawn_child("hold-directory", &root);
+    await_marker(&mut child, "LOCKED");
+    let lock_path = root.join("~lease/tenant/owner.lock");
+    assert!(lock_path.exists(), "owner created the persistent inode");
+    let meta = std::fs::metadata(&lock_path).expect("inode");
+    let inode = (meta.dev(), meta.ino());
+    signal(&child, "STOP");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        acquire_repository_lock(&tenant).is_err(),
+        "paused owner remains exclusive"
+    );
+    assert!(lock_path.exists(), "pause does not replace the inode");
+    signal(&child, "CONT");
+    child.kill().expect("kill");
+    let _ = child.wait().expect("reap");
+    let start = Instant::now();
+    let successor = loop {
+        match acquire_repository_lock(&tenant) {
+            Ok(lock) => break lock,
+            Err(_) if start.elapsed() < WAIT => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => panic!("death releases ownership: {error}"),
+        }
+    };
+    assert_eq!(successor.lock_path(), lock_path.as_path());
+    let after = successor.lock_inode().expect("successor inode");
+    assert_eq!(after.dev, inode.0);
+    assert_eq!(after.ino, inode.1);
+    assert!(
+        lock_path.exists(),
+        "successor acquisition never unlinks the lock inode"
+    );
+    drop(successor);
     let _ = std::fs::remove_dir_all(&root);
 }

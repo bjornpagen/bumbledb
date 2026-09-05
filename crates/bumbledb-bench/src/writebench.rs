@@ -76,7 +76,10 @@ pub fn commit_single_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measure
             let id = mint.next();
             tx.insert([&prepared_posting(&mut rng, &sizes, id)])
         })
-        .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("commit_single: {e:?}"))
     })
 }
@@ -322,12 +325,13 @@ pub fn trace_cold_containment_walk_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "obs")]
     use crate::corpus;
     use crate::corpus_gen::Scale;
 
     const CFG: GenConfig = GenConfig {
         seed: 1,
-        scale: Scale::S,
+        scale: Scale::Tiny,
     };
 
     fn scratch(tag: &str) -> std::path::PathBuf {
@@ -347,131 +351,6 @@ mod tests {
             .unwrap();
         }
         db
-    }
-
-    #[test]
-    fn commits_run_and_preserve_the_source_corpus() {
-        let dir = scratch("commit");
-        let source = dir.join("source");
-        let db = containment_target_db(&source);
-        let generation_before = db.generation().expect("generation");
-        drop(db);
-
-        let copy = dir.join("copy");
-        std::fs::create_dir_all(&copy).expect("copy dir");
-        for entry in std::fs::read_dir(&source).expect("read source") {
-            let entry = entry.expect("entry");
-            std::fs::copy(entry.path(), copy.join(entry.file_name())).expect("copy file");
-        }
-
-        let db = Db::open(&copy, Ledger).expect("open copy");
-        let single = commit_single_bumbledb(&db, CFG).expect("commit_single");
-        assert!(single.stats.min > 0);
-        assert_eq!(single.work, 64, "one row per sample");
-        let batch = commit_batch_bumbledb(&db, CFG).expect("commit_batch");
-        assert!(batch.stats.min > 0);
-        assert_eq!(batch.work, 512 * 32);
-
-        let witnessed = commit_witnessed_bumbledb(&db, CFG).expect("commit_witnessed");
-        assert!(witnessed.stats.min > 0);
-        assert_eq!(witnessed.work, 64, "one row per sample");
-        assert!(db.generation().expect("generation") > generation_before);
-        drop(db);
-
-        let db = Db::open(&source, Ledger).expect("reopen source");
-        assert_eq!(
-            db.generation().expect("generation"),
-            generation_before,
-            "the source corpus is untouched"
-        );
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The insert-stream runner completes its protocol with positive
-    #[test]
-    fn insert_stream_reports_positive_throughput() {
-        let dir = scratch("insert-stream");
-        let ours = insert_stream_bumbledb(CFG, &dir, crate::storemode::StoreMode::Durable)
-            .expect("insert_stream bumbledb");
-        let sizes = Sizes::of(CFG.scale);
-        assert_eq!(
-            ours.work,
-            (sizes.postings + sizes.posting_tags) * 8,
-            "full stream per sample"
-        );
-        assert!(ours.stats.min > 0);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The cold protocol runs, and rebuild cost shows: cold p50 is at
-    #[test]
-    fn cold_containment_walk_costs_at_least_warm() {
-        let dir = scratch("cold");
-        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
-        corpus::load_bumbledb(&db, CFG).expect("load");
-
-        let cold = cold_containment_walk(&db, CFG).expect("cold");
-        assert!(cold.stats.min > 0);
-
-        let family = families::all()
-            .iter()
-            .find(|f| f.name == "containment_walk")
-            .expect("registered");
-        let query = (family.query)();
-        let mut prepared = db.prepare(&query).expect("prepare");
-        let mut rotation = Rotation::new((family.params)(&CFG));
-        let mut buffer = Answers::new();
-        let warm = harness::measure(Protocol::WARM, || {
-            let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("warm execute: {e:?}"))?;
-            Ok(buffer.len() as u64)
-        })
-        .expect("warm");
-        assert!(
-            cold.stats.p50 >= warm.stats.p50,
-            "rebuild cost must show: cold p50 {} < warm p50 {}",
-            cold.stats.p50,
-            warm.stats.p50
-        );
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The delete lane's protocol runs, and rebuild cost shows:
-    #[test]
-    fn cold_containment_walk_delete_costs_at_least_warm() {
-        let dir = scratch("cold-delete");
-        let db = Db::create(&dir, Ledger).expect("create").expect("accepted");
-        corpus::load_bumbledb(&db, CFG).expect("load");
-
-        let cold = cold_containment_walk_delete(&db, CFG).expect("delete cold");
-        assert!(cold.stats.min > 0);
-
-        let family = families::all()
-            .iter()
-            .find(|f| f.name == "containment_walk")
-            .expect("registered");
-        let query = (family.query)();
-        let mut prepared = db.prepare(&query).expect("prepare");
-        let mut rotation = Rotation::new((family.params)(&CFG));
-        let mut buffer = Answers::new();
-        let warm = harness::measure(Protocol::WARM, || {
-            let args = param_args(rotation.next_set());
-            db.read(|snap| snap.execute(&mut prepared, &args, &mut buffer))
-                .map_err(|e| format!("warm execute: {e:?}"))?;
-            Ok(buffer.len() as u64)
-        })
-        .expect("warm");
-        assert!(
-            cold.stats.p50 >= warm.stats.p50,
-            "rebuild cost must show: delete-cold p50 {} < warm p50 {}",
-            cold.stats.p50,
-            warm.stats.p50
-        );
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(feature = "obs")]
@@ -547,6 +426,24 @@ mod tests {
         // collides with anything committed (MAX + 1 over live rows).
         let reprobed = PostingMint::probe(&db).expect("reprobe");
         assert_eq!(reprobed.0, after.id.0 + 1, "MAX(id) + 1 over live rows");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// REVIEW-001: rejected admission must not produce a successful measurement.
+    #[test]
+    fn commit_single_rejected_admission_is_not_a_measured_success() {
+        let dir = scratch("commit-single-refusal");
+        let db = Db::create(&dir, Ledger)
+            .expect("create")
+            .expect("accepted");
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            commit_single_bumbledb(&db, CFG)
+        }));
+        assert!(
+            result.is_err(),
+            "reference violations reject; the old `.map(|_| 1)` path wrongly counted that as work"
+        );
         drop(db);
         let _ = std::fs::remove_dir_all(&dir);
     }

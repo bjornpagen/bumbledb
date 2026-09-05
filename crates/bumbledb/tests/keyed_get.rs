@@ -28,16 +28,20 @@ bumbledb::schema! {
     Grp(label) -> Grp;
 
     Meta(grp) -> Meta;
+    // Containment/equality targets must be declared keys (chapter 10 checked
+    // schema premise). Declared last so the mirror-offset id assertions
+    // (TaskByKindSubject = 4, GrpByLabel = 5) stay put.
+    Grp(id) -> Grp;
 }
 
 #[test]
 fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
     let dir = common::TempDir::new("keyed-get-both-scopes");
-    let db = Db::create(dir.path(), KeyedGet)
+    let db = Db::create(dir.path(), KeyedGet, common::work())
         .expect("create")
         .expect("accepted");
     let (grp, task) = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
@@ -60,7 +64,7 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
         .unwrap()
         .value;
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         assert_eq!(
             snap.get(TaskByKindSubject {
                 kind: Kind::Alpha.id(),
@@ -85,7 +89,7 @@ fn keyed_get_reads_through_a_declared_key_on_both_scopes() {
     })
     .expect("snapshot keyed get");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         assert_eq!(
             tx.get(TaskByKindSubject {
                 kind: Kind::Alpha.id(),
@@ -123,11 +127,11 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
     );
 
     let dir = common::TempDir::new("keyed-get-mirror-offsets");
-    let db = Db::create(dir.path(), KeyedGet)
+    let db = Db::create(dir.path(), KeyedGet, common::work())
         .expect("schema admission succeeds")
         .expect("accepted");
     let grp = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
@@ -149,7 +153,7 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
         .expect("seed")
         .unwrap()
         .value;
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let by_key = snap
             .get(TaskByKindSubject {
                 kind: Kind::Beta.id(),
@@ -173,11 +177,11 @@ fn keyed_get_statement_ids_survive_mirror_offsets() {
 #[test]
 fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
     let dir = common::TempDir::new("keyed-get-string-keys");
-    let db = Db::create(dir.path(), KeyedGet)
+    let db = Db::create(dir.path(), KeyedGet, common::work())
         .expect("create")
         .expect("accepted");
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         assert_eq!(
             snap.get(GrpByLabel {
                 label: "never-interned",
@@ -188,7 +192,7 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
     })
     .expect("a never-interned label proves absence");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let grp = GrpId(1);
         tx.insert([&Grp {
             id: grp,
@@ -223,11 +227,11 @@ fn keyed_get_string_keys_resolve_pending_first_and_never_mint() {
 #[test]
 fn keyed_get_observes_the_final_state_overlay() {
     let dir = common::TempDir::new("keyed-get-final-state");
-    let db = Db::create(dir.path(), KeyedGet)
+    let db = Db::create(dir.path(), KeyedGet, common::work())
         .expect("create")
         .expect("accepted");
     let (grp, task) = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let grp = GrpId(1);
             tx.insert([&Grp {
                 id: grp,
@@ -288,7 +292,7 @@ fn keyed_get_observes_the_final_state_overlay() {
         .unwrap()
         .value;
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         assert_eq!(
             snap.get(TaskByKindSubject {
                 kind: Kind::Alpha.id(),

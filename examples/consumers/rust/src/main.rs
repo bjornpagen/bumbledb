@@ -1,18 +1,24 @@
-//! Chapter 34's Rust core flow as a downstream consumer: the shared
-//! `Learning` schema, ordinary RAII, application-owned `Id128` values
-//! generated once before sealing, typed nominal entity IDs, grouped
-//! exact float aggregates, `use`-composition of a reusable typed query
-//! template, and a witnessed read/modify/write against the same store.
+//! Packed Rust core consumer (D07/D22): the shared `Learning` schema,
+//! ordinary RAII, application-owned `Id128` values generated once before
+//! sealing, typed nominal entity IDs, grouped exact float aggregates,
+//! `use`-composition of a reusable typed query template, and a witnessed
+//! read/modify/write against the same store.
 //!
-//! Everything is the ACTUAL public surface: `Db::create`/`open`,
-//! `db.write(|tx| …)` admission with complete `Violations` on rejection,
-//! `db.read(|snap| …)` coherent snapshots, `db.prepare`/`execute_collect`
-//! and positional `BindValue` parameters. No log/AWS symbol is reachable
-//! from this crate graph (the core is log/transport-free by contract).
+//! Current public spellings: `Db::create(..., work)` by value,
+//! `ChangeSet::builder(db.schema(), work.clone())`, `db.apply` /
+//! `ApplyOutcome::InvariantRejected`, `db.snapshot(&work)` → `OwnedRead` /
+//! `ReadFrame`, `frame.prepare` + `execute_collect`, `Db::close() -> CloseReport`.
+//! Typed facts encode through `Fact::append_values`. Query params bind as
+//! `BindValue` (the published `BindArgs` surface).
+//!
+//! Verification: NotRun until packed-consumer qualification.
 
-use std::error::Error;
+use std::time::Duration;
 
-use bumbledb::{Admission, BindValue, Db, F64, Id128, Interval};
+use bumbledb::{
+    Admission, ApplyExpected, ApplyOutcome, BindValue, ChangeSet, ChangeSetBuilder, CloseReport,
+    Db, ExecutionPolicy, F64, Fact, Id128, Interval, WorkContext, start_operation,
+};
 
 bumbledb::schema! {
     pub Learning;
@@ -32,55 +38,117 @@ bumbledb::schema! {
     Student(id) <=[units]{0..budget} Attempt(student);
 }
 
-fn main() -> Result<(), Box<dyn Error>> {
+/// Finite host policy. Zero means none; nothing here invents MAX/year.
+fn work() -> WorkContext {
+    start_operation(ExecutionPolicy {
+        input_bytes: 4_000_000,
+        working_bytes: 16_000_000,
+        scratch_bytes: 16_000_000,
+        result_bytes: 4_000_000,
+        rows: 100_000,
+        work_units: 10_000_000,
+        timeout: Duration::from_secs(10),
+    })
+    .expect("finite work")
+}
+
+/// A budget that cannot pay for a completed two-row answer.
+fn tiny_delivery() -> WorkContext {
+    start_operation(ExecutionPolicy {
+        input_bytes: 4_000_000,
+        working_bytes: 16_000_000,
+        scratch_bytes: 16_000_000,
+        result_bytes: 8,
+        rows: 100_000,
+        work_units: 10_000_000,
+        timeout: Duration::from_secs(2),
+    })
+    .expect("tiny delivery work")
+}
+
+fn insert_fact<'a, F: Fact<'a>>(
+    draft: &mut ChangeSetBuilder<'_>,
+    fact: &F,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut values = Vec::new();
+    fact.append_values(&mut values)?;
+    draft.insert(F::RELATION, &values)?;
+    Ok(())
+}
+
+fn delete_fact<'a, F: Fact<'a>>(
+    draft: &mut ChangeSetBuilder<'_>,
+    fact: &F,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut values = Vec::new();
+    fact.append_values(&mut values)?;
+    draft.delete(F::RELATION, &values)?;
+    Ok(())
+}
+
+fn outcome_name(outcome: &ApplyOutcome) -> &'static str {
+    match outcome {
+        ApplyOutcome::Accepted { .. } => "accepted",
+        ApplyOutcome::NoChange { .. } => "no-change",
+        ApplyOutcome::InvariantRejected { .. } => "invariant-rejected",
+        ApplyOutcome::Moved { .. } => "moved",
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dir = std::env::temp_dir().join(format!("bumbledb-consumer-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
+    let work = work();
 
-    // Application-owned identity: sixteen bytes chosen by the app, once,
-    // before anything is sealed. There is no allocator, FreshRef or
-    // reservation anywhere; a real app uses cryptographic entropy.
     let student_id = StudentId(Id128::from_bytes(*b"\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10"));
     let attempt_id = AttemptId(Id128::from_bytes(*b"\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f\x20"));
     let second_attempt = AttemptId(Id128::from_bytes(*b"\x21\x22\x23\x24\x25\x26\x27\x28\x29\x2a\x2b\x2c\x2d\x2e\x2f\x30"));
 
-    // Explicit creation; open never creates a missing database.
-    let db = Db::create(&dir, Learning)?.unwrap();
+    let db = match Db::create(&dir, Learning, work.clone())? {
+        Admission::Accepted(db) => db,
+        Admission::Rejected(violations) => {
+            return Err(format!("empty Learning must admit: {violations:?}").into());
+        }
+    };
 
-    // Ordinary admission: `?` is operational failure, the Admission match
-    // is semantic judgment with complete statement diagnostics.
-    let admitted = db.write(|tx| {
-        tx.insert([&Student { id: student_id, name: "Ada", budget: 10 }])?;
-        tx.insert([&Attempt {
+    let mut draft = ChangeSet::builder(db.schema(), work.clone());
+    insert_fact(
+        &mut draft,
+        &Student {
+            id: student_id,
+            name: "Ada",
+            budget: 10,
+        },
+    )?;
+    insert_fact(
+        &mut draft,
+        &Attempt {
             id: attempt_id,
             student: student_id,
             score: F64::from(0.9),
             units: 1,
             active: Interval::new(0i64, 60i64).expect("nonempty half-open interval"),
-        }])?;
-        tx.insert([&Attempt {
+        },
+    )?;
+    insert_fact(
+        &mut draft,
+        &Attempt {
             id: second_attempt,
             student: student_id,
             score: F64::from(0.7),
             units: 2,
             active: Interval::new(60i64, 120i64).expect("nonempty half-open interval"),
-        }])?;
-        Ok(())
-    })?;
-    match admitted {
-        Admission::Accepted(()) => {}
-        Admission::Rejected(violations) => return Err(format!("rejected: {violations:?}").into()),
+        },
+    )?;
+    match db.apply(&draft.finish()?, ApplyExpected::Any, &work)? {
+        ApplyOutcome::Accepted { .. } | ApplyOutcome::NoChange { .. } => {}
+        other => return Err(format!("insert apply refused: {}", outcome_name(&other)).into()),
     }
 
-    // A parameterized reusable template: field-name punning binds by name,
-    // omitted fields stay existential, params are positional BindValues.
     let attempts_for = bumbledb::query!(Learning {
         (id, score, units) | Attempt(id, student, score, units), student == ?student;
     });
-
-    // A grouped exact-aggregate template, imported downstream with `use`:
-    // the same relation-expression composition the TypeScript
-    // `match(imported, …)` splice builds.
     let attempt_stats = bumbledb::query!(Learning {
         (student, total: Sum(score), mean: Mean(score)) | Attempt(id, student, score);
     });
@@ -90,62 +158,86 @@ fn main() -> Result<(), Box<dyn Error>> {
             stats(student, total, mean), Student(id: student, name);
     });
 
-    let mut per_student = db.prepare(&attempts_for)?;
-    let mut summary = db.prepare(&student_summary)?;
-    let no_params: [BindValue<'static>; 0] = [];
-
-    let (rows, summaries) = db.read(|snap| {
-        let rows = snap.execute_collect(&mut per_student, &[BindValue::Id128(student_id.0)])?;
-        let summaries = snap.execute_collect(&mut summary, &no_params)?;
-        Ok((rows, summaries))
-    })?;
+    let (rows, summaries, previous, witness) = {
+        let snapshot = db.snapshot(&work)?;
+        let frame = snapshot.frame(&work);
+        let mut attempts = frame.prepare(&attempts_for)?;
+        let rows = frame.execute_collect(&mut attempts, &[BindValue::Id128(student_id.0)])?;
+        let mut summary = frame.prepare(&student_summary)?;
+        let summaries = frame.execute_collect(&mut summary, &[] as &[BindValue])?;
+        let previous = snapshot
+            .get(attempt_id, &work)?
+            .expect("the inserted attempt exists");
+        (rows, summaries, previous, snapshot.witness())
+    };
     assert_eq!(rows.len(), 2, "both attempts are visible through the template");
     assert_eq!(summaries.len(), 1, "one student, one exact grouped summary row");
 
-    // Witnessed correction: read under a short snapshot, keep the copied
-    // row, replace it in one admitted delta. Same-fact add wins within a
-    // command; separate writes stay ordered by the engine.
-    let previous = db.read(|snap| {
-        let attempts = snap.scan_facts::<Attempt>()?.collect::<bumbledb::Result<Vec<_>>>()?;
-        Ok(attempts
-            .into_iter()
-            .find(|attempt| attempt.id == attempt_id)
-            .expect("the inserted attempt exists"))
-    })?;
-    let corrected = db.write(|tx| {
-        tx.delete([&previous])?;
-        tx.insert([&Attempt { score: F64::from(0.95), ..previous }])?;
-        Ok(())
-    })?;
-    match corrected {
-        Admission::Accepted(()) => {}
-        Admission::Rejected(violations) => return Err(format!("rejected: {violations:?}").into()),
+    // Tiny delivery work is a fresh frame budget: it does not inherit the snapshot.
+    let tiny = tiny_delivery();
+    let snapshot = db.snapshot(&work)?;
+    let frame = snapshot.frame(&tiny);
+    let mut oversized = frame.prepare(&attempts_for)?;
+    assert!(
+        frame
+            .execute_collect(&mut oversized, &[BindValue::Id128(student_id.0)])
+            .is_err(),
+        "D07: a result-bytes cap of 8 must refuse a two-row collect"
+    );
+    drop(snapshot);
+
+    let mut correction = ChangeSet::builder(db.schema(), work.clone());
+    delete_fact(&mut correction, &previous)?;
+    insert_fact(
+        &mut correction,
+        &Attempt {
+            score: F64::from(0.95),
+            ..previous
+        },
+    )?;
+    match db.apply(&correction.finish()?, ApplyExpected::Exact(witness), &work)? {
+        ApplyOutcome::Accepted { .. } | ApplyOutcome::NoChange { .. } => {}
+        other => {
+            return Err(format!("witnessed correction refused: {}", outcome_name(&other)).into());
+        }
     }
 
-    // Capacity is a law, not advice: an eleventh unit for a ten-unit
-    // budget refuses with the violated statement, not a panic or a
-    // silent partial write.
     let third = AttemptId(Id128::from_bytes(*b"\x31\x32\x33\x34\x35\x36\x37\x38\x39\x3a\x3b\x3c\x3d\x3e\x3f\x40"));
-    let over_budget = db.write(|tx| {
-        tx.insert([&Attempt {
+    let mut over = ChangeSet::builder(db.schema(), work.clone());
+    insert_fact(
+        &mut over,
+        &Attempt {
             id: third,
             student: student_id,
             score: F64::from(0.5),
             units: 8,
             active: Interval::new(120i64, 180i64).expect("nonempty half-open interval"),
-        }])?;
-        Ok(())
-    })?;
-    match over_budget {
-        Admission::Rejected(violations) => {
-            assert!(!violations.is_empty(), "capacity rejection names its statements");
+        },
+    )?;
+    match db.apply(&over.finish()?, ApplyExpected::Any, &work)? {
+        ApplyOutcome::InvariantRejected { violations } => {
+            assert!(
+                !violations.is_empty(),
+                "capacity rejection names its statements"
+            );
         }
-        Admission::Accepted(()) => return Err("an over-budget attempt was admitted".into()),
+        other => {
+            return Err(format!(
+                "an over-budget attempt was admitted: {}",
+                outcome_name(&other)
+            )
+            .into());
+        }
     }
 
-    // Dropping db/prepared/snapshot guards releases their resources; the
-    // store directory outlives the process like any application data dir.
-    drop(db);
+    match db.close() {
+        CloseReport::Closed => {}
+        CloseReport::Incomplete {
+            live_transactions, ..
+        } => {
+            return Err(format!("joined close left {live_transactions} live transactions").into());
+        }
+    }
     std::fs::remove_dir_all(&dir)?;
     println!("bumbledb rust consumer fixture: OK");
     Ok(())

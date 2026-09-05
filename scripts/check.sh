@@ -33,4 +33,4 @@ cargo nextest run -p bumbledb-bench --features obs
 echo "==> flame renderer golden selftest"
 python3 scripts/flame.py selftest
 
-echo "==> all gates green"
+echo "==> feature-gated check lanes complete (not release qualification)"

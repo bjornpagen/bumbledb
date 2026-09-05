@@ -31,6 +31,11 @@ export interface DiffResult {
 	readonly labelTokens: readonly string[]
 	/** Nonempty means: refuse generation with exactly these requirements. */
 	readonly requirements: readonly IntentRequirement[]
+	/**
+	 * True only when every ordinary map is an identity projection.
+	 * An explicit same-schema convert (units+1) is not identity.
+	 */
+	readonly identity: boolean
 }
 
 interface Consumable {
@@ -194,11 +199,33 @@ export function diffSchemas(
 		const sourceFields = new Map(source.fields.map((field) => [field.name, field]))
 
 		for (const [from, to] of renames) {
-			if (!sourceFields.has(from)) {
-				requirements.push(requirement("stale-intent", target.name, from, `renameField: no previous field ${from}`))
-			}
-			if (!targetFields.has(to)) {
-				requirements.push(requirement("stale-intent", target.name, to, `renameField: no current field ${to}`))
+			// Staleness preempts conflict: a rename whose `from` no longer exists
+			// (typically an intent already consumed by a recorded migration — after
+			// it applied, `to` exists on BOTH sides) matches no change between
+			// these schemas. It must classify stale with its remediation, never as
+			// a contradiction with a live intent.
+			if (!sourceFields.has(from) || !targetFields.has(to)) {
+				if (!sourceFields.has(from)) {
+					requirements.push(
+						requirement(
+							"stale-intent",
+							target.name,
+							from,
+							`renameField: no previous field ${from}; an intent already recorded by a generated migration must be removed`
+						)
+					)
+				}
+				if (!targetFields.has(to)) {
+					requirements.push(
+						requirement(
+							"stale-intent",
+							target.name,
+							to,
+							`renameField: no current field ${to}; an intent already recorded by a generated migration must be removed`
+						)
+					)
+				}
+				continue
 			}
 			if (targetFields.has(from)) {
 				requirements.push(
@@ -274,6 +301,31 @@ export function diffSchemas(
 			)
 			if (sourceName !== undefined) {
 				const sourceField = sourceFields.get(sourceName)
+				// Staleness preempts conflict: an intent targeting a field that is
+				// UNCHANGED between these schemas (same name, same type, no rename in
+				// play) matches no change — the signature of an intent already
+				// consumed by a recorded migration. `conflicting-intent` is reserved
+				// for intents contradicting a live change on the field.
+				const fieldUnchanged =
+					sourceName === field.name && sourceField !== undefined && sourceField.type === field.type
+				// Backfill is only for new fields. On an unchanged existing field it
+				// is stale (already recorded, or the wrong constructor). Convert on
+				// the same field is an explicit meaning change — record it even when
+				// the schema types match (L18 units+1), never drop as identity.
+				if (fieldUnchanged && fill !== undefined) {
+					fill.consumed = true
+					requirements.push(
+						requirement(
+							"stale-intent",
+							target.name,
+							field.name,
+							`backfill targets ${target.name}.${field.name}, which is unchanged between these schemas; an intent already recorded by a generated migration must be removed`
+						)
+					)
+					referenced.add(sourceName)
+					projections.push({ target: field.name, expression: fieldExpression(sourceName) })
+					continue
+				}
 				if (fill !== undefined) {
 					fill.consumed = true
 					requirements.push(
@@ -500,6 +552,10 @@ export function diffSchemas(
 		destructive,
 		seedRelations,
 		labelTokens,
-		requirements
+		requirements,
+		identity:
+			mapOperations.every((entry) => entry.identity) &&
+			emptyOperations.length === 0 &&
+			dropOperations.length === 0
 	}
 }

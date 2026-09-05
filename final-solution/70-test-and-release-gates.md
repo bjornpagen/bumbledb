@@ -1,277 +1,218 @@
-# 70 — The complete 1.0 test and release contract
+# Strict passing criteria
 
-Execution routing: all P00–P14 packets in [62](62-work-packets.md); P00 owns the single evidence ledger and P12 independently checks coverage. [64](64-final-verification-and-handoff.md) controls timing: author tests during implementation, execute only after the F2 integration barrier. This changes no required property or child-gate inventory. Historical runs are not current qualification.
+This chapter is a conjunction with the permanent [behavioral obligations](../docs/reference/behavioral-obligations.md) and [inventory](../docs/reference/obligation-inventory.json), not a replacement for their coverage. D01–D29 refine, rather than duplicate, inherited behaviors; consolidate several schedules in one purposeful test where practical. All tests below are **to be authored now and executed only in the final post-retirement qualification phase**, not claims of passing behavior.
 
-**Status: required future work. None of the successor gates below is claimed passed by writing this proposal.** The previous audit's 2,049 passing Rust tests, 209 selected SDK tests, and 277 conformance cases describe the audited 0.x tree, not 1.0 qualification.
+## No substitutions
 
-The owner's release rule is binding: flesh out the missing suite, fix every known issue, and pass every required gate before 1.0. This chapter makes that rule executable without inventing another testing platform. Keep Cargo/nextest, Lean, the Node runner, ordinary subprocesses, small independent models, and the existing measurement discipline. Add a small release-result manifest/check, not a workflow engine.
+ReadyForIntegration requests review of complete owned changes and authored discriminators, with any external consumer handoff explicitly named; it is not a completion claim. Integrated requires the replacement constructor, actual production callers, failure/cleanup paths and predecessor deletion, traced by the coordinator. Qualified requires discriminating executed evidence on the exact candidate and required backend/platform. Neither a worker's completion message nor compilation proves the invariant.
 
-## Green is a complete evidence set
+For each D case below, identify a plausible defective implementation that fails its assertion. During final qualification, establish sensitivity against the known defective behavior or a narrow isolated perturbation where practical. Do not retain a legacy production path just to get a red test. Independent small oracles are retained; mocks may test wire decoding but do not qualify the producer's authority or native lifecycle.
 
-Each release gate returns one of `Passed`, `Failed`, `NotRun`, or `NotApplicable(scope_reason)`. Only `Passed` satisfies a required cell. A missing environment variable, zero matched tests, a timed-out process, an ignored test without its designated lane, or an unavailable runner is **not** a pass.
+Each owner records the actual source/test symbol and result in the existing final evidence mechanism; no document per D ID. Multiple D cases may share one meaningful test/model program. No smoke-only test is acceptable.
 
-`NotApplicable` is for declared scope, such as an ARM-specific instruction assertion on x86—not a way to excuse a failed portable correctness test. Every required property must have a designated applicable lane. The release checker rejects missing cells, stale revisions, wrong artifact hashes, and unresolved audit obligations.
+## D01 — Charges cannot escape bytes (L01/L02/L03/L04/L05/L06/L12/L13)
 
-Each result names source revision, specification revision, toolchains, OS/architecture/libc/filesystem/backend, feature set, test inventory, executed/skipped counts and reasons, random seeds, and artifact digest. Timings in correctness logs are not performance claims.
+Production paths: canonical row decode, image construction, sink/pool growth, queued native result conversion. Reserve zero or less than a requested growth; the operation refuses **before** an instrumented allocation. Move an owner through decode/cache/result/delivery, retaining payload while releasing previous scopes; the responsible ledger remains charged until actual release/transfer. Failed reservation/allocation leaves correct previous state.
 
-No correctness defect can be waived by lowering a test count, changing a golden to the observed bug, renaming an error, disabling a test, or calling a failed environment unsupported after the run. Supported scope is chosen before qualification. Obsolete 0.x feature tests can be replaced only with a documented specification change and preserved safety coverage.
+Reject: an unused ChargedBuffer test; checking only reported logical length; dropping a reservation while bytes remain; the current “documented hazard” test asserting the bug. Exercise capacity after clear and after operation end, not only active length.
 
-## Existing machinery to preserve and correct
+## D02 — Shared cache meanings survive trim (L03/L04/L05/L06/L07/L12/L13)
 
-The current repository already has meaningful layers:
+Prepare A and B on one store; both retain a text-bearing image. Trim A, ingest different texts, execute B on its pinned version, and compare exact values to an independent read. Exercise concurrent trim/build, old/new snapshots, numeric-only images exceeding cache allowance and text cardinality above resident capacity. Pins prevent reuse or enforce exact remapping; retained numeric/text memory stays within the declared envelope, and nonresident text continues.
 
-- `scripts/battery.sh`: workspace format/lint/tests, feature checks, Lean/conformance, SDK build/test/type/lint and packed import.
-- `scripts/check.sh`: documentation tests, allocation gates, feature combinations and observational harness checks.
-- `scripts/lean.sh` and the conformance corpus: abstract semantics plus empirical cross-implementation comparison.
-- Separate `ts/crate` and `crates/bumbledb-c` checks exist in the audited tree; retain the native Node lane and remove the C crate/lane with affirmative absence checks.
-- `.github/workflows/ci.yml`, `bumbledb-log.yml`, and the old `c-abi.yml` identify existing macOS ARM64/Amazon Linux lanes. Port applicable platform/native properties before deleting the C workflow; qualify actual x86 Vercel Node deployment too.
-- `scripts/miri.sh`: selected low-level code under native and cross-interpreted targets.
-- Independent naive/SQLite oracles, compile-fail tests, kernel/disassembly checks, allocation measurement and packaged-import tests.
+Reject: checking generation counter increments; separate caches per prepare; retaining old generations forever; falling back into the same unbounded text interner.
 
-Fix the gaps rather than discarding this investment. Current CI explicitly skips S3 smoke with exit zero when credentials are absent; release qualification must expose that as `NotRun`. Miri filters and root workspace checks do not cover all FFI or real LMDB behavior. Path-filtered CI is useful during development, but a release runs the full declared matrix regardless of changed paths. Build/source tests must not accidentally use an old native artifact from an ignored directory.
+## D03 — Scratch accounting is transactional (L03/L04/L01/L02/L05/L06/L10/L11)
 
-## Gate inventory
+Force MapFull after reservation but before transaction commit, then successful growth/retry. Final retained charge must match one committed entry and the stated conservative physical capacity, not two attempts. Repeated equal-size overwrite does not linearly consume budget; shrinking/reuse obeys stated live versus reserved-page accounting. Reservation failure restores prior ledger state. Constant fingerprint collision preserves exact wide keys.
 
-| ID | Required evidence | Primary scope |
-| --- | --- | --- |
-| G00 | Complete specification/audit/test traceability and approved breaking changes | Every known issue and every public guarantee |
-| G01 | Clean pinned builds, lint, types, docs, features and dependencies | Rust, Lean, TS; all published artifacts and complete C removal |
-| G02 | Canonical scalar/row/schema/command codecs, especially floats | Bytes and cross-language value identity |
-| G03 | Admission, final-state constraints, diagnostics and proof correspondence | Engine semantic correctness |
-| G04 | Query denotation, optimizer equivalence, error outputs and arithmetic | All admitted query forms |
-| G05 | RAM/disk/scratch equivalence and larger-than-memory operation | No mandatory whole-relation RAM input or 32 GiB cliff |
-| G06 | LMDB transaction, snapshot, resize and local durability schedules | Core physical state and opaque attachment coherence |
-| G07 | Independent log history model and deterministic concurrency schedules | Single tenant publication authority |
-| G08 | Actual backend contract qualification | OS ownership, filesystem durability and real S3 conditions |
-| G09 | Named commands, witnesses, concrete application IDs and receipt retirement | Application-visible intent and retry semantics |
-| G10 | GC, checkpoint, backup/restore and migration drills | `bumbledb-log` only |
-| G11 | Lifecycle and ownership, Rust/Node native safety, repeated resource reclamation | Borrow/owner/operation/result handles |
-| G12 | Work, queue, scratch, memory and cancellation behavior | Bounded host execution without a database-size cap |
-| G13 | Fresh native packages, platform/ABI compatibility and real consumers | Registry-shaped release artifacts and examples |
-| G14 | Untrusted input, authority boundaries and corruption refusal | Parsers, request adapters, cache/provenance isolation |
-| G15 | Measured performance envelope and regression decisions | Warm, cold, mutation, larger-than-memory and hosted paths |
-| G16 | Complete exact-artifact release packet | No release tag/publication before all required cells pass |
+Creation races/preexisting paths and setup failures cannot adopt or delete unowned scratch. Cancellation releases environment before cleanup. Reject: adding pre-put charge while retry mutations survive; a ScratchPolicy field nobody consults; a cap checked only after all writes.
 
-## G00 — Preserve the issue and contract evidence
+## D04 — Compiled indexes earn locality (L01/L02/L05/L06/L07)
 
-Use [50 — Audit closure matrix](50-audit-closure-matrix.md) as a finite work inventory. For each ID record the selected representation, which old mechanism disappears, a falsifiable successor property, permanent test names, and fix/review evidence. Reproductions remain in `audit/`; do not rewrite the dated observations.
+Generate tiny independent schemas and final deltas exercising scalar/pointwise keys, containment removal/addition, selected predicates, capacity floors/ceilings and reordered cross-relation fields. Compare admission, complete violated-statement set and canonical witnesses with an independent full streaming judge, under forced routing collisions.
 
-The original regression should fail against the audited behavior where practical. If the old API is deleted, retain a baseline reproduction plus successor compile/API and behavioral tests proving the dangerous capability no longer exists. “We deleted the test because the method was renamed” is not closure.
+Count actual candidate/group visits while unrelated groups scale; eligible local laws do not scan unrelated facts. Inspect persisted index roster/key bytes for shared projection identity and compact u64 keys. Reject: testing key-size arithmetic; physical uniqueness that drops a conflicting row; making the optimized judge spill merely because reference judgment does.
 
-Also cover non-indexed observations in the FFI/packaging and hosting reports: payload error classification, package mutation, ABI compatibility, actual Linux runtime, base64 HTTP bodies, method validation, and sensitive diagnostic output. This matrix is a minimum, not a ceiling on new discoveries.
+## D05 — Rejection evidence is portable (L01/L02/L08/L09/L14)
 
-## G01–G03 — The trusted representation boundary
+Build equal logical states in opposite insertion orders with more than the citation limit of offenders; remint IDs through export/import; run the same rejected command resident and forced-scratch. Canonical evidence bytes, cited facts, truncation flags and decision outcome agree. Replay the resulting committed decision on the independently reminted state.
 
-### Builds and surface compatibility
+Reject: sorting already-selected row-ID examples; ignoring witness comparison during replay; changing expected goldens to source order; losing violated statement directions.
 
-- Clean-checkout builds use the pinned nightly and lockfiles, not a developer's prebuilt native library. Core default, supported feature combinations, log without S3, and log with its S3 feature compile and test.
-- Include the separately built native Node crate and all Rust consumers. Prove the C crate, public headers/exports, packaging hooks, examples, workspace references and dedicated workflow are gone. Test public examples as downstream consumers, including compile-fail invalid capability use.
-- Regenerate native descriptors and schema/plan artifacts into staging and compare; no in-place mutation of the release source tree is necessary.
-- Reject unsupported storage/protocol families before any cleanup or write. A reset numeric format version under new magic must not accept old v1/v8 fixtures.
-- Qualify one shared Node artifact/runtime per supported platform, used by both core and log packages. Rust core dependency checks remain log/AWS-free; importing the core Node package starts no transport or log maintenance. Duplicate runtime handles refuse safely rather than crossing addon pointers.
+## D06 — Staged means invisible until admitted (L07/L10/L11/L14)
 
-### Canonical values
+Use a legal target schema whose empty state violates a law. Initialize, restore, hydrate, migrate and resume via incremental batches; only final judgment governs readiness. Inject failure between every ingestion/judgment/sync/install step, including after rename. Populate an unlawful stage and verify full judgment refuses despite its empty final delta; D26 isolates this admission bypass. Destination is absent or the complete identified store, never a partial ready Db. Two installers cannot overwrite each other; zero-row destination with host metadata is not fresh. Cleanup cannot delete the winning successor.
 
-For every scalar and tuple encoding assert round trip, canonical idempotence, exact equality/hash agreement, lexicographic key-order agreement where promised, truncation refusal, width limits and typed wrong-schema rejection.
+Reject: renamed ordinary Db constructor, public Copy freshness token, preflight exists check as no-clobber proof, or losing installed identity after sync failure. Exercise both core substrate and public log lifecycle.
 
-Float fixtures must include both zeros; the smallest/largest subnormals; the normal/subnormal boundary; adjacent representable values; maximum finite values; both infinities; many positive/negative signaling/quiet NaN encodings; halfway rounding; overflow; underflow; and integer-cast boundaries near 2^53, i64 limits and u64 limits. Compare **canonical bits**, not approximate host numbers or ordinary JSON serialization.
+## D07 — Bounded public work is transitive (L05/L06/L07/L12/L13/L15/L16)
 
-Run Rust/Node ingestion, storage/reopen, key lookup, membership, grouping, joins and result marshaling against the same corpus on Apple Silicon, ARM Graviton and x86 Vercel's declared CPU/runtime floor. TypeScript's `number`, JSON's lack of nonfinite values and the host FPU environment are separate concerns; none may choose a different database equality relation.
+Compile and run the downstream Rust and TS API specimens using normal public entry points. Tiny input/work/deadline/output limits stop actual canonical decode, keyed reads, query execution and delivery. Snapshot/session age does not donate its old deadline or unlimited work. Draft's cumulative input/work across chunks and finish is enforced; an abandoned/failed draft is terminal.
 
-Float property tests use a simple independent bit/rational reference, not the production conversion routine. Force wrong-rounding and FTZ/DAZ host environments where supported. Verify numerical execution establishes/restores its contract and that foreign host settings cannot silently change persisted or returned results.
+Source gate: no ordinary MAX/year fallback, unlimited twin, native bypass or internal raw operational reexport. Pure metadata remains synchronous. Explicit map ceiling never silently increases; pinned same-thread read plus MapFull produces bounded progress/refusal, not self-deadlock.
 
-Public supported ingestion must not turn malformed interval/bool/text/byte/float rows into successful corrupt state. Force digest collisions with a test-only tiny/constant hash and verify full-value equality still decides fact identity and constraint results, including long values above LMDB's key-size bound.
+## D08 — Work without output still stops (L03/L04/L05/L06)
 
-Float intervals require dense numeric denotation fixtures, not enumeration of representable floats: adjacent finite endpoints, gaps between adjacent endpoint values, left/right rays, both infinities, NaN refusal, canonical zero and bound parameters. Allen masks, coverage, packing and pointwise laws use exact endpoint order. Nonfinite point membership is false; unbounded measure and overflow of a bounded length are different errors. `FixedInterval<F64>`/float-width interval compression and float capacity weights remain refused; ordinary F64 and float intervals have fixed-size canonical payloads. Local fingerprints and authoritative content digests have separate width/domain/golden/collision tests; shortening a fingerprint cannot remove exact comparison.
+Use fewer than STEP_QUANTUM explored items with work cap below actual exploration: final partial poll must fail the query, not return success. Interrupt first COLT construction, a long rejecting scan, cover/probe suffix and image filter. Instrument work quanta and allocations; bounded check latency holds before full relation processing. Retained COLT capacity remains charged afterward.
 
-### Admission and laws
+Reject: polls only on emit, ignored bool/error return, post-growth accounting, or a test whose relation fits in the first trivial quantum. Performance measurement separately verifies no per-tuple allocation/atomic overhead regression.
 
-- Compare committed/aborted state and the complete promised set of violated statements with an independent full-state evaluator. A boolean “rejected” is insufficient.
-- Cross typed/dynamic/FFI inputs, heap admission and LMDB delta admission, inserts/deletes/replacements/no-ops, multiple constraints, closed vocabularies and temporal boundaries.
-- Preserve the fresh-refused-key counterexample's semantic intent even though the old fresh-ID physical mechanism is gone.
-- Prove/model only the actual admitted language. Update the Lean mutable-support/closed-relation premise rather than citing the old braid theorem as publication proof.
-- Reject `sorry`, unreviewed axioms, missing theorem cases and an empirical bridge that silently regenerates expected outputs from production code. Explicitly document hardware, LMDB and S3 assumptions outside the formal model.
-- Grouped-measure tests cover supported alias normalization in Rust/TS/dynamic schema inputs, count as unit weight, zero-weight members, empty child groups for existing parents, missing-parent vacuity plus separate containment, dependent upper bounds and exact duration. Do not preserve cosmetic spelling failures as semantic laws or lower count-existence to containment without its key/admission premises. No pointwise temporal occupancy or weighted-bag semantics is implied.
+## D09 — All derived consumers really accept scratch (L03/L04/L05/L06)
 
-## G04 — Query semantics and optimizer legality
+Compose aggregate/computed stage → positive join and bound negation, then restricted positive linear recursion with large seen/frontier and text. Force RAM below intermediate cardinality. Compare full results and mandated errors with independent staged evaluator and resident execution; instrument peak retained capacity and absence of whole-image resurrection. Tiny nonempty stages stay resident.
 
-Run every admitted operator/type pairing through the naive model, optimized engine, optimization-disabled engine and the SQL-compatible subset through SQLite. Assert the legal pairing inventory is populated, not just a large random-case count. Closed relations, disjunction, negation, recursion, temporal operations, grouping and parameter sets must be tested in combination.
+Reject: merely adding Scratch enum arm; force-spilling all small stages; clearing charge while keeping images; catching resource failure as empty output.
 
-Nonrecursive relation composition includes aggregate/computed outputs consumed downstream. Test distinct-student projection then count versus attempt-binding count; equal-valued weights on distinct bindings; inner no-group behavior; inner overflow/cast/measure error followed by an outer false filter; and one-rounding at each stage. Inline/materialized/forced-spill executions must agree on facts and semantic errors. Frozen finite computed predecessor relations may feed the one positive linear closure; rejection tests cover aggregation, value invention, negation and mutual recursion through the cycle. Names alone are not materialization directives.
+## D10 — Selective fallback and true stop (L01/L02/L05/L06)
 
-Float rewrites need explicit negative tests: no reassociation of primitive arithmetic, no implicit FMA, no `x-x -> 0` for arbitrary nonfinite x, no `x/x -> 1`, no comparison substitution based on IEEE `NaN != NaN` when database equality is canonical equality. Equivalent plans and input permutations produce identical exact reduction bits. Cancellation and resource checks must not license a truncated set result.
+Force nonresident evaluation of a key-bound query against many unrelated rows; assert exact result and bounded real source visits. An existence-only suffix stops after the first sufficient witness. Inject sink refusal and source error; no later scans/probes occur beyond the permitted bounded chunk. Column layout compilation/decode is per plan/row visit, not allocation per operand.
 
-For sum/mean, include catastrophic cancellation, mixed signs/exponents, all-zero groups, NaN/infinity combinations, very large groups and different merge/spill partitions. Verify exact accumulator merge laws independently and the specified one-rounding result. Min/max follow the selected relational total order; they do not inherit a host library's NaN-skipping behavior accidentally.
+Reject: result-only comparisons with full scans; discarded sink stop; wrapper counters that do not cover actual storage iteration.
 
-Assert the exact result state after each error: overflow, decoding error, foreign plan, bad bind, cancellation, scratch failure and invalid numerical input. Reuse prepared plans/results through success/error/success sequences. A result becomes observable only when the API's promised completeness/provenance is established.
+## D11 — Pack order is logical, not insertion-token order (L03/L04/L05/L06)
 
-## G05 — Larger than memory is an ordinary execution regime
+Force wide group spill over several flushes. Same group receives [10,20) then [0,15); expected maximal segment is [0,20). Interleave two groups across flushes, duplicate claims, separated and adjacent intervals, and float endpoint ordering. Narrow grouping has a first encoded word starting 0xFE. Force collisions in the wide group map. Compare exact canonical results with resident pack and independent sweep.
 
-Every query family runs with RAM acceleration on, forced off, and a tiny cache/scratch budget forcing transitions into temporary LMDB. Compare exact canonical result sets and float bits. Include distinct, grouped reduction, recursive visited/frontier sets, text/bytes and many-to-many joins. Forced transitions occur before, during and after the first result/group/frontier, not only at a large final size.
+Peak group-head and claim retention must stay bounded beyond RAM; forbid finalize_spilled from gathering all_claims or all group headers in RAM. Stable group tokens reside in exact scratch-backed mapping. Reject: per-claim tokens, raw leading-byte mode detection, one-flush sorted input only, and any solution disabling legal wide spill.
 
-Use one scratch-map implementation across operators; test its spill/cursor/lifetime behavior thoroughly instead of introducing multiple external algorithms just to test them. A disk fallback may be slower; it must preserve denotation and continue making bounded progress.
+## D12 — Delivery admits before advancing/copying (L05/L06/L12/L13/L15/L16)
 
-Release qualification includes both:
+Complete a result with an oversized text cell; call collection/page with insufficient bytes, then retry within policy. Predelivery refusal returns no data and does not advance the cursor. A terminal backing/transport error explicitly closes it. No successful page is lost or repeated; EOF/early take/downstream failure close once. Result backing and queued conversion overlap are correctly charged with JS wrappers retained.
 
-1. **Data substantially exceeds resident memory.** On an isolated Linux runner, constrain memory with an appropriate cgroup and use a physical dataset several times larger. Do not use an address-space limit that prevents a legitimate sparse LMDB map and then call that a RAM test.
-2. **Physical database crosses the former 32 GiB boundary.** A dedicated storage-qualified run grows and reopens an actually populated database beyond that boundary (not just a large virtual map or sparse empty file), mutates/query-checks both sides, checkpoints and restores it with bounded memory. A practical minimum fixture is over 40 GiB with an explicitly recorded smaller memory allowance.
+Exercise actual addon from both RAM and scratch. Independent caps intersect: maxBytes cannot enlarge work.resultBytes. Fresh delivery deadline works after execution deadline expired. Reject: collect-all-then-check, pure mocked pages, charging only wire length, or new public raw cursor.
 
-Large fixtures use predictable generated data and streaming exact checks so the oracle does not itself require loading everything into RAM. Record page faults, RSS/cgroup usage, file size, virtual mapping size, I/O, result correctness, cancellation latency and temporary-disk cleanup. No universal speed ratio is required beyond memory; no arbitrary database-size rejection is permitted.
+## D13 — Evidence survives every post-publication failure (L08/L09/L14/L17/L18)
 
-## G06 — LMDB is the substrate, not a black box excuse
+Inject real driver faults: request published then response lost; Indeterminate admin attempt then next-loop deadline; local commit failure after known HEAD success; known rejected receipt then diagnostic-decode work/allocation failure; Effect interruption/finalizer failure after dispatch. Persist a stable recovery reference before dispatch.
 
-Test held read snapshots during write, compaction/copy, elastic map resize and close. Rows, local generation and opaque materialization attachment must describe one read transaction. The concurrent-compaction mismatch from ENG-003 must be impossible in the new snapshot API.
+NotStarted is possible only before actual dispatch or separately proved nonpublication under the selected outcome vocabulary. Known decided receipt stays terminal despite health/diagnostic failure. Unresolved publication remains unknown, resolvable with original identity. Compare public native/TS outcomes and persisted truth. Reject: setting phase before encoding, phase beside contradictory outcome, catch-all not-submitted, or a mock returning exactly the desired output.
 
-Use deliberately small initial maps to trigger many growth events. Test `MDB_MAP_FULL`, external-size adoption where supported, held transactions/cursors, reader-blocked resize, retry of a private candidate, and process death around durable commit. Bounds come from the actual platform/LMDB/filesystem, not a hardcoded product database ceiling.
+## D14 — Writer-parent coherence (L08/L09/L10/L11/L14)
 
-Inject ENOSPC, read-only filesystem, short write, failed sync, missing/truncated metadata, failed snapshot staging and rename. An error after hosted publication does not change the receipt to rejected. A core local transaction either commits facts plus attachment coherently or does not expose them as committed.
+Pause retirement/catch-up after its outside-writer capture; another worker commits next decision or newer control; resume. Under the actual local writer, revalidate/rebase or refuse without regressing stamps, facts or receipts. Include two concurrent replay workers, control-only HEAD changes, quiescent same-tip receipt retirement and local-prune retries.
 
-In particular, inject allocation/MAP_FULL/I/O failure **after application judgment and decision hashing, during `HostChanges` sealing**. No remote CAS may have been dispatched. This is not covered merely by a failure before application preparation. The sealed capability cannot amend application facts; a rejected candidate's receipt-only transaction retains the same exclusive writer-session parent.
+Independent history trace checks intermediate observable snapshots, not just eventual final digest. Reject: pre-lock comparison, comparing decision but not identity/control, pruning keys captured from an unrelated generation.
 
-Qualify the supported filesystem's actual persistence assumptions with subprocess and fault-injection tests. Miri does not model filesystem persistence and cannot substitute for them. At least one release campaign must exercise abrupt process death and the chosen machine-failure/durability simulation; state plainly what remains an assumed substrate guarantee.
+## D15 — Absence requires retained coverage (L08/L09/L14/L17/L18)
 
-## G07–G09 — Histories, not only final convergence
+This command's CAS publishes and loses acknowledgment. Another actor rotates and retires its receipt before resolve. Changed HEAD plus absence must **not** produce proved loss/not-submitted. Return uncertainty/expired-unprovable with the original reference. Separately, demonstrate a real covered losing attempt can be proved lost, and a retained matching receipt resolves decided.
 
-Implement a deliberately small independent reference state machine. It models HEAD versions, immutable objects, decisions, application state, receipts, epochs, retained roots, reads and client-visible outcomes. It does not call production transition helpers or recover expected histories from the same serializer.
+Reject: relying on latest token inequality, mixing two receipt/head snapshots, retrying under new ID, or treating NotRecordedAt(T) as permanent nonpublication.
 
-Enumerate bounded schedules with at least two writers, one reader, two request IDs, one checkpoint/GC transition and response loss. Add generated longer histories and retain minimized seeds. Deterministic barriers belong around consequential effects: before/after local prepare, upload, conditional dispatch, response receipt, receipt lookup, local apply, metadata commit and close.
+## D16 — Every locator byte and boundary is checked (L08/L09/L10/L11)
 
-Check every observation, not just end state:
+Encode decision with absent/present parent at exact computed capacity and one byte below; assert full codec length (49 bytes per current ObjectRef) and canonical roundtrip against an independent expected frame. Truncation, wrong kind, wrong parent digest, root tip mismatch and missing interior locator refuse.
 
-- At most one authoritative successor per HEAD version, and no ABA/reuse after maintenance or logical deletion.
-- Every terminal receipt has exactly one stable named outcome; every ordinary read is a published prefix meeting its declared freshness/witness request.
-- A rejected candidate never becomes visible before final convergence.
-- Same ID/same digest retries return the same outcome; same ID/different digest refuses; retired IDs never execute again.
-- Two witnessed decrements either enact the intended serial changes or return explicit precondition failure. Blind set-write semantics remain separately tested.
-- Entity IDs are generated once outside native submission and copied into sealed commands. Retries, response loss and restore preserve those bytes; no FreshRef/reservation/result-map API survives. Duplicate IDs follow ordinary schema laws, not a claim of collision-free issuance.
-- A failed/unknown attempt followed by another request on the same live handle preserves resolution evidence.
-- Captured-tip refresh does not chase infinite concurrent work. Every retry loop has a bounded outcome under contention or a stuck peer.
+Recovery/GC/backup/witness traversal must stop at the authenticated base without older fetches; no historical epoch probing. A relocated backup uses its manifest and unchanged historical commitments. Reject: only unit-testing ObjectRef in isolation while decision cap still counts the option tag twice; keeping a “helpful” missing-link fallback.
 
-Test `Committed`, definite mismatch and uncertain transport outcomes independently. Cases include error before dispatch, server applies/response lost, another caller wins, original request remains in flight, truncated verification GET, checkpoint advances before resolution, receipt epoch closes/retires, and local LMDB commit fails after remote success.
+## D17 — Lifecycle and receive are genuinely bounded (L03/L04/L07/L10/L11/L14)
 
-### Real adapter qualification
+A transport emits unknown/changing length or exceeds declared body size while receiving; cap/deadline interrupts before full buffering, verifies digest and preserves actual dispatch evidence. Slow HEAD receive is bounded too. Source/target migration and restore exceed RAM; MapSpill::finish must not reconstruct its entire scratch result as Rows/BTreeMap; instrument Rust **and native caller** peak live chunks, transform outputs and cleanup.
 
-For supported local filesystems, suspend an owner longer than any old lease TTL and attempt competing open/mutation. The successor must respect the actual OS lock, not delete or mutate the live owner's state. Resume the old process and verify no stolen ownership interval existed. Test crash/death lock release and directory teardown separately.
+Process death/failure at lifecycle boundaries preserves old authority or a resumable matching new target; valid cold-open/resume works. Real S3/IAM tests cover conditional ambiguity, lost response, immutable conflicts, missing-vs-denied, pagination, redirects/retries and provider refresh. Reject: MemStore as backend proof, Vec<Vec<u8>> caller, post-read cap, blanket “streaming” name.
 
-For S3, use an explicitly provisioned disposable test prefix and least-privilege test credentials. Exercise actual conditional create/update and opaque ETag handling, response-loss proxies or equivalent fault injection, concurrent writes, repeated reads, multipart/streamed snapshot handling, aborted uploads, deletion, permissions failure and restore. Test the exact bucket/service mode being advertised; an S3-compatible mock does not qualify AWS or another vendor automatically.
+## D18 — Close owns the payload, queue and thread (L12/L13/L14/L15/L16/L17/L18)
 
-Credential absence blocks S3 qualification. Cloud tests must never run against application prefixes or create/delete resources implicitly from ordinary source tests. The release workflow supplies the authorized test scope.
+Keep every JS capability wrapper strongly reachable and prohibit reliance on GC. Fill the normal queue, interrupt directory-acquire→Db-open and output-delivery gaps, open many idle snapshots/sessions and initiate close/eviction. Actual payloads/transactions/locks drain on fixed workers whose idle resource entries do not park their scheduler; close revokes new admission and reports honest remaining resources until joined. No heavy JS-thread destructor or per-session OS-thread growth.
 
-## G10 — Log-layer recovery, retention, backup and migration
+Concurrent operations cannot use stale-generation handles; abandoned outputs have cleanup owners. Session close leaves parent usable; repeated close joins one transition. A small tenant progresses alongside a slow tenant under allowed fairness. Reject: natives==0 manufactured by counter change, queue-full teardown failure, a test that explicitly frees wrappers/forces GC before close.
 
-The main engine gets snapshot/admission tests, not a migration framework. These operations and their runbooks live in `bumbledb-log`.
+## D19 — Shared typed scalar semantics (L01/L02/L05/L06/L10/L11/L14/L15/L16)
 
-The public log product is TypeScript-only. Internal Rust model/adapter tests remain required; public Rust log API tests are not a promised surface and the entire public C product is removed. Rust/TS core behavior remains fully qualified. LocalHistory's one-LMDB authority and independent local restore directories receive their own LOCAL-* crash tests; no hosted tail/epoch envelope is imposed just to reopen a local database.
+Static negatives reject invented field types, invalid query leaf scope, known I64/U64 mixing and incompatible known numeric operators without casts/any. Migration field names are symbolic: valid field arithmetic must construct, and missing/wrong-kind source fields must refuse in native schema-bound compilation before effects, even with zero input rows. Valid literals/operators/casts go through both native query and generated migration compilation/execution, including empty-input checking.
 
-- Publish while a checkpoint streams; advance the tip; publish the old coherent checkpoint with a validated retained suffix. It must not require a whole-database quiet period or re-copy on every conflict.
-- Advance a GC epoch while an old writer/checkpointer is paused at each upload/CAS boundary. Old objects cannot be introduced into live history after the deletion barrier.
-- Race mark/sweep with new objects, restore-point creation/release, hydration pins and failed deletes. Abandoned staged uploads must remain safely collectible; failed deletion must retain resumable discovery state.
-- Capture a root atomically before hydration. Revoke/release that root during hydrate and verify no incomplete/wrong snapshot is returned. A complete local snapshot's reads do not secretly depend on a remote pin still existing.
-- Lose all local cache files and replay from a clean directory. Verify every retained terminal receipt and application fact, including post-publication local errors.
-- Named restore points preserve their complete checkpoint+tail closure. Explicit release changes their availability contract; restart or clock changes do not release them automatically.
-- Recover under another origin/cache mapping. Same schema and same revision with foreign data must refuse or reseed before serving, writing or cleaning up anything.
-- Migrate through explicit freeze/export/transform/admit/import/new-incarnation/cutover steps. Kill at every step. Old writers cannot resume into the new history, invalid transformed state cannot become current, and original data is not overwritten by a failed migration.
-- Race pre-activation abort against activation and delayed genesis, including an absent target and local final-directory install. Durable terminal target fencing precedes source thaw; uncertainty leaves the source frozen. Deleted authorities have no active recovery root, preserve explicitly retained roots/barrier progress, and eventually permit collection without reopening their namespaces.
-- Run the schema generator and installed migration runner end to end: identical declarations produce identical canonical plans; automatic changes need no authored migration; rename/backfill/destruction ambiguity refuses without declarative intent. Check ordered plan/history identity, missing/edited/divergent history, baseline, bounded native evaluation, repeated operation identity, frozen-source recovery and expected-old cutover. Multiple pending plans build one final incarnation while preserving necessary intermediate checks; test composition against sequential denotation, including deduplication and rounding boundaries. No runtime imports user migration callbacks; no ordinary request silently migrates a tenant. Chapter 33 defines the exact child inventory.
-- Test 0.x format refusal, offline conversion with the declared matching old reader, new-format round trips, and restoring a backup with a new history identity. Never reset the version counter without a distinguishing format family.
-- Restore external blob references as part of the application drill. A relational restore whose required blobs were deleted is not a successful application restore.
+Assert canonical F64 bits for NaN/zero, exact sum/mean cancellation/ties/subnormals, overflow/cast refusal and stage-rounding boundaries against independent oracle. Check host floating-control save/set/restore on required architectures. Reject: only sharing NumericCast alias, tagged JSON test without execution, epsilon arithmetic comparisons or using the implementation to derive expected bits.
 
-There is no default time-window PITR guarantee in the selected 1.0 contract. Removing it is explicit. Any future time-window policy requires additional clock/retention proofs and tests before being advertised; it cannot be smuggled back in as an undocumented helper.
+## D20 — Verify all schemas and mappings before side effects (L10/L11/L14/L17/L18)
 
-## G11–G12 — Ownership, resource use and cancellation
+Supply missing, foreign, edited or wrong-order snapshots; a well-hashed plan with absent source field, wrong target kind, invalid expression/cast; and an empty source database. Generate/verify refuses before writing a new authoritative manifest or freezing source. Every required intermediate source/target is bound and compiled. Valid prefix retry appends only the intended suffix.
 
-Both TypeScript packages implement chapter 35's exact Effect 4 contract. Extend existing API-01/04/07/10/12, RUN-01/02/04/10 and FFI-05/07/08 with lazy construction, sequential ingestion reruns with cumulative budgets (including changed/exhausted input), concurrent/reentrant and spent-draft refusal, interrupted acquire/late native completion, scope/finalizer-installation races, explicit CloseReport versus CloseFailure defects, and known receipt followed by scope failure. A fiber's Cause.Interrupt is never a fabricated NotSubmitted; the pre-dispatch retained ref resolves after reopen. Full drain or explicitly retained Closing ownership is required, not listener removal. Use Effect 4 TestClock for JS time and real/injected native clocks for native deadlines; do not confuse them.
+Reject: optional snapshots, final-hash-only checking, compile only at execution, trusting an empty iterator to validate mapping, or handwritten migration callback escape.
 
-Completed-result page Streams replace the public TS cursor API. Test first-run consuming transfer, second-run refusal, early take, downstream failure/interruption, EOF, oversized row, escaped scope, close/collect races and scratch reclamation with GC disabled. All rows are complete before page delivery. No per-row Effect work is required. Native workers and OS locks are tested independently of JS wrappers.
+## D21 — Generated history survives contention and crash (L17/L18)
 
-Run borrowed-owner state sequences as finite model tests and through real Rust/Node handles. Include double release, stale release after reopen, close while opening, close with queued/in-flight requests, retained writer after close, foreign database/plan, use after callback scope, repeated dispose, leaked client borrow, registry slot reuse and generation exhaustion where relevant.
+Run two generators in the same process and two in different processes against one repository. Pause the first after old-manifest read; the second cannot enter the protected repository operation until ownership releases, or must refuse busy. Incompatible work cannot overwrite/delete winner artifacts. Kill after each durable file/sync/manifest step; retry finds either previous history or the complete committed new chain and repairs derivative files. Grow a file while bounded read is in progress; actual receiving/aggregate cap stops it.
 
-Verify native environments and locks actually release after the last authorized operation drains—not merely that a wrapper throws `closed`. Repeated open/read/query/close cycles must reach a stable resource envelope. Track file descriptors, mapped files, native owners, temporary LMDBs, timers, threads and memory, not just JavaScript heap. Internal Node diagnostics must not retain payloads with historical operation count.
+Reject: PID-only temp naming, stat then whole read as bound, stale cleanup without ownership, swallowed durability failure, multiple competing authoritative manifests. Keep test inputs beside the test.
 
-Miri covers applicable pure unsafe Rust; ASan/UBSan/LSan or appropriate platform tools cover the internal Node/native subprocess paths. Buffer pin/copy, thread handoff, cancellation and close must obey that boundary's actual ownership contract. Removing public C eliminates its raw-pointer contract, not unsafe Rust or native lifetime obligations.
+## D22 — Packed application, not source-only resemblance (L15/L16/L17/L18/L19/L20/L21)
 
-Memory pressure trims optional caches and moves scratch work to LMDB rather than rejecting a database solely because it is large. Real disk/address-space exhaustion, an unrepresentable scalar, or a configured request deadline returns a precise error. Queue and worker limits control concurrent work; they are not a hidden database-size cap.
+Import schema/query/scalar authoring with native package deliberately unavailable and an addon-load detector that would fail if invoked. Separately install fresh built tarballs outside the workspace and run core and log consumer: generate history, initialize, mutate with sealed IDs/changes, witnessed correction, query/collect/pages, migrate, reopen, backup/restore, close. Use the native-ledger-shaped application and Notes/Next.js/Alchemy Node path; Rust core consumer exercises public API too.
 
-Cancellation is tested inside scans, image/cache construction, grouping, exact float accumulation, recursive rounds, spill-map transitions, snapshot streams, object requests, receipt resolution and shutdown. Use measured maximum checkpoint/work intervals. A JavaScript Promise timeout while native work runs forever is a failure. After remote publication, cancellation reports/retains publication certainty and cannot imply rollback.
+No private imports, force casts, handwritten plan bytes, stub native module, stale dist, Promise wrapper or missing-peer duplicate Effect runtime. Publication check after actual package promotion is separately authorized; local packing alone is not registry publication proof.
 
-Include two-tenant noisy-neighbor tests: one slow/large request must not indefinitely stop the other tenant's progress or lifecycle operations. Worker isolation is a small runtime boundary, not a fleet scheduling product.
+## D23 — Evidence cannot manufacture green (L19/L20/L21/coordinator)
 
-## G13–G14 — The artifact and public boundary are the product
+Pass a required qualification cell evidence [“garbage”], nonexistent report/artifact, wrong digest/source/spec/platform/backend, stale dist and duplicate/unknown cell IDs. All refuse. Modify intended added/deleted file, executable bit, symlink target or lock input: candidate identity changes/refuses appropriately. Deleted tracked files do not crash ordinary candidate enumeration; arbitrary caller path/digest overrides cannot omit production inputs.
 
-Packed TypeScript consumers must infer exact Effect A/E/R, Scope acquisitions, Option get results and typed core/log errors using the required **4.0.0-rc.112** peer dependency. Compile chapters 33–35 against fresh packages. Assert no Promise/sync/AsyncDisposable twin or `/effect` adapter, no core log import, and direct core QueryReader/ChangeSet/page Stream/codec/NativeRuntime reuse by log. Test the app's one ManagedRuntime with concurrent requests and abort at its outer framework boundary; no layer-per-call or second tenant cache. Generation/admin interruption tests use the original stable operation identity. These strengthen existing PKG-03, TS-MIG-10 and APP-03/08, not a parallel release system.
+Missing credentials/hardware/report remain NotRun/unqualified. The final checker recomputes input identity and validates every cell's evidence using the same substantive checks as audit/gate records. Reject: nonempty evidence array, unchecked platform strings, conditional skips counted as passes or source HEAD masquerading as dirty candidate identity.
 
-Build exact native packages for the declared darwin-arm64, linux-arm64 and linux-x64 roster (or a deliberately revised prequalified roster). Exercise the oldest declared Node runtime as well as the current supported runtime. Linux artifacts run against their documented libc floor, not just any container with the word Linux on it.
 
-Pack from staging manifests. Install tarballs into empty consumers without workspace links/dev dependencies; import core and log separately; run create/write/read/query/reopen/close and hosted test-backend commands; typecheck downstream declarations and verify no public C artifact/export survives. Assert SDK/native ABI/format compatibility at load. Check mismatched artifacts refuse rather than calling the wrong export layout.
+## D24 — Session acquisition is a schedulable operation (L07/L12/L13/L14)
 
-Fuzz bounded parser and boundary inputs: wrong type/width/schema, unknown tags, duplicate/conflicting operations, malformed UTF-8, pathological lengths, noncanonical floats, recursive size limits, object digest/length mismatches and foreign identity. Reinstate an actual corpus-replay/fuzz campaign where useful; a past preference for deleting fuzzing is not a 1.0 correctness constraint.
+Actual addon/runtime with **one worker**: open Db/history, capture snapshot, prepare/read, close child execution session, read parent again, close parent/runtime. Each operation must complete without another user operation releasing its prerequisite. Repeat with worker initially asleep and an opening job routed to that same worker. Open more idle snapshots than worker count within the declared handle/memory limit; neighboring ordinary work still executes.
 
-HTTP/example adapters validate method/path/event shape and size, decode base64 correctly, and require a host-supplied authenticated tenant mapping. Test logs/errors do not emit private fact payloads or credentials by default. This is scoped boundary qualification, not a claim to have built a full authentication product.
+With multiple workers, fill normal queues and start close while snapshots stay reachable. Controls wake workers, current bounded jobs observe cancellation, actual resources drain. Use deterministic barriers, not an arbitrary timing microbenchmark. A deadline is a deadlock safety net, not the success assertion.
 
-The Next.js/Alchemy and x86 Vercel Node examples are release consumers: production build, server-only imports, native asset inclusion, selected Node/libc/CPU floor, actual local-disk envelope, real IAM/credential rotation, local development, generated deployment migration and schema/history mismatch on ordinary open. Client/Edge imports must fail usefully. The Expo/Drizzle analogy does not qualify a React Native or browser runtime. The >40-GiB engine lane runs on fitting hardware, not a serverless scratch directory without that capacity.
+**Sensitivity:** current ready-after-reactor-exit and missing inbox wakeup fail. Merely moving ready.send earlier still fails the idle-snapshot/same-pool cases. A larger worker count or reserved hidden per-session thread is not a fix.
 
-Chapter 34's proposed Rust/core-TS/log-TS syntax becomes executable consumer fixtures during implementation. The same core schema, scalar/ID, ChangeSet, query template, typed parameters, QueryReader helper, CompleteResult and value codec must work across the applicable surfaces without application adapters or duplicate brands. Log-only identity/receipt/freshness remains outside core exports; a shared read helper gains no write capability. Generated migration plans invoke the same core query operators and stage semantics. API-12, FFI-08, PKG-03 and TS-MIG-04/07/10 own this evidence; no new SDK testing framework is required.
+## D25 — Native batch cursor commits exactly once (L05/L13/L16)
 
-## G15 — Earn the performance claims without turning them into superstition
+Complete at least three variable-size rows. Choose pageBytes such that row1 and row2 each fit individually but together do not. Pull returns row1 as a successful nonempty page; next pull returns row2, then row3, each exactly once. Repeat with pending conversion expansion, RAM and scratch, and both TS Stream and direct private-addon cursor testing.
 
-Include the shared core/log Effect/V8 envelope from chapters 35/40: native/bridge/Effect/full-app decomposition, warmup, allocation/GC/external-memory plateau, bytes copied, stable versus polymorphic row shapes, event-loop tail delay, bounded page pull and cancellation under saturation. No per-tuple fibers/spans or duplicate log conversion. Correctness plus an Effect return type is not evidence that the main thread stays responsive.
+Inject predelivery resource refusal/cancellation after copying row1 but before the native output registration/commit. That failed invocation returns no data and retry begins at row1. Inject terminal scratch corruption there instead: cursor closes explicitly and no apparently complete page/EOF is returned. Retain queued output while draining the source; charge remains owned until transfer/cleanup.
 
-Use actual intended application schemas where available. Cover booking/capacity, knowledge/graph metadata, and event/ledger identity; report each schema's coordination domain and unsupported query shapes.
+**Sensitivity:** current inner core page advancement plus outer error propagation drops row1. Test must fail that composition, even if the single-row core cursor unit test passes. Registering an uncharged output or retaining all pages to make rollback easy also fails D01.
 
-Measure warm Free Join/indexed reads, first query after insert/replace/delete, cold reopen, beyond-memory cursor execution, scratch spill, cache churn, command sealing with application IDs, single/multiple remote writers, checkpoint/GC overlap and recovery. Include small per-student tenants, not just a single large relation. Report absolute latency distributions, throughput, peak/resident memory, virtual map/file sizes, temporary disk, bytes decoded/copied and object operations per terminal decision.
+## D26 — Complete judgment cannot borrow a lawful-parent premise (L02/L07/L10/L14)
 
-Chapters [40](40-performance-contract.md) and [41](41-storage-and-hashing.md) define mandatory workload/constant/storage/hash families. Revisit batch/load/prefetch/cache thresholds with falsifiers and in-situ antagonists. Separate machine facts from backend bounds and arbitrary policy. Account for per-namespace live key/value bytes, LMDB page occupancy/free pages, raw/compacted files, OS allocated blocks and indexed SQLite/WAL under the same data/index/durability conditions. Attribute the recorded 2.3–2.45× gap rather than labeling all overhead a Free Join tax. Compare 16-byte exact-checked local fingerprints, full authoritative digests and the AEGIS candidate on actual short-row and bulk inputs before freezing a new algorithm. No hash throughput claim or space-saving percentage is established by these documents.
+Through the actual internal staged population seam, insert two different canonical tuples with the same declared scalar key. Call terminal admit without further changes. It must reject, leave destination absent and release owned staging after abandonment. Repeat a violated containment and capacity floor/ceiling. No bypass via empty ChangeSet, unchecked Store/disarm accessor, metadata-only prepare or the new log install_judged_store wrapper.
 
-Retain all runs and configuration; do not select only best medians. Performance baselines compare identical correctness and durability semantics. Host-specific assembly/allocation assertions remain scoped measured claims; they do not replace application benchmarks or force an architecture-wide no-allocation promise.
+Positive dual: a schema with a nonempty-required final law starts with invalid empty staging, receives valid rows across multiple batches, then admits and survives install/cold reopen/restore/migration. Intermediate invalidity is allowed only while unready.
 
-A result that is slower than 0.x is investigated and accepted only with a documented tradeoff or fixed before release. Do not invent a universal speed target without workloads. The nonnegotiable cliff test is that beyond-memory and beyond-32-GiB data continue to execute correctly through the same public semantics.
+**Sensitivity:** the present staging.admit → prepare(empty) → delta-local-skip chain incorrectly accepts the invalid target. A test merely asserting the AdmittedStore type exists does not cover readiness.
 
-## G16 — Release packet and promotion
+## D27 — Useful unresolved scalar authoring (L10/L14/L15/L17/L18)
 
-The final release candidate is built from a clean committed tree. The packet includes:
+Construct Scalar.add(Scalar.field("units"), Scalar.u64(1n)) without native loading. Generate/compile a migration from a verified source schema with u64 units and a matching target; execute a real row units=2 → 3. Include nested explicit cast to f64, a rename/backfill and zero input rows. Query-scoped equivalent uses its typed variable with the same operator/literal grammar.
 
-1. Specification and breaking-change inventory, including float semantics and the new format family.
-2. Closed finding matrix with fix/test/review references and no unresolved known defect in supported behavior.
-3. Every required G00–G15 matrix result for that revision or a demonstrably identical promoted artifact.
-4. Exact source/native/package/binary digests, toolchains, dependency locks and generated schema/plan/native-descriptor provenance.
-5. Restore/migration, ownership, real S3 and large-database qualification records.
-6. Published workload results and explicit platform/backend/failure-domain limits.
-7. Tested installation, diagnosis, backup/restore, migration and rollback instructions.
+Wrong source field, I64/U64 mismatch and incompatible target must refuse during native chain compilation before manifest write/freeze, including empty data. Known-invalid literal-only combinations refuse at their promised authoring boundary. No generic field<T> assertion, any/force cast or JS arithmetic evaluator.
 
-A small machine check validates completeness and identity before tagging/publishing. It rejects credential-skipped S3, stale native artifacts, surviving public C artifacts or missing Node safety coverage, unrun large-database qualification and open audit rows. Human review checks that the specification was not weakened just to make the packet green.
+**Sensitivity:** current field-node throw fails positive construction; an “accept all unknown” patch fails native negatives. A scalar-only constant backfill does not establish this gate. Count construction work on a nested expression to exclude whole-tree revalidation per constructor.
 
-Separate prepublication qualification from distribution verification to avoid a circular gate. Before public promotion, exact staged artifacts pass all semantic/backend/platform/migration tests plus clean installation and a disposable/private registry publication rehearsal. After authorized publication, download the public registry artifacts, verify digest/pins/install, and only then declare release completion. A distribution mismatch is a release incident, never retroactive permission to ship unqualified code. The actual public registry cannot prove a version available before that version has been uploaded.
+## D28 — Kernel lock and joined I/O, not stale-file guessing (L11/L14/L17)
 
-The proposal commit is **not** this packet. It starts the implementation and qualification campaign. No `1.0.0` release tag, registry publication, data-layout reset in shipped code, or production migration is performed by this documentation phase.
+Use the actual native lock seam with same-process and subprocess callers. Pause owner after opening/holding the lock but before any optional lock body write; a second generator cannot enter. Lock body may be empty or garbage and is irrelevant. Pause the owner arbitrarily long; it remains exclusive. Kill it; a new generator acquires the **same persistent inode** without deleting/replacing it. A stale token’s repeated release cannot unlock a successor.
 
-## Detailed child gates are mandatory inventory, not optional examples
+Interrupt generation while an underlying filesystem promise is still in progress. The lock remains owned until that I/O is joined; no late write occurs after a successor begins. Kill after immutable artifact sync, manifest rename and directory sync; retry recovers one committed chain or the previous one and repairs derivative files.
 
-The following cross-index makes the chapter-specific families part of the release packet. Numeric ranges below are inclusive and expand to every integer with the shown zero padding. Each family may contain many tests; a family with zero selected cases fails. All listed properties require evidence in their applicable lane; broad G00–G16 success cannot conceal an unrun child. The release checker also scans chapter-defined families and refuses any new child missing from this index.
+Growing-file reads must stop at the receiving/aggregate bound on the same opened descriptor, reject invalid UTF-8 and close the descriptor. Assertions use actual recorded plans/snapshots, not file existence.
 
-| Chapter | Complete child family inventory | Parent gates |
-| --- | --- | --- |
-| [02 concurrency](02-concurrency-and-semilattices.md) | `CONC-01` through `CONC-06` | G03/G04/G06/G07/G09/G15 |
-| [10 engine](10-semantics-and-engine.md) | `E-DELTA`, `E-VALUE`, `E-CODEC`, `E-SNAPSHOT`, `E-NO-RESERVE`, `E-ADMIT`, `E-TEXT`, `E-DURABILITY`, `E-VISIBILITY`, `E-ORIGIN`, `E-LARGE`, `E-BRIDGE` | G01/G02/G03/G06/G09/G11 |
-| [11 floats](11-floats.md) | `F-CANON`, `F-GOLDEN`, `F-ORDER`, `F-ARITH`, `F-ENV`, `F-AGG`, `F-SET`, `F-OPT-NEG`, `F-CROSS`, `F-WIRE`, `F-RESOURCE`, `F-PROOF`, `F-INTERVAL` | G02/G03/G04/G05/G11/G12/G13 |
-| [12 queries](12-query-execution.md) | `Q-ATOMIC`, `Q-BUDGET`, `Q-DISK`, `Q-LARGE-STORE`, `Q-COLLISION`, `Q-FALLBACK`, `Q-RECUR`, `Q-GROUP`, `Q-TEMPORAL`, `Q-LIFETIME`, `Q-FAIR`, `Q-IR`, `Q-INJECT` | G04/G05/G06/G11/G12/G15 |
-| [13 assurance](13-lean-and-rust.md) | `P-KERNEL`, `P-SEMANTIC`, `P-FLOAT`, `P-REPRESENTATION`, `P-DISK`, `P-MEMORY`, `P-SCHEDULE`, `P-ARTIFACT`, `P-PERF` | G00–G15 as the linked lane specifies |
-| [20 protocol](20-durable-protocol.md) | `PROTO-01` through `PROTO-20` | G07/G08/G09/G11/G12/G15 |
-| [21 storage](21-storage-and-retention.md) | `STORE-01` through `STORE-10`; `LOCAL-01` through `LOCAL-03` | G05/G06/G08/G10/G11/G12/G15 |
-| [21 collection](21-storage-and-retention.md) | `GC-01` through `GC-13` | G07/G08/G10/G12 |
-| [21 real backends](21-storage-and-retention.md) | `FS-01` through `FS-05`; `S3-01` through `S3-06` | G06/G08/G10/G11/G14 |
-| [22 recovery](22-recovery-and-migrations.md) | `REC-01` through `REC-07` | G06/G07/G09/G10/G11 |
-| [22 backup/restore](22-recovery-and-migrations.md) | `BACKUP-01` through `BACKUP-05`; `RESTORE-01` through `RESTORE-03` | G05/G08/G10/G14 |
-| [22 migration](22-recovery-and-migrations.md) | `MIG-01` through `MIG-14` | G08/G10/G13/G14 |
-| [22 erasure/operations](22-recovery-and-migrations.md) | `ERASE-01` through `ERASE-04`; `OPS-TEST-01` through `OPS-TEST-02` | G08/G10/G11/G14 |
-| [30 public APIs](30-client-apis.md) | `API-01` through `API-12` | G01/G02/G04/G05/G07/G09/G11/G12/G13/G14 |
-| [31 runtime](31-tenant-runtime.md) | `RUN-01` through `RUN-15` | G05/G06/G08/G10/G11/G12/G13/G14/G15 |
-| [32 native ABI](32-ffi-and-release-packaging.md) | `FFI-01` through `FFI-08` | G01/G02/G04/G11/G12/G13/G14 |
-| [32 packages](32-ffi-and-release-packaging.md) | `PKG-01` through `PKG-06`; `PKG-07A`, `PKG-07B` | G01/G13/G16; PKG-07B public-distribution verification after authorized promotion |
-| [33 TypeScript migrations](33-typescript-migrations-and-apps.md) | `TS-MIG-01` through `TS-MIG-10` | G02/G05/G08/G10/G12/G13/G14 |
-| [33 application integration](33-typescript-migrations-and-apps.md) | `APP-01` through `APP-08` | G08/G10/G11/G12/G13/G14/G15 |
-| [40 application performance](40-performance-contract.md) | `APP-FAST`, `APP-MUTATE`, `APP-NUMERIC`, `APP-LARGE`, `APP-TENANTS`, `APP-TARGETS`, `APP-METHOD`, `APP-MAGIC` | G00/G04/G05/G06/G11/G12/G13/G15 |
-| [41 storage/hashing](41-storage-and-hashing.md) | `SPACE-01` through `SPACE-02`; `HASH-01` through `HASH-04` | G00/G02/G03/G04/G05/G13/G14/G15 |
+**Sensitivity:** current readLockPid(null)→rm steals a live empty lock. UUID temp naming alone fails. A generic “lock acquired” mock and stat→readFile check cannot qualify this gate.
 
-The TypeScript migration/application families are as mandatory as engine/protocol families. A checked history file alone does not qualify migration, and a successful local Next build alone does not qualify native deployment or the attached AWS permissions.
+## D29 — Resource ownership does not serialize or accumulate tenants (L03/L04/L12/L13/L20)
 
-In the implementation result manifest, one row per expanded child records exact test names, applicable platforms/backends, evidence revision/artifact, executed case count, outcome and review reference. This is a small data file checked by the release script—not a new test orchestration service.
+Two workers/owners: pause one inside an instrumented payload conversion/scratch read, then run another owner’s independent resource operation. It must not need the first owner’s registry mutex; only short shared routing/admission work is allowed. No payload closure, destructor, I/O or callback under that lock.
+
+Fail retained-byte admission immediately before insertion: no payload, row or charge survives. Keep JS wrappers alive, close resources and repeat many bounded cycles: worker table/tombstone count and actual retained capacity return to the admitted baseline, independent of operation history. In-flight use drains before release; repeated/stale close never consumes a successor.
+
+For cache, retain an image across eviction: its bytes stay charged until the final strong owner releases it; old text resolves exactly after new-generation admission. Include closed/numeric images and full cache allowance with legal old pins.
+
+**Sensitivity:** current global with_payload lock, insert-before-admission, permanent revoked rows and cache-entry refund all fail distinct assertions. Zeroing statistics, forcing GC or using only independent runtimes is not a fix.
+
+## Efficient suite, no ritual tests
+
+Use a small everyday lane for exact semantics, budget counters and deterministic schedules; static lanes for compile/type/doc/ABI assertions; purpose-built subprocess/backend ownership lanes; explicit scale/performance lanes. Share expensive setup where isolation allows, avoid duplicated native builds, and run current-addon build before any native-dependent test. Serialize performance measurement per host; parallelize independent correctness cases.
+
+Delete inert smoke checks, arithmetic-only storage tests, asserted bugs, no-op generic runtime wrappers and stale source-word/symbol counts. Preserve meaningful tests even if their filename says smoke until consolidated/renamed by responsibility. Remove obsolete compatibility cases only after affirmative unsupported-family refusal remains. Do not remove an independent oracle because it disagrees.
+
+Lean qualification proves current premises and empirical correspondence, not text mentioning a theorem/file. Retain semantic/codegen/golden comparisons that detect wrong implementations; remove exact `dyn` counts, wording bans and deleted-path census. No test-count or line-count quotas.
+
+## Final gate families
+
+G00 traceability; G01 pinned builds/lints/types/docs; G02 codecs; G03 admission; G04 query meaning; G05 disk/large-state equivalence; G06 LMDB/durability; G07 independent authority model; G08 real backends; G09 commands/witnesses/retention; G10 lifecycle/GC/migrations; G11 native ownership; G12 bounded resources; G13 actual packages/consumers; G14 untrusted boundaries; G15 measured performance; G16 exact release evidence.
+
+All required target/backend cells must pass for the advertised 1.0 envelope: Apple Silicon, real Graviton Linux ARM64 and x86 Node, selected local filesystem and real S3/IAM. Miri/unsafe lanes apply to their supported components; unsupported substrates are documented rather than pretending Miri executes S3/LMDB. Pre-promotion public-registry checks remain pending until separately authorized promotion; do not block ordinary local implementation by inventing permission to publish.
+
+Approved narrowing only: no pre-1.0 importer (early untouched refusal instead), no mandatory AEGIS research lane, no pointless millions-of-cycles default. Within-family migrations, exact floating results, recovery, receipt safety and larger-than-memory behavior remain mandatory. See [90](90-evidence-and-retirement.md) for the final barrier.

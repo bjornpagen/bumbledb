@@ -10,7 +10,7 @@ import { Effect, Result } from "effect"
 import { requirePrincipal } from "../../../src/auth.ts"
 import { bindingFor } from "../../../src/db/bindings.ts"
 import { createNote } from "../../../src/db/commands.ts"
-import { allNotes } from "../../../src/db/queries.ts"
+import { listNotes as collectNotes } from "../../../src/db/reads.ts"
 import { Note } from "../../../src/db/schema.ts"
 import { requestPolicy } from "../../../src/db/runtime-policy.ts"
 import { appRuntime, Databases } from "../../../src/db/server.ts"
@@ -27,8 +27,7 @@ const listNotes = Effect.fn("routes.listNotes")(
 		const databases = yield* Databases
 		const db = yield* databases.acquire(binding, work)
 		const snapshot = yield* db.snapshot({ ...work, consistency: { kind: "cached" } })
-		const result = yield* snapshot.execute(allNotes, {}, work)
-		const rows = yield* result.collect({ maxBytes: work.resultBytes })
+		const rows = yield* collectNotes(snapshot, work)
 		const body = yield* Effect.fromResult(encodeBoundaryRows(Note, rows))
 		return Response.json(body, { headers: { "Cache-Control": "private, no-store" } })
 	},
@@ -86,7 +85,11 @@ async function parseBody(request: Request): Promise<Result.Result<{ id: string; 
 		if (typeof raw !== "object" || raw === null) {
 			return Result.fail("not an object")
 		}
-		const { id, text } = raw as { id?: unknown; text?: unknown }
+		if (!("id" in raw) || !("text" in raw)) {
+			return Result.fail("bad fields")
+		}
+		const id = raw.id
+		const text = raw.text
 		if (typeof id !== "string" || typeof text !== "string" || text.length === 0 || text.length > TEXT_LIMIT) {
 			return Result.fail("bad fields")
 		}

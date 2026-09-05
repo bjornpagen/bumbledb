@@ -213,9 +213,10 @@ pub struct EvidenceFact {
     pub fact: Box<[u8]>,
 }
 
-/// One violated statement as decoded evidence: the stable materialized-
-/// order identity, the kind tag, the containment direction, the exact
-/// widened capacity measure, bounded examples and the truncation label.
+/// One violated statement as decoded evidence: the stable
+/// materialized-order identity, the kind tag, the containment direction,
+/// the exact widened capacity measure, bounded examples and the
+/// truncation label.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvidenceViolation {
     pub statement: StatementId,
@@ -416,7 +417,7 @@ fn decode_example(
                 other => EvidenceInterpretError::Row(other),
             }
         })?;
-    Ok(decoded.values.into_boxed_slice())
+    Ok(decoded.values().to_vec().into_boxed_slice())
 }
 
 /// One violation prepared for framing: fixed fields plus pre-encoded

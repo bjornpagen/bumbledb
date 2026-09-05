@@ -23,10 +23,12 @@ use bumbledb_theory::schema::{
 
 mod aggregates;
 mod answers;
+mod budgets;
 mod correctness;
 mod disjoint;
 mod float_aggregates;
 mod folded;
+mod gates;
 mod ground;
 mod key_probe;
 mod latch;

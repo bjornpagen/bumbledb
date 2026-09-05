@@ -22,6 +22,7 @@ use crate::Answers;
 use crate::ParamArg;
 use crate::PreparedQuery;
 use crate::error::{DynIdError, Result};
+use crate::image::cache::ImageCache;
 use crate::ir::{Query, Value};
 use crate::schema::Schema;
 use crate::work::WorkContext;
@@ -31,11 +32,13 @@ use super::closed::ClosedRows;
 use super::get as get_path;
 use super::row_reader::RowReader;
 use super::tx::{encode_values, row_error};
-use super::{Fact, Key, embedded_work};
+use super::{Fact, Key};
 
 pub struct OwnedInstance<S> {
     schema: Arc<Schema>,
     closed: Arc<ClosedRows>,
+    /// One image cache for every prepare on this admitted instance.
+    cache: Arc<ImageCache>,
     /// The admitted final set: canonical rows per relation, sorted by full
     /// canonical bytes (set semantics; binary-search membership).
     relations: BTreeMap<RelationId, Vec<Box<[u8]>>>,
@@ -54,12 +57,21 @@ impl<S> OwnedInstance<S> {
                 .all(|rows| rows.is_sorted_by(|a, b| a < b)),
             "admitted rows are strictly sorted canonical bytes"
         );
+        let cache = Arc::new(ImageCache::with_policy(
+            schema.as_ref(),
+            crate::work::CachePolicy::platform_default(),
+        ));
         Self {
             schema,
             closed,
+            cache,
             relations,
             marker: PhantomData,
         }
+    }
+
+    pub(crate) fn cache(&self) -> &Arc<ImageCache> {
+        &self.cache
     }
 
     #[must_use]
@@ -127,12 +139,11 @@ impl<S> OwnedInstance<S> {
     /// # Errors
     /// Unknown relation, or a malformed admitted row (unreachable through
     /// admission).
-    pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<Vec<Value>>> + '_> {
+    pub fn scan<'a>(&'a self, rel: RelationId, work: &'a WorkContext) -> Result<impl Iterator<Item = Result<Vec<Value>>> + 'a> {
         let Some(relation) = self.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
-        let work = embedded_work()?;
         if let Some(rows) = self.closed.get(rel) {
             return Ok(ScanRows::Closed(
                 rows.iter().map(|row| Ok(row.values.to_vec())),
@@ -166,24 +177,23 @@ impl<S> OwnedInstance<S> {
 
     /// # Errors
     /// Shape refusals.
-    pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F) -> Result<bool> {
+    pub fn contains<'f, F: Fact<'f, Schema = S>>(&self, fact: &F, work: &WorkContext) -> Result<bool> {
         let mut values = Vec::new();
         fact.append_values(&mut values)?;
-        self.contains_values(F::RELATION, &values)
+        self.contains_values(F::RELATION, &values, work)
     }
 
     /// # Errors
     /// Shape refusals.
-    pub fn contains_dyn(&self, rel: RelationId, values: &[Value]) -> Result<bool> {
-        self.contains_values(rel, values)
+    pub fn contains_dyn(&self, rel: RelationId, values: &[Value], work: &WorkContext) -> Result<bool> {
+        self.contains_values(rel, values, work)
     }
 
-    fn contains_values(&self, relation: RelationId, values: &[Value]) -> Result<bool> {
+    fn contains_values(&self, relation: RelationId, values: &[Value], work: &WorkContext) -> Result<bool> {
         if let Some(rows) = self.closed.get(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
-        let work = embedded_work()?;
-        let bytes = encode_values(self.schema.as_ref(), relation, values, &work)?;
+        let bytes = encode_values(self.schema.as_ref(), relation, values, work)?;
         Ok(self
             .relation_rows(relation)
             .binary_search_by(|row| row.as_ref().cmp(bytes.as_slice()))
@@ -196,7 +206,7 @@ impl<S> OwnedInstance<S> {
         clippy::needless_pass_by_value,
         reason = "the public get takes Key by value to match ReadInstance::get"
     )]
-    pub fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K) -> Result<Option<K::Fact>> {
+    pub fn get<'a, K: Key<'a, Schema = S>>(&'a self, key: K, work: &WorkContext) -> Result<Option<K::Fact>> {
         let relation = <K::Fact as Fact<'a>>::RELATION;
         let (_, statement) =
             get_path::key_statement_of(self.schema.as_ref(), relation, K::STATEMENT)?;
@@ -214,7 +224,7 @@ impl<S> OwnedInstance<S> {
                 None => Ok(None),
             };
         }
-        match self.find_by_key(relation, &statement.projection, &key_values)? {
+        match self.find_by_key(relation, &statement.projection, &key_values, work)? {
             Some(bytes) => K::Fact::decode(RowReader::new(bytes)?).map(Some),
             None => Ok(None),
         }
@@ -227,10 +237,11 @@ impl<S> OwnedInstance<S> {
         relation: RelationId,
         key: StatementId,
         key_values: &[Value],
+        work: &WorkContext,
     ) -> Result<Option<Vec<Value>>> {
         let mut out = Vec::new();
         Ok(self
-            .get_dyn_into(relation, key, key_values, &mut out)?
+            .get_dyn_into(relation, key, key_values, &mut out, work)?
             .then_some(out))
     }
 
@@ -242,6 +253,7 @@ impl<S> OwnedInstance<S> {
         key: StatementId,
         key_values: &[Value],
         out: &mut Vec<Value>,
+        work: &WorkContext,
     ) -> Result<bool> {
         out.clear();
         let (_, statement) = get_path::key_statement_of(self.schema.as_ref(), relation, key)?;
@@ -262,11 +274,10 @@ impl<S> OwnedInstance<S> {
                 },
             );
         }
-        match self.find_by_key(relation, &statement.projection, key_values)? {
+        match self.find_by_key(relation, &statement.projection, key_values, work)? {
             Some(bytes) => {
                 let fields = self.schema.relation(relation).fields();
-                let work = embedded_work()?;
-                let decoded = crate::canonical::decode(fields, bytes, &work).map_err(row_error)?;
+                let decoded = crate::canonical::decode(fields, bytes, work).map_err(row_error)?;
                 out.extend(decoded.values);
                 Ok(true)
             }
@@ -291,11 +302,11 @@ impl<S> OwnedInstance<S> {
         relation: RelationId,
         projection: &[bumbledb_theory::schema::FieldId],
         key_values: &[Value],
+        work: &WorkContext,
     ) -> Result<Option<&[u8]>> {
         let fields = self.schema.relation(relation).fields();
-        let work = embedded_work()?;
         for row in self.relation_rows(relation) {
-            let decoded = crate::canonical::decode(fields, row, &work).map_err(row_error)?;
+            let decoded = crate::canonical::decode(fields, row, work).map_err(row_error)?;
             if get_path::projection_matches(&decoded.values, projection, key_values) {
                 return Ok(Some(row));
             }

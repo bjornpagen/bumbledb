@@ -1,26 +1,35 @@
 use super::{
-    CHUNK_LEN, Chunk, Colt, NodeRef, NodeState, Positions, Slot, pack_child, unpack_child,
+    CHUNK_LEN, Chunk, Colt, NodeRef, NodeState, Positions, Slot, pack_child, reserve_exact_for,
+    unpack_child,
 };
+use crate::work::WorkError;
 
 impl Colt {
-    fn alloc_chunk(&mut self, cap: usize) -> u32 {
+    pub(super) fn alloc_chunk(&mut self, cap: usize) -> Result<u32, WorkError> {
+        let chunks_needed = self.chunks.len() + 1;
+        let pos_needed = self.chunk_positions.len() + cap;
+        self.admit_needed::<Chunk>(self.chunks.capacity(), chunks_needed)?;
+        self.admit_needed::<u32>(self.chunk_positions.capacity(), pos_needed)?;
+        reserve_exact_for(&mut self.chunks, chunks_needed);
+        reserve_exact_for(&mut self.chunk_positions, pos_needed);
         let idx = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
         let start = u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
-        self.chunk_positions
-            .resize(self.chunk_positions.len() + cap, 0);
+        self.chunk_positions.resize(pos_needed, 0);
         self.chunks.push(Chunk {
             start,
             cap: u8::try_from(cap).expect("chunk capacities fit u8"),
             len: 0,
             next: u32::MAX,
         });
-        idx
+        Ok(idx)
     }
 
-    pub(super) fn append_child(&mut self, child_at: usize, position: u32) {
+    pub(super) fn append_child(&mut self, child_at: usize, position: u32) -> Result<(), WorkError> {
         match unpack_child(self.buckets[child_at]) {
             Slot::Single(first_position) => {
-                let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap));
+                let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap))?;
+                self.admit_needed::<NodeState>(self.nodes.capacity(), self.nodes.len() + 1)?;
+                reserve_exact_for(&mut self.nodes, self.nodes.len() + 1);
                 let c = self.chunks[chunk_idx as usize];
                 self.chunk_positions[c.start as usize] = first_position;
                 self.chunk_positions[c.start as usize + 1] = position;
@@ -51,7 +60,7 @@ impl Colt {
                         count: count + 1,
                     });
                 } else {
-                    let new_idx = self.alloc_chunk(CHUNK_LEN);
+                    let new_idx = self.alloc_chunk(CHUNK_LEN)?;
                     let c = self.chunks[new_idx as usize];
                     self.chunk_positions[c.start as usize] = position;
                     self.chunks[new_idx as usize].len = 1;
@@ -64,5 +73,6 @@ impl Colt {
                 }
             }
         }
+        Ok(())
     }
 }

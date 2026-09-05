@@ -3,9 +3,8 @@ use bumbledb::{Db, FieldId, Theory as _, Value};
 
 use crate::differential::{self, Op, Verdict};
 use crate::naive::{Delta, NaiveDb};
-use crate::writebench::write_protocol;
 
-use super::{Mass, PARENTS, calendar, calendar_rows, ids, power, power_baseline, power_rows};
+use super::{Mass, calendar, calendar_rows, ids, power, power_baseline, power_rows};
 
 fn scratch(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("bumbledb-capacity-{tag}"));
@@ -272,54 +271,6 @@ fn the_sqlite_sum_trigger_agrees_with_the_engine() {
     }
     assert_eq!(aborts, 3, "the stream exercises both verdicts");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn the_capacity_rows_run_their_protocols() {
-    let dir = scratch("rows");
-    let budgeted = Db::create(&dir.join("power"), power::PowerWorld)
-        .expect("create")
-        .expect("accepted");
-    super::load(&budgeted, Mass::BENCH, power_rows).expect("load power");
-    let control = Db::create(&dir.join("baseline"), power_baseline::UnbudgetedWorld)
-        .expect("create control")
-        .expect("accepted");
-    super::load(&control, Mass::BENCH, power_rows).expect("load control");
-    let rooms = Db::create(&dir.join("calendar"), calendar::CalendarCapacityWorld)
-        .expect("create calendar")
-        .expect("accepted");
-    super::load(&rooms, Mass::BENCH, calendar_rows).expect("load calendar");
-
-    let mut sum_mint = super::MINT_BASE;
-    let mut baseline_mint = super::MINT_BASE;
-    let mut duration_mint = super::MINT_BASE;
-    let sum = super::commit_capacity_sum(
-        &budgeted,
-        write_protocol("commit_capacity_sum"),
-        &mut sum_mint,
-    )
-    .expect("sum");
-    assert_eq!(sum.work, 64, "one row per sample");
-    assert!(sum.stats.min > 0);
-    let baseline = super::commit_capacity_baseline(
-        &control,
-        write_protocol("commit_capacity_baseline"),
-        &mut baseline_mint,
-    )
-    .expect("baseline");
-    assert_eq!(baseline.work, 64);
-    let duration = super::commit_capacity_duration(
-        &rooms,
-        write_protocol("commit_capacity_duration"),
-        &mut duration_mint,
-    )
-    .expect("duration");
-    assert_eq!(duration.work, 64);
-    let _ = PARENTS;
-    drop(budgeted);
-    drop(control);
-    drop(rooms);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

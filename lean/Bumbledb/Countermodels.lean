@@ -97,14 +97,14 @@ part of the spec.
 
 ## residents
 
-* `per_op_judgment_wrong` — the FinalStateView seam's formal
+* `per_op_judgment_wrong` — the final-state seam's formal
  justification: a two-deletion transaction (parent and child of a
  containment) whose FINAL state holds, whose two op orders reach the
  SAME final state, and whose parent-first order transiently violates
  mid-sequence. A per-operation judge would reject one order of a
  valid transaction — which is why judgment reads one final state
  (`Txn.judge`'s signature; `Txn.final_state_judgment_order_free`)
- and why `judgment.rs::FinalStateView` is a type, not a discipline.
+ and why `CandidateFacts` / `judge_complete` take one proposed state.
 
 * `incremental_verdict_needs_holds` — the delta-restricted judgment's
  load-bearing premise (`Txn/DeltaRestriction.lean`): WITHOUT
@@ -113,12 +113,10 @@ part of the spec.
  survives an empty delta whose touched set is empty, so every
  restricted check passes vacuously while the final state does not
  hold. Inside the lifecycle the premise is free (`State.models`);
- outside it, this countermodel is exactly why `Db::verify_store`
- exists — the sweeper re-runs both judgment forms globally, owning
- the class no incremental check can see ("an incremental form wrong
- once, long ago, preserved by every commit since" —
- § the store sweeper, the
- division of authority).
+ outside it, this countermodel is exactly why staged readiness and
+ `Db::verify_store` run `judge_complete` — `LawfulParent` is the
+ only constructor of the incremental premise, and `UnreadyStore`
+ cannot mint it.
 
 * `obligation_partition_needs_validation` — the complete roster's
  load-bearing validation witness (`Txn.obligation_partition`): a
@@ -758,9 +756,9 @@ judge would reject one op order of a valid transaction, and which
 order the host writes is semantically arbitrary; that is why judgment
 is final-state (`Txn.judge` takes ONE instance;
 `Txn.final_state_judgment_order_free`) and why per-operation checking
-is wrong, not merely slow. Bridge: `judgment.rs::FinalStateView`
-("operation order is representable here") — the
-constitution's seam, formally justified. -/
+is wrong, not merely slow. Bridge: `CandidateFacts` /
+`judge_complete` — operation order is not representable in the
+complete-judge input. -/
 theorem per_op_judgment_wrong :
     holds pcTheory (Txn.applyOps pcInst parentFirst) ∧
     Txn.applyOps pcInst parentFirst = Txn.applyOps pcInst childFirst ∧
@@ -836,9 +834,9 @@ violation in an untouched binding survives, unjudged. Inside the
 lifecycle the premise is free (`Txn.State.models`); outside it, this
 is exactly why `Db::verify_store` exists: the sweeper re-runs both
 judgment forms globally over the full committed state, owning the
-class no incremental check can see
- § the store sweeper — the
-division of authority the delta-restricted judgment implies). -/
+class no incremental check can see. `LawfulParent` is the only
+constructor of that premise; `UnreadyStore` cannot mint it, and
+staged readiness must call `judge_complete`. -/
 theorem incremental_verdict_needs_holds :
     (∀ st, st ∈ fdTheory.statements →
       Txn.deltaCheck fdTheory violInstance emptyDelta st) ∧

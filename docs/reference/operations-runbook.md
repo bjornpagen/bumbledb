@@ -1,8 +1,9 @@
 # Operations runbook — backup, restore, admin
 
 Status: permanent doc over the shipped admin surface
-(`@bjornpagen/bumbledb-log` root exports; final-solution 21/22 remain the
-normative retention/recovery contract until proposal retirement). All
+(`@bjornpagen/bumbledb-log` root exports). Retention and recovery
+meanings live in [behavioral-obligations.md](behavioral-obligations.md)
+(`REP-*`, `GC-*`, `BACKUP-*`, `RESTORE-*`). All
 mutating admin operations return the three-way certainty
 `completed | not-started | outcome-unknown` around an operator-supplied
 operation reference; `outcome-unknown` is resolved by re-running status
@@ -55,7 +56,7 @@ deny-delete policy for the data-plane roles.
    explicitly (the binding registry is app-owned); old bindings keep
    refusing with a lineage mismatch rather than silently serving the
    wrong incarnation.
-4. Drill (F3, BACKUP-*/RESTORE-* gates): delete the local cache and the
+4. Drill (BACKUP-*/RESTORE-* gates; NotRun until executed): delete the local cache and the
    active namespace of a disposable tenant, restore from the protected
    root, verify facts/receipts/history — with data-plane credentials
    proven UNABLE to delete the protected root.

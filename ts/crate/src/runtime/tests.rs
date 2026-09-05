@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 
 use super::*;
@@ -386,4 +387,117 @@ fn suspended_owner_fences_a_second_acquire() {
 
     assert_eq!(close(&runtime), CloseReport::Closed);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+// --- C7: control drain and bounded affine lanes (authored; NotRun) --------
+
+#[test]
+fn control_lane_teardown_runs_when_ordinary_queue_is_full() {
+    let runtime = Arc::new(Runtime::start(options()).unwrap());
+    let (release, blocked) = mpsc::channel();
+    let (entered, running) = mpsc::channel();
+    let (_operation, done) = submit(
+        &runtime,
+        Box::new(move |_| {
+            entered.send(()).unwrap();
+            blocked.recv().unwrap();
+            Ok(Output::Ready)
+        }),
+    );
+    running.recv_timeout(Duration::from_secs(2)).unwrap();
+    let _second = runtime
+        .submit(
+            policy(),
+            Box::new(|| {}),
+            |_| Ok(Box::new(|_| Ok(Output::Ready))),
+        )
+        .unwrap();
+    assert!(matches!(
+        runtime.submit(
+            policy(),
+            Box::new(|| {}),
+            |_| Ok(Box::new(|_| Ok(Output::Ready)))
+        ),
+        Err(RuntimeError::QueueFull)
+    ));
+    let (tx, rx) = mpsc::channel();
+    runtime
+        .submit_control(
+            Box::new(move || {
+                tx.send(()).unwrap();
+            }),
+            Some(Box::new(move |report| {
+                rx.send(report).unwrap();
+            })),
+        )
+        .expect("control admits while ordinary queue is saturated");
+    release.send(()).unwrap();
+    done.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(
+        rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        CloseReport::Closed
+    );
+    assert_eq!(close(&runtime), CloseReport::Closed);
+}
+
+#[test]
+fn d18_idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
+    // D18: drain an idle pool. lane_send must not re-lock runtime.state
+    // from begin_close/drain (std Mutex deadlock / hang).
+    let runtime = Runtime::start(options()).unwrap();
+    assert_eq!(runtime.inspect().active, 0);
+    assert_eq!(runtime.inspect().phase, Phase::Open);
+    assert_eq!(close(&runtime), CloseReport::Closed);
+    assert_eq!(runtime.inspect().phase, Phase::Closed);
+}
+
+#[test]
+fn d29_worker_inbox_wakeup_reaches_a_sleeping_pool() {
+    // D24/D29 sensitivity: a sleeping worker must observe an admitted inbox
+    // item (lane_send holds the bookkeeping lock across notify; the wait
+    // path try_recv's before Condvar::wait). One ready job after idle
+    // proves wakeup. Failed admission must not leave a route.
+    let runtime = Runtime::start(options()).unwrap();
+    assert_eq!(runtime.inspect().active, 0);
+    let (operation, done) = submit(&runtime, Box::new(|_| Ok(Output::Ready)));
+    done.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(runtime.take(&operation), Ok(Output::Ready)));
+    assert_eq!(close(&runtime), CloseReport::Closed);
+}
+
+#[test]
+fn d29_repository_lock_kind_is_stamped_on_the_capability() {
+    let runtime = Runtime::start(options()).unwrap();
+    let cap = runtime
+        .reserve_native_route(super::registry::NativeKind::RepositoryLock, 0)
+        .expect("lock route");
+    assert_eq!(cap.kind, super::registry::NativeKind::RepositoryLock);
+    runtime.rollback_native_route(cap);
+    assert_eq!(runtime.registry.route_count(), 0);
+    assert_eq!(close(&runtime), CloseReport::Closed);
+}
+
+#[test]
+fn d29_failed_native_admission_does_not_leave_a_route() {
+    let runtime = Runtime::start(options()).unwrap();
+    assert!(matches!(
+        runtime.reserve_native_route(super::registry::NativeKind::Result, u64::MAX),
+        Err(RuntimeError::ResourceLimit { .. })
+    ));
+    assert_eq!(runtime.inspect().natives, 0);
+    assert_eq!(runtime.registry.route_count(), 0);
+    assert_eq!(runtime.inspect().reserved[3], 0);
+    assert_eq!(close(&runtime), CloseReport::Closed);
+}
+
+#[test]
+fn retained_native_guard_refunds_registry_charge_on_drop() {
+    let runtime = Runtime::start(options()).unwrap();
+    let guard = runtime.retain_native(7).expect("admit native");
+    assert_eq!(runtime.inspect().natives, 1);
+    assert_eq!(runtime.inspect().reserved[3], 7);
+    drop(guard);
+    assert_eq!(runtime.inspect().natives, 0);
+    assert_eq!(runtime.inspect().reserved[3], 0);
+    assert_eq!(close(&runtime), CloseReport::Closed);
 }

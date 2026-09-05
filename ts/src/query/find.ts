@@ -1,7 +1,8 @@
 import type { AnyField, Infer } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
 import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
-import type { AnyComputeExpr, ComputeExpr } from "#query/compute.ts"
+import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
+import type { ScalarKind } from "#scalar.ts"
 import type { AnyVar, MintSlotOf } from "#query/scope.ts"
 
 type FoldOpName = "sum" | "mean" | "min" | "max" | "pack"
@@ -88,8 +89,8 @@ type FindValue<E> = E extends AnyVar
 			? Infer<O["field"]>
 			: E extends Agg<"pack", infer V extends AnyVar>
 				? Infer<V["field"]>
-				: E extends ComputeExpr<infer T>
-					? T
+				: E extends ComputeExpr<infer K extends ScalarKind>
+					? ComputeValue<K>
 					: never
 
 type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]> }

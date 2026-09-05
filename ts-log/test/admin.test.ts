@@ -2,8 +2,10 @@
  * Admin/migration certainty wrappers: mutating operations return
  * `AdminOutcome` in A with E = never and a stable operation reference
  * derived BEFORE dispatch; `not-started` proves this invocation performed
- * no authoritative mutation; interruption leaves Cause (the ref remains
- * usable through status). Read-only status/verification has typed E.
+ * no authoritative mutation; interruption after dispatch is
+ * `outcome-unknown` (or `completed` if the receipt already decoded) under
+ * the original operationId — never a new ID. Read-only status/verification
+ * has typed E.
  * `completed(paused)` is a known report, not permission to cut over.
  * Maps to OPS-006 (primary audit row), OPS-TEST-01 (status fixtures,
  * layer side), ERASE-03 reporting shape, TS-MIG-09/10 (wrapper side).
@@ -56,7 +58,8 @@ const plans: GeneratedMigrations = {
 			operations: [{ kind: "validate-schema", schemaId: "2d".repeat(32) }],
 			destructive: []
 		}
-	]
+	],
+	snapshots: ["base-schema-render", "target-schema-render"]
 }
 
 type Double = ReturnType<typeof makeWireDouble>
@@ -73,6 +76,7 @@ describe("admin certainty", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: { verb: "checkpoint", at: stampWire, state: stateWire, root: "root-1" }
 			}
 		})
@@ -83,6 +87,7 @@ describe("admin certainty", function suite() {
 		if (outcome.kind === "completed") {
 			assert.equal(outcome.value.root, "root-1")
 			assert.equal(outcome.value.at.seq, 7n)
+			assert.equal(outcome.phase, "confirmed")
 		}
 		// The operation id crossed the wire with the request (fixed before dispatch).
 		const request = double.calls[0]?.request as { operationId: string }
@@ -118,6 +123,7 @@ describe("admin certainty", function suite() {
 		if (outcome.kind === "outcome-unknown") {
 			assert.equal(outcome.ref.operation, OPERATION)
 			assert.equal(outcome.error.code, "Backend")
+			assert.equal(outcome.phase, "dispatchedUnresolved")
 		}
 	})
 
@@ -126,6 +132,7 @@ describe("admin certainty", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "erase",
 					tombstoned: true,
@@ -156,12 +163,13 @@ describe("admin certainty", function suite() {
 		assert.equal(error.value.code, "UnsupportedArtifact")
 	})
 
-	test("interrupting a mutating operation leaves Cause, and the ref is already retained", async function interrupted() {
+	test("interrupting a mutating operation is outcome-unknown under the original operationId", async function interrupted() {
 		const { double, machine } = make()
 		double.plan("logAdmin", {
 			hold: true,
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: { verb: "checkpoint", at: stampWire, state: stateWire, root: "root-2" }
 			}
 		})
@@ -170,8 +178,15 @@ describe("admin certainty", function suite() {
 		await new Promise((resolve) => setImmediate(resolve))
 		await Effect.runPromise(Fiber.interrupt(fiber))
 		const exit = await Effect.runPromise(Fiber.await(fiber))
-		assert.ok(Exit.isFailure(exit))
-		assert.ok(Exit.hasInterrupts(exit))
+		assert.ok(Exit.isSuccess(exit))
+		const outcome = Exit.getSuccess(exit)
+		assert.ok(outcome._tag === "Some")
+		assert.equal(outcome.value.kind, "outcome-unknown")
+		if (outcome.value.kind === "outcome-unknown") {
+			assert.equal(outcome.value.ref.operation, OPERATION)
+			assert.equal(outcome.value.phase, "dispatchedUnresolved")
+			assert.equal(outcome.value.error.code, "Cancelled")
+		}
 		assert.ok(double.cancelCount() >= 1)
 	})
 })
@@ -211,6 +226,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-migrate",
 					value: {
@@ -246,6 +262,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-migrate",
 					value: {
@@ -297,6 +314,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-activate",
 					target: { ...identityWire, incarnationId: "9b".repeat(16) },
@@ -316,6 +334,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-abort",
 					target: { ...identityWire, incarnationId: "9b".repeat(16) },
@@ -345,13 +364,12 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: { verb: "migration-initialize", binding: { kind: "local", directory: "/tmp/t", identity: identityWire }, genesis: "7a".repeat(32) }
 			}
 		})
-		// Base schema snapshot FIRST, then each entry's target (entries + 1).
-		const withSnapshots = { ...plans, snapshots: ["base-schema-render", "target-schema-render"] }
 		const outcome = await Effect.runPromise(
-			provideRuntime(machine.migrations.initialize(localBinding, withSnapshots, adminOptions))
+			provideRuntime(machine.migrations.initialize(localBinding, plans, adminOptions))
 		)
 		assert.equal(outcome.kind, "completed")
 		const request = double.calls[0]?.request as { plans: { snapshots: string[]; entries: unknown[] } }
@@ -364,7 +382,13 @@ describe("migration wrappers", function suite() {
 		// One entry needs TWO snapshot rows (base + target); one row is malformed
 		// caller input and must never reach the native machine.
 		const short = { ...plans, snapshots: ["base-schema-render"] }
-		double.plan("logAdmin", { result: { certainty: "completed", value: { verb: "migration-initialize" } } })
+		double.plan("logAdmin", {
+			result: {
+				certainty: "completed",
+				publicationPhase: "confirmed",
+				value: { verb: "migration-initialize" }
+			}
+		})
 		const outcome = await Effect.runPromise(
 			provideRuntime(machine.migrations.initialize(localBinding, short, adminOptions))
 		)
@@ -375,18 +399,17 @@ describe("migration wrappers", function suite() {
 		assert.equal(double.calls.length, 0)
 	})
 
-	test("absent snapshots stay absent: the typed refusal is native, never invented here", async function noSnapshots() {
+	test("absent snapshots refuse before dispatch", async function noSnapshots() {
 		const { double, machine } = make()
-		double.plan("logAdmin", {
-			failure: { source: "protocol", reason: { _tag: "Misuse" } }
-		})
+		const missing = { ...plans, snapshots: undefined as unknown as string[] }
 		const outcome = await Effect.runPromise(
-			provideRuntime(machine.migrations.migrate(localBinding, plans, adminOptions))
+			provideRuntime(machine.migrations.migrate(localBinding, missing, adminOptions))
 		)
-		// Dispatched without the optional field; the native machine answered.
-		const request = double.calls[0]?.request as { plans: Record<string, unknown> }
-		assert.ok(!("snapshots" in request.plans))
-		assert.equal(outcome.kind, "outcome-unknown")
+		assert.equal(outcome.kind, "not-started")
+		if (outcome.kind === "not-started") {
+			assert.equal(outcome.error.code, "InvalidArgument")
+		}
+		assert.equal(double.calls.length, 0)
 	})
 
 	test("binding-carrying admin verbs thread the lowered schema when supplied", async function adminSchema() {
@@ -395,6 +418,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: { verb: "checkpoint", at: stampWire, state: stateWire, root: "root-3" }
 			}
 		})
@@ -410,6 +434,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: { verb: "checkpoint", at: stampWire, state: stateWire, root: "root-4" }
 			}
 		})
@@ -425,6 +450,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "restore",
 					identity: identityWire,
@@ -485,6 +511,7 @@ describe("migration wrappers", function suite() {
 		double.plan("logAdmin", {
 			result: {
 				certainty: "completed",
+				publicationPhase: "confirmed",
 				value: {
 					verb: "migration-activate",
 					target: { ...identityWire, incarnationId: "9b".repeat(16) },

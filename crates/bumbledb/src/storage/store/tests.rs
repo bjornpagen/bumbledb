@@ -20,7 +20,9 @@
 
 use std::time::Duration;
 
-use bumbledb_theory::schema::{RelationId, StatementId};
+use bumbledb_theory::schema::RelationId;
+
+use crate::schema::ProjectionId;
 
 use crate::schema::{
     FieldDescriptor, RelationDescriptor, Schema, SchemaDescriptor, ValidateDescriptor as _,
@@ -38,18 +40,23 @@ use super::host::{AttachmentChange, HostChanges, HostRecordChange};
 use super::map::MapPolicy;
 use super::store_env::Store;
 
+mod admission;
+mod compiled_projection;
+mod fresh_adoption;
 mod candidate_visibility;
 mod collision;
 mod crash;
+mod incremental;
 mod judged;
 mod large;
 mod lifecycle;
 mod resize;
+mod schema_indexed;
 mod snapshot_coherence;
 
 pub(super) const NOTE: RelationId = RelationId(0);
 pub(super) const TAG: RelationId = RelationId(1);
-pub(super) const NOTE_KEY: StatementId = StatementId(0);
+pub(super) const NOTE_KEY: ProjectionId = ProjectionId(0);
 
 pub(super) fn schema() -> Schema {
     SchemaDescriptor {
@@ -144,8 +151,9 @@ impl RowIndexer for NoIndex {
         _relation: RelationId,
         _row: &[u8],
         _work: &WorkContext,
-        _emit: &mut dyn FnMut(StatementId, &[u8]) -> StoreResult<()>,
+        _        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
     ) -> StoreResult<()> {
+        let _ = emit;
         Ok(())
     }
 }
@@ -160,16 +168,16 @@ impl RowIndexer for FirstFieldKey {
         relation: RelationId,
         row: &[u8],
         work: &WorkContext,
-        emit: &mut dyn FnMut(StatementId, &[u8]) -> StoreResult<()>,
+        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
     ) -> StoreResult<()> {
         if relation != NOTE {
             return Ok(());
         }
         let decoded = crate::canonical::decode(schema().relation(NOTE).fields(), row, work)?;
-        let Value::U64(id) = decoded.values[0] else {
+        let Value::U64(id) = decoded.values()[0] else {
             panic!("test rows lead with a u64 id");
         };
-        emit(NOTE_KEY, &id.to_be_bytes())
+        emit(NOTE_KEY, &id.to_be_bytes(), None)
     }
 }
 
@@ -213,7 +221,7 @@ impl CandidateJudge for UniqueNoteId {
             }
             let decoded =
                 crate::canonical::decode(schema().relation(NOTE).fields(), record.row, work)?;
-            let Value::U64(id) = decoded.values[0] else {
+            let Value::U64(id) = decoded.values()[0] else {
                 panic!("test rows lead with a u64 id");
             };
             let bucket = candidate.determinant_candidates(NOTE_KEY, &id.to_be_bytes(), work)?;
@@ -225,7 +233,7 @@ impl CandidateJudge for UniqueNoteId {
                     .fetch(NOTE, row_id)?
                     .expect("bucket entries resolve");
                 let row = crate::canonical::decode(schema().relation(NOTE).fields(), row, work)?;
-                if row.values[0] == Value::U64(id) {
+                if row.values()[0] == Value::U64(id) {
                     matching.push(row_id);
                 }
             }
@@ -299,5 +307,7 @@ pub(super) fn open_default(path: &std::path::Path) -> Store {
 }
 
 pub(super) fn create_default(path: &std::path::Path) -> Store {
-    Store::create(path, &schema(), MapPolicy::default()).expect("create store")
+    Store::create(path, &schema(), MapPolicy::default())
+        .expect("create store")
+        .0
 }

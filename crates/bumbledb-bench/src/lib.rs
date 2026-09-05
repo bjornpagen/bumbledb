@@ -8,6 +8,7 @@ pub mod clockproxy;
 pub mod closure;
 pub mod compare;
 pub mod conformance;
+pub mod correspondence;
 pub mod corpus;
 pub mod corpus_gen;
 pub mod crud;

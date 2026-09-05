@@ -10,6 +10,7 @@ use bumbledb_theory::schema::{
 use std::collections::BTreeMap;
 
 mod build;
+mod distinct_proof;
 mod selections;
 mod validate;
 mod witness;

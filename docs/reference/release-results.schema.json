@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bumbledb.dev/reference/release-results.schema.json",
+  "title": "Bumbledb release qualification index",
+  "description": "Small checked index at docs/reference/release-results.json. Actual reports and raw runs live in CI/release artifacts only. The index excludes itself from the candidate source digest.",
+  "type": "object",
+  "required": [
+    "format",
+    "candidateSourceDigest",
+    "specificationRevision",
+    "audits",
+    "gates",
+    "priorReviews",
+    "discriminators",
+    "qualification"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": 2 },
+    "candidateSourceDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of the deterministic tracked+untracked source inventory (path/kind/mode/payload; docs/reference/release-gates.md)."
+    },
+    "specificationRevision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$",
+      "description": "SHA-256 of docs/reference/obligation-inventory.json canonical content."
+    },
+    "sourceRevision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$",
+      "description": "Optional post-commit git object name recorded in final handoff metadata only."
+    },
+    "audits": { "$ref": "#/$defs/obligationRows" },
+    "gates": { "$ref": "#/$defs/obligationRows" },
+    "priorReviews": { "$ref": "#/$defs/obligationRows" },
+    "discriminators": { "$ref": "#/$defs/obligationRows" },
+    "digestOverride": false,
+    "candidatePaths": false,
+    "pathOverride": false,
+    "specificationOverride": false,
+    "qualification": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/qualificationCell" }
+    }
+  },
+  "$defs": {
+    "artifactRef": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": [
+        "candidateSourceDigest",
+        "specificationRevision",
+        "executed",
+        "skipped",
+        "tests",
+        "platform",
+        "backend",
+        "toolchain",
+        "features",
+        "command",
+        "review",
+        "artifact",
+        "report"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "candidateSourceDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "specificationRevision": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "sourceRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+        "executed": { "type": "integer", "minimum": 1 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "skipReasons": { "type": "array", "items": { "type": "string" } },
+        "tests": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "platform": { "type": "string", "minLength": 1 },
+        "backend": { "type": "string", "minLength": 1 },
+        "toolchain": { "type": "string" },
+        "features": { "type": "string" },
+        "command": { "type": "string" },
+        "review": { "type": "string" },
+        "artifact": { "$ref": "#/$defs/artifactRef" },
+        "report": { "$ref": "#/$defs/artifactRef" }
+      }
+    },
+    "obligationRow": {
+      "type": "object",
+      "required": ["id", "outcome", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "outcome": {
+          "enum": ["Passed", "Failed", "NotRun", "NotApplicable"]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        }
+      }
+    },
+    "obligationRows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/obligationRow" }
+    },
+    "qualificationCell": {
+      "type": "object",
+      "required": ["id", "outcome"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "outcome": {
+          "enum": ["Passed", "Failed", "NotRun", "NotApplicable"]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/evidence" }
+        }
+      }
+    }
+  }
+}

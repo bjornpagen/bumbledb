@@ -1,16 +1,15 @@
 //! C07 — the conditional-store verbs the hosted publication machine needs.
 //!
-//! This is P04's *proposed* seam for P05's backend. P05 owns the actual S3 /
-//! filesystem / memory adapters, their durability ordering, path namespace,
-//! lock exclusion and fault taxonomy. P04 owns the publication machine that
-//! calls these verbs and interprets their conditional-result grammar. The
-//! trait is deliberately the exact set of operations chapter 20/21 use — read
-//! a versioned head, conditionally create/replace it, put/get immutable
-//! objects, list and delete — not a generic five-verb KV framework.
+//! L11 owns adapters, durability, path namespace, exclusion and transport
+//! observations. L08 owns the publication machine that calls these verbs and
+//! interprets only the typed [`ConditionalOutcome`] grammar plus coherent
+//! evidence. Production HEAD/object reads are not on this trait: they go
+//! through [`crate::store::ReceivingStore`] (`receive_head` / `receive_object`)
+//! with an explicit envelope. `Denied` / `Capped` / generic `Indeterminate`
+//! observations are not published or lost.
 //!
 //! The three-way conditional grammar is load-bearing: a transport failure
 //! after dispatch is `Indeterminate`, never a manufactured success or failure.
-//! Emulator green is not S3 qualification; that evidence is P05/P12's F3 lane.
 
 /// An opaque backend version token for the head object (S3 version-id/ETag,
 /// or a filesystem generation). The machine never parses it; it only feeds an
@@ -80,11 +79,6 @@ pub struct ListPage {
 pub trait ConditionalStore {
     type Error;
 
-    /// Read the current head at `head_key`, or `Absent`.
-    /// # Errors
-    /// A transport/auth/IO failure with no definite head observation.
-    fn read_head(&self, head_key: &str) -> Result<HeadRead, Self::Error>;
-
     /// Create the head only if it does not exist. `PreconditionFailed` means a
     /// head already exists — a never-reused head is never re-created over.
     /// # Errors
@@ -111,11 +105,6 @@ pub trait ConditionalStore {
     /// Transport failure with no definite store observation.
     fn put_object(&self, key: &str, body: &[u8]) -> Result<PutOutcome, Self::Error>;
 
-    /// Get an immutable object.
-    /// # Errors
-    /// Transport failure with no definite read observation.
-    fn get_object(&self, key: &str) -> Result<ObjectRead, Self::Error>;
-
     /// List actual extant object keys under `prefix`, one bounded page.
     /// Listing enumerates real names, never a historical slot count.
     /// # Errors
@@ -137,10 +126,6 @@ macro_rules! delegate_conditional_store {
         impl<$($generics)+> ConditionalStore for $ty {
             type Error = T::Error;
 
-            fn read_head(&self, head_key: &str) -> Result<HeadRead, Self::Error> {
-                (**self).read_head(head_key)
-            }
-
             fn create_head(
                 &self,
                 head_key: &str,
@@ -160,10 +145,6 @@ macro_rules! delegate_conditional_store {
 
             fn put_object(&self, key: &str, body: &[u8]) -> Result<PutOutcome, Self::Error> {
                 (**self).put_object(key, body)
-            }
-
-            fn get_object(&self, key: &str) -> Result<ObjectRead, Self::Error> {
-                (**self).get_object(key)
             }
 
             fn list_objects(

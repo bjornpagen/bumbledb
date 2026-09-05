@@ -18,9 +18,16 @@ pub mod authority;
 pub mod command;
 pub mod decision;
 mod frame;
+pub mod locator;
 pub mod receipt;
 mod types;
 
 pub use bumbledb::SchemaFingerprint as SchemaId;
 pub use frame::FrameError;
+pub use locator::{
+    ChainVisitor, OBJECT_REF_OPTION_ABSENT_BYTES, OBJECT_REF_OPTION_PRESENT_BYTES,
+    OBJECT_REF_WIRE_BYTES, object_ref_option_bytes, parent_locator_field_bytes,
+    receive_limits_for_object, validate_parent_locator, validate_recovery_locators,
+    validate_tip_locator, walk_decision_chain, walk_decision_chain_collect,
+};
 pub use types::*;

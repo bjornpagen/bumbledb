@@ -1,14 +1,14 @@
 /**
  * Computed find terms (C05 `FindTerm::Compute`) — authoring walls, wire
- * lowering and row typing. Pure metadata throughout: nothing here touches
- * the native runtime. The wire spelling asserted below is the agreed C05
- * lane landed in `#native.ts`/`ts/crate` (P06R2): `FindTermIr`
- * `{ kind: "compute", expr: ScalarExprIr }` and `HeadTermIr`
- * `{ kind: "compute" }`.
+ * lowering and row typing over the shared L15 scalar grammar. Pure
+ * metadata throughout: nothing here touches the native runtime. The wire
+ * spelling asserted below is the agreed C05 lane landed in `#native.ts`/
+ * `ts/crate`: `FindTermIr` `{ kind: "compute", expr: ScalarExprIr }` and
+ * `HeadTermIr` `{ kind: "compute" }`. Compute constructors are the query-var
+ * scope of `#scalar.ts` — not a second roster.
  *
- * Gate mapping: QRY-* computed-stage half (P03 primary), API-12
- * (typed surface + compile-fail pins), API-01 (construction inertia).
- * Verification: NotRun (F1).
+ * D19: known query I64/U64 mixing fails without any/casts.
+ * Verification: NotRun
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
@@ -34,9 +34,11 @@ describe("Compute construction walls (engine result_type parity)", function wall
 	test("mixed numeric kinds refuse — no implicit promotion", function mixed() {
 		const { score, units } = v(Attempt)
 		assert.throws(function mixedAdd() {
+			// @ts-expect-error — known f64/u64 query kinds do not unify
 			Compute.add(score, units)
 		}, /operand kinds differ \(f64 vs u64\)/)
 		assert.throws(function mixedLit() {
+			// @ts-expect-error — known query u64/i64 mixing has no implicit promotion
 			Compute.multiply(units, Compute.i64(2n))
 		}, /operand kinds differ \(u64 vs i64\)/)
 	})
@@ -99,7 +101,7 @@ describe("Compute construction walls (engine result_type parity)", function wall
 
 	test("trees deeper than the engine's 128-node bound refuse", function depthWall() {
 		const { score } = v(Attempt)
-		let expr: ComputeExpr<number> = Compute.toF64(score)
+		let expr: ComputeExpr<"f64"> = Compute.toF64(score)
 		assert.throws(function grow() {
 			for (let i = 0; i < 200; i += 1) {
 				expr = Compute.add(expr, Compute.f64(1))
@@ -111,7 +113,8 @@ describe("Compute construction walls (engine result_type parity)", function wall
 		const { score } = v(Attempt)
 		const expr = Compute.multiply(score, Compute.f64(2))
 		assert.equal(Object.isFrozen(expr), true)
-		assert.equal(Object.isFrozen(expr.node), true)
+		assert.equal(expr.scope, "query-var")
+		assert.equal(expr.kind, "multiply")
 	})
 })
 

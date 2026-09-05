@@ -13,10 +13,12 @@
 
 use std::path::Path;
 
-use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange};
+use bumbledb::integration::HostRecordChange;
 use bumbledb::scalar::ScalarEvaluator;
 use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
-use bumbledb::{Admission, ChangeSet, Db, InstanceBuilder, Violations, WorkContext, WorkError};
+use bumbledb::schema::RelationId;
+use bumbledb::{Admission, ChangeSet, Db, Violations, WorkContext, WorkError};
+use crate::recovery::{begin_staged, StagedPopulation};
 
 use crate::history::authority::{
     Access, ActivateOutcome, Activation, ActivationCause, DeleteOutcome, DeletedReason,
@@ -86,6 +88,12 @@ pub enum MigrationError {
     WrongSuffix {
         applied: u64,
     },
+    /// The hosted data plane's checkpoint capture/upload/fetch failed
+    /// (target checkpoint publication or reuse verification).
+    Checkpoint(crate::checkpointer::CheckpointError),
+    /// Hydrating a published hosted target's recovery objects for reuse
+    /// verification failed.
+    Hydration(crate::recovery::RecoveryError),
 }
 
 impl std::fmt::Display for MigrationError {
@@ -112,20 +120,34 @@ from_error!(Plan, PlanError);
 from_error!(Compile, CompileError);
 from_error!(State, StateError);
 from_error!(Namespace, NamespaceError);
-from_error!(Log, LogError);
 from_error!(Frame, FrameError);
 from_error!(Work, WorkError);
 from_error!(Core, bumbledb::Error);
+from_error!(Checkpoint, crate::checkpointer::CheckpointError);
+from_error!(Hydration, crate::recovery::RecoveryError);
+
+impl From<LogError> for MigrationError {
+    fn from(error: LogError) -> Self {
+        match error {
+            // Bounded work/deadline/cancellation is ONE typed resource
+            // refusal no matter which layer charged it: the SDK maps
+            // `MigrationError::Work` to the exact core reason, while a
+            // nested `Log(Work)` would be respelled as migration drift.
+            LogError::Work(work) => Self::Work(work),
+            other => Self::Log(other),
+        }
+    }
+}
 
 impl From<bumbledb::integration::IntegrationError> for MigrationError {
     fn from(error: bumbledb::integration::IntegrationError) -> Self {
-        Self::Log(LogError::from(error))
+        Self::from(LogError::from(error))
     }
 }
 
 impl From<crate::history::authority::AuthorityError> for MigrationError {
     fn from(error: crate::history::authority::AuthorityError) -> Self {
-        Self::Log(LogError::from(error))
+        Self::from(LogError::from(error))
     }
 }
 
@@ -427,7 +449,7 @@ impl<'h, S> LocalMigration<'h, S> {
         // Capture the exact frozen source and execute the ordered suffix.
         let state = capture_source(self.source.db(), work)?;
         let (state, _) = execute_steps(state, &compiled, work)?;
-        let target_digest = state.digest();
+        let target_digest = state.digest()?;
 
         // One Applied record for the whole executed suffix.
         let source_position = self
@@ -578,7 +600,7 @@ impl<'h, S> LocalMigration<'h, S> {
                         MigrationError::SourceFrozenByOther { operation: held }
                     })
                 }
-                Err(error) => Err(MigrationError::Log(LogError::from(error))),
+                Err(error) => Err(MigrationError::from(LogError::from(error))),
             }
         })
     }
@@ -671,7 +693,7 @@ impl<'h, S> LocalMigration<'h, S> {
                 Ok(())
             })?;
             if let Some(state) = captured {
-                recomputed = Some(state?.digest());
+                recomputed = Some(state?.digest()?);
             }
         }
         if recomputed != Some(applied_record.target_digest) {
@@ -795,9 +817,20 @@ pub fn activate_target(
             Err(crate::history::authority::AuthorityError::ActivationEvidenceMismatch) => {
                 Err(MigrationError::StaleActivationRef)
             }
-            Err(error) => Err(MigrationError::Log(LogError::from(error))),
+            Err(error) => Err(MigrationError::from(LogError::from(error))),
         }
     })?;
+    // Durable readable copy of the one-time activation, beside the tombstone
+    // in the stable namespace: recorded evidence for probes that run while a
+    // live owner later holds the activated store open. The control commit
+    // above is the authority; a crash before this write heals on the next
+    // matching activate retry (the Keep path re-records it).
+    let recorded =
+        read_attachment(&target_db)?.ok_or(MigrationError::Log(LogError::NotInitialized))?;
+    let recorded = decode_control(&recorded, cap).map_err(LogError::from)?;
+    if matches!(recorded.activation, Activation::Activated { .. }) {
+        namespace.record_activation(&lock, &recorded, cap)?;
+    }
     drop(lock);
     Ok(report)
 }
@@ -831,7 +864,24 @@ pub fn fence_target(
     }
     if namespace.target_exists() {
         let target_db: Db<SchemaDescriptor> =
-            Db::open(&namespace.target_dir(), target_descriptor.clone())?;
+            match Db::open(&namespace.target_dir(), target_descriptor.clone()) {
+                Ok(db) => db,
+                // A live owner holds the published target open. Recorded
+                // activation evidence means activation already won this
+                // namespace (a served target is never automatically
+                // aborted); without it, the typed open refusal stands.
+                Err(error) if store_locked(&error) => {
+                    if let Some(recorded) = namespace.read_activation(cap)? {
+                        return Err(if recorded.identity == planned_identity {
+                            MigrationError::ActivationWon
+                        } else {
+                            MigrationError::TargetConflict
+                        });
+                    }
+                    return Err(error.into());
+                }
+                Err(error) => return Err(error.into()),
+            };
         return with_authority(&target_db, limits, work, |authority| {
             if authority.identity != planned_identity {
                 return Err(MigrationError::TargetConflict);
@@ -849,7 +899,7 @@ pub fn fence_target(
                 Err(crate::history::authority::AuthorityError::OperationMismatch { .. }) => {
                     Err(MigrationError::TargetConflict)
                 }
-                Err(error) => Err(MigrationError::Log(LogError::from(error))),
+                Err(error) => Err(MigrationError::from(LogError::from(error))),
             }
         });
     }
@@ -919,7 +969,7 @@ pub fn initialize(
         return Ok(runnerless);
     }
     let (state, _) = execute_steps(MigrationState::empty(), &compiled, work)?;
-    let target_digest = state.digest();
+    let target_digest = state.digest()?;
     let applied_record = Applied {
         operation: request.operation,
         plan_set_digest: psd,
@@ -959,7 +1009,7 @@ pub fn initialize(
 // Shared private machinery.
 // ---------------------------------------------------------------------------
 
-fn compile_suffix(
+pub(super) fn compile_suffix(
     source_descriptor: &SchemaDescriptor,
     steps: &[StepInput],
 ) -> Result<Vec<CompiledPlan>, MigrationError> {
@@ -972,7 +1022,7 @@ fn compile_suffix(
     Ok(compiled)
 }
 
-fn applied_steps(manifest: &Manifest, first: usize, count: usize) -> Vec<AppliedStep> {
+pub(super) fn applied_steps(manifest: &Manifest, first: usize, count: usize) -> Vec<AppliedStep> {
     manifest.entries[first..first + count]
         .iter()
         .map(|entry| AppliedStep {
@@ -988,7 +1038,7 @@ fn applied_steps(manifest: &Manifest, first: usize, count: usize) -> Vec<Applied
 /// Execute the compiled ordered steps over one starting state. One numeric
 /// operation owns the evaluator for the whole suffix and drops before any
 /// I/O follows.
-fn execute_steps(
+pub(super) fn execute_steps(
     state: MigrationState,
     compiled: &[CompiledPlan],
     work: &WorkContext,
@@ -1009,7 +1059,10 @@ fn execute_steps(
     Ok((current, executed))
 }
 
-fn capture_source<S>(db: &Db<S>, work: &WorkContext) -> Result<MigrationState, MigrationError> {
+pub(super) fn capture_source<S>(
+    db: &Db<S>,
+    work: &WorkContext,
+) -> Result<MigrationState, MigrationError> {
     let schema = db.schema();
     let mut captured: Option<Result<MigrationState, StateError>> = None;
     db.read(|read| {
@@ -1019,7 +1072,7 @@ fn capture_source<S>(db: &Db<S>, work: &WorkContext) -> Result<MigrationState, M
     Ok(captured.ok_or(MigrationError::Log(LogError::Corruption))??)
 }
 
-fn read_attachment<S>(db: &Db<S>) -> Result<Option<Vec<u8>>, MigrationError> {
+pub(super) fn read_attachment<S>(db: &Db<S>) -> Result<Option<Vec<u8>>, MigrationError> {
     let mut owned = None;
     db.read(|read| {
         owned = read.integration_host_attachment()?.map(<[u8]>::to_vec);
@@ -1034,6 +1087,55 @@ fn read_attachment<S>(db: &Db<S>) -> Result<Option<Vec<u8>>, MigrationError> {
 /// target returns `None` — its full `ReadyToSwitch` reuse verification runs
 /// under the held freeze. A published directory without a decodable control
 /// is a conflict, never something to freeze over.
+/// Whether a core open refusal is the store's live-owner exclusion.
+fn store_locked(error: &bumbledb::Error) -> bool {
+    matches!(
+        error,
+        bumbledb::Error::Store(inner)
+            if matches!(**inner, bumbledb::store::StoreError::StoreLocked { .. })
+    )
+}
+
+/// Resolve recorded activation evidence for a target whose store is held
+/// open by a live owner (the activated database being served): the durable
+/// namespace activation marker, written in `activate_target`'s commit path,
+/// is the readable copy of the one-time activation. A locked target WITHOUT
+/// matching recorded evidence stays the original typed open refusal — never
+/// guessed into an outcome.
+fn locked_target_evidence(
+    namespace: &TargetNamespace,
+    operation: OperationId,
+    target_identity: DatabaseIdentity,
+    cap: usize,
+    locked: bumbledb::Error,
+) -> Result<MigrateOutcome, MigrationError> {
+    if let Some(recorded) = namespace.read_activation(cap)? {
+        if recorded.identity != target_identity {
+            return Err(MigrationError::TargetConflict);
+        }
+        if let Activation::Activated {
+            operation: held, ..
+        } = recorded.activation
+        {
+            if held == operation {
+                // The store is live-owned, so the CURRENT mode is not
+                // readable; the recorded-at-activation mode is the durable
+                // evidence (a live owner implies a live materialization).
+                let access = match &recorded.lifecycle {
+                    Lifecycle::Live(live) => live.access.mode(),
+                    Lifecycle::Deleted { .. } => AccessMode::Deleted,
+                };
+                return Ok(MigrateOutcome::AlreadyActivated {
+                    activation: recorded.activation,
+                    access,
+                });
+            }
+            return Err(MigrationError::TargetConflict);
+        }
+    }
+    Err(MigrationError::Core(locked))
+}
+
 fn published_terminal_evidence(
     namespace: &TargetNamespace,
     operation: OperationId,
@@ -1044,7 +1146,15 @@ fn published_terminal_evidence(
     if !namespace.target_exists() {
         return Ok(None);
     }
-    let target_db: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), descriptor.clone())?;
+    let target_db: Db<SchemaDescriptor> =
+        match Db::open(&namespace.target_dir(), descriptor.clone()) {
+            Ok(db) => db,
+            Err(error) if store_locked(&error) => {
+                return locked_target_evidence(namespace, operation, target_identity, cap, error)
+                    .map(Some);
+            }
+            Err(error) => return Err(error.into()),
+        };
     let control = read_attachment(&target_db)?.ok_or(MigrationError::TargetConflict)?;
     let authority = decode_control(&control, cap).map_err(LogError::from)?;
     if authority.identity != target_identity {
@@ -1080,7 +1190,7 @@ fn published_terminal_evidence(
 }
 
 /// Read the complete migration history chain from one coherent snapshot.
-fn read_chain<S>(db: &Db<S>, cap: usize) -> Result<Vec<HistoryRecord>, MigrationError> {
+pub(super) fn read_chain<S>(db: &Db<S>, cap: usize) -> Result<Vec<HistoryRecord>, MigrationError> {
     let mut rows: Vec<Vec<u8>> = Vec::new();
     let mut host_error = None;
     db.read(|read| {
@@ -1099,7 +1209,7 @@ fn read_chain<S>(db: &Db<S>, cap: usize) -> Result<Vec<HistoryRecord>, Migration
         Ok(())
     })?;
     if let Some(error) = host_error {
-        return Err(MigrationError::Log(LogError::from(error)));
+        return Err(MigrationError::from(LogError::from(error)));
     }
     rows.iter()
         .map(|bytes| super::history::decode_record(bytes, cap).map_err(MigrationError::from))
@@ -1149,38 +1259,6 @@ fn with_authority<S, T>(
     }
 }
 
-/// Commit host records and/or the control attachment in ONE core LMDB
-/// transaction over an empty fact change.
-fn commit_host<S>(
-    db: &Db<S>,
-    records: &[(Vec<u8>, Vec<u8>)],
-    control: Option<&[u8]>,
-    work: &WorkContext,
-) -> Result<(), MigrationError> {
-    let mut session = db.integration_writer(work)?;
-    let empty = ChangeSet::builder(db.schema(), work.clone())
-        .finish()
-        .map_err(|error| MigrationError::Log(LogError::Core(error.into())))?;
-    let prepared = match session.prepare(&empty)? {
-        Admission::Accepted(prepared) => prepared,
-        Admission::Rejected(_) => return Err(MigrationError::Log(LogError::Corruption)),
-    };
-    let changes: Vec<HostRecordChange<'_>> = records
-        .iter()
-        .map(|(key, value)| HostRecordChange::Put {
-            key: key.as_slice(),
-            value: value.as_slice(),
-        })
-        .collect();
-    let attachment = control.map_or(AttachmentChange::Keep, AttachmentChange::Put);
-    let sealed = prepared.seal(HostChanges {
-        records: &changes,
-        attachment,
-    })?;
-    sealed.commit()?;
-    Ok(())
-}
-
 /// Read a published target expected to be `ReadyToSwitch` for exactly this
 /// operation/plan set (initialization resume). Refuses everything else.
 fn read_published_ready(
@@ -1193,7 +1271,17 @@ fn read_published_ready(
     work: &WorkContext,
 ) -> Result<MigrateOutcome, MigrationError> {
     let cap = limits.envelope_bytes;
-    let target_db: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), descriptor.clone())?;
+    let target_db: Db<SchemaDescriptor> =
+        match Db::open(&namespace.target_dir(), descriptor.clone()) {
+            Ok(db) => db,
+            // A live owner holds the published target open (the activated
+            // database being served): recorded activation evidence resolves
+            // the rerun; anything else stays the typed open refusal.
+            Err(error) if store_locked(&error) => {
+                return locked_target_evidence(namespace, operation, target_identity, cap, error);
+            }
+            Err(error) => return Err(error.into()),
+        };
     let control = read_attachment(&target_db)?.ok_or(MigrationError::TargetConflict)?;
     let authority = decode_control(&control, cap).map_err(LogError::from)?;
     if authority.identity != target_identity {
@@ -1247,7 +1335,7 @@ fn read_published_ready(
     })?;
     let recomputed = captured
         .ok_or(MigrationError::Log(LogError::Corruption))??
-        .digest();
+        .digest()?;
     if recomputed != applied_record.target_digest || live.decision.seq != 0 {
         return Err(MigrationError::OutputMismatch);
     }
@@ -1260,6 +1348,155 @@ fn read_published_ready(
         },
         applied: applied_record.clone(),
     })
+}
+
+/// One completely built staged target: the open staged database (private
+/// scratch until published), its frozen genesis control and genesis stamp.
+pub(super) struct StagedTarget {
+    pub(super) db: Db<SchemaDescriptor>,
+    pub(super) frozen: HeadAuthority,
+    pub(super) genesis: crate::history::DecisionStamp,
+}
+
+/// Build the staged target database at `staging` through the core checked
+/// builder: complete judged admission of every relation's final rows, then
+/// genesis control + the complete history chain committed in one host
+/// transaction. The result is private scratch; publication (a locked local
+/// install, or the hosted checkpoint + genesis-head data plane) is the
+/// caller's separate durable step.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one private build path shared by the local and hosted runners"
+)]
+pub(super) fn build_staged(
+    staging: &Path,
+    operation: OperationId,
+    psd: [u8; 32],
+    genesis: GenesisRecord,
+    target_chain: &[HistoryRecord],
+    state: &MigrationState,
+    descriptor: &SchemaDescriptor,
+    limits: Limits,
+    work: &WorkContext,
+) -> Result<StagedTarget, MigrationError> {
+    let cap = limits.envelope_bytes;
+    let target_identity = genesis.identity;
+    let stamp = genesis_stamp(&genesis, cap).map_err(LogError::from)?;
+    let authority = HeadAuthority::genesis(target_identity, stamp, Activation::NotActivated)
+        .map_err(LogError::from)?;
+    let frozen = match authority
+        .freeze(
+            operation,
+            FreezeIntent::Migration {
+                plan_set_digest: psd,
+                target: target_identity.incarnation_id,
+            },
+        )
+        .map_err(LogError::from)?
+    {
+        FreezeOutcome::Frozen(frozen) => frozen,
+        FreezeOutcome::AlreadyFrozen { .. } => unreachable!("a fresh genesis is active"),
+    };
+    let control = encode_control(&frozen, cap).map_err(LogError::from)?;
+
+    // Stream compiled final sets into private unready staging; complete
+    // admission once. No InstanceBuilder / ready-path population.
+    let schema = descriptor
+        .clone()
+        .validate()
+        .map_err(bumbledb::Error::from)?;
+    if let Some(parent) = staging.parent() {
+        std::fs::create_dir_all(parent).map_err(NamespaceError::Io)?;
+    }
+    let staged = begin_staged(staging, descriptor.clone(), work)?;
+    populate_staged(&staged, state, &schema, work)?;
+    let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(target_chain.len());
+    for (index, record) in target_chain.iter().enumerate() {
+        records.push((
+            history_key(index as u64).to_vec(),
+            encode_record(record, cap).map_err(LogError::from)?,
+        ));
+    }
+    let host: Vec<HostRecordChange<'_>> = records
+        .iter()
+        .map(|(key, value)| HostRecordChange::Put {
+            key: key.as_slice(),
+            value: value.as_slice(),
+        })
+        .collect();
+    staged.write_host(&host, Some(&control), work)?;
+    let dest = staged.destination().to_path_buf();
+    staged.complete_install(work)?;
+    let staged_db = Db::open(&dest, descriptor.clone(), work.clone())?;
+    Ok(StagedTarget {
+        db: staged_db,
+        frozen,
+        genesis: stamp,
+    })
+}
+
+const STAGED_BATCH_BYTES: usize = 16 * 1024 * 1024;
+
+fn populate_staged(
+    staged: &StagedPopulation,
+    state: &MigrationState,
+    schema: &bumbledb::schema::Schema,
+    work: &WorkContext,
+) -> Result<(), MigrationError> {
+    for (index, relation) in schema.relations().iter().enumerate() {
+        if relation.body().closed_rows().is_some() {
+            continue;
+        }
+        work.checkpoint()?;
+        let id = RelationId(u32::try_from(index).expect("validated relation count"));
+        let fields = relation.fields();
+        let mut pending: Vec<Vec<bumbledb::Value>> = Vec::new();
+        let mut batch_bytes = 0usize;
+        let mut flush_error = None;
+        state.visit_rows(id, fields, work, &mut |values| {
+            pending.push(values.to_vec());
+            batch_bytes = batch_bytes.saturating_add(64 + 48 * values.len());
+            if batch_bytes >= STAGED_BATCH_BYTES {
+                if let Err(error) = flush_staged_batch(staged, schema, id, &pending, work) {
+                    flush_error = Some(error);
+                    return Ok(false);
+                }
+                pending.clear();
+                batch_bytes = 0;
+            }
+            Ok(true)
+        })?;
+        if let Some(error) = flush_error {
+            return Err(error);
+        }
+        if !pending.is_empty() {
+            flush_staged_batch(staged, schema, id, &pending, work)?;
+        }
+    }
+    Ok(())
+}
+
+fn flush_staged_batch(
+    staged: &StagedPopulation,
+    schema: &bumbledb::schema::Schema,
+    id: RelationId,
+    pending: &[Vec<bumbledb::Value>],
+    work: &WorkContext,
+) -> Result<(), MigrationError> {
+    let mut builder = ChangeSet::builder(schema, work.clone());
+    for values in pending {
+        builder
+            .insert(id, values)
+            .map_err(|error| MigrationError::Log(LogError::Core(error.into())))?;
+    }
+    let changes = builder
+        .finish()
+        .map_err(|error| MigrationError::Log(LogError::Core(error.into())))?;
+    if changes.is_empty() {
+        return Ok(());
+    }
+    staged.apply_unjudged(&changes, work)?;
+    Ok(())
 }
 
 /// Build the staged target database through the core checked builder, write
@@ -1283,61 +1520,20 @@ fn build_and_install(
 ) -> Result<ActivationRef, MigrationError> {
     let cap = limits.envelope_bytes;
     let target_identity = genesis.identity;
-    let stamp = genesis_stamp(&genesis, cap).map_err(LogError::from)?;
-    let authority = HeadAuthority::genesis(target_identity, stamp, Activation::NotActivated)
-        .map_err(LogError::from)?;
-    let frozen = match authority
-        .freeze(
-            operation,
-            FreezeIntent::Migration {
-                plan_set_digest: psd,
-                target: target_identity.incarnation_id,
-            },
-        )
-        .map_err(LogError::from)?
-    {
-        FreezeOutcome::Frozen(frozen) => frozen,
-        FreezeOutcome::AlreadyFrozen { .. } => unreachable!("a fresh genesis is active"),
-    };
-    let control = encode_control(&frozen, cap).map_err(LogError::from)?;
-
-    // The complete checked build: every relation's final rows through the
-    // core builder, judged as one admission before publication.
-    let schema = descriptor
-        .clone()
-        .validate()
-        .map_err(bumbledb::Error::from)?;
-    let mut builder = InstanceBuilder::new(descriptor.clone())?;
-    for (index, relation) in schema.relations().iter().enumerate() {
-        if relation.body().closed_rows().is_some() {
-            continue;
-        }
-        work.checkpoint()?;
-        let id = bumbledb::RelationId(u32::try_from(index).expect("validated relation count"));
-        builder.load_dyn(id, state.rows_of(id))?;
-    }
-    let instance = match builder.admit()? {
-        Admission::Accepted(instance) => instance,
-        Admission::Rejected(violations) => {
-            return Err(MigrationError::AdmissionRejected(violations));
-        }
-    };
-
     let staging = namespace.fresh_staging();
-    if let Some(parent) = staging.parent() {
-        std::fs::create_dir_all(parent).map_err(NamespaceError::Io)?;
-    }
-    let staged_db = Db::from_instance(&staging, &instance)?;
-    drop(instance);
-    let mut records: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(target_chain.len());
-    for (index, record) in target_chain.iter().enumerate() {
-        records.push((
-            history_key(index as u64).to_vec(),
-            encode_record(record, cap).map_err(LogError::from)?,
-        ));
-    }
-    commit_host(&staged_db, &records, Some(&control), work)?;
-    drop(staged_db);
+    let staged = build_staged(
+        &staging,
+        operation,
+        psd,
+        genesis,
+        target_chain,
+        state,
+        descriptor,
+        limits,
+        work,
+    )?;
+    let stamp = staged.genesis;
+    drop(staged.db);
 
     // Durable publication: the no-overwrite install under the stable lock.
     // An abort that fenced this namespace while we built wins here; the

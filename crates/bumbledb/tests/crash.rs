@@ -28,9 +28,9 @@ fn crash_child_commit_loop() {
     let Ok(dir) = std::env::var("BUMBLEDB_CRASH_DIR") else {
         return;
     };
-    let db = Db::open(std::path::Path::new(&dir), Store).expect("child open");
+    let db = Db::open(std::path::Path::new(&dir), Store, common::work()).expect("child open");
     for k in 1..u64::MAX {
-        db.write(|tx| {
+        db.write(common::work(), |tx| {
             tx.insert([&item(k)])?;
             if k > 1 {
                 tx.delete([&item(k - 1)])?;
@@ -48,7 +48,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
     for (round, delay_ms) in [5u64, 20, 60].into_iter().enumerate() {
         let dir = common::TempDir::new(&format!("crash-{round}"));
         drop(
-            Db::create(dir.path(), Store)
+            Db::create(dir.path(), Store, common::work())
                 .expect("create")
                 .expect("accepted"),
         );
@@ -71,9 +71,9 @@ fn kill_during_commit_leaves_a_consistent_database() {
 
         // Reopen: format + fingerprint verify, then sweep consistency
 
-        let db = Db::open(dir.path(), Store).expect("open after crash");
+        let db = Db::open(dir.path(), Store, common::work()).expect("open after crash");
         let live: Vec<Item> = db
-            .read(|snap| snap.scan_facts::<Item>()?.collect())
+            .read(common::work(), |snap| snap.scan_facts::<Item>()?.collect())
             .expect("scan after crash");
         assert!(
             live.len() <= 1,
@@ -84,7 +84,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
             assert_eq!(item_k.seq, item_k.id.0 * 7, "round {round}: torn fact");
         }
 
-        db.write(|tx| {
+        db.write(common::work(), |tx| {
             if let Some(existing) = live.first() {
                 assert_eq!(
                     tx.insert([existing])?.changed(),
@@ -103,7 +103,7 @@ fn kill_during_commit_leaves_a_consistent_database() {
         .unwrap();
 
         let count = db
-            .read(|snap| Ok(snap.scan_facts::<Item>()?.count()))
+            .read(common::work(), |snap| Ok(snap.scan_facts::<Item>()?.count()))
             .expect("count after crash");
         assert!(count >= 1);
     }

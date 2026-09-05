@@ -6,12 +6,15 @@
 //! join to plan: the evaluator runs the filters against the sealed rows
 use std::collections::BTreeSet;
 
+use crate::error::Error;
 use crate::image::view::{Const, FilterPredicate};
+use crate::image::TextEq;
 use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::{VarId, WordCmp};
 use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
-use bumbledb_theory::schema::{FieldId, RelationId};
+use crate::work::{CacheLedger, GenerationHandle, GenerationState};
+use bumbledb_theory::schema::{FieldId, RelationId, ValueType};
 
 use super::var_is_dead;
 
@@ -79,7 +82,10 @@ fn fold_positive(
         }
         Vec::new()
     };
-    let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
+    let Some(survivors) = fold_surviving_ids(relation, &normalized.occurrences[c_idx].filters)
+    else {
+        return false;
+    };
     if survivors.is_empty() {
         normalized.dead = Some(format!(
             "folded to ∅: {}",
@@ -109,7 +115,10 @@ fn fold_negated(normalized: &mut NormalizedQuery, schema: &Schema, c_idx: usize)
     {
         return false;
     }
-    let survivors = surviving_ids(relation, &normalized.occurrences[c_idx].filters);
+    let Some(survivors) = fold_surviving_ids(relation, &normalized.occurrences[c_idx].filters)
+    else {
+        return false;
+    };
     if survivors.is_empty() {
         remove_anti_probe(normalized, c_idx);
         normalized.occurrences[c_idx].role = Role::Folded(folded_negated(relation_id, Vec::new()));
@@ -253,6 +262,13 @@ impl crate::image::view::Operands for SealedRow<'_> {
             }
         })
     }
+
+    fn string_field(&self, at: crate::image::view::OperandAddr) -> bool {
+        matches!(
+            self.fact.layout().field_type(usize::from(at.field().0)),
+            ValueType::String
+        )
+    }
 }
 
 /// One sealed row field as column words, sliced straight out of the dense
@@ -269,7 +285,6 @@ fn sealed_operand(
 ) -> crate::exec::dispatch::FactOperand {
     use crate::encoding::{field_bytes, interval_words};
     use crate::exec::dispatch::FactOperand;
-    use bumbledb_theory::schema::ValueType;
 
     let idx = usize::from(field.0);
     let ty = fact.layout().field_type(idx);
@@ -313,26 +328,66 @@ fn sealed_operand(
     }
 }
 
-pub(crate) fn surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Vec<u64> {
+/// Closed-row σ. String columns compare through [`TextEq`]; a resolver
+/// `Err` is not a dropped id.
+pub(crate) fn surviving_ids(
+    relation: &Relation,
+    filters: &[FilterPredicate],
+    text: TextEq<'_>,
+) -> Result<Vec<u64>, Error> {
     let layout = relation.layout();
-    relation
+    let mut ids = Vec::new();
+    for (id, row) in relation
         .body()
         .closed_rows()
         .expect("callers checked closedness")
         .iter()
         .enumerate()
-        .filter(|(_, row)| {
-            let ops = SealedRow {
-                fact: layout.encoded(&row.fact),
-            };
-            filters.iter().all(|filter| {
-                crate::image::view::holds(filter, &ops, &[])
-                    .unwrap_or_else(|e| match e {})
-                    .unwrap_or(false)
-            })
-        })
-        .map(|(id, _)| id as u64)
-        .collect()
+    {
+        let ops = SealedRow {
+            fact: layout.encoded(&row.fact),
+        };
+        if sealed_row_survives(&ops, filters, text)? {
+            ids.push(id as u64);
+        }
+    }
+    Ok(ids)
+}
+
+fn sealed_row_survives(
+    ops: &SealedRow<'_>,
+    filters: &[FilterPredicate],
+    text: TextEq<'_>,
+) -> Result<bool, Error> {
+    for filter in filters {
+        match crate::image::view::holds(filter, ops, &[], text)? {
+            Some(true) => {}
+            Some(false) | None => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
+fn closed_layout_has_string(relation: &Relation) -> bool {
+    let layout = relation.layout();
+    (0..layout.field_count()).any(|idx| matches!(layout.field_type(idx), ValueType::String))
+}
+
+/// This fold has no image/generation. Numeric closed rows never consult
+/// `TextEq`; String columns must not take a dummy resolver (raw word
+/// compare / `Ok(false)`).
+fn fold_surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Option<Vec<u64>> {
+    if closed_layout_has_string(relation) {
+        return None;
+    }
+    let generation = GenerationHandle::new(GenerationState::new(
+        crate::image::CacheGeneration::initial(),
+        CacheLedger::unbounded(),
+    ));
+    match surviving_ids(relation, filters, generation.text_eq(None)) {
+        Ok(ids) => Some(ids),
+        Err(_) => None,
+    }
 }
 
 pub(super) fn membership_binders(
@@ -443,3 +498,5 @@ pub(crate) fn folded_picture(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod text_eq;

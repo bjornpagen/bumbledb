@@ -46,10 +46,10 @@ bumbledb::schema! {
 #[test]
 fn cyclic_containments_insert_in_one_transaction() {
     let dir = common::TempDir::new("edge-cyclic");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Alpha {
             id: AlphaId(1),
             beta: BetaId(2),
@@ -69,7 +69,7 @@ fn cyclic_containments_insert_in_one_transaction() {
     .unwrap();
 
     // And the failure half: a cycle missing one side aborts whole.
-    let _ = common::expect_rejected(db.write(|tx| {
+    let _ = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert([&Alpha {
             id: AlphaId(5),
             beta: BetaId(99),
@@ -81,7 +81,7 @@ fn cyclic_containments_insert_in_one_transaction() {
 #[test]
 fn empty_strings_and_bytes_round_trip() {
     let dir = common::TempDir::new("edge-empty-intern");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let original = Blob {
@@ -89,11 +89,11 @@ fn empty_strings_and_bytes_round_trip() {
         payload: [0u8; 16],
         name: "",
     };
-    db.write(|tx| tx.insert([&original]))
+    db.write(common::work(), |tx| tx.insert([&original]))
         .expect("write")
         .unwrap();
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let back: Vec<Blob> = snap.scan_facts()?.collect::<Result<_, _>>()?;
         assert_eq!(back, vec![original]);
         Ok(())
@@ -107,10 +107,10 @@ fn empty_strings_and_bytes_round_trip() {
 #[test]
 fn explicit_max_id_is_a_legal_value() {
     let dir = common::TempDir::new("edge-fresh-max");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Node {
             id: NodeId(u64::MAX),
             parent: NodeId(u64::MAX),
@@ -159,10 +159,10 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
         }],
     };
     let dir = common::TempDir::new("edge-wide-vocabulary");
-    let db = Db::create(dir.path(), schema)
+    let db = Db::create(dir.path(), schema, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert_dyn(RelationId(1), [&[Value::U64(0)]])?;
         tx.insert_dyn(RelationId(1), [&[Value::U64(255)]])?;
         Ok(())
@@ -170,7 +170,7 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     .expect("write")
     .unwrap();
     let mut facts = db
-        .read(|snap| snap.scan(RelationId(1))?.collect::<Result<Vec<_>, _>>())
+        .read(common::work(), |snap| snap.scan(RelationId(1))?.collect::<Result<Vec<_>, _>>())
         .expect("scan");
     facts.sort_by_key(|f| match f[0] {
         Value::U64(id) => id,
@@ -178,7 +178,7 @@ fn cap_wide_closed_vocabulary_through_commit_and_scan() {
     });
     assert_eq!(facts, vec![vec![Value::U64(0)], vec![Value::U64(255)]]);
 
-    let _ = common::expect_rejected(db.write(|tx| {
+    let _ = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert_dyn(RelationId(1), [&[Value::U64(256)]])?;
         Ok(())
     }));
@@ -244,10 +244,10 @@ fn one_byte_compound_determinants() {
     let (switch, watcher) = (RelationId(0), RelationId(1));
 
     let dir = common::TempDir::new("edge-byte-determinants");
-    let db = Db::create(dir.path(), schema)
+    let db = Db::create(dir.path(), schema, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
         tx.insert_dyn(
             watcher,
@@ -258,7 +258,7 @@ fn one_byte_compound_determinants() {
     .expect("validated insert commits")
     .unwrap();
 
-    let _ = common::expect_rejected(db.write(|tx| {
+    let _ = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert_dyn(
             watcher,
             [&[Value::Bool(false), Value::Bool(false), Value::U64(1)]],
@@ -266,7 +266,7 @@ fn one_byte_compound_determinants() {
         Ok(())
     }));
 
-    let _ = common::expect_rejected(db.write(|tx| {
+    let _ = common::expect_rejected(db.write(common::work(), |tx| {
         tx.delete_dyn(switch, [&[Value::Bool(true), Value::Bool(true)]])?;
         Ok(())
     }));
@@ -275,10 +275,10 @@ fn one_byte_compound_determinants() {
 #[test]
 fn zero_binding_gate_with_global_count() {
     let dir = common::TempDir::new("edge-gate-count");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Node {
             id: NodeId(1),
             parent: NodeId(1),
@@ -310,15 +310,15 @@ fn zero_binding_gate_with_global_count() {
     let mut prepared = db.prepare(&query).expect("prepare");
 
     let answers = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
         .expect("execute");
     assert!(answers.is_empty(), "an empty gate empties the query");
 
-    db.write(|tx| tx.insert([&Gate { tag: "open" }]))
+    db.write(common::work(), |tx| tx.insert([&Gate { tag: "open" }]))
         .expect("open the gate")
         .unwrap();
     let answers = db
-        .read(|snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue]))
         .expect("execute");
     assert_eq!(answers.len(), 1);
     assert_eq!(answers.get(0, 0), bumbledb::AnswerValue::U64(2));
@@ -348,11 +348,11 @@ fn mixed_params_query() -> Query {
 )]
 fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
     let dir = common::TempDir::new("edge-bind-matrix");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let ids = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let mut ids = Vec::new();
             for (next, (account, amount, memo)) in [
                 (10u64, 5i64, "rent"),
@@ -380,7 +380,7 @@ fn bind_matrix_raises_precise_errors_and_mixed_binds_execute() {
         .value;
 
     let mut prepared = db.prepare(&mixed_params_query()).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let args = [
             ParamArg::Scalar(BindValue::I64(5)),
             ParamArg::Set(&[Value::U64(10), Value::U64(11), Value::U64(11)]),

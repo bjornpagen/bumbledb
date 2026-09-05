@@ -30,8 +30,17 @@
 //!     Item(id) -> Item;
 //! }
 //! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
+//! # let work = bumbledb::start_operation(bumbledb::ExecutionPolicy {
+//! #     input_bytes: 1 << 30,
+//! #     working_bytes: 1 << 30,
+//! #     scratch_bytes: 1 << 30,
+//! #     result_bytes: 1 << 30,
+//! #     rows: 1 << 30,
+//! #     work_units: 1 << 30,
+//! #     timeout: std::time::Duration::from_secs(3600),
+//! # }).unwrap();
 //! # let _ = std::fs::remove_dir_all(&dir);
-//! let db = bumbledb::Db::create(&dir, Ledger).unwrap().unwrap();
+//! let db = bumbledb::Db::create(&dir, Ledger, work).unwrap().unwrap();
 //! db.write(|tx| {
 //!     let id = ItemId(bumbledb::Id128::from_bytes([7; 16]));
 //!     tx.insert([&Item { id }]) // schema-B fact, schema-A database: rustc refuses
@@ -87,12 +96,12 @@ pub use allen::{AllenMask, Basic, classify};
 #[doc(hidden)]
 pub use api::db::{AcceptedCollection, CollectionBuilder};
 pub use api::db::{
-    Db, Fact, InstanceBuilder, Key, MutationReport, OwnedInstance, ReadInstance, RowReader,
-    Witness, WriteTx,
+    ApplyExpected, ApplyOutcome, Db, Fact, InstanceBuilder, Key, MutationReport, OwnedInstance,
+    OwnedRead, ReadFrame, ReadInstance, RowReader, Witness, WriteTx, start_operation,
 };
 pub use api::prepared::{
-    Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, ParamArg, PreparedQuery,
-    ResultCursor, ResultIdentity, ResultPage,
+    Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,
+    PreparedQuery, ResultCursor, ResultIdentity, ResultPage,
 };
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Id128, Id128ParseError};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
@@ -123,8 +132,15 @@ pub use plan::ground::with_grounding_disabled;
 /// key on it: a format bump must regenerate every store-derived
 /// artifact, never reuse one.
 pub use storage::GenerationId;
+pub use storage::store::CloseReport;
 pub use storage::store::format::LAYOUT as STORAGE_FORMAT_VERSION;
-pub use work::{ExecutionPolicy, WorkContext, WorkError};
+pub use work::{
+    ExecutionPolicy, GenerationHandle, GenerationState, ResolverView, WeakGenerationHandle,
+    ScratchClaimKey,
+    ScratchAppend, ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe, ScratchRelation,
+    ScratchTextLookup, ScratchWriteBatch,
+    ScratchWordKey, WorkContext, WorkError,
+};
 
 /// Successor physical store (C04): LMDB owner, owned snapshots, private
 /// candidate. Consumed by the internal log and the native runtime.
@@ -138,6 +154,8 @@ pub use ir::{
     ProjectionRule, Query, Rec, RecRule, RecStep, Rule, Term, Value, VarId, WordCmp,
 };
 
+/// Query-image text token (process-scoped, never persisted) — public only
+/// as the payload of [`error::CorruptionError::DanglingInternId`].
 pub use crate::encoding::InternId;
 pub use bumbledb_theory::schema::FixedIntervalElement;
 pub use error::{
@@ -146,8 +164,9 @@ pub use error::{
 };
 pub use schema::fingerprint::SchemaFingerprint;
 pub use schema::{
-    FieldId, Manifest, RelationId, RenderedFact, RenderedViolation, Schema, SchemaDescriptor,
-    SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory, render_rejection,
+    CompileError, FieldId, Manifest, RelationId, RenderedFact, RenderedViolation, Schema,
+    SchemaDescriptor, SchemaSpec, SchemaSpecError, StatementId, StatementKind, Theory,
+    render_rejection,
 };
 /// Offline store sweeper used by the bench harness and engine tests.
 /// Not embedding API.

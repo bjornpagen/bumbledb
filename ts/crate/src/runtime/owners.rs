@@ -34,8 +34,12 @@ impl DatabaseEntry {
     pub fn begin_close(&mut self) {
         self.closing = true;
         for session in self.sessions.values_mut() {
-            session.begin_close();
+            session.closing = true;
         }
+    }
+
+    pub fn snapshot_caps(&self) -> Vec<super::registry::Capability> {
+        self.sessions.values().map(|slot| slot.cap).collect()
     }
 }
 
@@ -184,6 +188,7 @@ impl State {
                 .get(&owner)
                 .and_then(|entry| entry.databases.get(&database))
                 .is_none_or(|entry| !entry.sessions.contains_key(&id)),
+            WaitTarget::Resource(_) => false,
         }
     }
 
@@ -193,7 +198,7 @@ impl State {
             WaitTarget::Owner(id) | WaitTarget::Database(id, _) | WaitTarget::Session(id, _, _) => {
                 self.owners.get(&id).is_some_and(|entry| entry.failed)
             }
-            WaitTarget::Operation(_) => false,
+            WaitTarget::Operation(_) | WaitTarget::Resource(_) => false,
         }
     }
 
@@ -428,10 +433,18 @@ impl Runtime {
     /// owner holds exactly `path` (the admin verbs reuse an already-open
     /// tenant instead of double-acquiring its kernel fence). `None` when no
     /// live owner holds that directory.
+    ///
+    /// Held locks record the fence's CANONICAL spelling
+    /// ([`acquire_directory`] canonicalizes the parent), so the requested
+    /// path is normalized the same way before comparison — otherwise a
+    /// symlinked spelling (macOS `/var` → `/private/var`) would silently
+    /// miss the warm tenant and double-acquire its kernel fence.
     pub(crate) fn lease_database_at(
         self: &Arc<Self>,
         path: &std::path::Path,
     ) -> Result<Option<DbLease>, RuntimeError> {
+        let canonical = canonical_directory(path);
+        let requested: &Path = canonical.as_deref().unwrap_or(path);
         let target = {
             let state = lock(&self.state);
             let mut found = None;
@@ -442,7 +455,7 @@ impl Runtime {
                 let Some(held) = entry.lock.as_ref() else {
                     continue;
                 };
-                if held.directory() != path {
+                if held.directory() != requested {
                     continue;
                 }
                 if let Some((&db_id, database)) = entry
@@ -588,7 +601,11 @@ impl Runtime {
         report: Box<dyn FnOnce(CloseReport) + Send>,
     ) {
         let mut state = lock(&self.state);
-        let immediate = if state.target_done(target) {
+        let resource_done = match target {
+            WaitTarget::Resource(cap) => self.registry.join(cap),
+            _ => false,
+        };
+        let immediate = if resource_done || state.target_done(target) {
             Some(CloseReport::Closed)
         } else if state.target_failed(target)
             || state.waiters.len() >= self.options.cleanup_capacity
@@ -664,18 +681,31 @@ impl DirectoryOwner {
         self.close_with(false);
     }
     pub fn close_with(&self, remove: bool) {
-        let mut state = lock(&self.runtime.state);
-        if let Some(entry) = state.owners.get_mut(&self.id) {
-            entry.begin_close(remove);
+        let caps = {
+            let mut state = lock(&self.runtime.state);
+            let caps = if let Some(entry) = state.owners.get_mut(&self.id) {
+                entry.begin_close(remove);
+                entry
+                    .databases
+                    .values()
+                    .flat_map(DatabaseEntry::snapshot_caps)
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            for operation in state
+                .operations
+                .values()
+                .filter(|operation| operation.owner == Some(self.id))
+            {
+                operation.context.cancel();
+            }
+            self.runtime.changed.notify_all();
+            caps
+        };
+        for cap in caps {
+            let _ = self.runtime.request_resource_close(cap);
         }
-        for operation in state
-            .operations
-            .values()
-            .filter(|operation| operation.owner == Some(self.id))
-        {
-            operation.context.cancel();
-        }
-        self.runtime.changed.notify_all();
     }
     pub fn drain(&self, report: Box<dyn FnOnce(CloseReport) + Send>) {
         self.begin_close();
@@ -801,20 +831,28 @@ impl ManagedDb {
         })
     }
     pub fn begin_close(&self) {
-        let mut state = lock(&self.runtime.state);
-        if let Some(entry) = state
-            .owners
-            .get_mut(&self.owner)
-            .and_then(|entry| entry.databases.get_mut(&self.id))
-        {
-            entry.begin_close();
+        let caps = {
+            let mut state = lock(&self.runtime.state);
+            let caps = state
+                .owners
+                .get_mut(&self.owner)
+                .and_then(|entry| entry.databases.get_mut(&self.id))
+                .map(|entry| {
+                    entry.begin_close();
+                    entry.snapshot_caps()
+                })
+                .unwrap_or_default();
+            for operation in state.operations.values().filter(|operation| {
+                operation.owner == Some(self.owner) && operation.database == Some(self.id)
+            }) {
+                operation.context.cancel();
+            }
+            self.runtime.changed.notify_all();
+            caps
+        };
+        for cap in caps {
+            let _ = self.runtime.request_resource_close(cap);
         }
-        for operation in state.operations.values().filter(|operation| {
-            operation.owner == Some(self.owner) && operation.database == Some(self.id)
-        }) {
-            operation.context.cancel();
-        }
-        self.runtime.changed.notify_all();
     }
     pub fn drain(&self, report: Box<dyn FnOnce(CloseReport) + Send>) {
         self.begin_close();
@@ -839,6 +877,18 @@ impl Drop for PendingDirectory {
             self.runtime.changed.notify_all();
         }
     }
+}
+
+/// The fence's canonical spelling of a tenant directory: absolute path with
+/// the PARENT canonicalized and the final component kept verbatim — exactly
+/// how [`acquire_directory`] records `DirectoryLock::directory`. `None` when
+/// the path cannot be normalized (comparison then falls back to the raw
+/// spelling, which can only under-match, never cross-match).
+fn canonical_directory(path: &Path) -> Option<std::path::PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    let name = absolute.file_name()?;
+    let parent = std::fs::canonicalize(absolute.parent()?).ok()?;
+    Some(parent.join(name))
 }
 
 #[allow(clippy::needless_pass_by_value)]

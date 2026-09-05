@@ -5,9 +5,10 @@ import { PUBLISH_PLATFORMS } from "./platform.ts"
  * Packed-manifest derivation — pure functions over the committed repo
  * manifest, consumed by `scripts/stage.ts`. The committed `package.json`
  * is NEVER rewritten: the earlier prepack/postpack pair that injected and
- * removed `optionalDependencies` in place is deleted (chapter 32: "no
- * prepack/postpack hook rewrites the developer's package.json or depends
- * on an interrupted post-hook repairing it"). Instead the exact platform
+ * removed `optionalDependencies` in place is deleted
+ * (docs/reference/packaging.md PKG-02: no prepack/postpack hook rewrites
+ * the developer's package.json or depends on an interrupted post-hook
+ * repairing it). Instead the exact platform
  * pins are written into the STAGED manifest only, inside an isolated
  * staging tree, and `pnpm pack` runs there. An interrupted stage leaves
  * the checkout byte-identical by construction.

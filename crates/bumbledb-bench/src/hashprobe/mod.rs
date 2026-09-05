@@ -8,8 +8,8 @@
 //! - the representative canonical-input corpus ([`inputs`]),
 //! - the BLAKE3-full / BLAKE3-truncated-16 / AEGIS-128L-MAC candidate probe
 //!   with one-shot/streaming equivalence and timing ([`probe`], HASH-04),
-//! - known-answer-test loading with typed refusal when vectors are absent
-//!   ([`kat`], HASH-01 — a missing vector file is `Err`, never a silent pass),
+//! - known-answer-test loading; a missing AEGIS vector file is **NotRun**,
+//!   never a silent pass and never a required 1.0 cell,
 //! - the forced-collision workload schedules for HASH-02 ([`collision`]).
 //!
 //! Nothing here selects a persisted format. The selected default remains

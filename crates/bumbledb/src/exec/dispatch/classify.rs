@@ -3,8 +3,8 @@ use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;
 use crate::ir::normalize::NormalizedQuery;
 use crate::plan::fj::OccBind;
-use crate::schema::{Relation, Schema};
-use bumbledb_theory::schema::FieldId;
+use crate::schema::{DistinctnessWitness, Relation, Schema};
+use bumbledb_theory::schema::{FieldId, RelationId};
 
 /// Classifies a normalized query: `Some(KeyProbePlan)` iff it is key-probe
 /// eligible — exactly one atom occurrence (positive, so no negated atoms
@@ -66,7 +66,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
     if relation.body().closed_rows().is_some() {
         return None;
     }
-    let kind = key_probe_candidate(relation, schema, &value_of)?;
+    let kind = key_probe_candidate(relation_id, relation, schema, &value_of)?;
     let key_fields: Vec<FieldId> = kind.key().iter().map(|(f, _)| *f).collect();
 
     let mut slot = 0usize;
@@ -95,43 +95,52 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
 }
 
 fn key_probe_candidate(
+    relation_id: RelationId,
     relation: &Relation,
     schema: &Schema,
     value_of: &impl Fn(FieldId) -> Option<Const>,
 ) -> Option<super::KeyProbeKind> {
-    relation
-        .keys()
-        .iter()
-        .find(|id| {
-            schema
-                .key(**id)
-                .projection
-                .iter()
-                .all(|f| value_of(*f).is_some())
-        })
-        .map(|id| {
-            let key = schema.key(*id);
-            super::KeyProbeKind::Uniqueness {
-                statement: key.id,
-                key: key
-                    .projection
-                    .iter()
-                    .map(|f| (*f, value_of(*f).expect("checked above")))
-                    .collect(),
+    let theory = schema.compiled_theory().ok()?;
+    for key in schema.keys() {
+        if key.relation != relation_id {
+            continue;
+        }
+        match theory.key_witness(key.id) {
+            Some(DistinctnessWitness::ScalarKeyUnique { projection }) => {
+                let compiled = theory.projection(projection)?;
+                if compiled.projection.iter().all(|f| value_of(*f).is_some()) {
+                    return Some(super::KeyProbeKind::Uniqueness {
+                        statement: key.id,
+                        key: compiled
+                            .projection
+                            .iter()
+                            .map(|f| (*f, value_of(*f).expect("checked above")))
+                            .collect(),
+                    });
+                }
             }
+            Some(DistinctnessWitness::FullRowEquality)
+            | Some(DistinctnessWitness::ExistenceOnly { .. })
+            | None => {}
+        }
+    }
+    let fields = theory.fields_of(relation_id).unwrap_or(relation.fields());
+    let all: Vec<FieldId> = (0..fields.len())
+        .map(|i| FieldId(u16::try_from(i).expect("field count fits u16")))
+        .collect();
+    all.iter()
+        .all(|f| value_of(*f).is_some())
+        .then(|| super::KeyProbeKind::Membership {
+            key: all
+                .iter()
+                .map(|f| (*f, value_of(*f).expect("checked above")))
+                .collect(),
         })
-        .or_else(|| {
-            let all: Vec<FieldId> = (0..relation.fields().len())
-                .map(|i| FieldId(u16::try_from(i).expect("field count fits u16")))
-                .collect();
-            all.iter()
-                .all(|f| value_of(*f).is_some())
-                .then(|| super::KeyProbeKind::Membership {
-                    key: all
-                        .iter()
-                        .map(|f| (*f, value_of(*f).expect("checked above")))
-                        .collect(),
-                })
+        .filter(|_| {
+            matches!(
+                theory.full_row_witness(),
+                DistinctnessWitness::FullRowEquality
+            )
         })
 }
 

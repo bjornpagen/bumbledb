@@ -262,7 +262,11 @@ impl Executor {
 
             if carried.is_none() {
                 counters.phase_start(node_idx, JoinPhase::Force);
-                colts[occ].ensure_forced(start_cursor, s_level);
+                if self.colt_ok(colts[occ].ensure_forced(start_cursor, s_level)).is_none() {
+                    scratch.parents.clear();
+                    scratch.element_origins.clear();
+                    return;
+                }
                 counters.phase_end(node_idx, JoinPhase::Force);
             }
 
@@ -300,16 +304,23 @@ impl Executor {
                     let cursor = carried.map_or(start_cursor, |col| {
                         pending_cursors[parent * carried_w + col]
                     });
-                    let hit = colt.get_prehashed(
+                    let Some(hit) = self.colt_ok(colt.get_prehashed(
                         cursor,
                         s_level,
                         &probe_keys[k * sub_arity..(k + 1) * sub_arity],
                         hashes[k],
-                    );
+                    )) else {
+                        break;
+                    };
                     counters.probe(node_idx, sub_idx, hit.is_some());
                     sibling_children[element] = hit.unwrap_or(Cursor::Row(0));
                     mask[k] = u8::from(hit.is_some());
                 }
+            }
+            if !matches!(self.drive_state, super::DriveState::Running) {
+                scratch.parents.clear();
+                scratch.element_origins.clear();
+                return;
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             counters.phase_end(node_idx, JoinPhase::Probe);
@@ -438,7 +449,7 @@ impl Executor {
             counters.phase_end(node_idx, JoinPhase::Residual);
         }
 
-        anti_probe_pass(
+        if let Err(error) = anti_probe_pass(
             &self.precompute[node_idx].anti_probes,
             node_idx,
             &node.subatoms[cover_sub].vars,
@@ -458,7 +469,12 @@ impl Executor {
                 scratch.pending_bindings[parent * slot_count + slot]
             },
             counters,
-        );
+        ) {
+            self.poison(super::Poison::Work(error));
+            scratch.parents.clear();
+            scratch.element_origins.clear();
+            return;
+        }
 
         let leaf = node_idx + 2 == n_nodes;
         let child_carried = &tables.carried[node_idx + 1];
@@ -533,6 +549,13 @@ impl Executor {
                     self.cursors[occ] = (assemble(occ), tables.entry_level[node_idx + 1][occ]);
                 }
                 let flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
+                if flow.is_terminal() {
+                    self.poison(match flow {
+                        super::Flow::Stop => super::Poison::SinkStop,
+                        _ => super::Poison::SinkError,
+                    });
+                    return;
+                }
                 if flow == Flow::SkipSuffix {
                     counters.skip(node_idx);
                     match tables.absorb {

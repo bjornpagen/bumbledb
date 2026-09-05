@@ -6,6 +6,9 @@ use super::{
 impl Colt {
     /// # Panics
     /// Only on programmer-invariant violations: undersized caller buffers.
+    /// # Errors
+    /// Returns the force/growth refusal. Do not treat `Ok((0, token))` as
+    /// admission failure.
     pub fn iter_batch(
         &mut self,
         cursor: Cursor,
@@ -14,7 +17,7 @@ impl Colt {
         keys_out: &mut [u64],
         children_out: &mut [Cursor],
         max: usize,
-    ) -> (usize, BatchToken) {
+    ) -> Result<(usize, BatchToken), crate::work::WorkError> {
         self.iter_batch_at(
             cursor,
             self.join_index(level),
@@ -46,7 +49,7 @@ impl Colt {
         keys_out: &mut [u64],
         children_out: &mut [Cursor],
         max: usize,
-    ) -> (usize, BatchToken) {
+    ) -> Result<(usize, BatchToken), crate::work::WorkError> {
         let arity = self.arity_at(level);
         // Caller-buffer contract — a plan-shape invariant, never data:
 
@@ -56,26 +59,26 @@ impl Colt {
                 let payload = self.token_payload(token);
 
                 if payload > 0 || max == 0 {
-                    return (0, token);
+                    return Ok((0, token));
                 }
                 for (i, col) in self.schema_columns[level].iter().enumerate() {
                     keys_out[i] = self.word_at(*col, position);
                 }
                 children_out[0] = Cursor::Row(position);
-                (1, BatchToken(1 | self.epoch_bits()))
+                Ok((1, BatchToken(1 | self.epoch_bits())))
             }
             Cursor::Node(node) => {
                 let is_suffix = level + 1 == self.schema_columns.len();
                 match self.nodes[node.0 as usize] {
                     NodeState::Unforced(_) if is_suffix => {
-                        self.iter_positions(node, level, token, keys_out, children_out, max)
+                        Ok(self.iter_positions(node, level, token, keys_out, children_out, max))
                     }
                     NodeState::Unforced(_) => {
-                        let map = self.force(node, level);
-                        self.iter_map(map, level, token, keys_out, children_out, max)
+                        let map = self.force(node, level)?;
+                        Ok(self.iter_map(map, level, token, keys_out, children_out, max))
                     }
                     NodeState::Forced { map } => {
-                        self.iter_map(map, level, token, keys_out, children_out, max)
+                        Ok(self.iter_map(map, level, token, keys_out, children_out, max))
                     }
                 }
             }

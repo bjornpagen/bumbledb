@@ -82,7 +82,7 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 			[["missing-backfill", "Note", "pinned"]]
 		)
 		const filled = diffSchemas(prev, next, [
-			{ kind: "backfill", relation: "Note", field: "pinned", expression: LIT_FALSE } as MigrationIntentEntry
+			{ kind: "backfill", relation: "Note", field: "pinned", expression: LIT_FALSE } as unknown as MigrationIntentEntry
 		])
 		assert.deepEqual(filled.requirements, [])
 		const map = filled.operations[0]
@@ -164,27 +164,93 @@ describe("ambiguity and loss refuse without typed intent", function suite() {
 		const prev = snap(rel("M", [["x", "i64"]]))
 		const next = snap(rel("M", [["x", "bool"]]))
 		const converted = diffSchemas(prev, next, [
-			{ kind: "convert", relation: "M", field: "x", expression: LIT_FALSE } as MigrationIntentEntry
+			{ kind: "convert", relation: "M", field: "x", expression: LIT_FALSE } as unknown as MigrationIntentEntry
 		])
 		assert.deepEqual(converted.requirements, [])
 		assert.deepEqual(converted.destructive, [{ relation: "M", field: "x" }])
 	})
 
-	test("backfill on an existing field and convert on a new field are conflicts", function misuse() {
-		const prev = snap(rel("M", [["x", "i64"]]))
-		const next = snap(rel("M", [["x", "i64"], ["y", "i64"]]))
-		const wrongFill = diffSchemas(prev, next, [
-			{ kind: "backfill", relation: "M", field: "x", expression: LIT_FALSE } as MigrationIntentEntry,
-			{ kind: "backfill", relation: "M", field: "y", expression: { kind: "field", name: "x" } } as MigrationIntentEntry
-		])
+	test("backfill contradicting a live type change and convert on a new field are conflicts", function misuse() {
+		// backfill where a type change is live on the field: a genuinely
+		// contradictory intent (the change needs convert), never stale.
+		const changed = diffSchemas(
+			snap(rel("M", [["x", "i64"]])),
+			snap(rel("M", [["x", "f64"]])),
+			[{ kind: "backfill", relation: "M", field: "x", expression: LIT_FALSE } as unknown as MigrationIntentEntry]
+		)
 		assert.deepEqual(
-			wrongFill.requirements.map((entry) => [entry.code, entry.field]),
+			changed.requirements.map((entry) => [entry.code, entry.field]),
 			[["conflicting-intent", "x"]]
 		)
+		const prev = snap(rel("M", [["x", "i64"]]))
+		const next = snap(rel("M", [["x", "i64"], ["y", "i64"]]))
 		const wrongConvert = diffSchemas(prev, next, [
-			{ kind: "convert", relation: "M", field: "y", expression: LIT_FALSE } as MigrationIntentEntry
+			{ kind: "convert", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry
 		])
 		assert.ok(wrongConvert.requirements.some((entry) => entry.code === "conflicting-intent" && entry.field === "y"))
+	})
+
+	test("intent on an unchanged field is stale, never a conflict, even beside live changes", function recorded() {
+		// The already-recorded shape: after 'add y with backfill' was generated
+		// and recorded, rerunning with the same intent sees y unchanged on both
+		// sides — stale-intent with remediation, not conflicting-intent.
+		const applied = snap(rel("M", [["x", "i64"], ["y", "i64"]]))
+		const rerun = diffSchemas(applied, applied, [
+			{ kind: "backfill", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry
+		])
+		assert.deepEqual(
+			rerun.requirements.map((entry) => [entry.code, entry.relation, entry.field]),
+			[["stale-intent", "M", "y"]]
+		)
+		assert.ok(rerun.requirements[0] !== undefined && rerun.requirements[0].detail.includes("must be removed"))
+		assert.equal(rerun.identity, true)
+		// Staleness on one field never hides live changes elsewhere: the stale
+		// entry and the live missing-backfill both appear, deterministically.
+		const mixed = diffSchemas(applied, snap(rel("M", [["x", "i64"], ["y", "i64"], ["z", "i64"]])), [
+			{ kind: "backfill", relation: "M", field: "y", expression: LIT_FALSE } as unknown as MigrationIntentEntry
+		])
+		assert.deepEqual(
+			mixed.requirements.map((entry) => [entry.code, entry.field]),
+			[["stale-intent", "y"], ["missing-backfill", "z"]]
+		)
+	})
+
+	test("same-schema convert records units+1, not an identity no-op drop", function sameSchemaConvert() {
+		const attempt = snap(rel("Attempt", [["id", "u64"], ["units", "u64"]]))
+		const increment = {
+			kind: "add",
+			left: { kind: "field", name: "units" },
+			right: { kind: "literal", value: { u64: 1n } }
+		}
+		const diff = diffSchemas(attempt, attempt, [
+			{ kind: "convert", relation: "Attempt", field: "units", expression: increment } as MigrationIntentEntry
+		])
+		assert.deepEqual(diff.requirements, [])
+		assert.equal(diff.identity, false)
+		const map = diff.operations[0]
+		assert.ok(map !== undefined && map.kind === "map-relation")
+		assert.deepEqual(map.fields, [
+			{ target: "id", expression: { kind: "field", name: "id" } },
+			{
+				target: "units",
+				expression: {
+					kind: "add",
+					left: { kind: "field", name: "units" },
+					right: { kind: "literal", value: { u64: "1" } }
+				}
+			}
+		])
+	})
+
+	test("an already-applied field rename reruns as exactly one stale entry, no conflict", function renameRerun() {
+		// After renameField(body → text) was recorded and applied, prev and next
+		// both spell the field 'text': `from` is gone, `to` exists on both sides.
+		const applied = snap(rel("Note", [["id", "u64"], ["text", "string"]]))
+		const rerun = diffSchemas(applied, applied, [{ kind: "rename-field", relation: "Note", from: "body", to: "text" }])
+		assert.deepEqual(
+			rerun.requirements.map((entry) => [entry.code, entry.relation, entry.field]),
+			[["stale-intent", "Note", "body"]]
+		)
 	})
 
 	test("backfill referencing unknown source fields is unsupported, not guessed", function unknownRef() {

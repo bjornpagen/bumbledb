@@ -129,7 +129,7 @@ const program = Effect.scoped(
 			return outcome
 		}
 		const result = yield* snapshot.execute(attemptsFor, { student: studentId }, work)
-		const rows = yield* result.collect({ maxBytes: work.resultBytes })
+		const rows = yield* result.collect({ maxBytes: work.resultBytes }, work)
 		return { outcome, rows }
 	})
 )
@@ -172,9 +172,10 @@ and query representations.
   `insert`/`delete` are lazy bounded ingestion effects, `finish()` seals the
   immutable `ChangeSet`. Snapshots satisfy the shared `QueryReader`: typed
   `get` returns `Option`, `execute` returns a sealed `CompleteResult` whose
-  `collect({ maxBytes })` is capped materialization and whose
-  `pages({ pageBytes })` is a one-shot consuming `Stream` of owned page
-  arrays after complete evaluation.
+  `collect({ maxBytes }, work)` is capped materialization and whose
+  `pages({ pageBytes }, work)` is a one-shot consuming `Stream` of owned page
+  arrays after complete evaluation. Delivery work is fresh: it does not
+  inherit the snapshot or execution deadline.
 - `query(S).rule(...)` builds typed queries. Reusing a variable created by
   `v(R)` joins records through that value. The builder supports named result
   rows, typed parameters, negation, comparisons, boolean conditions, set
@@ -182,6 +183,10 @@ and query representations.
   `f64` are deterministic with one final rounding), named intermediate
   results, nonrecursive composition of query templates, and linear
   recursive reachability.
+- `Scalar.field("units")` is an unresolved source-field leaf.
+  `Scalar.add(Scalar.field("units"), Scalar.u64(1n))` authors synchronously
+  without native loading. Native schema binding typechecks it, including
+  on zero rows. There is no `field<T>` assertion and no JS evaluator.
 - Operational failure is the one `DbError` tagged-reason class in the
   Effect error channel; interruption and finalizer problems stay in
   `Cause`. Resource owners are scoped and report honest `CloseReport`s;

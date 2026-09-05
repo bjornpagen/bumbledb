@@ -11,6 +11,7 @@ import Bumbledb.Exec.Rewrites
 import Bumbledb.Exec.Reach
 import Bumbledb.Exec.SemiNaive
 import Bumbledb.Txn
+import Bumbledb.Txn.DeltaRestriction
 import Bumbledb.Txn.Support
 import Bumbledb.Float64.Sum
 import Bumbledb.FloatInterval
@@ -20,46 +21,36 @@ import Bumbledb.Oracle
 import Bumbledb.Countermodels
 
 /-!
-# Bridge — the obligation ledger (
+# Bridge — current constructor correspondence
 
-The machine-listable Lean↔Rust boundary: one `Obligation` per premise
-the Rust engine discharges, collated from the modules' inline `Bridge:`
-notes (PRDs 02–09), replacing the prose theorem↔evidence table that
-lived in.
+One `Obligation` per Lean premise that a **current** Rust constructor
+is expected to discharge. Tokens name live symbols; deleted
+`storage/commit` / `WriteDelta` / braid paths are not mechanisms.
+Empirical instruments are correspondence cases (`lean/correspondence.md`),
+not dyn counts or wording bans.
 
 ## The two checked halves
 
-* **The Lean half is CHECKED BY THE BUILD.** Every row is constructed
- through `Obligation.row`, whose first argument is the theorem ITSELF
- (`@theoremName` — the chosen mechanism, recorded per the PRD: one
- term-level reference inside each row, so a renamed or deleted theorem
- is an unknown-constant elaboration error and `lake build` fails). The
- `theoremName: Lean.Name` field is the machine-listable rendering of
- the same reference.
-* **The Rust/docs half is CHECKED BY THE CENSUS**
- (`scripts/spec-census.sh`, run via `scripts/lean.sh` and the CI lean
- job): every `mechanism` and `instrument` token of the form
- `symbol (path)` must find its path on disk and its symbol inside that
- path; bare `crates/…` tokens must exist on disk; and every
- `lean/…` citation in the surviving markdown (`lean/README.md`,
- `lean/conformance/README.md`, `docs/cookbook.md`, `ts/COOKBOOK.md`)
- must resolve to a real declaration in this tree.
+* **Lean:** `Obligation.row` carries `@theoremName`, so a deleted
+ theorem fails `lake build`.
+* **Correspondence:** `scripts/spec-census.sh` resolves each
+ `symbol (path)` token and refuses deleted commit/braid vocabulary
+ as a current mechanism. It does not prove LMDB, S3, native
+ lifetimes, or host FP state.
 
-## String conventions (the census's parse contract)
+## String conventions
 
-* `premise` is ONE prose sentence — no `::`, no `crates/`
- (any such token would make the census scan it).
-* `mechanism` and `instrument` are census-scanned: semicolon-joined
- `symbol (path)` pairs (the symbol's final `::`-segment must grep
- word-bounded inside the path) and bare repository paths (existence).
- An instrument names a test fn or a conformance case.
+* `premise` is one sentence — no `::`, no `crates/`.
+* `mechanism` and `instrument` are semicolon-joined `symbol (path)`
+ pairs, or a bare `crates/` / `lean/` path.
 
-## The inline residue
+## Premise owners (C4)
 
-The modules' per-theorem `Bridge:` doc-comment notes REMAIN as the
-in-context pointers (the allowed residue); this file is the collation
-the census checks. The ledger row count is asserted at the bottom
-(`ledger_count`) so a dropped row is a build failure, not a drift.
+* Complete / unready / verifier: `judge_complete` over `CandidateFacts`.
+* Incremental: `judge_incremental` requires `LawfulParent` (the
+ constructor of `State.models`). `UnreadyStore` cannot mint it.
+* Streaming reference: `judge_final_state` — not the production planner.
+* Citations: `fact_sort_key` then labeled top-k.
 -/
 
 namespace Bumbledb
@@ -114,7 +105,7 @@ def ledger : List Obligation := [
   .row @measure_ray_none `Bumbledb.measure_ray_none
     "A ray has no duration measure — the constructor marks it; a Duration-weighted capacity law raises the typed write refusal."
     "crate::Interval::is_ray (crates/bumbledb-theory/src/interval.rs); crate::Error::CapacityRayMeasure (crates/bumbledb/src/error.rs)"
-    "ray_is_the_unbounded_denotation (crates/bumbledb-theory/src/interval.rs); capacity_duration_weight_of_a_ray_refuses_typed (crates/bumbledb/src/storage/commit/tests/marks.rs)",
+    "ray_is_the_unbounded_denotation (crates/bumbledb-theory/src/interval.rs)",
 
   .row @measure_finite `Bumbledb.measure_finite
     "A bounded interval's length is exactly end minus start — the host computes it; the representation carries the two bounds."
@@ -138,8 +129,8 @@ def ledger : List Obligation := [
 
   .row @value_eq_iff_encode_eq `Bumbledb.value_eq_iff_encode_eq
     "Canonical-bytes identity: within one value type, value equality is exactly canonical-encoding equality — the fact-identity law, per-database for interned strings."
-    "crate::encoding::encode::encode_literal (crates/bumbledb/src/encoding/encode.rs); crate::encoding::encode::encode_fact (crates/bumbledb/src/encoding/encode.rs)"
-    "encode_fact_matches_independent_field_encodings (crates/bumbledb/src/encoding/tests.rs)",
+    "crate::encoding::encode::encode_literal (crates/bumbledb/src/encoding/encode.rs); crate::encoding::encode::encode_fact (crates/bumbledb/src/encoding/encode.rs); fact_sort_key (crates/bumbledb/src/canonical.rs)"
+    "encode_fact_matches_independent_field_encodings (crates/bumbledb/src/encoding/tests.rs); collision_pair_judgment_is_exact_bytes_not_fingerprints (crates/bumbledb-bench/src/hashprobe/tests.rs)",
 
   .row @FixedU64.not_ray `Bumbledb.FixedU64.not_ray
     "The Q2 bound of the fixed-width interval family: start plus width sits strictly below the ceiling, so a fixed-width value is never a ray and its one-word encoding re-derives the end without loss — the constructor discharges the bound by parsing."
@@ -153,13 +144,13 @@ def ledger : List Obligation := [
 
   .row @contains_iff_view_subset `Bumbledb.contains_iff_view_subset
     "The containment judgment is exactly subset inclusion of selected projected views — the checker's per-fact probe and the denotation are one statement."
-    "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs); judgment.rs::Checker (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "a_coherently_deleted_scalar_target_is_a_judgment_violation (crates/bumbledb/src/verify_store/tests.rs)",
+    "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs); judge_complete (crates/bumbledb/src/schema/judge.rs)"
+    "d04_containment_target_removal_matches_complete (crates/bumbledb/src/schema/judge/discriminators.rs); containment_judges_the_final_state_not_the_landing_order (crates/bumbledb/src/schema/judge/tests.rs)",
 
   .row @accepted_target_key_spent `Bumbledb.accepted_target_key_spent
     "Acceptance spent: on a holding instance, an accepted target key is semantic functionality of the target denotation — the exact-field-set premise enters as a hypothesis, never a conjunct of the denotation."
-    "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs); judgment.rs::judge (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "a_coherently_deleted_scalar_target_is_a_judgment_violation (crates/bumbledb/src/verify_store/tests.rs)",
+    "schema/validate.rs::resolve_target_key (crates/bumbledb/src/schema/validate.rs); judge_complete (crates/bumbledb/src/schema/judge.rs)"
+    "d04_containment_target_removal_matches_complete (crates/bumbledb/src/schema/judge/discriminators.rs); containment_judges_the_final_state_not_the_landing_order (crates/bumbledb/src/schema/judge/tests.rs)",
 
   .row @containsEq_iff_view_ext `Bumbledb.containsEq_iff_view_ext
     "Bare mutual containment is projected view equality and nothing more — the equality statement lowers to two adjacent containments."
@@ -174,8 +165,8 @@ def ledger : List Obligation := [
   .row @Selection.singleton_satisfies_iff
     `Bumbledb.Selection.singleton_satisfies_iff
     "A singleton literal set is exactly the equality binding, so the disjunctive set form the engine accepts re-reads every previously accepted selection unchanged — the sets seal canonical and satisfaction is membership among them."
-    "LiteralSet (crates/bumbledb-theory/src/schema.rs); schema/validate.rs::validate_side_shape (crates/bumbledb/src/schema/validate.rs); judgment.rs::FieldCheck (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "a_literal_set_selection_seals_sorted (crates/bumbledb/src/schema/tests/valid.rs); a_literal_set_sigma_seals_and_judges_membership (crates/bumbledb/src/storage/commit/tests/sealed_checks.rs); rejects_a_singleton_spelled_as_a_set (crates/bumbledb/src/schema/tests/reject.rs)",
+    "LiteralSet (crates/bumbledb-theory/src/schema.rs); schema/validate.rs::validate_side_shape (crates/bumbledb/src/schema/validate.rs)"
+    "a_literal_set_selection_seals_sorted (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_singleton_spelled_as_a_set (crates/bumbledb/src/schema/tests/reject.rs)",
 
   .row @Oracle.capacity_plan_decides
     `Bumbledb.Oracle.capacity_plan_decides
@@ -186,19 +177,19 @@ def ledger : List Obligation := [
   .row @Txn.capacity_delta_restriction
     `Bumbledb.Txn.capacity_delta_restriction
     "Over a clean pre-state the capacity law holds of the final state iff the touched-parents check passes — every parent key any delta child projects to, plus the delta's ψ-selected parents, each judged by one keyed parent probe and one child-group measure walk against the final state, the bound resolved from the parent's own row."
-    "Checker::check_capacity (crates/bumbledb/src/storage/commit/judgment.rs); plan.rs::mark_insert (crates/bumbledb/src/storage/commit/plan.rs)"
-    "capacity_floor_convicts_a_childless_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); capacity_removal_remeasures_the_touched_parent (crates/bumbledb/src/storage/commit/tests/marks.rs); capacity_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
+    "capacity (crates/bumbledb/src/schema/judge.rs); delta_local_statements (crates/bumbledb/src/schema/compiled.rs)"
+    "d04_capacity_floor_and_target_replacement_match_complete (crates/bumbledb/src/schema/judge/discriminators.rs); capacity_verdicts_agree_with_the_model (crates/bumbledb-bench/src/differential/tests/marks.rs)",
 
   .row @Oracle.capacity_ceiling_exit_sound
     `Bumbledb.Oracle.capacity_ceiling_exit_sound
     "The clipped measure walk is sound (C12): non-negative weights make the running sum monotone, so a ceiling walk's verdict is decided the moment the sum passes hi and a floor-only walk's the moment it reaches lo — the clip serves the verdict, while on conviction the full walk serves the walk-order-independent witnessed measure (C14)."
-    "Checker::measure_children (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "capacity_sum_ceiling_convicts_with_the_full_measure (crates/bumbledb/src/storage/commit/tests/marks.rs)",
+    "capacity (crates/bumbledb/src/schema/judge.rs)"
+    "d04_capacity_floor_and_target_replacement_match_complete (crates/bumbledb/src/schema/judge/discriminators.rs)",
 
   .row @functionality_unique_witness `Bumbledb.functionality_unique_witness
-    "Under a functionality statement there is at most one fact per determinant tuple — a key proves uniqueness, never existence."
-    "schema/validate.rs::validate_functionality (crates/bumbledb/src/schema/validate.rs); applier.rs::Applier (crates/bumbledb/src/storage/commit/applier.rs)"
-    "scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs); scalar_key_conflict_across_deltas_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs)",
+    "Under a functionality statement there is at most one fact per determinant tuple — a key proves uniqueness, never existence. Routing hashes only find candidates; exact canonical equality decides the conflict."
+    "schema/validate.rs::validate_functionality (crates/bumbledb/src/schema/validate.rs); key_scalar (crates/bumbledb/src/schema/judge.rs)"
+    "d04_compiled_indexes_earn_locality (crates/bumbledb/src/schema/judge/discriminators.rs); scalar_key_conflicts (crates/bumbledb-bench/src/naive/tests/judgment.rs)",
 
   .row @keyed_get_at_most_one `Bumbledb.keyed_get_at_most_one
     "A keyed point read returns at most one fact: the functionality statement's injectivity at a fixed determinant image, derived — the read surface adds no semantics."
@@ -207,12 +198,12 @@ def ledger : List Obligation := [
 
   .row @pointwise_key_disjoint `Bumbledb.pointwise_key_disjoint
     "A pointwise key gives per-scalar-group pairwise disjointness of interval point sets — the premise the coverage sweep's witness token attests."
-    "crate::schema::DisjointDeterminantProof (crates/bumbledb/src/schema.rs); Applier::probe_neighbors (crates/bumbledb/src/storage/commit/applier.rs)"
-    "overlap_left_in_delta_aborts (crates/bumbledb/src/storage/commit/tests/functionality.rs); pointwise_overlap_is_found_by_the_ordered_walk (crates/bumbledb/src/verify_store/tests.rs)",
+    "key_pointwise (crates/bumbledb/src/schema/judge.rs)"
+    "the_fixed_pointwise_key_rejects_overlap_and_accepts_adjacency (crates/bumbledb/tests/schema_macro.rs)",
 
   .row @coverage_is_support_inclusion `Bumbledb.coverage_is_support_inclusion
     "One-way interval coverage is exactly pointwise support inclusion per scalar group — inclusion only, so target overhang is legal."
-    "Checker::check_coverage (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "containment_pointwise (crates/bumbledb/src/schema/judge.rs)"
     "r26_exact_partition_commit_matrix (crates/bumbledb-query/tests/cookbook.rs)",
 
   .row @exact_partition_iff `Bumbledb.exact_partition_iff
@@ -222,8 +213,8 @@ def ledger : List Obligation := [
 
   .row @selection_monotonicity `Bumbledb.selection_monotonicity
     "Containment is preserved by strengthening the source selection and weakening the target selection — a never-interned source literal is the strongest source selection, held vacuously."
-    "SelectionCheck::Never (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "an_uninterned_sigma_literal_resolves_to_never (crates/bumbledb/src/storage/commit/tests/sealed_checks.rs)",
+    "containment (crates/bumbledb/src/schema/judge.rs)"
+    "d04_containment_target_removal_matches_complete (crates/bumbledb/src/schema/judge/discriminators.rs)",
 
   .row @no_closure_superkey_implication `Bumbledb.no_closure_superkey_implication
     "The decidability firewall: the superkey implication is true and deliberately unspent — acceptance resolves exact field sets, computes no closure, and names the entailment as diagnostics only."
@@ -367,8 +358,8 @@ def ledger : List Obligation := [
 
   .row @Exec.sweep_covered_sound_complete `Bumbledb.Exec.sweep_covered_sound_complete
     "THE witness-token theorem: under ordered-and-disjoint — precisely what the proof token attests — the one-pass coverage verdict equals the point-subset denotation (soundness needs no premise; completeness spends only order; disjointness licences the predecessor-seek entry below the fold)."
-    "crate::schema::DisjointDeterminantProof (crates/bumbledb/src/schema.rs); Checker::check_coverage (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "coverage_verdict_matches_the_naive_subset_check (crates/bumbledb/src/interval/sweep.rs); pointwise_overlap_is_found_by_the_ordered_walk (crates/bumbledb/src/verify_store/tests.rs)",
+    "containment_pointwise (crates/bumbledb/src/schema/judge.rs)"
+    "coverage_verdict_matches_the_naive_subset_check (crates/bumbledb/src/interval/sweep.rs); pointwise_offender_selection_is_the_reference_adjacent_pair_sweep (crates/bumbledb/src/schema/judge/delta_tests.rs)",
 
   .row @Exec.sweep_early_exit_sound `Bumbledb.Exec.sweep_early_exit_sound
     "Once the frontier passes the window end the verdict is accept on any remaining input — the early return loses nothing."
@@ -377,7 +368,7 @@ def ledger : List Obligation := [
 
   .row @Exec.sweep_ignores_spent_segments `Bumbledb.Exec.sweep_ignores_spent_segments
     "A segment wholly at or before the frontier is a no-op, so the predecessor-seek entry skips only segments the fold would ignore anyway — the seam is mechanism, not semantics."
-    "Checker::check_coverage (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "containment_pointwise (crates/bumbledb/src/schema/judge.rs)"
     "coverage_verdict_matches_the_naive_subset_check (crates/bumbledb/src/interval/sweep.rs)",
 
   .row @Exec.pack_is_the_sweep `Bumbledb.Exec.pack_is_the_sweep
@@ -387,7 +378,7 @@ def ledger : List Obligation := [
 
   .row @Exec.ray_needs_ray `Bumbledb.Exec.ray_needs_ray
     "A source ray is covered only by a chain reaching a target ray — coverage to infinity, with infinity an ordinary largest end word."
-    "Checker::check_coverage (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "containment_pointwise (crates/bumbledb/src/schema/judge.rs)"
     "rays_are_ordinary_largest_end_words (crates/bumbledb/src/interval/sweep.rs)",
 
   .row @Exec.adjacent_segments_cover `Bumbledb.Exec.adjacent_segments_cover
@@ -448,12 +439,12 @@ def ledger : List Obligation := [
   .row @Query.keyprobe_equiv_join `Bumbledb.Query.keyprobe_equiv_join
     "Under the accepted shape and the key's uniqueness, the point-probe evaluation equals the join denotation — one get finds exactly the one deriving fact, and the residual per-field filters only shrink that at-most-one hit."
     "PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared.rs); PreparedRule::KeyProbe (crates/bumbledb/src/api/prepared/build.rs); remaining_filters (crates/bumbledb/src/exec/dispatch/classify.rs)"
-    "key_probe_fast_lane_hits_misses_and_type_errors (crates/bumbledb/src/api/prepared/tests/key_probe.rs); pointwise_key_point_lookup_uses_key_probe_and_is_image_free (crates/bumbledb/src/api/prepared/tests/key_probe.rs)",
+    "key_probe_fast_lane_hits_misses_and_type_errors (crates/bumbledb/src/api/prepared/tests/key_probe.rs); pointwise_key_point_lookup_uses_key_probe (crates/bumbledb/src/api/prepared/tests/key_probe.rs)",
 
   .row @Query.keyprobe_pointwise_key_spent `Bumbledb.Query.keyprobe_pointwise_key_spent
     "A pointwise key implies exact-tuple functionality — two facts sharing the scalar prefix with identical intervals overlap pointwise — so the key-probe premise closes for interval-final keys too."
     "key_probe_candidate (crates/bumbledb/src/exec/dispatch/classify.rs)"
-    "pointwise_key_point_lookup_uses_key_probe_and_is_image_free (crates/bumbledb/src/api/prepared/tests/key_probe.rs)",
+    "pointwise_key_point_lookup_uses_key_probe (crates/bumbledb/src/api/prepared/tests/key_probe.rs)",
 
   .row @Query.statically_empty_sound `Bumbledb.Query.statically_empty_sound
     "A statically refuted rule contributes the empty answer set on every instance — the verdict never consulted one."
@@ -472,18 +463,18 @@ def ledger : List Obligation := [
 
   .row @Txn.final_state_judgment_order_free `Bumbledb.Txn.final_state_judgment_order_free
     "Judgment is a function of the final state alone: any two op sequences with one final state receive one verdict — operation order is not representable in the judge's input."
-    "judgment.rs::FinalStateView (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "delete_plus_insert_of_same_key_succeeds_in_either_user_order (crates/bumbledb/src/storage/commit/tests/apply.rs)",
+    "CandidateFacts (crates/bumbledb/src/schema/judge.rs); judge_complete (crates/bumbledb/src/schema/judge.rs)"
+    "d04_compiled_indexes_earn_locality (crates/bumbledb/src/schema/judge/discriminators.rs)",
 
   .row @Txn.committed_states_model `Bumbledb.Txn.committed_states_model
-    "Every committed state models its theory — the free-lunches law: queries may assume every declared dependency of every committed state."
-    "judgment.rs::judge (crates/bumbledb/src/storage/commit/judgment.rs); Db::verify_store (crates/bumbledb/src/verify_store.rs)"
-    "clean_store_reports_nothing_and_counts_the_leak (crates/bumbledb/src/verify_store/tests.rs)",
+    "Every committed state models its theory — the free-lunches law: queries may assume every declared dependency of every committed state. The minting constructor is complete admission or a lawful-parent incremental transition, never an unready store."
+    "judge_complete (crates/bumbledb/src/schema/judge.rs); LawfulParent (crates/bumbledb/src/schema/judge.rs); verify_store (crates/bumbledb/src/verify_store.rs)"
+    "a_lawful_store_sweeps_coherent_after_mixed_commits (crates/bumbledb/src/verify_store/tests.rs); d26_valid_nonempty_required_state_admits (crates/bumbledb/src/schema/judge/discriminators.rs)",
 
   .row @Txn.rejection_is_complete `Bumbledb.Txn.rejection_is_complete
-    "A rejection carries the failing phase's complete violation set — the violated key statements when any key fails (the preemption: the statement phase's probes are defined over the keyed final state), else the violated non-key statements — sound, nonempty, never a mix."
-    "crate::error::Violations (crates/bumbledb/src/error.rs); apply.rs::apply (crates/bumbledb/src/storage/commit/apply.rs); judgment.rs::judge (crates/bumbledb/src/storage/commit/judgment.rs)"
-    "statement_phase_cites_containments_and_capacities_together (crates/bumbledb/src/storage/commit/tests/marks.rs); key_violation_preempts_the_capacity_judgment (crates/bumbledb/src/storage/commit/tests/marks.rs)",
+    "A rejection carries the failing phase's complete violation set — the violated key statements when any key fails (the preemption: the statement phase's probes are defined over the keyed final state), else the violated non-key statements — sound, nonempty, never a mix. Example rows are canonical-byte top-k, not first-seen ids."
+    "crate::error::Violations (crates/bumbledb/src/error.rs); judge_complete (crates/bumbledb/src/schema/judge.rs); fact_sort_key (crates/bumbledb/src/canonical.rs)"
+    "d05_rejection_evidence_is_portable (crates/bumbledb/src/schema/judge/discriminators.rs)",
 
   .row @Txn.witness_conflict_distinct `Bumbledb.Txn.witness_conflict_distinct
     "Witness conflicts are not dependency violations: the two failure kinds are distinct constructors, and the one generation compare aborts before anything is judged."
@@ -538,7 +529,7 @@ def ledger : List Obligation := [
   .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
     "Interior DAG once, then either main rulesAnswers or reachDen plus main — listed by evalQueryList."
     "run_derived (crates/bumbledb/src/api/prepared/reach.rs); run_reach (crates/bumbledb/src/api/prepared/reach.rs)"
-    "docs/cookbook.md",
+    "lean/conformance/cases",
 
   .row @Query.evalQuery_empty_rules `Bumbledb.Query.evalQuery_empty_rules
     "Main's rulesAnswers over [] is the empty union; a reach arm's finished table is an environment entry, never the conclusion."
@@ -552,7 +543,7 @@ def ledger : List Obligation := [
 
   .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
     "One delta occurrence per rec arm walks the naive chain; the spanning seen-set absorbs re-derivation."
-    "RecArm (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); answers_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
+    "RecArm (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); drain_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
     "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs)",
 
   .row @holdsB_iff_holds `Bumbledb.holdsB_iff_holds
@@ -562,18 +553,18 @@ def ledger : List Obligation := [
 
   .row @Txn.judgeB_agrees `Bumbledb.Txn.judgeB_agrees
     "The executable two-phase judge renders the model judge's verdict on EVERY row instance — accept together, or reject in the same phase with the same per-phase violation sets — under no premise beyond the closed-roster merge."
-    "judge (crates/bumbledb/src/storage/commit/judgment.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
+    "judge_complete (crates/bumbledb/src/schema/judge.rs); generate_judgment_corpus (crates/bumbledb-bench/src/conformance/judgment.rs)"
     "three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); the_corpus_replays_byte_identical_from_its_provenance (crates/bumbledb-bench/src/conformance.rs)",
 
   .row @Txn.completeKeyViolations_eq `Bumbledb.Txn.completeKeyViolations_eq
     "On a theory whose closed-constant obligations hold, the complete key roster is the key-phase citation set — validation has emptied the closed-functionality slice the roster skips."
-    "apply (crates/bumbledb/src/storage/commit/apply.rs); schema/validate.rs::validate_functionality (crates/bumbledb/src/schema/validate.rs)"
-    "scalar_key_conflict_in_one_delta_aborts_with_the_statement_id (crates/bumbledb/src/storage/commit/tests/commit.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs)",
+    "key_scalar (crates/bumbledb/src/schema/judge.rs); schema/validate.rs::validate_functionality (crates/bumbledb/src/schema/validate.rs)"
+    "d04_compiled_indexes_earn_locality (crates/bumbledb/src/schema/judge/discriminators.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs)",
 
   .row @Txn.completeStatementViolations_eq
     `Bumbledb.Txn.completeStatementViolations_eq
     "On a theory whose closed-constant obligations hold, the complete statement roster is the statement-phase citation set — closed-to-closed containments and closed-constant capacity are validation-discharged."
-    "judge (crates/bumbledb/src/storage/commit/judgment.rs); schema/validate.rs::validate_containment (crates/bumbledb/src/schema/validate.rs)"
+    "judge_complete (crates/bumbledb/src/schema/judge.rs); schema/validate.rs::validate_containment (crates/bumbledb/src/schema/validate.rs)"
     "a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs); rejects_a_closed_to_closed_containment_the_axioms_refute (crates/bumbledb/src/schema/tests/reject.rs)",
 
   .row @Txn.obligation_partition `Bumbledb.Txn.obligation_partition
@@ -595,55 +586,55 @@ def ledger : List Obligation := [
 
   .row @Txn.completeAdmissionB_agrees `Bumbledb.Txn.completeAdmissionB_agrees
     "Complete admission of a raw instance is the two-phase judge over that instance — judgeB stays the differential oracle, and generated worlds including closed-source containments run against it."
-    "InstanceBuilder (crates/bumbledb/src/api/db/builder.rs); engine_admit (crates/bumbledb-bench/src/differential.rs); judge_complete (crates/bumbledb-bench/src/naive.rs); generate_complete_corpus (crates/bumbledb-bench/src/conformance/complete.rs)"
-    "complete_admission_includes_closed_source_containments (crates/bumbledb-bench/src/conformance/complete.rs); three_way_conformance_over_the_checked_in_corpus (crates/bumbledb-bench/src/conformance.rs); complete_admission_rejects_unhandled_closed_source (crates/bumbledb-bench/src/naive/tests/closed.rs)",
+    "InstanceBuilder (crates/bumbledb/src/api/db/builder.rs); engine_admit (crates/bumbledb-bench/src/differential.rs); judge_complete (crates/bumbledb/src/schema/judge.rs); generate_complete_corpus (crates/bumbledb-bench/src/conformance/complete.rs)"
+    "complete_admission_includes_closed_source_containments (crates/bumbledb-bench/src/conformance/complete.rs); judge_complete (crates/bumbledb-bench/src/naive.rs); complete_admission_rejects_unhandled_closed_source (crates/bumbledb-bench/src/naive/tests/closed.rs)",
 
   .row @Txn.Support.judgment_stable_outside_mutable_support
     `Bumbledb.Txn.Support.judgment_stable_outside_mutable_support
     "The ASS-001 successor: a delta touching no relation of one statement's MUTABLE consulted support leaves that statement's judgment unchanged while all closed denotations remain fixed — the premise IS the runtime support derivation, not a component partition over closed targets; it licenses scoped admission planning only, never a publication lane or causal read cut."
-    "mark_insert (crates/bumbledb/src/storage/commit/plan.rs); judge (crates/bumbledb/src/storage/commit/judgment.rs)"
+    "delta_local_statements (crates/bumbledb/src/schema/compiled.rs); mutable_support (crates/bumbledb-bench/src/naive/successor/admission.rs)"
     "judgment_stable_under_untouched_relations (crates/bumbledb-bench/src/naive/successor/admission.rs)",
 
   .row @Txn.Support.disjoint_mutable_locality
     `Bumbledb.Txn.Support.disjoint_mutable_locality
-    "Shared closed vocabulary never merges two mutable components: a delta local to one statement's mutable support leaves any statement with a disjoint mutable support unmoved, even when both statements cite the same sealed closed relations."
-    "mark_insert (crates/bumbledb/src/storage/commit/plan.rs)"
+    "Shared closed vocabulary never merges two mutable components: a delta local to one statement's mutable support leaves any statement with a disjoint mutable support unmoved, even when both statements cite the same sealed closed relations. Retired braid ComponentClosed theorems do not certify the current log."
+    "delta_local_statements (crates/bumbledb/src/schema/compiled.rs)"
     "shared_closed_vocabulary_does_not_merge_supports (crates/bumbledb-bench/src/naive/successor/admission.rs)",
 
   .row @Txn.Support.normalize_applyTo
     `Bumbledb.Txn.Support.normalize_applyTo
     "The one-command tie rule: canonicalizing a delta to its add-wins normal form changes nothing because application already reads add-wins; normalization is idempotent, and the rule is a same-command normalization, never cross-command conflict resolution."
-    "WriteDelta (crates/bumbledb/src/storage/delta.rs)"
+    "ChangeSet (crates/bumbledb/src/changes.rs); parse (crates/bumbledb/src/changes.rs)"
     "same_command_tie_rule_add_wins (crates/bumbledb-bench/src/naive/successor/admission.rs)",
 
   .row @Txn.Support.applyTo_comm_of_disjoint
     `Bumbledb.Txn.Support.applyTo_comm_of_disjoint
     "Raw commutation at its real strength: two deltas with no cross add/remove conflicts commute as SET transformations only — the theorem says nothing about admission outcomes, exact-state witnesses or capacity interactions, and no public commutativity flag spends it."
-    "WriteDelta (crates/bumbledb/src/storage/delta.rs)"
+    "ChangeSet (crates/bumbledb/src/changes.rs)"
     "raw_commutation_does_not_commute_admission (crates/bumbledb-bench/src/naive/successor/admission.rs)",
 
   .row @F64.Agg.accumulator_within_34_limbs
     `Bumbledb.F64.Agg.accumulator_within_34_limbs
     "The 34-limb sufficiency bound: under the u64 count limit every finite exact float total sits strictly below 2^2175 in magnitude, inside a signed 2,176-bit accumulator — proved from the single-value scaled bound, not accepted from prose."
     "finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
-    "exact_sum_matches_rational_oracle (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+    "exact_sum_matches_rational_oracle (crates/bumbledb-bench/src/verify/f64_oracle/tests.rs)",
 
   .row @F64.Agg.fold_perm `Bumbledb.F64.Agg.fold_perm
     "Exact float accumulation is order- and partition-independent: the canonical merge table is associative and commutative with the empty identity, so no plan, iteration order, merge tree or spill partition can change sum or mean."
     "finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
-    "sum_is_permutation_and_partition_independent (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+    "sum_is_permutation_and_partition_independent (crates/bumbledb-bench/src/verify/f64_oracle/tests.rs)",
 
   .row @F64.Agg.merge_not_idempotent
     `Bumbledb.F64.Agg.merge_not_idempotent
     "The accumulator merge is NOT idempotent: merging one finite partial state with itself doubles its contribution and count, so exact set deduplication must precede accumulation — the accumulator carries no binding provenance to detect replay."
     "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs)"
-    "partial_state_replay_is_not_idempotent (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+    "partial_state_replay_is_not_idempotent (crates/bumbledb-bench/src/verify/f64_oracle/tests.rs)",
 
   .row @F64.Agg.sum_max_max_overflows
     `Bumbledb.F64.Agg.sum_max_max_overflows
     "Mean divides the exact rational total by the exact count and rounds ONCE: the MAX-FINITE pair's once-rounded sum is the infinity payload while its once-rounded exact mean is exactly MAX-FINITE — mean is never rounded-sum over count."
     "finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
-    "mean_divides_exact_rational_not_rounded_sum (crates/bumbledb-bench/src/verify/f64_oracle.rs)",
+    "mean_divides_exact_rational_not_rounded_sum (crates/bumbledb-bench/src/verify/f64_oracle/tests.rs)",
 
   .row @FInterval.nonempty `Bumbledb.FInterval.nonempty
     "Float intervals denote NONEMPTY dense numeric ranges with exact rational endpoint order: every checked interval — finite spans, rays including [-Infinity, -MAX_FINITE), and the whole line — contains a dense point; infinity placement is a theorem of the strict endpoint order, not a side condition."
@@ -693,14 +684,26 @@ def ledger : List Obligation := [
     `Bumbledb.Query.Stages.value_creation_escapes
     "Value creation in the recursive feedback cycle escapes every frozen finite domain — the countermodel behind refusing aggregation, arithmetic and value invention inside the cycle."
     "NonlinearRecArm (crates/bumbledb/src/error.rs)"
-    "value_creation_feedback_is_refused (crates/bumbledb-bench/src/naive/successor/staged.rs)"
+    "value_creation_feedback_is_refused (crates/bumbledb-bench/src/naive/successor/staged.rs)",
+
+  .row @Txn.delta_restricted_commit_sound
+    `Bumbledb.Txn.delta_restricted_commit_sound
+    "Incremental judgment is sound exactly when the committed parent already models the theory — that premise is LawfulParent, minted only by complete admission, trusted open, or a prior admitted commit."
+    "judge_incremental (crates/bumbledb/src/schema/judge.rs); LawfulParent (crates/bumbledb/src/schema/judge.rs); delta_local_statements (crates/bumbledb/src/schema/compiled.rs)"
+    "d04_compiled_indexes_earn_locality (crates/bumbledb/src/schema/judge/discriminators.rs); d26_complete_judgment_cannot_borrow_a_lawful_parent (crates/bumbledb/src/schema/judge/discriminators.rs)",
+
+  .row @incremental_verdict_needs_holds
+    `Bumbledb.incremental_verdict_needs_holds
+    "Without a holding parent the empty-delta restricted check accepts a colliding final state — UnreadyStore therefore cannot mint LawfulParent, and staged readiness must run judge_complete over the populated state."
+    "judge_complete (crates/bumbledb/src/schema/judge.rs); judge_final_state (crates/bumbledb/src/schema/judge.rs); UnreadyStore (crates/bumbledb/src/storage/store/staging.rs); SchemaJudge (crates/bumbledb/src/storage/store/judge_bridge.rs)"
+    "d26_complete_judgment_cannot_borrow_a_lawful_parent (crates/bumbledb/src/schema/judge/discriminators.rs); d26_incremental_requires_lawful_parent_capability (crates/bumbledb/src/storage/store/judge_bridge.rs); lean/conformance/cases/complete-key-collision.json"
 
 ]
 
 /-- The ledger count, asserted: a dropped or added row moves this
 number, so the census (which re-derives the count by grep) and the
 build (which checks this literal) both notice. -/
-theorem ledger_count : ledger.length = 116 := rfl
+theorem ledger_count : ledger.length = 118 := rfl
 
 end Bridge
 end Bumbledb

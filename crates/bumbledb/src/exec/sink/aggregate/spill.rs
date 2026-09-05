@@ -17,11 +17,14 @@
 //! are disjoint (merge is NOT idempotent — the dedup seen-set or the
 //! plan's `DistinctWitness` is the license, as in `push_repeated`).
 //!
-//! Pack claims spill as individual `groupkey ‖ start ‖ end` set entries;
-//! the scratch map's exact key order (group key first, then start) lets
-//! finalize stream the maximal-segment union per group with the same
-//! frontier walk as [`crate::interval::sweep`] without rematerializing a
-//! group's claim set in RAM.
+//! Pack claims spill as individual `(start, end)` set entries. Mode is
+//! chosen from the checked group layout at first flush — never from a
+//! payload byte. Narrow heads stay inline as `(group, start, end)`. Wide
+//! heads use one [`ScratchRelation`] roster: `Default` claims,
+//! `GroupToToken`, and `TokenToGroup`. Finalize streams one token (or
+//! one inline group) through endpoint coalescing and fetches that group's
+//! header via [`ScratchRelation::visit_with_lookup`]. Exact sum/count
+//! state is not rounded here.
 //!
 //! Errors are sticky (the executor's emit interface is infallible): a
 //! flush failure records itself, later rows drop, and finalize refuses
@@ -29,8 +32,26 @@
 
 use crate::error::{Error, OverflowKind, Result};
 use crate::exec::kernel::numeric::ExactF64Accumulator;
-use crate::exec::scratch::{MAX_INLINE_KEY, ScratchRelation};
+use crate::exec::scratch::{
+    MAX_INLINE_KEY, ScratchAppend, ScratchClaimKey, ScratchMapId, ScratchRelation,
+};
 use crate::exec::sink::{Acc, AggregateSink, GroupState, GroupTable};
+
+/// Wide Pack claim length — [`ScratchClaimKey::BYTE_LEN`]. Always
+/// ≤ [`MAX_INLINE_KEY`], so claim iteration is exact key order.
+pub(crate) const PACK_WIDE_CLAIM_BYTES: usize = ScratchClaimKey::BYTE_LEN;
+
+const _: () = assert!(
+    PACK_WIDE_CLAIM_BYTES <= MAX_INLINE_KEY,
+    "wide Pack claims must stay inline-ordered"
+);
+
+/// Group-key word count that forces wide (token) Pack keys: inline
+/// `(group ‖ start ‖ end)` would exceed [`MAX_INLINE_KEY`].
+#[must_use]
+pub(crate) const fn pack_requires_wide(group_words: usize) -> bool {
+    group_words.saturating_mul(8).saturating_add(16) > MAX_INLINE_KEY
+}
 
 /// The spilled group-state partition store plus its reusable codec
 /// buffers. Owned by the sink once the allowance is crossed; disposed by
@@ -47,6 +68,12 @@ pub(in crate::exec::sink) struct GroupSpill {
     value_bytes: Vec<u8>,
     existing: Vec<u8>,
     decoded: DecodedGroup,
+    /// Checked from the group-key layout at first flush, never inferred
+    /// from a leading payload byte (narrow data may start `0xFE`).
+    pack_wide_mode: bool,
+    /// Next stable group token. Assigned once per distinct wide group;
+    /// headers live in `TokenToGroup` on [`Self::table`].
+    next_pack_token: u64,
 }
 
 impl std::fmt::Debug for GroupSpill {
@@ -54,6 +81,8 @@ impl std::fmt::Debug for GroupSpill {
         f.debug_struct("GroupSpill")
             .field("groups", &self.groups)
             .field("entries", &self.table.len())
+            .field("pack_wide_mode", &self.pack_wide_mode)
+            .field("next_pack_token", &self.next_pack_token)
             .finish_non_exhaustive()
     }
 }
@@ -73,6 +102,21 @@ fn corrupt() -> Error {
     Error::Corruption(crate::error::CorruptionError::MalformedValue(
         "aggregate scratch group",
     ))
+}
+
+fn pack_claim_inline(group_key: &[u64], start: u64, end: u64, out: &mut Vec<u8>) {
+    encode_key(group_key, out);
+    out.extend_from_slice(&start.to_be_bytes());
+    out.extend_from_slice(&end.to_be_bytes());
+}
+
+fn decode_narrow_claim(key: &[u8], group_bytes: usize) -> Result<(u64, u64)> {
+    if key.len() != group_bytes + 16 {
+        return Err(corrupt());
+    }
+    let start = u64::from_be_bytes(key[group_bytes..group_bytes + 8].try_into().expect("eight bytes"));
+    let end = u64::from_be_bytes(key[group_bytes + 8..].try_into().expect("eight bytes"));
+    Ok((start, end))
 }
 
 fn cardinality() -> Error {
@@ -305,16 +349,9 @@ impl AggregateSink {
         if self.error.is_some() || self.cardinality_overflow {
             return;
         }
-        // Pack claim keys must stay inline in the scratch map: the
-        // streaming maximal-segment union at finalize is licensed by the
-        // map's exact key order, which oversized (bucketed) keys lose.
-        // Group keys wide enough to overflow the inline bound stay in RAM
-        // (find arity keeps real heads far below it).
-        if matches!(self.group_state, GroupState::Pack { .. })
-            && self.key_scratch.len() * 8 + 16 > MAX_INLINE_KEY
-        {
-            return;
-        }
+        // Pack claims use inline group heads when they fit the scratch
+        // key bound; otherwise a dense token keeps `(token,start,end)`
+        // ordered and short so the streaming finalize stays exact.
         let over = self.ram_group_bytes() > budget.ram_bytes;
         let eager = budget.ram_bytes == 0 && self.spill.is_none();
         if !(over || eager) {
@@ -339,6 +376,12 @@ impl AggregateSink {
                 crate::obs::TraceArgs::Count(self.groups.len() as u64),
             );
             let mut table = ScratchRelation::new(&budget.work, 0);
+            let pack_wide_mode = matches!(&self.group_state, GroupState::Pack { .. })
+                && pack_requires_wide(self.key_scratch.len());
+            if pack_wide_mode {
+                table.open_map(ScratchMapId::GroupToToken)?;
+                table.open_map(ScratchMapId::TokenToGroup)?;
+            }
             table.force_spill()?;
             self.spill = Some(Box::new(GroupSpill {
                 table,
@@ -347,6 +390,8 @@ impl AggregateSink {
                 value_bytes: Vec::new(),
                 existing: Vec::new(),
                 decoded: DecodedGroup::default(),
+                pack_wide_mode,
+                next_pack_token: 0,
             }));
         }
         let mut spill = self.spill.take().expect("installed above");
@@ -389,23 +434,21 @@ impl AggregateSink {
                         encode_group(group_accs, count, float_accs, &mut spill.value_bytes);
                         spill.groups += 1;
                     }
-                    spill.table.put(&spill.key_bytes, &spill.value_bytes)
-                })
-            }
-            GroupState::Pack { claims, .. } => {
-                for_each_ram_group(&self.groups, &mut |key, group_idx| {
-                    encode_key(key, &mut spill.key_bytes);
-                    spill.groups += 1;
-                    let prefix = spill.key_bytes.len();
-                    for &[start, end] in &claims[group_idx] {
-                        spill.key_bytes.truncate(prefix);
-                        spill.key_bytes.extend_from_slice(&start.to_be_bytes());
-                        spill.key_bytes.extend_from_slice(&end.to_be_bytes());
-                        spill.table.insert_if_absent(&spill.key_bytes, &[])?;
+                    let mut append = ScratchAppend::new(&mut spill.table);
+                    match append.append(
+                        ScratchMapId::Default,
+                        &spill.key_bytes,
+                        &spill.value_bytes,
+                    ) {
+                        Ok(()) => append.finish(),
+                        Err(error) => {
+                            drop(append);
+                            Err(error)
+                        }
                     }
-                    Ok(())
                 })
             }
+            GroupState::Pack { claims, .. } => flush_pack_claims(spill, &self.groups, claims),
         }
     }
 
@@ -413,6 +456,10 @@ impl AggregateSink {
     /// flushed; walk the merged scratch state in key order and emit each
     /// group exactly once. Consumes the spill (a finished execution's
     /// scratch is disposed here rather than lingering until reset).
+    ///
+    /// Pack streams one group's ordered claims, coalesces endpoints, and
+    /// fetches that group's header boundedly. Unrelated groups are not
+    /// sorted against each other (set output).
     pub(in crate::exec::sink) fn finalize_spilled(
         &mut self,
         answer_scratch: &mut Vec<u64>,
@@ -443,70 +490,17 @@ impl AggregateSink {
                 })
             }
             GroupState::Pack { .. } => {
-                // Streaming maximal-segment union: claims arrive in exact
-                // key order (group key, then start), so one frontier walk
-                // per group — the same merge judgment as
-                // `crate::interval::sweep` with no window.
-                let finds = &self.finds;
-                let group_bytes = self.key_scratch.len() * 8;
-                let mut run: Option<(Vec<u64>, u64, u64)> = None;
-                let mut claim_key: Vec<u64> = Vec::new();
-                spill.table.for_each(&mut |key, _| {
-                    if key.len() != group_bytes + 16 {
-                        return Err(corrupt());
-                    }
-                    decode_key(&key[..group_bytes], &mut claim_key)?;
-                    let start = u64::from_be_bytes(
-                        key[group_bytes..group_bytes + 8]
-                            .try_into()
-                            .expect("eight bytes"),
-                    );
-                    let end =
-                        u64::from_be_bytes(key[group_bytes + 8..].try_into().expect("eight bytes"));
-                    match &mut run {
-                        Some((group, run_start, frontier)) if *group == claim_key => {
-                            if start > *frontier {
-                                super::finalize::emit_pack_row(
-                                    finds,
-                                    group,
-                                    *run_start,
-                                    *frontier,
-                                    answer_scratch,
-                                    emit,
-                                )?;
-                                *run_start = start;
-                                *frontier = end;
-                            } else {
-                                *frontier = (*frontier).max(end);
-                            }
-                        }
-                        _ => {
-                            if let Some((group, run_start, frontier)) = run.take() {
-                                super::finalize::emit_pack_row(
-                                    finds,
-                                    &group,
-                                    run_start,
-                                    frontier,
-                                    answer_scratch,
-                                    emit,
-                                )?;
-                            }
-                            run = Some((claim_key.clone(), start, end));
-                        }
-                    }
-                    Ok(true)
-                })?;
-                if let Some((group, run_start, frontier)) = run {
-                    super::finalize::emit_pack_row(
-                        finds,
-                        &group,
-                        run_start,
-                        frontier,
+                if spill.pack_wide_mode {
+                    finalize_pack_wide(&mut spill, &self.finds, answer_scratch, emit)
+                } else {
+                    finalize_pack_narrow(
+                        &mut spill,
+                        self.key_scratch.len(),
+                        &self.finds,
                         answer_scratch,
                         emit,
-                    )?;
+                    )
                 }
-                Ok(())
             }
         }
     }
@@ -517,6 +511,226 @@ impl AggregateSink {
     pub fn group_state_spilled(&self) -> bool {
         self.spill.is_some()
     }
+
+    /// Checked Pack key regime after the first flush. `None` until spill.
+    #[cfg(test)]
+    #[must_use]
+    pub fn pack_wide_mode(&self) -> Option<bool> {
+        self.spill.as_ref().map(|spill| spill.pack_wide_mode)
+    }
+}
+
+fn flush_pack_claims(
+    spill: &mut GroupSpill,
+    groups: &GroupTable,
+    claims: &[Vec<[u64; 2]>],
+) -> Result<()> {
+    let wide = spill.pack_wide_mode;
+    if wide {
+        let first_new = spill.next_pack_token;
+        let mut tokens = vec![0u64; claims.len()];
+        for_each_ram_group(groups, &mut |key, group_idx| {
+            encode_key(key, &mut spill.key_bytes);
+            if spill.table.get_map(
+                ScratchMapId::GroupToToken,
+                &spill.key_bytes,
+                &mut spill.value_bytes,
+            )? {
+                if spill.value_bytes.len() != 8 {
+                    return Err(corrupt());
+                }
+                tokens[group_idx] = u64::from_be_bytes(
+                    spill.value_bytes.as_slice().try_into().expect("eight bytes"),
+                );
+            } else {
+                let token = spill.next_pack_token;
+                spill.next_pack_token = token.checked_add(1).ok_or_else(cardinality)?;
+                tokens[group_idx] = token;
+            }
+            Ok(())
+        })?;
+        let GroupSpill {
+            table,
+            key_bytes,
+            groups: group_count,
+            ..
+        } = spill;
+        let mut append = ScratchAppend::new(table);
+        let staged = for_each_ram_group(groups, &mut |key, group_idx| {
+            *group_count += 1;
+            let token = tokens[group_idx];
+            if token >= first_new {
+                encode_key(key, key_bytes);
+                let token_bytes = token.to_be_bytes();
+                append.append(ScratchMapId::GroupToToken, key_bytes, &token_bytes)?;
+                append.append(ScratchMapId::TokenToGroup, &token_bytes, key_bytes)?;
+            }
+            for &[start, end] in &claims[group_idx] {
+                let claim = ScratchClaimKey::new([token, start, end]).encode();
+                append.append(ScratchMapId::Default, &claim, &[])?;
+            }
+            Ok(())
+        });
+        return match staged {
+            Ok(()) => append.finish(),
+            Err(error) => {
+                drop(append);
+                Err(error)
+            }
+        };
+    }
+
+    let GroupSpill {
+        table,
+        key_bytes,
+        groups: group_count,
+        ..
+    } = spill;
+    let mut append = ScratchAppend::new(table);
+    let staged = for_each_ram_group(groups, &mut |key, group_idx| {
+        *group_count += 1;
+        for &[start, end] in &claims[group_idx] {
+            pack_claim_inline(key, start, end, key_bytes);
+            append.append(ScratchMapId::Default, key_bytes, &[])?;
+        }
+        Ok(())
+    });
+    match staged {
+        Ok(()) => append.finish(),
+        Err(error) => {
+            drop(append);
+            Err(error)
+        }
+    }
+}
+
+fn finalize_pack_wide(
+    spill: &mut GroupSpill,
+    finds: &[crate::exec::sink::SinkSpec],
+    answer_scratch: &mut Vec<u64>,
+    emit: &mut impl FnMut(&[u64]) -> Result<()>,
+) -> Result<()> {
+    let mut group_header: Vec<u64> = Vec::new();
+    let mut header = Vec::new();
+    let mut current_token: Option<u64> = None;
+    let mut run_start = 0u64;
+    let mut frontier = 0u64;
+    let mut have_run = false;
+    spill
+        .table
+        .visit_with_lookup(ScratchMapId::Default, &mut |lookup, key, _| {
+            let claim = ScratchClaimKey::decode(key).ok_or_else(corrupt)?;
+            let [token, start, end] = claim.words();
+            if current_token != Some(token) {
+                if have_run {
+                    super::finalize::emit_pack_row(
+                        finds,
+                        &group_header,
+                        run_start,
+                        frontier,
+                        answer_scratch,
+                        emit,
+                    )?;
+                }
+                if !lookup.get(ScratchMapId::TokenToGroup, &token.to_be_bytes(), &mut header)? {
+                    return Err(corrupt());
+                }
+                decode_key(&header, &mut group_header)?;
+                current_token = Some(token);
+                run_start = start;
+                frontier = end;
+                have_run = true;
+            } else if start > frontier {
+                super::finalize::emit_pack_row(
+                    finds,
+                    &group_header,
+                    run_start,
+                    frontier,
+                    answer_scratch,
+                    emit,
+                )?;
+                run_start = start;
+                frontier = end;
+            } else {
+                frontier = frontier.max(end);
+            }
+            Ok(true)
+        })?;
+    if have_run {
+        super::finalize::emit_pack_row(
+            finds,
+            &group_header,
+            run_start,
+            frontier,
+            answer_scratch,
+            emit,
+        )?;
+    }
+    Ok(())
+}
+
+fn finalize_pack_narrow(
+    spill: &mut GroupSpill,
+    group_words: usize,
+    finds: &[crate::exec::sink::SinkSpec],
+    answer_scratch: &mut Vec<u64>,
+    emit: &mut impl FnMut(&[u64]) -> Result<()>,
+) -> Result<()> {
+    let group_bytes = group_words * 8;
+    let mut group_header: Vec<u64> = Vec::new();
+    let mut prev_prefix: Vec<u8> = Vec::new();
+    let mut have_group = false;
+    let mut run_start = 0u64;
+    let mut frontier = 0u64;
+    let mut have_run = false;
+    spill.table.for_each(&mut |key, _| {
+        let (start, end) = decode_narrow_claim(key, group_bytes)?;
+        let same = have_group && key.len() >= group_bytes && prev_prefix == key[..group_bytes];
+        if !same {
+            if have_run {
+                super::finalize::emit_pack_row(
+                    finds,
+                    &group_header,
+                    run_start,
+                    frontier,
+                    answer_scratch,
+                    emit,
+                )?;
+            }
+            decode_key(&key[..group_bytes], &mut group_header)?;
+            prev_prefix.clear();
+            prev_prefix.extend_from_slice(&key[..group_bytes]);
+            have_group = true;
+            run_start = start;
+            frontier = end;
+            have_run = true;
+        } else if start > frontier {
+            super::finalize::emit_pack_row(
+                finds,
+                &group_header,
+                run_start,
+                frontier,
+                answer_scratch,
+                emit,
+            )?;
+            run_start = start;
+            frontier = end;
+        } else {
+            frontier = frontier.max(end);
+        }
+        Ok(true)
+    })?;
+    if have_run {
+        super::finalize::emit_pack_row(
+            finds,
+            &group_header,
+            run_start,
+            frontier,
+            answer_scratch,
+            emit,
+        )?;
+    }
+    Ok(())
 }
 
 /// Walk every live RAM group as `(key words, group index)` — the shared

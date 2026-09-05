@@ -99,6 +99,9 @@ impl Executor {
             let flow = super::emit_node_batch(sink, node.suffix_skip, &batch);
             counters.emit();
             counters.phase_end(node_idx, JoinPhase::Descend);
+            if flow.is_terminal() {
+                return flow;
+            }
             if flow == Flow::SkipSuffix {
                 counters.skip(node_idx);
                 return Flow::SkipSuffix;
@@ -234,7 +237,15 @@ impl Executor {
             };
 
             let flow = sink.emit_batch(&batch);
-            debug_assert_eq!(flow, Flow::Continue, "non-skipping sinks never skip");
+            if flow.is_terminal() {
+                counters.phase_end(node_idx, JoinPhase::Descend);
+                self.scratch[node_idx] = scratch;
+                return flow;
+            }
+            debug_assert!(
+                matches!(flow, Flow::Continue | Flow::SkipSuffix),
+                "non-skipping sinks never skip"
+            );
             for _ in 0..scratch.survivors.len() {
                 counters.emit();
             }

@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
 import type { Scope } from "effect"
 import { drainClose, releaseOwner } from "#close.ts"
 import type { SchemaId } from "#compile.ts"
@@ -8,7 +8,7 @@ import { dbNative } from "#db-native.ts"
 import { lower } from "#lower.ts"
 import type { AnyRelation, Fact } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
-import { cellBytes, cellOf, recordOf } from "#rows.ts"
+import { assertHostCellFits, cellOf, recordOf } from "#rows.ts"
 import type { CloseReport } from "#runtime-errors.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
@@ -25,6 +25,8 @@ import type { Rel } from "#shape.ts"
  */
 interface ChangeSet<S extends AnySchema> {
 	readonly schemaId: SchemaId
+	/** Phantom schema brand: a ChangeSet is only ever applied to its own S. */
+	readonly schema?: S
 	close(): Effect.Effect<CloseReport>
 }
 
@@ -87,38 +89,81 @@ interface Chunk {
 	readonly rows: bigint
 	readonly cells: readonly CellValue[]
 	readonly done: boolean
+	readonly leftover: object | undefined
+}
+
+function eventLoopTurn(): Effect.Effect<void> {
+	return Effect.callback<void>((resume) => {
+		const id = setImmediate(() => resume(Effect.void))
+		return Effect.sync(() => clearImmediate(id))
+	})
+}
+
+function hostFactCharge(relation: AnyRelation, record: Readonly<Record<string, unknown>>): bigint {
+	const data = relation.data
+	let bytes = 0n
+	for (const declared of data.fields) {
+		const value = record[declared.name]
+		if (value === undefined) {
+			throw refusal("ChangeDraft.ingest", "InvalidArgument")
+		}
+		bytes += assertHostCellFits(
+			`relation ${data.name} field ${declared.name}`,
+			value,
+			CHUNK_BYTES
+		)
+	}
+	return bytes
+}
+
+function projectFact(relation: AnyRelation, record: Readonly<Record<string, unknown>>): readonly CellValue[] {
+	const data = relation.data
+	const cells: CellValue[] = []
+	for (const declared of data.fields) {
+		const value = record[declared.name]
+		if (value === undefined) {
+			throw refusal("ChangeDraft.ingest", "InvalidArgument")
+		}
+		cells.push(cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value))
+	}
+	return cells
 }
 
 /**
- * Pulls one bounded chunk off the caller's iterator, projecting each fact
- * to owned cells in sealed field order. Explicit host getters/iterator
- * steps execute as ordinary JS here — their side effects cannot be undone
- * and they are never replayed; a thrown getter/shape error is caught by
- * the caller and becomes a typed input failure that spends the draft.
+ * Pulls one bounded chunk off the caller's iterator. Host length is judged
+ * before any string scan or byte copy. A leftover fact that does not fit
+ * the current chunk is returned unconverted for the next turn.
  */
-function pullChunk(relation: AnyRelation, iterator: Iterator<object>): Chunk {
-	const data = relation.data
+function pullChunk(
+	relation: AnyRelation,
+	iterator: Iterator<object>,
+	pending: object | undefined
+): Chunk {
 	const cells: CellValue[] = []
 	let rows = 0n
 	let bytes = 0n
-	while (rows < BigInt(CHUNK_ROWS) && bytes < CHUNK_BYTES) {
-		const next = iterator.next()
-		if (next.done === true) {
-			return { rows, cells, done: true }
-		}
-		const record = recordOf(next.value)
-		rows += 1n
-		for (const declared of data.fields) {
-			const value = record[declared.name]
-			if (value === undefined) {
-				throw refusal("ChangeDraft.ingest", "InvalidArgument")
+	let leftover: object | undefined
+	let current: object | undefined = pending
+	while (rows < BigInt(CHUNK_ROWS) && leftover === undefined) {
+		if (current === undefined) {
+			const next = iterator.next()
+			if (next.done === true) {
+				return { rows, cells, done: true, leftover: undefined }
 			}
-			const cell = cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value)
-			bytes += cellBytes(cell)
-			cells.push(cell)
+			current = next.value
 		}
+		const record = recordOf(current)
+		const charge = hostFactCharge(relation, record)
+		if (rows > 0n && bytes + charge > CHUNK_BYTES) {
+			leftover = current
+			break
+		}
+		cells.push(...projectFact(relation, record))
+		bytes += charge
+		rows += 1n
+		current = undefined
 	}
-	return { rows, cells, done: false }
+	return { rows, cells, done: false, leftover }
 }
 
 function spendAndDrain(state: DraftState, operation: string): Effect.Effect<void> {
@@ -160,29 +205,29 @@ function ingest(
 			return yield* Effect.fail(refusal(operation, "InvalidArgument"))
 		}
 		state.inFlight = true
-		const wire = policyWire(state.policy, operation)
-		const finish = Effect.sync(() => {
-			state.inFlight = false
+		const wire = yield* Effect.try({
+			try: () => policyWire(state.policy, operation),
+			catch: () => refusal(operation, "InvalidArgument")
 		})
 		const body = Effect.gen(function* () {
 			const iterator = rows[Symbol.iterator]()
+			let leftover: object | undefined
 			let done = false
 			while (!done) {
 				const chunk = yield* Effect.try({
-					try: () => pullChunk(relation, iterator),
+					try: () => pullChunk(relation, iterator, leftover),
 					catch: (cause) => (cause instanceof DbError ? cause : refusal(operation, "InvalidArgument"))
 				}).pipe(
 					Effect.catch((error) =>
-						// Typed input failure (getter throw, shape misuse,
-						// shared backing): spend and drain, never an
-						// untracked partial draft.
 						spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))
 					)
 				)
-				done = chunk.done
+				leftover = chunk.leftover
+				done = chunk.done && leftover === undefined
 				if (chunk.rows === 0n) {
 					continue
 				}
+				yield* eventLoopTurn()
 				yield* nativeOperationWith(
 					operation,
 					(callback) => verb(state.handle, wire, relationId, chunk.rows, chunk.cells, callback),
@@ -191,15 +236,19 @@ function ingest(
 				).pipe(
 					Effect.catch((error) =>
 						Effect.sync(() => {
-							// A failed native ingestion spends the draft
-							// natively; mirror the capability state.
 							state.spent = true
 						}).pipe(Effect.andThen(Effect.fail(error)))
 					)
 				)
 			}
 		})
-		return yield* Effect.onExit(body, () => finish)
+		return yield* Effect.onExit(body, (exit) => {
+			state.inFlight = false
+			if (state.spent || Exit.isSuccess(exit)) {
+				return Effect.void
+			}
+			return spendAndDrain(state, operation)
+		})
 	})
 }
 
@@ -317,5 +366,5 @@ const draftStates = new WeakMap<object, DraftState>()
 
 const ChangeSet = Object.freeze({ builder })
 
-export type { ChangeDraft }
+export type { ChangeDraft, ChangeSet }
 export { ChangeSet, internalChanges }

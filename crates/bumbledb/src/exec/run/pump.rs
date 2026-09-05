@@ -109,14 +109,16 @@ impl Executor {
                     break;
                 }
                 let want = if gate_cover { 1 } else { self.batch - fill };
-                let (yielded, next) = colts[cover_occ].iter_batch(
+                let Some((yielded, next)) = self.colt_ok(colts[cover_occ].iter_batch(
                     cover_cursor,
                     cover_level,
                     token,
                     &mut scratch.entry_keys[fill * cur_arity..],
                     &mut scratch.children[fill..],
                     want,
-                );
+                )) else {
+                    break;
+                };
 
                 // the run_node twin breaks before counting; counting it
 
@@ -132,6 +134,12 @@ impl Executor {
                     .extend(std::iter::repeat_n(entry_origin, yielded));
                 fill += yielded;
                 token = next;
+                // The bounded-quantum ledger poll on binding exploration
+                // (chapter 12 §7); a refusal poisons the drive and the
+                // Running checks above unwind every level.
+                if !self.note_explored(yielded, &*colts) {
+                    break;
+                }
                 if fill == self.batch {
                     counters.phase_end(node_idx, JoinPhase::Gather);
                     self.probe_pass(

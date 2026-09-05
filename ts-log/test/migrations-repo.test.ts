@@ -15,12 +15,12 @@ import type { NativeRuntime } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
 import { ProtocolError } from "#errors.ts"
 import { makeGenerator } from "#migrations/generate.ts"
-import { readBounded, writeAtomic } from "#migrations/fsops.ts"
+import { readBounded, writeDerived, writeImmutable, writeManifest } from "#migrations/fsops.ts"
 import { readRepository } from "#migrations/repo.ts"
-import { scriptedCodec, withStubRuntime, WORK } from "#test/migrations-double.ts"
+import { scriptedCodec, scriptedExclusion, withStubRuntime, WORK } from "#test/migrations-double.ts"
 import { App0, App1, evolution1, Note0 } from "#test/migrations-example.ts"
 
-const gen = makeGenerator(scriptedCodec())
+const gen = makeGenerator(scriptedCodec(), scriptedExclusion())
 
 function run<A, E>(effect: Effect.Effect<A, E, NativeRuntime>): Promise<A> {
 	return Effect.runPromise(withStubRuntime(effect))
@@ -99,6 +99,20 @@ describe("drift, fork and tamper refuse before writes", function suite() {
 		await history(second)
 		await rm(path.join(second, "0000-initialize.plan.json"))
 		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory: second }, work: WORK })), "MigrationDrift")
+		const third = await repoDir()
+		await history(third)
+		await rm(path.join(third, "meta", "base.schema.json"))
+		expectRefusal(await runExit(gen.checkMigrations({ schema: App1, repository: { directory: third }, work: WORK })), "MigrationDrift")
+	})
+
+	test("same-process duplicate generation refuses while the first holds exclusion", async function sameProcess() {
+		const directory = await repoDir()
+		const held = await run(scriptedExclusion().acquire("test", directory, WORK))
+		const busy = await runExit(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		expectRefusal(busy, "MigrationRepository")
+		await run(held.release)
+		const first = await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		assert.equal(first.status, "generated")
 	})
 
 	test("a stray plan that is not the next sequence is drift, never adopted", async function stray() {
@@ -153,22 +167,48 @@ describe("bounded interruption-safe filesystem work", function suite() {
 		assert.equal(absent, null)
 	})
 
-	test("writeAtomic commits whole files and leaves no temporary behind", async function atomic() {
+	test("writeManifest commits whole files and leaves no temporary behind", async function atomic() {
 		const directory = await repoDir()
 		const file = path.join(directory, "artifact.json")
-		await run(writeAtomic("test", file, "one\n"))
-		await run(writeAtomic("test", file, "two\n"))
+		await run(writeManifest("test", file, "one\n"))
+		await run(writeManifest("test", file, "two\n"))
 		assert.equal(await readFile(file, "utf8"), "two\n")
 		const names = await readdir(directory)
 		assert.deepEqual(names, ["artifact.json"], "no temporary sibling survives a completed commit")
-		// A failed rename target (non-empty directory in the way) cleans its
-		// temporary up on the failure path.
 		const clash = path.join(directory, "clash")
 		await mkdir(clash)
 		await mkdir(path.join(clash, "sub"))
-		const failed = await runExit(writeAtomic("test", clash, "text\n"))
+		const failed = await runExit(writeDerived("test", clash, "text\n"))
 		assert.ok(Exit.isFailure(failed))
 		const after = await readdir(directory)
 		assert.deepEqual(after.sort(), ["artifact.json", "clash"], "the temporary was removed on failure")
+	})
+
+	test("writeImmutable is no-clobber and accepts only identical existing content", async function noclobber() {
+		const directory = await repoDir()
+		const file = path.join(directory, "plan.json")
+		await run(writeImmutable("test", file, "same\n"))
+		await run(writeImmutable("test", file, "same\n"))
+		assert.equal(await readFile(file, "utf8"), "same\n")
+		const clash = await runExit(writeImmutable("test", file, "other\n"))
+		assert.ok(Exit.isFailure(clash))
+		assert.equal(await readFile(file, "utf8"), "same\n")
+	})
+
+	test("PID/stale-lock and stat-then-read predecessors are deleted", async function deletions() {
+		const fsops = await import("#migrations/fsops.ts")
+		assert.equal("acquireGenerationLock" in fsops, false)
+		assert.equal("releaseGenerationLock" in fsops, false)
+		assert.equal("writeAtomic" in fsops, false)
+		assert.equal("processAlive" in fsops, false)
+		assert.equal("readLockPid" in fsops, false)
+	})
+
+	test("invalid UTF-8 on the same descriptor is fatal", async function utf8() {
+		const directory = await repoDir()
+		const file = path.join(directory, "bad.json")
+		await writeFile(file, Buffer.from([0xff, 0xfe, 0x00]))
+		const exit = await runExit(readBounded("test", file, 1024))
+		assert.ok(Exit.isFailure(exit))
 	})
 })

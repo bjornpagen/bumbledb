@@ -3,8 +3,9 @@
 //! bytes, or binding slots — and call [`holds`]. Measure-of-ray is
 //! `None`; every other outcome is `Some`. There is no second walk.
 //! Static dispatch, never `dyn`.
+use crate::error::Error;
 use crate::image::intern::InternerHandle;
-use crate::image::{ColumnView, ColumnWidth, RelationImage};
+use crate::image::{ColumnView, ColumnWidth, RelationImage, TextEq, is_scratch_token};
 use crate::ir::WordCmp;
 use crate::obs;
 use crate::schema::Relation;
@@ -134,6 +135,12 @@ pub(crate) trait Operands {
         let _ = bytes;
         unreachable!("validated: PendingIntern is latched before this provider")
     }
+
+    /// String fields compare through [`TextEq`], never raw word identity.
+    fn string_field(&self, at: OperandAddr) -> bool {
+        let _ = at;
+        false
+    }
 }
 
 pub(crate) struct ImageRow<'a> {
@@ -174,6 +181,10 @@ impl Operands for ImageRow<'_> {
 
     fn loaded(&self, at: OperandAddr) -> Result<Loaded, Self::Error> {
         Ok(image_loaded(self.image, at.field(), self.position))
+    }
+
+    fn string_field(&self, at: OperandAddr) -> bool {
+        self.image.field_is_string(at.field())
     }
 }
 
@@ -296,21 +307,66 @@ pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
     }
 }
 
+fn words_equal(text: TextEq<'_>, string_field: bool, left: u64, right: u64) -> Result<bool, Error> {
+    if string_field || is_scratch_token(left) || is_scratch_token(right) {
+        text.tokens_equal(left, right)
+    } else {
+        Ok(left == right)
+    }
+}
+
+fn words_compare(
+    text: TextEq<'_>,
+    string_field: bool,
+    op: WordCmp,
+    left: u64,
+    right: u64,
+) -> Result<bool, Error> {
+    match op {
+        WordCmp::Eq => words_equal(text, string_field, left, right),
+        WordCmp::Ne => Ok(!words_equal(text, string_field, left, right)?),
+        _ => Ok(op.compare(&left, &right)),
+    }
+}
+
+fn word_in_set(text: TextEq<'_>, string_field: bool, word: u64, set: &[u64]) -> Result<bool, Error> {
+    if string_field || is_scratch_token(word) || set.iter().any(|&c| is_scratch_token(c)) {
+        for &elt in set {
+            if text.tokens_equal(word, elt)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    } else {
+        Ok(set.binary_search(&word).is_ok())
+    }
+}
+
 pub(crate) fn holds<O: Operands>(
     predicate: &FilterPredicate,
     ops: &O,
     params: &[Const],
-) -> std::result::Result<Option<bool>, O::Error> {
+    text: TextEq<'_>,
+) -> Result<Option<bool>, Error>
+where
+    Error: From<O::Error>,
+{
     Ok(match predicate {
         FilterPredicate::Compare { field, op, value } => Some(compare_loaded(
             ops,
+            *field,
             ops.loaded(*field)?,
             resolve(value, params),
             *op,
+            text,
         )?),
-        FilterPredicate::FieldsCompare { left, right, op } => {
-            Some(fields_compare(ops.loaded(*left)?, ops.loaded(*right)?, *op))
-        }
+        FilterPredicate::FieldsCompare { left, right, op } => Some(fields_compare(
+            ops.loaded(*left)?,
+            ops.loaded(*right)?,
+            *op,
+            text,
+            ops.string_field(*left) || ops.string_field(*right),
+        )?),
         FilterPredicate::PointIn {
             field,
             point,
@@ -383,12 +439,18 @@ pub(crate) fn holds<O: Operands>(
 
 fn compare_loaded<O: Operands>(
     ops: &O,
+    field: OperandAddr,
     got: Loaded,
     value: &Const,
     op: WordCmp,
-) -> Result<bool, O::Error> {
+    text: TextEq<'_>,
+) -> Result<bool, Error>
+where
+    Error: From<O::Error>,
+{
+    let string_field = ops.string_field(field);
     Ok(match (got, value) {
-        (Loaded::Word(word), Const::Word(c)) => op.compare(&word, c),
+        (Loaded::Word(word), Const::Word(c)) => words_compare(text, string_field, op, word, *c)?,
         (Loaded::Byte(byte), Const::Byte(c)) => op.compare(&byte, c),
         (Loaded::Pair(s, e), Const::Interval { start, end }) => match op {
             WordCmp::Eq => s == *start && e == *end,
@@ -399,21 +461,27 @@ fn compare_loaded<O: Operands>(
             WordCmp::Ne => words[..usize::from(count)] != **c,
             _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
         },
-        (Loaded::Word(word), Const::WordSet(set)) => set.binary_search(&word).is_ok(),
+        (Loaded::Word(word), Const::WordSet(set)) => word_in_set(text, string_field, word, set)?,
         (Loaded::Byte(byte), Const::WordSet(set)) => set.binary_search(&u64::from(byte)).is_ok(),
         (Loaded::Block { words, count }, Const::WordSet(set)) => span_in_set(&words, count, set),
 
         (Loaded::Word(word), Const::Byte(c)) => op.compare(&word, &u64::from(*c)),
         (Loaded::Word(word), Const::PendingIntern { bytes }) => {
-            op.compare(&word, &ops.intern(bytes)?)
+            words_compare(text, string_field, op, word, ops.intern(bytes).map_err(Error::from)?)?
         }
         _ => unreachable!("validated, resolved filter constant"),
     })
 }
 
-fn fields_compare(left: Loaded, right: Loaded, op: WordCmp) -> bool {
-    match (left, right) {
-        (Loaded::Word(a), Loaded::Word(b)) => op.compare(&a, &b),
+fn fields_compare(
+    left: Loaded,
+    right: Loaded,
+    op: WordCmp,
+    text: TextEq<'_>,
+    string_field: bool,
+) -> Result<bool, Error> {
+    Ok(match (left, right) {
+        (Loaded::Word(a), Loaded::Word(b)) => words_compare(text, string_field, op, a, b)?,
         (Loaded::Byte(a), Loaded::Byte(b)) => op.compare(&a, &b),
         (Loaded::Pair(a_s, a_e), Loaded::Pair(b_s, b_e)) => match op {
             WordCmp::Eq => a_s == b_s && a_e == b_e,
@@ -426,7 +494,7 @@ fn fields_compare(left: Loaded, right: Loaded, op: WordCmp) -> bool {
             _ => unreachable!("validated: bytes<N> compares under Eq/Ne only"),
         },
         _ => unreachable!("same-fact comparison joins same-typed fields"),
-    }
+    })
 }
 
 fn image_loaded(image: &RelationImage, field: FieldId, position: usize) -> Loaded {
@@ -473,19 +541,20 @@ fn interval_at(image: &RelationImage, field: FieldId, position: usize) -> (u64, 
     }
 }
 
-#[must_use]
 pub(crate) fn row_holds(
     image: &RelationImage,
     predicates: &[FilterPredicate],
     params: &[Const],
     position: usize,
-) -> bool {
+    text: TextEq<'_>,
+) -> Result<bool, Error> {
     let ops = ImageRow { image, position };
-    predicates.iter().all(|predicate| {
-        holds(predicate, &ops, params)
-            .unwrap_or_else(|e| match e {})
-            .unwrap_or(false)
-    })
+    for predicate in predicates {
+        if !holds(predicate, &ops, params, text)?.unwrap_or(false) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn interval_columns(image: &RelationImage, field: OperandAddr) -> (&[u64], &[u64]) {
@@ -509,6 +578,7 @@ pub(crate) fn kernel_scan(
     predicate: &FilterPredicate,
     params: &[Const],
     out: &mut Vec<u32>,
+    text: TextEq<'_>,
 ) -> bool {
     match predicate {
         FilterPredicate::Compare { .. } => {}
@@ -624,6 +694,14 @@ pub(crate) fn kernel_scan(
     }
     match (image.column(usize::from(span.first_column)), value) {
         (ColumnView::Words(words), Const::Word(c)) => {
+            if image.field_is_string(field.field())
+                && (is_scratch_token(*c) || text.scratch_epoch().is_some())
+            {
+                return false;
+            }
+            if is_scratch_token(*c) {
+                return false;
+            }
             let (lo, hi) = match op {
                 WordCmp::Eq => {
                     crate::exec::kernel::filter_eq_u64(words, *c, out);
@@ -659,7 +737,8 @@ pub(crate) fn kernel_scan(
 }
 
 /// Substitutes one filter's symbolic constants into its resolved slot,
-/// in place. `Ok(false)` = the positive-occurrence `Eq` short-circuit.
+/// in place. `Ready(false)` = the positive-occurrence `Eq` short-circuit.
+/// Latch cache refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -672,14 +751,21 @@ pub(crate) fn resolve_filter_into(
     negated: bool,
     dst: &mut FilterPredicate,
     latched: &mut u32,
-) -> crate::error::Result<bool> {
+) -> crate::error::Result<crate::image::ResidentAdmit<bool>> {
     match template {
         FilterPredicate::Compare { field, op, value } => {
             if let Const::PendingIntern { bytes } = value {
                 // Interning is append-only and never misses: the literal
                 // latches to a final token on its first resolution. A text
                 // absent from every image is an ordinary unequal word.
-                let word = interner.latch(bytes)?;
+                // Cache refusal is BeyondMemory — L05 execute must open
+                // scratch, not treat latch as Allocation.
+                let word = match interner.latch(bytes)? {
+                    crate::image::ResidentAdmit::Ready(word) => word,
+                    crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
+                        return Ok(crate::image::ResidentAdmit::BeyondMemory(exhausted));
+                    }
+                };
                 *value = Const::Word(word);
                 *latched += 1;
                 obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
@@ -689,17 +775,17 @@ pub(crate) fn resolve_filter_into(
                 Const::Words(words) => {
                     write_compare(dst, *field, *op, None);
                     write_words_value(dst, words);
-                    return Ok(true);
+                    return Ok(crate::image::ResidentAdmit::Ready(true));
                 }
                 Const::Param(param) => {
                     if missed[usize::from(param.0)] && *op == WordCmp::Eq && !negated {
-                        return Ok(false);
+                        return Ok(crate::image::ResidentAdmit::Ready(false));
                     }
                     match &params[usize::from(param.0)] {
                         Const::Words(words) => {
                             write_compare(dst, *field, *op, None);
                             write_words_value(dst, words);
-                            return Ok(true);
+                            return Ok(crate::image::ResidentAdmit::Ready(true));
                         }
                         other => other.clone(),
                     }
@@ -707,20 +793,20 @@ pub(crate) fn resolve_filter_into(
                 Const::ParamSet(param) => {
                     debug_assert_eq!(*op, WordCmp::Eq, "validated: sets only under Eq");
                     if missed[usize::from(param.0)] && !negated {
-                        return Ok(false);
+                        return Ok(crate::image::ResidentAdmit::Ready(false));
                     }
                     let Const::WordSet(words) = &params[usize::from(param.0)] else {
                         unreachable!("validated: a set param resolves to a word set")
                     };
                     write_compare(dst, *field, *op, None);
                     write_word_set_value(dst, words);
-                    return Ok(true);
+                    return Ok(crate::image::ResidentAdmit::Ready(true));
                 }
                 Const::WordSet(words) => {
                     debug_assert_eq!(*op, WordCmp::Eq, "plan-constant sets ride Eq");
                     write_compare(dst, *field, *op, None);
                     write_word_set_value(dst, words);
-                    return Ok(true);
+                    return Ok(crate::image::ResidentAdmit::Ready(true));
                 }
                 Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
             };
@@ -818,7 +904,7 @@ pub(crate) fn resolve_filter_into(
             dst.clone_from(template);
         }
     }
-    Ok(true)
+    Ok(crate::image::ResidentAdmit::Ready(true))
 }
 
 fn write_compare(dst: &mut FilterPredicate, field: OperandAddr, op: WordCmp, value: Option<Const>) {
@@ -1201,5 +1287,91 @@ mod gate {
             ["image/view/eval.rs", "plan/selectivity.rs"],
             "exhaustive FilterPredicate matches belong in the evaluator and selectivity only"
         );
+    }
+}
+
+#[cfg(test)]
+mod text_eq_holds {
+    use super::*;
+    use crate::api::prepared::source::UNBOUNDED_POLICY;
+    use crate::exec::scratch::capability::ScratchPolicy;
+    use crate::image::intern::InternerHandle;
+    use crate::image::{ResidentAdmit, TextEq};
+    use crate::work::{CacheLedger, CachePolicy, GenerationHandle, GenerationState};
+
+    struct TextWord(u64);
+    impl Operands for TextWord {
+        type Error = std::convert::Infallible;
+        fn word(&self, _: OperandAddr) -> Result<u64, Self::Error> {
+            Ok(self.0)
+        }
+        fn pair(&self, _: OperandAddr) -> Result<(u64, u64), Self::Error> {
+            unreachable!("scalar")
+        }
+        fn block(&self, _: OperandAddr) -> Result<([u64; 8], u8), Self::Error> {
+            unreachable!("scalar")
+        }
+        fn loaded(&self, _: OperandAddr) -> Result<Loaded, Self::Error> {
+            Ok(Loaded::Word(self.0))
+        }
+        fn string_field(&self, _: OperandAddr) -> bool {
+            true
+        }
+    }
+
+    fn predicate(op: WordCmp, word: u64) -> FilterPredicate {
+        FilterPredicate::Compare {
+            field: OperandAddr::from(FieldId(0)),
+            op,
+            value: Const::Word(word),
+        }
+    }
+
+    /// Spilled String Eq/Ne through `holds` / `compare_loaded` agrees with intern.
+    #[test]
+    fn d02_holds_spilled_string_eq_ne_agrees_with_intern() {
+        let work = crate::api::prepared::source::unbounded_work().expect("work");
+        let generation = GenerationHandle::new(GenerationState::new(
+            crate::image::CacheGeneration::initial(),
+            CacheLedger::new(CachePolicy { cache_bytes: 8 }),
+        ));
+        let admitted = InternerHandle::new(&generation, &work)
+            .intern_or_spill("a-text-that-cannot-fit-eight-cache-bytes")
+            .expect("work");
+        let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
+            panic!("tiny cache must spill");
+        };
+        let cap = crate::exec::scratch::ScratchCapability::start(
+            UNBOUNDED_POLICY,
+            ScratchPolicy::unbounded(),
+        )
+        .expect("scratch");
+        let mut store = exhausted.open_nonresident(&cap);
+        let scratch = store.intern("shared", cap.work()).expect("scratch");
+
+        let fat = GenerationHandle::new(GenerationState::new(
+            crate::image::CacheGeneration::initial(),
+            CacheLedger::unbounded(),
+        ));
+        let intern = fat
+            .lock_resolver()
+            .intern("shared", &work, fat.ledger())
+            .expect("intern");
+        assert_ne!(scratch, intern, "raw words stay disjoint");
+
+        let eq = TextEq::bind(&fat, Some(&store));
+        let ops = TextWord(intern);
+        let hit = holds(&predicate(WordCmp::Eq, scratch), &ops, &[], eq)
+            .expect("infallible")
+            .expect("some");
+        let miss = holds(&predicate(WordCmp::Ne, scratch), &ops, &[], eq)
+            .expect("infallible")
+            .expect("some");
+        assert!(hit, "holds/compare_loaded Eq unifies intern and scratch");
+        assert!(!miss, "holds/compare_loaded Ne is the complement");
+        let other = store.intern("other", cap.work()).expect("other");
+        assert!(!holds(&predicate(WordCmp::Eq, other), &ops, &[], eq)
+            .expect("infallible")
+            .expect("some"));
     }
 }

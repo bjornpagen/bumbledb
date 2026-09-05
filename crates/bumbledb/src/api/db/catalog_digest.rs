@@ -10,16 +10,16 @@
 //! `_core_meta` stays out on purpose — generation and schema fingerprint
 //! are carried and verified by their own consumers.
 
-use super::{Db, OwnedInstance, embedded_work};
+use super::Db;
 use crate::error::{Error, Result};
+use crate::work::WorkContext;
 use bumbledb_theory::schema::RelationId;
 
 impl<S> Db<S> {
     /// # Errors
     /// Storage failure or stopped work.
     #[doc(hidden)]
-    pub fn catalog_digest(&self) -> Result<[u8; 32]> {
-        let work = embedded_work()?;
+    pub fn catalog_digest(&self, work: WorkContext) -> Result<[u8; 32]> {
         let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
         let mut digest = crate::digest::Digest::new();
         for (index, relation) in self.schema.relations().iter().enumerate() {
@@ -40,7 +40,7 @@ impl<S> Db<S> {
     }
 }
 
-impl<S> OwnedInstance<S> {
+impl<S> super::OwnedInstance<S> {
     /// # Errors
     /// None today; kept fallible to match the store-backed digest.
     #[doc(hidden)]
@@ -51,7 +51,6 @@ impl<S> OwnedInstance<S> {
                 continue;
             }
             let id = RelationId(u32::try_from(index).expect("sealed relation ids fit u32"));
-            // Admitted rows are already sorted by canonical bytes.
             fold_relation(
                 &mut digest,
                 id,

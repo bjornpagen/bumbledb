@@ -99,7 +99,7 @@ fn assert_zero(window_name: &str, shape: &str, w: AllocWindow) {
 }
 
 fn seed_store(db: &Db<Budget>) -> (HolderId, AccountId, Holder, Account) {
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let hid = HolderId(1);
         let aid = AccountId(1);
         let holder = Holder { id: hid, tag: 7 };
@@ -145,7 +145,7 @@ fn warm_query_store(
     prepared: &mut PreparedQuery<Budget>,
     params: &[BindValue<'_>],
 ) {
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let mut out = Answers::new();
         snap.execute(prepared, params, &mut out).expect(label);
         alloc_counter::reset();
@@ -172,7 +172,7 @@ fn warm_query_heap(
 }
 
 fn point_read_store(db: &Db<Budget>, id: AccountId, fact: &Account) {
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let _ = snap.get(AccountById { id })?.expect("present");
         assert!(snap.contains(fact)?);
         alloc_counter::reset();
@@ -220,7 +220,7 @@ fn committed_fact_budget(db: &Db<Budget>) {
 fn insert_batch(db: &Db<Budget>, next_tag: &mut u64) {
     let base = *next_tag;
     *next_tag += COMMIT_BATCH;
-    common::expect_admitted(db.write(|tx| {
+    common::expect_admitted(db.write(common::work(), |tx| {
         for i in 0..COMMIT_BATCH {
             let hid = HolderId(1_000 + base + i);
             tx.insert([&Holder {
@@ -281,7 +281,7 @@ fn alloc_law_budgets() {
     point_read_heap(&heap, heap_aid, &heap_acct);
 
     let dir = common::TempDir::new("alloc-budgets");
-    let db = Db::create(dir.path(), Budget)
+    let db = Db::create(dir.path(), Budget, common::work())
         .expect("create")
         .expect("accepted");
     let (_hid, aid, _holder, account) = seed_store(&db);

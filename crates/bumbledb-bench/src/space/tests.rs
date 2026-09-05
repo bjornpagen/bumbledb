@@ -8,14 +8,23 @@ use rusqlite::Connection;
 use super::census::{self, CensusSource, EntrySize, NamespaceCensus, PageStats};
 use super::sqlite_stat;
 use super::variants::{self, Axis, Baseline};
-use super::{NAMESPACES, Namespace, audited_layout, successor_layout};
+use super::{NAMESPACES, Namespace, audited_layout, current_layout, successor_layout};
+
+#[test]
+fn live_tags_match_keys_rs() {
+    assert_eq!(Namespace::from_census_tag(false, 0x01), Namespace::Fact);
+    assert_eq!(Namespace::from_census_tag(false, 0x02), Namespace::Membership);
+    assert_eq!(Namespace::from_census_tag(false, 0x03), Namespace::Determinant);
+    assert_eq!(Namespace::from_census_tag(true, 0x01), Namespace::HostMeta);
+    assert_eq!(Namespace::from_census_tag(false, 0xFF), Namespace::Unknown);
+    assert_eq!(current_layout::KEY_BYTES_FACT_MEMBERSHIP_FP_DET, 69);
+}
 
 // SPACE-01 — the raw-byte model reproduces chapter 41's bill.
 
 #[test]
 fn model_reproduces_the_chapter41_entry_table() {
-    // Fact: 13 + W; membership 45; determinant 15 + d; reverse 15+d / 23+d;
-    // dictionary 41 / 9 + text.
+    // Historical 0.x bill — attribution only.
     assert_eq!(audited_layout::fact_entry(24), 37);
     assert_eq!(audited_layout::MEMBERSHIP_ENTRY, 45);
     assert_eq!(audited_layout::determinant_entry(8), 23);
@@ -24,6 +33,18 @@ fn model_reproduces_the_chapter41_entry_table() {
     assert_eq!(audited_layout::DICT_FORWARD_ENTRY, 41);
     assert_eq!(audited_layout::dict_reverse_entry(12), 21);
     assert_eq!(audited_layout::dict_total(12), 62);
+}
+
+#[test]
+fn current_layout_matches_live_keys_and_compiled_overhead() {
+    use super::current_layout;
+    assert_eq!(current_layout::ROW_KEY, 13);
+    assert_eq!(current_layout::MEMBERSHIP_ENTRY, 29);
+    assert_eq!(current_layout::determinant_exact_u64(), 19);
+    assert_eq!(current_layout::determinant_fingerprint(), 27);
+    assert_eq!(current_layout::KEY_BYTES_FACT_MEMBERSHIP_FP_DET, 69);
+    assert_eq!(current_layout::fact_membership_fp_det(24), 24 + 69);
+    assert_eq!(current_layout::DETERMINANT_OVERHEAD, 11);
 }
 
 #[test]
@@ -95,7 +116,7 @@ fn census_accumulates_per_namespace_and_separates_the_four_measures() {
                 value_bytes: 0,
             },
             EntrySize {
-                namespace: Namespace::Metadata,
+                namespace: Namespace::HostMeta,
                 key_bytes: 7,
                 value_bytes: 8,
             },
@@ -121,7 +142,8 @@ fn census_accumulates_per_namespace_and_separates_the_four_measures() {
         }
     );
     assert_eq!(report.namespace(Namespace::Membership).raw_bytes(), 29);
-    assert_eq!(report.namespace(Namespace::DictionaryForward).entries, 0);
+    assert_eq!(report.namespace(Namespace::HostMeta).entries, 1);
+    assert_eq!(report.namespace(Namespace::Unknown).entries, 0);
     assert_eq!(report.live_raw_bytes(), 26 + 64 + 29 + 15);
     // Page accounting: used vs freelist vs live raw vs file vs allocated
     // are all distinct numbers.
@@ -132,9 +154,16 @@ fn census_accumulates_per_namespace_and_separates_the_four_measures() {
         4 * 4096 - report.live_raw_bytes()
     );
     assert_eq!(report.file_bytes, 8192);
-    // A fully written small file: allocated ≥ length is filesystem-dependent;
-    // assert only that the measure exists and is nonzero here.
-    assert!(report.allocated_bytes > 0);
+    // Fully written file: allocated blocks are a distinct measure from length.
+    // Do not treat "nonzero" as success — require the split exists and
+    // allocated is at least the written length on this Unix temp file.
+    assert_eq!(report.file_bytes, 8192);
+    assert!(
+        report.allocated_bytes >= report.file_bytes,
+        "dense write: allocated {} < length {}",
+        report.allocated_bytes,
+        report.file_bytes
+    );
     let _ = std::fs::remove_file(&path);
 }
 
@@ -157,6 +186,8 @@ fn census_page_overhead_saturates_instead_of_underflowing() {
         },
         file_bytes: 0,
         allocated_bytes: 0,
+        virtual_map_bytes: None,
+        live_transactions: None,
     };
     assert_eq!(
         report.page_overhead_bytes(),

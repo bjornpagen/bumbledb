@@ -9,11 +9,13 @@ mod stats;
 #[cfg(test)]
 mod tests;
 mod traced;
+mod work;
 
 pub use cold::{measure_cold, org_touch};
 pub use measure::{measure, measure_batched, measure_interleaved};
 pub use stats::{normalized_p50, stats};
 pub use traced::{traced_cold_sample, traced_sample};
+pub use work::{bench_policy, bench_work, capped_work_units};
 
 /// The warmup/measure protocol. Warm reads use [`Protocol::WARM`]; writes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

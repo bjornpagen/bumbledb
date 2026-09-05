@@ -7,6 +7,10 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
+		},
+		"./internal/log": {
+			"types": "./dist/internal/log.d.ts",
+			"default": "./dist/internal/log.js"
 		}
 	},
 	"imports": {
@@ -26,7 +30,7 @@
 		"build": "node scripts/build.ts",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
-		"test": "pnpm run build && node --test 'test/**/*.test.ts'",
+		"test": "node --test 'test/**/*.test.ts'",
 		"prepublishOnly": "pnpm run build"
 	},
 	"keywords": [

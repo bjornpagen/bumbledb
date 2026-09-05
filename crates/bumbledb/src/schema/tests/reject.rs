@@ -446,8 +446,10 @@ fn rejects_permuted_duplicate_functionality() {
 }
 
 #[test]
-fn rejects_determinant_overflow() {
-    let count = crate::schema::validate::MAX_DETERMINANT_WIDTH / 8 + 1;
+fn wide_scalar_keys_compile_to_fingerprint_routing() {
+    // 63 u64 fields exceed the 16-byte exact crossover; the store uses a
+    // 16-byte fingerprint and the complete physical key still fits LMDB.
+    let count = 63usize;
     let fields: Vec<FieldDescriptor> = (0..count)
         .map(|i| field(&format!("f{i}"), ValueType::U64))
         .collect();
@@ -456,9 +458,11 @@ fn rejects_determinant_overflow() {
         .collect();
     let mut decl = one_relation(fields);
     decl.statements.push(fd(RelationId(0), &projection));
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        StatementErrorKind::DeterminantKeyTooWide { width: count * 8 }.at(StatementId(0))
+    let schema = decl.validate().expect("wide key uses fingerprint bucket");
+    let theory = crate::schema::CompiledTheory::compile(&schema);
+    assert!(
+        theory.max_determinant_key_width <= crate::schema::LMDB_KEY_LIMIT,
+        "physical determinant keys must fit LMDB"
     );
 }
 

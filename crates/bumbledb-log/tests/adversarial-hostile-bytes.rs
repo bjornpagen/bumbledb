@@ -36,7 +36,7 @@ use support::{LIMITS, base_schema, db_id, incarnation, op, temp_dir, work};
 fn keyed_history(tag: &str) -> (Arc<Db<SchemaDescriptor>>, LocalHistory<SchemaDescriptor>) {
     let dir = temp_dir(tag).join("db");
     let db = Arc::new(
-        Db::create(&dir, base_schema())
+        Db::create(&dir, base_schema(), work())
             .expect("create store")
             .expect("empty store admits"),
     );
@@ -87,7 +87,7 @@ fn seal_inserts(
 
 fn row_count(db: &Db<SchemaDescriptor>) -> usize {
     let mut count = 0;
-    db.read(|read| {
+    db.read(work(), |read| {
         for row in read.scan(RelationId(0))? {
             row?;
             count += 1;
@@ -123,6 +123,7 @@ fn forge(
             identity,
             seq: position.decision.seq + 1,
             parent: position.decision,
+            parent_object: None,
             before_state: position.state,
             after_state: after,
             canonical_command: &canonical_command,
@@ -298,6 +299,7 @@ fn a_decision_off_the_exact_parent_refuses_as_a_chain_break() {
             identity,
             seq: forged_parent.seq + 1,
             parent: forged_parent,
+            parent_object: None,
             before_state: position.state,
             after_state: StateStamp {
                 incarnation: position.state.incarnation,
@@ -317,6 +319,54 @@ fn a_decision_off_the_exact_parent_refuses_as_a_chain_break() {
         matches!(refused, Err(ApplyError::Chain(_))),
         "spliced parent refuses: {refused:?}"
     );
+    assert_eq!(row_count(&db), 0);
+}
+
+/// A present parent locator must bind kind and digest to the parent stamp.
+/// A chunk-kind or wrong-digest link is corruption, not a missing-link fallback.
+#[test]
+fn a_malformed_interior_parent_locator_refuses_before_state_moves() {
+    use bumbledb_log::history::decision::decode_decision;
+    use bumbledb_log::store::{ObjectKind, ObjectRef};
+
+    let (db, history) = keyed_history("bad-link");
+    let identity = history.identity();
+    let command = seal_inserts(&db, identity, 0x77, &[(7, "eta")]);
+    let authority = history.authority().expect("authority");
+    let position = authority.position().expect("live genesis");
+    let canonical_command = command.encode(LIMITS).expect("command encodes");
+    let wrong_kind = ObjectRef {
+        epoch: 1,
+        kind: ObjectKind::Chunk,
+        digest: *position.decision.hash.as_bytes(),
+        length: 16,
+    };
+    let bytes = encode_decision(
+        DecisionParts {
+            identity,
+            seq: position.decision.seq + 1,
+            parent: position.decision,
+            parent_object: Some(wrong_kind),
+            before_state: position.state,
+            after_state: StateStamp {
+                incarnation: position.state.incarnation,
+                data_revision: position.state.data_revision + 1,
+            },
+            canonical_command: &canonical_command,
+            outcome: UnverifiedOutcome::Committed {
+                changed: ChangeSummary::new(1, 0).expect("nonzero summary"),
+                result: &[],
+            },
+        },
+        LIMITS,
+    )
+    .expect("hostile bytes frame");
+    assert!(
+        decode_decision(&bytes, LIMITS).is_err(),
+        "wrong parent kind is not a walkable link"
+    );
+    let refused = apply::materialize(&db, &authority, &bytes, LIMITS, &work());
+    assert!(refused.is_err(), "malformed interior link refuses: {refused:?}");
     assert_eq!(row_count(&db), 0);
 }
 

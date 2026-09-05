@@ -8,6 +8,8 @@
 //! crate-private handles — the exact desync each finding names, never a
 //! second key-derivation implementation.
 
+use std::time::Duration;
+
 use bumbledb_theory::schema::{
     FieldDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, ValueType,
 };
@@ -17,7 +19,7 @@ use crate::storage::store::{
     CandidateJudge, CandidateState, Judgment as StoreJudgment, StoreResult, UnindexedRows,
 };
 use crate::testutil::TempDir;
-use crate::work::WorkContext;
+use crate::work::{ExecutionPolicy, WorkContext};
 use crate::{Db, StoreVerdict, Theory, Value};
 
 const ENTRY: RelationId = RelationId(0);
@@ -55,7 +57,18 @@ fn row(name: &str, amount: i64) -> Vec<Value> {
 }
 
 fn create(dir: &TempDir) -> Db<Ledger> {
-    Db::create(dir.path(), Ledger)
+    let work = ExecutionPolicy {
+        input_bytes: 1 << 30,
+        working_bytes: 1 << 30,
+        scratch_bytes: 1 << 30,
+        result_bytes: 1 << 30,
+        rows: 1 << 30,
+        work_units: 1 << 30,
+        timeout: Duration::from_secs(3600),
+    }
+    .start()
+    .expect("work");
+    Db::create(dir.path(), Ledger, work)
         .expect("create")
         .expect("empty theory admits")
 }

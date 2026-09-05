@@ -10,14 +10,14 @@ use std::sync::Arc;
 
 use bumbledb::RelationId;
 use bumbledb_log::backup::{
-    BackupError, backup_manifest_key, backup_root, read_backup_manifest, read_backup_tail,
+    BackupError, backup_manifest_key, backup_root, read_backup_manifest, relocated_tail,
     verify_backup,
 };
 use bumbledb_log::checkpointer::{CheckpointKind, CheckpointPolicy, publish_checkpoint};
 use bumbledb_log::history::IncarnationId;
 use bumbledb_log::restore::{inspect, restore_writable_with_tail};
 use bumbledb_log::store::mem::{Behavior, MemStore, Op};
-use bumbledb_log::store::{ConditionalStore as _, get_verified};
+use bumbledb_log::store::{ConditionalStore as _, ReceiveLimits, TransportContext, get_verified};
 use bumbledb_log::writer::{LocalHistory, LogError, SubmitOutcome};
 use lane_support::{HEAD_CAP, LIMITS, Mirror, insert_user, op, temp_dir, theory, work};
 
@@ -26,6 +26,43 @@ fn ckpt_policy() -> CheckpointPolicy {
         chunk_bytes: 4_096,
         head_cap: HEAD_CAP,
         ..CheckpointPolicy::DEFAULT
+    }
+}
+
+fn fetch_verified(
+    store: &MemStore,
+    prefix: &str,
+    reference: &bumbledb_log::store::ObjectRef,
+) -> bumbledb::work::ChargedBytes {
+    get_verified(
+        store,
+        prefix,
+        reference,
+        TransportContext::new(&work(), ReceiveLimits::exact(reference.length)),
+    )
+    .expect("verified")
+}
+
+fn fetch_chunk_owners(
+    store: &MemStore,
+    prefix: &str,
+    chunks: &[bumbledb_log::store::ObjectRef],
+) -> Vec<bumbledb::work::ChargedBytes> {
+    chunks
+        .iter()
+        .map(|chunk| fetch_verified(store, prefix, chunk))
+        .collect()
+}
+
+fn charged_chunk_views(
+    owners: &[bumbledb::work::ChargedBytes],
+) -> impl Iterator<Item = Result<&[u8], bumbledb_log::recovery::RecoveryError>> + '_ {
+    owners.iter().map(|charged| Ok(charged.as_bytes()))
+}
+
+fn release_owners(owners: Vec<bumbledb::work::ChargedBytes>) {
+    for charged in owners {
+        drop(charged.into_owner());
     }
 }
 
@@ -106,27 +143,23 @@ fn backup01_05_backup_verifies_and_restores_from_the_destination_only() {
     // Restore into a new incarnation from the destination only, reaching the
     // backed-up tip through the copied tail.
     let (manifest, digest) =
-        read_backup_manifest(&destination, "vault", op(0x01)).expect("manifest reads");
+        read_backup_manifest(&destination, "vault", op(0x01), &work()).expect("manifest reads");
     let checkpoint_ref = manifest.checkpoint.expect("checkpoint copied");
-    let checkpoint_bytes = get_verified(&destination, "vault", &checkpoint_ref).expect("from dest");
-    let checkpoint = bumbledb_log::codec::decode_manifest(&checkpoint_bytes, ckpt_policy().stream)
-        .expect("decodes");
-    let chunks: Vec<Result<Vec<u8>, bumbledb_log::recovery::RecoveryError>> = checkpoint
-        .chunks
-        .iter()
-        .map(|chunk| {
-            get_verified(&destination, "vault", chunk)
-                .map_err(bumbledb_log::recovery::RecoveryError::Object)
-        })
-        .collect();
-    let tail = read_backup_tail(&destination, "vault", &manifest, LIMITS, &work()).expect("tail");
+    let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
+    let checkpoint = bumbledb_log::codec::decode_manifest(
+        checkpoint_bytes.as_bytes(),
+        ckpt_policy().stream,
+    )
+    .expect("decodes");
+    let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
+    let tail = relocated_tail(&destination, "vault", &manifest, LIMITS, &work());
     let target = temp_dir("bk-restore-target").join("db");
     let restored = restore_writable_with_tail(
         &target,
         theory(),
         &checkpoint,
-        chunks,
-        &tail,
+        charged_chunk_views(&chunk_owners),
+        tail,
         manifest.tip,
         IncarnationId::from_core(bumbledb::Id128::from_bytes([0xdd; 16])),
         op(0x0f),
@@ -139,11 +172,13 @@ fn backup01_05_backup_verifies_and_restores_from_the_destination_only() {
         &work(),
     )
     .expect("restore reaches the tip");
+    release_owners(chunk_owners);
+    drop(checkpoint_bytes.into_owner());
     // Exact captured facts: all three users, byte-preserved entity values.
     let mut users = Vec::new();
     restored
         .db
-        .read(|read| {
+        .read(work(), |read| {
             for row in read.scan(RelationId(0)).expect("scan") {
                 users.push(row.expect("row"));
             }
@@ -196,7 +231,7 @@ fn backup02_incomplete_operations_are_never_listed_and_retry_is_idempotent() {
         &work(),
     );
     assert!(interrupted.is_err(), "the interrupted copy fails");
-    let unlisted = read_backup_manifest(&destination, "vault", op(0x02));
+    let unlisted = read_backup_manifest(&destination, "vault", op(0x02), &work());
     assert!(
         matches!(unlisted, Err(BackupError::Incomplete { .. })),
         "an incomplete backup is never listed as complete: {unlisted:?}"
@@ -252,9 +287,12 @@ fn backup04_corruption_wrong_operation_and_conflicts_refuse_with_evidence() {
     // Corrupt one copied chunk in the DESTINATION: verification fails with
     // the precise object, before any restore activation.
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
-    let checkpoint_bytes = get_verified(&destination, "vault", &checkpoint_ref).expect("manifest");
-    let checkpoint = bumbledb_log::codec::decode_manifest(&checkpoint_bytes, ckpt_policy().stream)
-        .expect("decodes");
+    let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
+    let checkpoint = bumbledb_log::codec::decode_manifest(
+        checkpoint_bytes.as_bytes(),
+        ckpt_policy().stream,
+    )
+    .expect("decodes");
     let chunk_key = checkpoint.chunks[0].key("vault");
     assert!(destination.corrupt_object(&chunk_key, |bytes| bytes[7] ^= 0xff));
     let refused = verify_backup(
@@ -271,7 +309,7 @@ fn backup04_corruption_wrong_operation_and_conflicts_refuse_with_evidence() {
     destination
         .create_head(&foreign_key, b"foreign bytes at the operation key")
         .expect("planted");
-    let conflicting = read_backup_manifest(&destination, "vault", op(0x05));
+    let conflicting = read_backup_manifest(&destination, "vault", op(0x05), &work());
     assert!(conflicting.is_err(), "{conflicting:?}");
 }
 
@@ -282,28 +320,26 @@ fn restore02_read_only_inspection_grants_no_mutation_capability() {
     let mirror = hosted_fixture("bk-inspect", &store);
     let report = run_backup(&mirror, &destination, 0x06);
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
-    let checkpoint_bytes = get_verified(&destination, "vault", &checkpoint_ref).expect("manifest");
-    let checkpoint = bumbledb_log::codec::decode_manifest(&checkpoint_bytes, ckpt_policy().stream)
-        .expect("decodes");
-    let chunks: Vec<Result<Vec<u8>, bumbledb_log::recovery::RecoveryError>> = checkpoint
-        .chunks
-        .iter()
-        .map(|chunk| {
-            get_verified(&destination, "vault", chunk)
-                .map_err(bumbledb_log::recovery::RecoveryError::Object)
-        })
-        .collect();
+    let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
+    let checkpoint = bumbledb_log::codec::decode_manifest(
+        checkpoint_bytes.as_bytes(),
+        ckpt_policy().stream,
+    )
+    .expect("decodes");
+    let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
     let scratch = temp_dir("bk-inspect-scratch").join("db");
     let inspection = inspect(
         &scratch,
         theory(),
         &checkpoint,
-        chunks,
+        charged_chunk_views(&chunk_owners),
         ckpt_policy().stream,
         HEAD_CAP,
         &work(),
     )
     .expect("inspection materializes");
+    release_owners(chunk_owners);
+    drop(checkpoint_bytes.into_owner());
     // Original provenance and stamps are retained; reads work; the type
     // exposes NO write/submit surface (compile-time: `Inspection` has only
     // `read`/`provenance`).
@@ -314,7 +350,7 @@ fn restore02_read_only_inspection_grants_no_mutation_capability() {
     );
     let mut count = 0;
     inspection
-        .read(|read| {
+        .read(work(), |read| {
             for row in read.scan(RelationId(0)).expect("scan") {
                 row.expect("row");
                 count += 1;
@@ -378,25 +414,20 @@ fn restore03_restored_outbox_style_facts_document_duplicate_delivery_hazard() {
     mirror.submit(&lane_support::delete_user(mirror.db(), identity, 2, 777));
     // Restore the backup: the outbox row is pending AGAIN in the new lineage.
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
-    let checkpoint_bytes = get_verified(&destination, "vault", &checkpoint_ref).expect("manifest");
-    let checkpoint = bumbledb_log::codec::decode_manifest(&checkpoint_bytes, ckpt_policy().stream)
-        .expect("decodes");
-    let chunks: Vec<Result<Vec<u8>, bumbledb_log::recovery::RecoveryError>> = checkpoint
-        .chunks
-        .iter()
-        .map(|chunk| {
-            get_verified(&destination, "vault", chunk)
-                .map_err(bumbledb_log::recovery::RecoveryError::Object)
-        })
-        .collect();
-    let tail =
-        read_backup_tail(&destination, "vault", &report.manifest, LIMITS, &work()).expect("tail");
+    let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
+    let checkpoint = bumbledb_log::codec::decode_manifest(
+        checkpoint_bytes.as_bytes(),
+        ckpt_policy().stream,
+    )
+    .expect("decodes");
+    let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
+    let tail = relocated_tail(&destination, "vault", &report.manifest, LIMITS, &work());
     let restored = restore_writable_with_tail(
         &temp_dir("bk-outbox-target").join("db"),
         theory(),
         &checkpoint,
-        chunks,
-        &tail,
+        charged_chunk_views(&chunk_owners),
+        tail,
         report.manifest.tip,
         IncarnationId::from_core(bumbledb::Id128::from_bytes([0xee; 16])),
         op(0x09),
@@ -409,10 +440,12 @@ fn restore03_restored_outbox_style_facts_document_duplicate_delivery_hazard() {
         &work(),
     )
     .expect("restore");
+    release_owners(chunk_owners);
+    drop(checkpoint_bytes.into_owner());
     let mut pending = 0;
     restored
         .db
-        .read(|read| {
+        .read(work(), |read| {
             for row in read.scan(RelationId(0)).expect("scan") {
                 row.expect("row");
                 pending += 1;
@@ -424,5 +457,103 @@ fn restore03_restored_outbox_style_facts_document_duplicate_delivery_hazard() {
         pending, 1,
         "the restored outbox row appears pending again: the duplicate-delivery \
          hazard is real and the receiver's stable business identity must dedup"
+    );
+}
+
+/// D16/D17: a relocated backup is consumed from the destination manifest's
+/// ordered refs. Historical decision commitments stay unchanged; restore
+/// does not follow source-location parent refs. Verification: NotRun.
+#[test]
+fn d16_relocated_backup_uses_manifest_refs_not_source_locators() {
+    let store = MemStore::new();
+    let destination = MemStore::new();
+    let mirror = hosted_fixture("bk-relocated", &store);
+    let report = run_backup(&mirror, &destination, 0x21);
+    let source_keys: Vec<String> = store.object_keys();
+    for key in &source_keys {
+        store.delete_object(key).expect("source gone");
+    }
+    assert!(
+        store.object_keys().is_empty(),
+        "source objects must not be consulted after relocation"
+    );
+    let verified = verify_backup(
+        &destination,
+        "vault",
+        op(0x21),
+        LIMITS,
+        ckpt_policy().stream,
+        &work(),
+    )
+    .expect("destination-only verification");
+    assert_eq!(verified.manifest.decisions.len(), report.manifest.decisions.len());
+    let mut parent = report.manifest.base;
+    let mut count = 0u64;
+    for body in relocated_tail(&destination, "vault", &report.manifest, LIMITS, &work()) {
+        let body = body.expect("relocated body");
+        let envelope = bumbledb_log::history::decision::decode_decision(body.as_bytes(), LIMITS)
+            .expect("historical bytes decode");
+        assert_eq!(
+            envelope.parent, parent,
+            "parent stamp commitment is unchanged; no source locator chase"
+        );
+        parent = envelope.stamp();
+        drop(body.into_owner());
+        count += 1;
+    }
+    assert_eq!(count, report.manifest.decisions.len() as u64);
+    assert_eq!(parent, report.manifest.tip);
+}
+
+/// D17: a with-tail restore whose expected tip disagrees with the reached
+/// authority refuses before publication. `theory()` admits empty prefixes,
+/// so dest-absent means the tip check ran on the unready owner.
+/// Verification: NotRun.
+#[test]
+fn d17_wrong_tip_with_tail_leaves_destination_absent() {
+    let store = MemStore::new();
+    let destination = MemStore::new();
+    let mirror = hosted_fixture("bk-d17-tip", &store);
+    let report = run_backup(&mirror, &destination, 0x17);
+    let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
+    let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
+    let checkpoint = bumbledb_log::codec::decode_manifest(
+        checkpoint_bytes.as_bytes(),
+        ckpt_policy().stream,
+    )
+    .expect("decodes");
+    let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
+    let tail = relocated_tail(&destination, "vault", &report.manifest, LIMITS, &work());
+    let target = temp_dir("bk-d17-wrong-tip").join("db");
+    let refused = restore_writable_with_tail(
+        &target,
+        theory(),
+        &checkpoint,
+        charged_chunk_views(&chunk_owners),
+        tail,
+        checkpoint.decision,
+        IncarnationId::from_core(bumbledb::Id128::from_bytes([0xd7; 16])),
+        op(0x17),
+        report.manifest_digest,
+        "mem",
+        "t-restored",
+        LIMITS,
+        &ckpt_policy(),
+        HEAD_CAP,
+        &work(),
+    );
+    release_owners(chunk_owners);
+    drop(checkpoint_bytes.into_owner());
+    assert!(
+        refused.is_err(),
+        "expected_tip at the checkpoint (not the backed-up tip) refuses, got {refused:?}"
+    );
+    assert!(
+        !target.exists()
+            || std::fs::read_dir(&target)
+                .map(|listing| listing.filter_map(Result::ok).count())
+                .unwrap_or(0)
+                == 0,
+        "wrong-tip with-tail restore left a published destination"
     );
 }

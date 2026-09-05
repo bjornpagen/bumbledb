@@ -10,6 +10,7 @@ import { Effect, Option, Result } from "effect"
 import { requirePrincipal } from "../../../../src/auth.ts"
 import { bindingFor } from "../../../../src/db/bindings.ts"
 import { setPinned } from "../../../../src/db/commands.ts"
+import { getNote } from "../../../../src/db/reads.ts"
 import { Note } from "../../../../src/db/schema.ts"
 import { requestPolicy } from "../../../../src/db/runtime-policy.ts"
 import { appRuntime, Databases } from "../../../../src/db/server.ts"
@@ -27,7 +28,7 @@ const readNote = Effect.fn("routes.readNote")(
 		const databases = yield* Databases
 		const db = yield* databases.acquire(binding, work)
 		const snapshot = yield* db.snapshot({ ...work, consistency: { kind: "latest" } })
-		const found = yield* snapshot.get(Note, { id }, work)
+		const found = yield* getNote(snapshot, id, work)
 		if (Option.isNone(found)) {
 			return Response.json({ error: "NotFound" }, { status: 404 })
 		}
@@ -79,7 +80,11 @@ async function parseBody(request: Request): Promise<Result.Result<{ requestKey: 
 		if (typeof raw !== "object" || raw === null) {
 			return Result.fail("not an object")
 		}
-		const { requestKey, pinned } = raw as { requestKey?: unknown; pinned?: unknown }
+		if (!("requestKey" in raw) || !("pinned" in raw)) {
+			return Result.fail("bad fields")
+		}
+		const requestKey = raw.requestKey
+		const pinned = raw.pinned
 		if (typeof requestKey !== "string" || typeof pinned !== "boolean") {
 			return Result.fail("bad fields")
 		}

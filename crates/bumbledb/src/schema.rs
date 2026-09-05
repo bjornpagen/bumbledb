@@ -9,6 +9,7 @@
 /// truncation evidence. The log frames these bytes verbatim into decisions
 /// and receipts; strict decode plus schema interpretation reproduces the
 /// judge's verdict or the public [`crate::Violations`] value.
+pub mod compiled;
 pub mod evidence;
 pub mod fingerprint;
 /// The reference final-state judge and the candidate-state interface
@@ -46,6 +47,12 @@ pub use spec::{
     RelationSpec, RowSpec, SchemaSpec, SchemaSpecError, SideSpec, SpecIssue, StatementSpec,
     WeightSpec,
 };
+pub use compiled::{
+    CompileError, CompiledProjection, CompiledTheory, DistinctnessWitness, KeyEncoding,
+    LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES, ProjectionBinding, ProjectionId, ProjectionInternKey,
+    VisitControl, VisitOutcome, encode_scalar_group,
+};
+pub use judge::{LawfulParent, judge_complete, judge_incremental};
 pub use validate::ValidateDescriptor;
 
 /// Witness index into [`Schema::keys`] — minted only by validation.
@@ -629,6 +636,7 @@ pub struct Relation {
 #[derive(Debug, Clone)]
 pub struct Schema {
     identity: std::sync::OnceLock<fingerprint::SchemaFingerprint>,
+    compiled: std::sync::OnceLock<Result<compiled::SharedCompiledTheory, compiled::CompileError>>,
     relations: Box<[Relation]>,
 
     keys: Box<[KeyStatement]>,
@@ -641,6 +649,29 @@ pub struct Schema {
 }
 
 impl Schema {
+    /// The sealed schema's compiled projection/law machine (C1). Compiled
+    /// once and shared by storage, admission and planning consumers.
+    ///
+    /// # Errors
+    /// [`CompileError::ProjectionIdExhausted`] when interned projection ids run out.
+    pub fn compiled_theory(&self) -> Result<&compiled::CompiledTheory, compiled::CompileError> {
+        self.compiled
+            .get_or_init(|| compiled::shared_compile(self))
+            .as_ref()
+            .map(std::convert::AsRef::as_ref)
+            .map_err(|error| *error)
+    }
+
+    pub(crate) fn shared_compiled_theory(
+        &self,
+    ) -> Result<compiled::SharedCompiledTheory, compiled::CompileError> {
+        self.compiled
+            .get_or_init(|| compiled::shared_compile(self))
+            .as_ref()
+            .cloned()
+            .map_err(|error| *error)
+    }
+
     #[must_use]
     pub fn relations(&self) -> &[Relation] {
         &self.relations

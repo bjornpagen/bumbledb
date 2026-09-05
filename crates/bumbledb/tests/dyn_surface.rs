@@ -57,11 +57,11 @@ fn edge_row(src: u64, dst: u64) -> Vec<Value> {
 }
 
 fn seeded(dir: &common::TempDir, nodes: usize) -> (bumbledb::Db<Graph>, Vec<u64>) {
-    let db = bumbledb::Db::create(dir.path(), Graph)
+    let db = bumbledb::Db::create(dir.path(), Graph, common::work())
         .expect("create")
         .expect("accepted");
     let ids = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             (0..nodes)
                 .map(|n| {
                     let id = n as u64;
@@ -85,7 +85,7 @@ fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
     let (db, ids) = seeded(&dir, 2);
     assert_eq!(ids.len(), 2);
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         assert_eq!(
             tx.delete_dyn(
                 Graph::NODE,
@@ -107,7 +107,7 @@ fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
     .expect("identity rewrite commits")
     .unwrap();
     let renamed = db
-        .write(|tx| tx.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])]))
+        .write(common::work(), |tx| tx.get_dyn(Graph::NODE, NODE_KEY, &[Value::U64(ids[0])]))
         .expect("point read")
         .unwrap()
         .value
@@ -115,7 +115,7 @@ fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
     assert_eq!(renamed[1], Value::String(Box::from("renamed")));
 
     let next = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             // Application-owned identity: pick a fresh id past everything seen.
             let next = ids.iter().max().copied().unwrap_or(0) + 1;
             tx.insert_dyn(Graph::NODE, [&node_row(next, "next", Kind::Lesson.id())])?;
@@ -138,7 +138,7 @@ fn dyn_identity_rewrite_and_fresh_explicit_ids_preserve_identity() {
 fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
     let dir = common::TempDir::new("dyn-write-sweep");
     let (db, ids) = seeded(&dir, 1);
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let unknown = RelationId(99);
         let wrong_arity = vec![Value::U64(ids[0])];
         let wrong_type = vec![Value::Bool(true), Value::U64(1), Value::U64(0)];
@@ -172,7 +172,7 @@ fn dyn_writes_refuse_malformed_input_typed_never_panicking() {
 fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
     let dir = common::TempDir::new("dyn-read-sweep");
     let (db, ids) = seeded(&dir, 1);
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         assert!(tx.contains_dyn(Graph::NODE, &node_row(ids[0], "node-0", Kind::Lesson.id()))?);
         assert!(!tx.contains_dyn(
             Graph::NODE,
@@ -220,7 +220,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
     .expect("reads commit nothing")
     .unwrap();
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         assert!(snap.contains_dyn(Graph::NODE, &node_row(ids[0], "node-0", Kind::Lesson.id()))?);
         assert!(!snap.contains_dyn(
             Graph::NODE,
@@ -268,7 +268,7 @@ fn dyn_point_reads_refuse_malformed_input_and_miss_honestly() {
 fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
     let dir = common::TempDir::new("dyn-rejection-render");
     let (db, ids) = seeded(&dir, 3);
-    let violations = common::expect_rejected(db.write(|tx| {
+    let violations = common::expect_rejected(db.write(common::work(), |tx| {
         let hub = ids.iter().max().copied().unwrap_or(0) + 1;
         tx.insert_dyn(
             Graph::NODE,
@@ -333,7 +333,7 @@ fn a_rejection_renders_statement_spelling_kind_and_decoded_facts() {
 fn an_fd_rejection_renders_the_key_form() {
     let dir = common::TempDir::new("dyn-rejection-fd");
     let (db, ids) = seeded(&dir, 1);
-    let violations = common::expect_rejected(db.write(|tx| {
+    let violations = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert_dyn(
             Graph::NODE,
             [&node_row(ids[0], "usurper", Kind::Lesson.id())],

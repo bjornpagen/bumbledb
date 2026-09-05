@@ -21,7 +21,11 @@ use std::time::Duration;
 use heed::types::Bytes;
 use heed::{Database, EnvOpenOptions, RoTxn, RwTxn, WithoutTls};
 
+use super::candidate::{CandidateState, Judgment};
+use super::copy::FreshDestination;
+use super::det_index::DeterminantTable;
 use super::error::{StoreError, StoreResult};
+use super::judge_bridge::SchemaJudge;
 use super::fingerprint::Fingerprinter;
 use super::format::{
     self, CoreStoreId, DATA_DB, EnvironmentId, FAMILY, K_FAMILY, K_GENERATION, K_LAYOUT,
@@ -52,6 +56,10 @@ pub(crate) struct StoreInner {
     pub(crate) identity: StoreIdentity,
     pub(crate) schema_fp: SchemaFingerprint,
     pub(crate) fingerprinter: Fingerprinter,
+    /// Compiled schema-derived determinant projections: index maintenance
+    /// and probe-side projection share this one table (see
+    /// [`super::det_index`]).
+    pub(crate) det: DeterminantTable,
     path: PathBuf,
     #[cfg(test)]
     pub(crate) fail_host_after: Mutex<Option<usize>>,
@@ -165,7 +173,7 @@ fn populated_file_bytes(path: &Path) -> u64 {
     std::fs::metadata(path.join("data.mdb")).map_or(0, |meta| meta.len())
 }
 
-fn sync_dirent_chain(dir: &Path) -> std::io::Result<()> {
+pub(crate) fn sync_dirent_chain(dir: &Path) -> std::io::Result<()> {
     let parent = match dir.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -179,9 +187,10 @@ fn sync_dirent_chain(dir: &Path) -> std::io::Result<()> {
 impl Store {
     /// Create a new store. The destination must not exist; a crash before
     /// the final rename leaves only a staging sibling, never a half store.
+    /// Returns the minted [`FreshDestination`] capability for snapshot adoption.
     /// # Errors
     /// `DestinationExists`, lock/I/O/LMDB failures.
-    pub fn create(path: &Path, schema: &Schema, policy: MapPolicy) -> StoreResult<Self> {
+    pub fn create(path: &Path, schema: &Schema, policy: MapPolicy) -> StoreResult<(Self, FreshDestination)> {
         if path.exists() {
             return Err(StoreError::DestinationExists {
                 path: path.to_path_buf(),
@@ -195,34 +204,7 @@ impl Store {
         }
         let staging = staging_path(path)?;
         let created: StoreResult<()> = (|| {
-            let lock = acquire_lock(&staging)?;
-            let store_id = CoreStoreId::mint(path);
-            let schema_fp = fingerprint(schema);
-            {
-                let env = open_env(&staging, policy.open_map_bytes(0))?;
-                let mut wtxn = env.write_txn().map_err(StoreError::from_heed)?;
-                let meta: Database<Bytes, Bytes> = env
-                    .create_database(&mut wtxn, Some(META_DB))
-                    .map_err(StoreError::from_heed)?;
-                let _data: Database<Bytes, Bytes> = env
-                    .create_database(&mut wtxn, Some(DATA_DB))
-                    .map_err(StoreError::from_heed)?;
-                let put = |wtxn: &mut RwTxn<'_>, key: &[u8], value: &[u8]| {
-                    meta.put(wtxn, key, value).map_err(StoreError::from_heed)
-                };
-                put(&mut wtxn, K_FAMILY, FAMILY)?;
-                put(&mut wtxn, K_LAYOUT, &LAYOUT.to_be_bytes())?;
-                put(&mut wtxn, K_STORE_ID, &store_id.0)?;
-                put(&mut wtxn, K_SCHEMA, &schema_fp.0)?;
-                put(
-                    &mut wtxn,
-                    K_GENERATION,
-                    &GenerationId::initial().storage_word().to_be_bytes(),
-                )?;
-                put(&mut wtxn, K_NEXT_ROW_ID, &1u64.to_be_bytes())?;
-                wtxn.commit().map_err(StoreError::from_heed)?;
-                // env drops here: closed before the rename.
-            }
+            init_staging_directory(&staging, path, schema, policy)?;
             for entry in std::fs::read_dir(&staging)? {
                 let entry = entry?;
                 if entry.file_type()?.is_file() {
@@ -232,14 +214,34 @@ impl Store {
             sync_dirent_chain(&staging)?;
             std::fs::rename(&staging, path)?;
             sync_dirent_chain(path)?;
-            drop(lock); // same inode followed the rename; reacquired below
             Ok(())
         })();
         if let Err(error) = created {
             let _ = std::fs::remove_dir_all(&staging);
+            if path.exists() {
+                return Err(StoreError::InstallSettlementFailed {
+                    path: path.to_path_buf(),
+                    detail: Box::new(error),
+                });
+            }
             return Err(error);
         }
-        Self::open(path, schema, policy)
+        Self::open(path, schema, policy).map(|store| (store, FreshDestination::mint()))
+    }
+
+    /// Populate a new store in a private staging directory, then publish it
+    /// atomically to `dest` (CORE-016). Prefer [`super::staging`] for the
+    /// full unready → admitted → installed ownership path.
+    /// # Errors
+    /// `DestinationExists`, population failure, lock/I/O/LMDB failures.
+    pub fn install_populated(
+        dest: &Path,
+        schema: &Schema,
+        policy: MapPolicy,
+        work: &WorkContext,
+        populate: impl FnOnce(&super::staging::StageWriter<'_>, &WorkContext) -> StoreResult<()>,
+    ) -> StoreResult<Self> {
+        super::staging::install_populated(dest, schema, policy, work, populate)
     }
 
     /// Open an existing store. Acquires the kernel lock first; verifies the
@@ -247,7 +249,7 @@ impl Store {
     /// cleanup, adoption, or write. A refused open mutates nothing.
     /// # Errors
     /// `StoreLocked`, `UnrecognizedStore`, `LayoutMismatch`,
-    /// `SchemaMismatch`, corruption, lock/I/O/LMDB failures.
+    /// `SchemaMismatch`, `Compile`, corruption, lock/I/O/LMDB failures.
     pub fn open(path: &Path, schema: &Schema, policy: MapPolicy) -> StoreResult<Self> {
         Self::open_with(path, schema, policy, Fingerprinter::Blake3)
     }
@@ -284,7 +286,7 @@ impl Store {
     ) -> StoreResult<Self> {
         // Create durable meta with the production protocol, then open with
         // the forced bucket function for in-process collision tests.
-        drop(Self::create(path, schema, policy)?);
+        drop(Self::create(path, schema, policy)?.0);
         Self::open_with(path, schema, policy, Fingerprinter::Constant(fp))
     }
 
@@ -294,8 +296,9 @@ impl Store {
         policy: MapPolicy,
         fingerprinter: Fingerprinter,
     ) -> StoreResult<Self> {
+        let det = DeterminantTable::compile(schema)?;
         let lock = acquire_lock(path)?;
-        let map_bytes = policy.open_map_bytes(populated_file_bytes(path));
+        let map_bytes = policy.open_map_bytes(populated_file_bytes(path))?;
         let env = open_env(path, map_bytes)?;
         let schema_fp = fingerprint(schema);
         let (meta, data, store_id) = {
@@ -339,6 +342,7 @@ impl Store {
                 },
                 schema_fp,
                 fingerprinter,
+                det,
                 path: path.to_path_buf(),
                 #[cfg(test)]
                 fail_host_after: Mutex::new(None),
@@ -556,6 +560,22 @@ impl Store {
         let rtxn = self.inner.env.read_txn().map_err(StoreError::from_heed)?;
         read_generation(&self.inner, &rtxn)
     }
+
+    /// Complete production judgment over the committed populated state.
+    /// Used by unready admission; does not mint a lawful parent.
+    pub(crate) fn judge_populated(
+        &self,
+        schema: &Schema,
+        work: &WorkContext,
+    ) -> StoreResult<Judgment<Box<[crate::schema::judge::JudgedViolation]>>> {
+        let owner = self.writer(work)?;
+        let txn = self.gated_write_txn(work)?;
+        let state = CandidateState::of_committed(self, &txn);
+        let judged = SchemaJudge::new(schema).judge_complete(&state, work);
+        drop(txn);
+        drop(owner);
+        judged
+    }
 }
 
 pub(crate) fn read_generation(
@@ -570,7 +590,106 @@ pub(crate) fn read_generation(
     )?))
 }
 
-fn staging_path(dest: &Path) -> StoreResult<PathBuf> {
+/// Initialize one empty successor store inside an already-created staging
+/// directory. The kernel lock is held until the environment closes.
+pub(crate) fn init_staging_directory(
+    staging: &Path,
+    dest: &Path,
+    schema: &Schema,
+    policy: MapPolicy,
+) -> StoreResult<()> {
+    let _lock = acquire_lock(staging)?;
+    let store_id = CoreStoreId::mint(dest);
+    let schema_fp = fingerprint(schema);
+    let env = open_env(staging, policy.open_map_bytes(0)?)?;
+    let mut wtxn = env.write_txn().map_err(StoreError::from_heed)?;
+    let meta: Database<Bytes, Bytes> = env
+        .create_database(&mut wtxn, Some(META_DB))
+        .map_err(StoreError::from_heed)?;
+    let _data: Database<Bytes, Bytes> = env
+        .create_database(&mut wtxn, Some(DATA_DB))
+        .map_err(StoreError::from_heed)?;
+    let put = |wtxn: &mut RwTxn<'_>, key: &[u8], value: &[u8]| {
+        meta.put(wtxn, key, value).map_err(StoreError::from_heed)
+    };
+    put(&mut wtxn, K_FAMILY, FAMILY)?;
+    put(&mut wtxn, K_LAYOUT, &LAYOUT.to_be_bytes())?;
+    put(&mut wtxn, K_STORE_ID, &store_id.0)?;
+    put(&mut wtxn, K_SCHEMA, &schema_fp.0)?;
+    put(
+        &mut wtxn,
+        K_GENERATION,
+        &GenerationId::initial().storage_word().to_be_bytes(),
+    )?;
+    put(&mut wtxn, K_NEXT_ROW_ID, &1u64.to_be_bytes())?;
+    wtxn.commit().map_err(StoreError::from_heed)?;
+    Ok(())
+}
+
+/// Publication evidence for one install attempt. Rename success — not
+/// `dest.exists()` — distinguishes this attempt's install from a preexisting
+/// destination.
+#[derive(Debug)]
+pub(crate) enum PublishOutcome {
+    Installed(Store),
+    PublishedUnsettled { dest: PathBuf, detail: StoreError },
+    DestinationOccupied { path: PathBuf },
+    NotPublished(StoreError),
+}
+
+/// Fsync, rename staging into `dest`, fsync the chain, and reopen.
+pub(crate) fn publish_staging(
+    staging: &Path,
+    dest: &Path,
+    schema: &Schema,
+    policy: MapPolicy,
+    work: &WorkContext,
+) -> PublishOutcome {
+    if dest.exists() {
+        return PublishOutcome::DestinationOccupied {
+            path: dest.to_path_buf(),
+        };
+    }
+    if let Err(detail) = work.checkpoint() {
+        return PublishOutcome::NotPublished(StoreError::Work(detail));
+    }
+    if let Err(detail) = (|| -> StoreResult<()> {
+        for entry in std::fs::read_dir(staging)? {
+            let entry = entry?;
+            if entry.file_type()?.is_file() {
+                std::fs::File::open(entry.path())?.sync_all()?;
+            }
+        }
+        sync_dirent_chain(staging)?;
+        Ok(())
+    })() {
+        return PublishOutcome::NotPublished(detail);
+    }
+    match std::fs::rename(staging, dest) {
+        Ok(()) => {}
+        Err(error) if dest.exists() => {
+            return PublishOutcome::DestinationOccupied {
+                path: dest.to_path_buf(),
+            };
+        }
+        Err(error) => return PublishOutcome::NotPublished(StoreError::from(error)),
+    }
+    if let Err(detail) = sync_dirent_chain(dest) {
+        return PublishOutcome::PublishedUnsettled {
+            dest: dest.to_path_buf(),
+            detail: StoreError::from(detail),
+        };
+    }
+    match Store::open(dest, schema, policy) {
+        Ok(store) => PublishOutcome::Installed(store),
+        Err(detail) => PublishOutcome::PublishedUnsettled {
+            dest: dest.to_path_buf(),
+            detail,
+        },
+    }
+}
+
+pub(crate) fn staging_path(dest: &Path) -> StoreResult<PathBuf> {
     static NONCE: AtomicU64 = AtomicU64::new(1);
     for _ in 0..16 {
         let nonce = u64::from(std::process::id())

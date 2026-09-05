@@ -18,6 +18,7 @@ pub(super) fn run_join<S, C, I>(
     plan: &crate::plan::fj::ValidatedPlan,
     schema: &Schema,
     images: &I,
+    work: &crate::work::WorkContext,
     executor: &mut Executor,
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
@@ -25,9 +26,10 @@ pub(super) fn run_join<S, C, I>(
     memo: &mut ViewMemo,
     derived_images: &super::reach::OccImages,
     derived_retired: &mut Vec<Vec<u32>>,
+    nonresident: &mut Option<crate::image::NonresidentTextStore>,
     sink: &mut S,
     counters: &mut C,
-) -> Result<()>
+) -> Result<bool>
 where
     S: crate::exec::run::Sink,
     C: crate::exec::run::Counters,
@@ -35,6 +37,15 @@ where
 {
     let views_span = obs::span(obs::names::VIEWS);
     memo.tick += 1;
+
+    // Bind the current operation on every COLT before any view reset,
+    // force_root, select, or execute. Rebind installs this ledger so a
+    // prior execution's refusal cannot poison this one.
+    executor.begin_work(work);
+    for colt in &mut memo.colts {
+        colt.bind(Some(work));
+    }
+    let mut pending_steps = 0u32;
 
     debug_assert!(
         resolved_filters
@@ -60,6 +71,9 @@ where
             continue;
         }
 
+        // Scratch-backed derived occurrences never reach this arm:
+        // `rule_uses_scratch_derived` selects fallback before COLT build,
+        // so join/negation walks the sealed stage instead of rematerializing.
         if occurrence.bind.edb().is_none() {
             let image = derived_images.image(occ_idx);
             let mut build_span = obs::span_args(
@@ -72,7 +86,8 @@ where
             {
                 buffer = pooled;
             }
-            let view = apply(image, &resolved_filters[occ_idx], &[], buffer);
+            let eq = image.generation().text_eq(nonresident.as_ref());
+            let view = apply(image, &resolved_filters[occ_idx], &[], buffer, eq)?;
             build_span.set_pair(occ_idx as u64, view.len() as u64);
             let old = memo.colts[occ_idx].reset(view);
             *memo.spare_mut(occ_idx) = old.recycle();
@@ -80,6 +95,7 @@ where
                 memo.is_derived(occ_idx),
                 "an Interior occurrence is Derived and never enters the memo"
             );
+            checkpoint_join_work(work, &mut pending_steps)?;
             continue;
         }
         let relation = match occurrence.source() {
@@ -96,6 +112,7 @@ where
                 obs::names::VIEW_MEMO_HIT,
                 obs::TraceArgs::Count(occ_idx as u64),
             );
+            checkpoint_join_work(work, &mut pending_steps)?;
             continue;
         }
 
@@ -105,27 +122,40 @@ where
                 .colts
                 .get_disjoint_mut([canon, occ_idx])
                 .expect("dedup source is a distinct occurrence");
-            canon_colt.force_root();
-            let old = colt.clone_bound_from(canon_colt, buffer);
+            canon_colt
+                .force_root()
+                .map_err(crate::api::prepared::source::work_error)?;
+            let old = colt
+                .clone_bound_from(canon_colt, buffer)
+                .map_err(crate::api::prepared::source::work_error)?;
             obs::event(
                 obs::names::VIEW_DEDUP,
                 obs::TraceArgs::Pair(occ_idx as u64, canon as u64),
             );
             *memo.spare_mut(occ_idx) = old.recycle();
             memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
+            checkpoint_join_work(work, &mut pending_steps)?;
             continue;
         }
         let mut build_span = obs::span_args(
             obs::names::VIEW_BUILD,
             obs::TraceArgs::Count(occ_idx as u64),
         );
-        let image = images.image(schema, relation)?;
+        let image = match images.image(schema, relation)? {
+            crate::image::ResidentAdmit::Ready(image) => image,
+            crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
+                super::text::install(nonresident, &exhausted, work)?;
+                return Ok(false);
+            }
+        };
         let buffer = std::mem::take(memo.spare_mut(occ_idx));
-        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer);
+        let eq = image.generation().text_eq(nonresident.as_ref());
+        let view = apply(&image, &resolved_filters[occ_idx], &[], buffer, eq)?;
         build_span.set_pair(occ_idx as u64, view.len() as u64);
         let old = memo.colts[occ_idx].reset(view);
         *memo.spare_mut(occ_idx) = old.recycle();
         memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
+        checkpoint_join_work(work, &mut pending_steps)?;
     }
     views_span.end();
 
@@ -139,7 +169,11 @@ where
             );
             continue;
         }
-        let hit = memo.colts[occ_idx].select(keys).is_some();
+        checkpoint_join_work(work, &mut pending_steps)?;
+        let selected = memo.colts[occ_idx]
+            .select(keys)
+            .map_err(crate::api::prepared::source::work_error)?;
+        let hit = selected.is_some();
         probed += 1;
         obs::event(
             obs::names::SELECT_PROBE,
@@ -147,16 +181,41 @@ where
         );
         if !hit {
             selections_span.set_count(probed);
-            return Ok(());
+            return Ok(true);
         }
     }
     selections_span.set_pair(probed, 1);
     selections_span.end();
+    flush_join_work(work, &mut pending_steps)?;
     let _join = obs::span(obs::names::JOIN);
 
-    // their sink enum once per execution BEFORE this call (`run_rule`'s
-
     executor.execute(plan, &mut memo.colts, bindings, sink, counters)?;
+    flush_join_work(work, &mut pending_steps)?;
+    Ok(true)
+}
+
+fn checkpoint_join_work(
+    work: &crate::work::WorkContext,
+    pending: &mut u32,
+) -> crate::error::Result<()> {
+    *pending = pending.saturating_add(1);
+    if *pending >= crate::exec::sink::STEP_QUANTUM {
+        flush_join_work(work, pending)?;
+    }
+    Ok(())
+}
+
+fn flush_join_work(
+    work: &crate::work::WorkContext,
+    pending: &mut u32,
+) -> crate::error::Result<()> {
+    if *pending == 0 {
+        return Ok(());
+    }
+    work
+        .step(u64::from(*pending))
+        .map_err(crate::api::prepared::source::work_error)?;
+    *pending = 0;
     Ok(())
 }
 

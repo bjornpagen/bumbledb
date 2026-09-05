@@ -24,7 +24,7 @@ spends probe-ability (`keyed_eq_unique_correspondence` via the
 semantic keys; `accepted_target_key_spent` for the theory-side form),
 never a conjunct of `Containment` — exactly as
 `schema/validate.rs::resolve_target_key` is separate from
-`storage/commit/judgment.rs`.
+`schema/judge.rs`.
 
 ## The `no_closure` model note (item 10 — the D1 evaluation's seat)
 
@@ -113,7 +113,7 @@ facts agree on the determinant projection `X`. Determinants are field
 LISTS whose SET is identity (`functionality_respects_field_set`);
 composite determinants are the general case, not an extension.
 Bridge: `schema/validate.rs::validate_functionality` accepts the
-declaration; `storage/commit/applier.rs::Applier` rejects colliding
+declaration; `schema/judge.rs::key_scalar` rejects colliding
 determinant images during the insert phase. -/
 def Functionality (R : Set Fact) (X : List FieldId) : Prop :=
   ∀ f g, f ∈ R → g ∈ R → f.project X = g.project X → f = g
@@ -138,7 +138,7 @@ the scalar prefix `S` share no point of their interval position `i`
 constraint" is this judgment on this type, not a feature.
 Bridge: `validate_functionality` admits one final interval position
 and mints `DisjointDeterminantProof`;
-`storage/commit/applier.rs::Applier::probe_neighbors` rejects overlap
+`schema/judge.rs::key_pointwise` rejects overlap
 with predecessor or successor. -/
 def PointwiseKey (R : Set Fact) (S : List FieldId) (i : FieldId) :
     Prop :=
@@ -283,7 +283,7 @@ declared statement's judgment holds of the final state. This is the
 final-state judgment's SPEC — dependencies are properties of
 COMMITTED databases, checked once at commit against the transaction's
 final state; Txn ( consumes this.
-Bridge: `storage/commit/judgment.rs::judge` (delta-restricted, sound
+Bridge: `judge_incremental` under `LawfulParent` (delta-restricted, sound
 because an untouched binding keeps its pre-state verdict — the
 restriction theorems, `Txn/DeltaRestriction.lean`) and
 `Db::verify_store` (the global re-verification). -/

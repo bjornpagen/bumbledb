@@ -105,13 +105,21 @@ fn order_cost(
         let OccBind::Edb(relation_id) = OccBind::of_occurrence(occ(i)) else {
             panic!("fixture");
         };
-        let relation = schema.relation(relation_id);
-        relation
-            .keys()
+        let Ok(theory) = schema.compiled_theory() else {
+            return Vec::new();
+        };
+        theory
+            .key_projections_of(relation_id)
             .iter()
             .filter_map(|id| {
+                match theory.distinctness_witness(*id)? {
+                    crate::schema::DistinctnessWitness::ScalarKeyUnique { .. } => {}
+                    crate::schema::DistinctnessWitness::FullRowEquality
+                    | crate::schema::DistinctnessWitness::ExistenceOnly { .. } => return None,
+                }
+                let projection = theory.projection(*id)?;
                 let mut set = 0u128;
-                for field in &schema.key(*id).projection {
+                for field in projection.projection.iter() {
                     let (_, var) = occ(i).vars.iter().find(|(f, _)| f == field)?;
                     set |= 1 << var_index[var];
                 }

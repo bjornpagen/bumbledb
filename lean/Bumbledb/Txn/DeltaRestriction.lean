@@ -20,20 +20,20 @@ soundness, whole.
 
 * **Scalar FD** — determinant tuples some delta fact of the relation
  projects to (`Delta.projected`, read at the determinant list).
- Bridge: `storage/commit/applier.rs::Applier` probes exactly the
+ Bridge: `schema/judge.rs::key_scalar` / `key_delta_local` probe
  inserted determinant images.
 * **Pointwise FD** — the scalar-prefix groups of the delta facts
  (`Delta.projected` at the scalar prefix); the neighbor probe runs
  within the touched group. Bridge: `Applier::probe_neighbors`.
 * **Scalar IND, source side** — the ADDED source facts inside φ (the
  net insert set is the delta's `adds` by representation — the
- coalesced pair). Bridge: `storage/commit/judgment.rs::check_source`.
+ coalesced pair). Bridge: `schema/judge.rs::containment`.
 * **Scalar IND, target side** — the removed target key tuples NOT
  re-established (`removedTargetKeys`): a ψ-satisfying holder was
  removed and no ψ-satisfying holder stands in the final state.
  Re-establishment is ψ-QUALIFIED per statement — a re-landed tuple
  whose establishing fact fails ψ does not re-establish — mirroring
- `storage/commit/judgment.rs::check_target`'s discipline (the plan's
+ `schema/judge.rs::containment` discipline (the compiled adjacency's
  plain set difference drops the empty-ψ re-land; one `F` get per
  re-landed tuple answers the ψ-carrying dependents).
 * **Coverage** — the touched WINDOW per scalar group
@@ -67,10 +67,11 @@ The engine both ACCEPTS the capacity form at declaration
 `schema/validate.rs`) and ENFORCES it per commit: the
 delta-restricted check this module states is the Rust checker's
 consultation plan, implemented as stated — the touched-parent set is
-`storage/commit/plan.rs`'s capacity derivation
+`schema/compiled.rs::delta_local_statements`
 (`capacity_delta_restriction`'s ledger row), and
-`storage/commit/judgment.rs::check_capacity` judges exactly that
-set against the final state.
+`schema/judge.rs::capacity` / `capacity_delta_local` judge exactly that
+set against the final state. Incremental entry is
+`judge_incremental` and spends `LawfulParent`.
 
 ## Narrowings recorded (law 5: narrow and record)
 
@@ -216,8 +217,8 @@ theorem untouched_fact_pre {T : Theory} {I : Instance} {d : Delta}
 
 /-- The delta-restricted scalar-FD check: injectivity demanded only
 at TOUCHED determinant tuples, judged against the final state.
-Bridge: `storage/commit/applier.rs::Applier` — the insert scan probes
-exactly the inserted determinant images. -/
+Bridge: `schema/judge.rs::key_scalar` — the complete walk, or
+`key_delta_local` under `LawfulParent`. -/
 def fdDeltaCheck (T : Theory) (I : Instance) (d : Delta) (R : RelId)
     (X : List FieldId) : Prop :=
   ∀ f g, f ∈ T.den (d.applyTo I) R → g ∈ T.den (d.applyTo I) R →
@@ -277,7 +278,7 @@ projected key tuples some removed ψ-satisfying target fact held, with
 NO ψ-satisfying holder standing in the final state. Re-establishment
 is ψ-QUALIFIED — a re-landed tuple whose establishing fact fails ψ
 does not re-establish — mirroring
-`storage/commit/judgment.rs::check_target` (the plan's plain set
+`schema/judge.rs::containment` (the compiled adjacency's
 difference drops the empty-ψ re-land; the ψ-carrying dependents read
 the establishing fact). -/
 def removedTargetKeys (T : Theory) (I : Instance) (d : Delta)
@@ -610,8 +611,8 @@ final state models the theory. This is the one prose sentence of
  § enforcement as mathematics —
 the incremental judgment convicts exactly what the full judgment
 convicts, so running only the restricted checks at commit loses
-nothing. Bridge: `storage/commit/judgment.rs::judge` +
-`storage/commit/apply.rs::apply` run every form's restricted check
+nothing. Bridge: `judge_incremental` + `LawfulParent` run every
+form's restricted check; `judge_complete` is the unready/offline entry
 (FD, containment, and window — module doc § discharged), and
 equivalent-under-premise
 rather than literally these; the two recorded coincidences: (1) the

@@ -22,9 +22,10 @@ use super::frame::{
 use super::{
     CommandRef, DatabaseIdentity, DecisionDigest, DecisionStamp, IncarnationId, StateStamp,
 };
+use crate::store::{ObjectKind, ObjectRef};
 
 pub const FAMILY: &[u8] = b"bumbledb.decision.v1\0";
-pub const LAYOUT: u16 = 1;
+pub const LAYOUT: u16 = 2;
 const DECISION: u8 = 1;
 const GENESIS: u8 = 2;
 const DECISION_DIGEST_DOMAIN: &str = "bumbledb.decision.v1/decision-digest";
@@ -32,12 +33,15 @@ const GENESIS_DIGEST_DOMAIN: &str = "bumbledb.decision.v1/genesis-digest";
 
 /// The fields a writer supplies when framing one decision. The canonical
 /// command bytes are the exact sealed command envelope; the outcome is the
-/// judged terminal evidence.
+/// judged terminal evidence. `parent_object` names the parent stamp's object
+/// when retained; absent for decisions immediately after a checkpoint-only
+/// base.
 #[derive(Debug, Clone, Copy)]
 pub struct DecisionParts<'a> {
     pub identity: DatabaseIdentity,
     pub seq: u64,
     pub parent: DecisionStamp,
+    pub parent_object: Option<ObjectRef>,
     pub before_state: StateStamp,
     pub after_state: StateStamp,
     pub canonical_command: &'a [u8],
@@ -51,6 +55,7 @@ pub struct UnverifiedDecisionEnvelope<'a> {
     pub identity: DatabaseIdentity,
     pub seq: u64,
     pub parent: DecisionStamp,
+    pub parent_object: Option<ObjectRef>,
     pub before_state: StateStamp,
     pub after_state: StateStamp,
     /// The embedded exact command envelope bytes (command family framing).
@@ -89,6 +94,7 @@ pub fn encode_decision(parts: DecisionParts<'_>, limits: Limits) -> Result<Vec<u
             64,
             8,
             40,
+            crate::history::locator::parent_locator_field_bytes(parts.parent_object.is_some()),
             24,
             24,
             8,
@@ -100,6 +106,13 @@ pub fn encode_decision(parts: DecisionParts<'_>, limits: Limits) -> Result<Vec<u
     put_identity(&mut out, parts.identity);
     put_u64(&mut out, parts.seq);
     put_stamp(&mut out, parts.parent);
+    match parts.parent_object {
+        None => out.push(0),
+        Some(reference) => {
+            out.push(1);
+            crate::manifest::put_object_ref(&mut out, &reference);
+        }
+    }
     put_state(&mut out, parts.before_state);
     put_state(&mut out, parts.after_state);
     put_u64(&mut out, parts.canonical_command.len() as u64);
@@ -128,6 +141,11 @@ pub fn decode_decision(
     let identity = input.identity()?;
     let seq = input.u64()?;
     let parent = input.stamp()?;
+    let parent_object = match input.tag()? {
+        (_, 0) => None,
+        (_, 1) => Some(crate::history::frame::read_object_ref(&mut input)?),
+        (at, got) => return Err(FrameError::Tag { at, got }),
+    };
     let before_state = input.state()?;
     let after_state = input.state()?;
     let canonical_command = input.span(limits.envelope_bytes)?;
@@ -135,10 +153,18 @@ pub fn decode_decision(
     input.end()?;
     let nested = command::decode_command(canonical_command, limits)?;
     let command = nested.command_ref();
+    if let Some(parent_ref) = parent_object {
+        crate::history::locator::validate_parent_locator(&parent_ref, &parent)
+            .map_err(|error| match error {
+                crate::store::ObjectError::Frame(frame) => frame,
+                _ => FrameError::InvalidTerminalStamp,
+            })?;
+    }
     let envelope = UnverifiedDecisionEnvelope {
         identity,
         seq,
         parent,
+        parent_object,
         before_state,
         after_state,
         canonical_command,
@@ -430,6 +456,7 @@ mod tests {
                 seq: 2,
                 hash: DecisionDigest::from_bytes([7; 32]),
             },
+            parent_object: None,
             before_state: state(1),
             after_state: state(2),
             canonical_command: command,
@@ -438,6 +465,103 @@ mod tests {
                 result: &[],
             },
         }
+    }
+
+    /// Independent decision-frame width: family + layout + kind + fields.
+    /// Must not be derived from the encoder's own part list.
+    fn independent_decision_frame_len(command_len: usize, parent_present: bool) -> usize {
+        const FAMILY_AND_HEADER: usize = 21 + 2 + 1;
+        const IDENTITY: usize = 64;
+        const SEQ: usize = 8;
+        const PARENT_STAMP: usize = 40;
+        const BEFORE: usize = 24;
+        const AFTER: usize = 24;
+        const COMMAND_LEN_FIELD: usize = 8;
+        const COMMITTED_EMPTY_OUTCOME: usize = 25;
+        FAMILY_AND_HEADER
+            + IDENTITY
+            + SEQ
+            + PARENT_STAMP
+            + if parent_present { 50 } else { 1 }
+            + BEFORE
+            + AFTER
+            + COMMAND_LEN_FIELD
+            + command_len
+            + COMMITTED_EMPTY_OUTCOME
+    }
+
+    #[test]
+    fn decision_frame_length_is_independent_of_the_extra_tag_formula() {
+        let command = command_bytes();
+        let parent_hash = DecisionDigest::from_bytes([7; 32]);
+        let parent_ref = crate::store::ObjectRef {
+            epoch: 1,
+            kind: crate::store::ObjectKind::Decision,
+            digest: *parent_hash.as_bytes(),
+            length: 512,
+        };
+        let parts = DecisionParts {
+            identity: identity(),
+            seq: 3,
+            parent: DecisionStamp {
+                seq: 2,
+                hash: parent_hash,
+            },
+            parent_object: Some(parent_ref),
+            before_state: state(1),
+            after_state: state(2),
+            canonical_command: &command,
+            outcome: UnverifiedOutcome::Committed {
+                changed: ChangeSummary::new(1, 0).unwrap(),
+                result: &[],
+            },
+        };
+        let command_len = command.len();
+        let expected = independent_decision_frame_len(command_len, true);
+        let extra_tag = expected - 50 + 1 + 1 + 49;
+        assert_ne!(
+            expected, extra_tag,
+            "independent expected bytes must fail the extra-tag (51) formula"
+        );
+        assert_eq!(expected + 1, extra_tag);
+        assert_eq!(crate::history::locator::OBJECT_REF_WIRE_BYTES, 49);
+        assert_eq!(crate::history::locator::OBJECT_REF_OPTION_PRESENT_BYTES, 50);
+        let exact = Limits {
+            envelope_bytes: expected,
+            ..LIMITS
+        };
+        let bytes = encode_decision(parts, exact).unwrap();
+        assert_eq!(bytes.len(), expected);
+        let under = Limits {
+            envelope_bytes: expected - 1,
+            ..LIMITS
+        };
+        assert_eq!(
+            encode_decision(parts, under),
+            Err(FrameError::LimitExceeded)
+        );
+        let decoded = decode_decision(&bytes, LIMITS).unwrap();
+        assert_eq!(decoded.parent_object, Some(parent_ref));
+
+        let absent_expected = independent_decision_frame_len(command_len, false);
+        let absent_parts = DecisionParts {
+            parent_object: None,
+            ..parts
+        };
+        let absent_exact = Limits {
+            envelope_bytes: absent_expected,
+            ..LIMITS
+        };
+        let absent = encode_decision(absent_parts, absent_exact).unwrap();
+        assert_eq!(absent.len(), absent_expected);
+        let absent_under = Limits {
+            envelope_bytes: absent_expected - 1,
+            ..LIMITS
+        };
+        assert_eq!(
+            encode_decision(absent_parts, absent_under),
+            Err(FrameError::LimitExceeded)
+        );
     }
 
     #[test]

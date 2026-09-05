@@ -227,3 +227,461 @@ fn sealed_results_charge_the_result_ledger() {
         "64 result bytes cannot own a kilobyte of text"
     );
 }
+
+/// D12/D25: two rows that fit individually but not together become two
+/// successful pages. Predelivery refusal after copy returns no data and
+/// retries at the same row. Verification: NotRun.
+#[test]
+fn d25_two_row_page_cap_and_predelivery_abort() {
+    let work = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    answers.push_value(&AnswerValue::String("aaaaaaaa"));
+    answers.push_value(&AnswerValue::String("bbbbbbbb"));
+    answers.push_value(&AnswerValue::String("c"));
+    let sealed = CompleteResult::seal(answers, heap_identity(), &work, usize::MAX).expect("seal");
+    let mut cursor = sealed.into_cursor(8);
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    let row1_bytes = {
+        let preview = ticket
+            .preview_page(&work, 24)
+            .expect("row1 fits")
+            .expect("nonempty");
+        assert_eq!(preview.len(), 1, "row2 must not join row1");
+        super::logical_bytes_for_test(preview)
+    };
+    let adopted = ticket.adopt().expect("preview");
+    assert_eq!(adopted.len(), 1);
+    let charge = work
+        .reserve(crate::work::ByteKind::Result, row1_bytes)
+        .expect("register output");
+    drop(charge);
+    ticket.commit();
+
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    ticket.preview_page(&work, 24).expect("row2 preview");
+    ticket.abort();
+    assert_eq!(
+        cursor.len().saturating_sub(cursor_next_for_test(&cursor)),
+        2,
+        "abort leaves row2 undelivered"
+    );
+
+    let tiny = crate::work::ExecutionPolicy {
+        result_bytes: 1,
+        ..UNBOUNDED_POLICY
+    }
+    .start()
+    .expect("tiny");
+    let refused = cursor.next_page_with_work(&tiny, 1);
+    assert!(refused.is_err(), "predelivery refusal returns no page");
+    assert_eq!(
+        cursor.debug_next_row(),
+        1,
+        "predelivery refusal leaves the cursor on the refused row"
+    );
+    let retry = cursor
+        .next_page_with_work(&work, 24)
+        .expect("retry after abort")
+        .expect("row2 still there");
+    assert_eq!(retry.rows.len(), 1);
+
+    cursor.inject_backing_failure(Error::Corruption(
+        crate::error::CorruptionError::MalformedValue("result row sequence"),
+    ));
+    assert!(cursor.next_page().is_err(), "backing failure is failed");
+    assert!(
+        cursor.next_page().is_err(),
+        "a failed cursor never becomes EOF"
+    );
+    assert!(
+        cursor.next_page_with_work(&work, 64).is_err(),
+        "later pulls stay failed"
+    );
+}
+
+/// Oversized first row: fit is refused from the sealed lengths, the
+/// cursor stays on that row, and a later admitted pull still delivers it.
+/// Verification: NotRun.
+#[test]
+fn oversized_first_row_refuses_with_cursor_unchanged() {
+    let work = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    answers.push_value(&AnswerValue::String("this-row-is-too-large-for-eight-bytes"));
+    answers.push_value(&AnswerValue::String("ok"));
+    for ram_allowance in [usize::MAX, 0] {
+        let sealed =
+            CompleteResult::seal(clone_answers(&answers), heap_identity(), &work, ram_allowance)
+                .expect("seal");
+        let mut cursor = sealed.into_cursor(8);
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let before = work.used(crate::work::Resource::ResultBytes);
+        let refused = ticket.preview_page(&work, 8);
+        assert!(
+            refused.is_err(),
+            "first row exceeds eight encoded bytes, got {refused:?}"
+        );
+        assert_eq!(
+            ticket.preview_charged_bytes(),
+            0,
+            "oversized refuse does not take a preview reservation"
+        );
+        assert_eq!(
+            work.used(crate::work::Resource::ResultBytes),
+            before,
+            "oversized refuse leaves no preview charge"
+        );
+        drop(ticket);
+        assert_eq!(
+            work.used(crate::work::Resource::ResultBytes),
+            before,
+            "refused oversized row left no uncharged allocation to refund"
+        );
+        assert_eq!(
+            cursor.debug_next_row(),
+            0,
+            "predelivery refusal leaves next_row"
+        );
+        let retry = cursor
+            .next_page_with_work(&work, 1024)
+            .expect("retry")
+            .expect("row still there");
+        assert_eq!(retry.rows.len(), 1);
+        assert_eq!(retry.rows.get(0, 0), AnswerValue::String("this-row-is-too-large-for-eight-bytes"));
+    }
+}
+
+fn clone_answers(answers: &Answers) -> Answers {
+    let mut copy = Answers::new();
+    copy.begin(answers.arity());
+    for row in 0..answers.len() {
+        for column in 0..answers.arity() {
+            copy.push_value(&answers.get(row, column));
+        }
+    }
+    copy
+}
+
+/// Several rows that jointly fit become one page. Size comes from the
+/// sealed cells / one scratch load — the page is not encoded into an
+/// uncharged Vec and then rejected. `into_cursor(page_rows)` is the cap.
+/// Verification: NotRun.
+#[test]
+fn multirow_page_fits_under_byte_allowance() {
+    let work = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    answers.push_value(&AnswerValue::U64(1));
+    answers.push_value(&AnswerValue::U64(2));
+    answers.push_value(&AnswerValue::U64(3));
+    // One U64 encodes as 9 bytes; three fit in 32. Row cap 2 must win.
+    for ram_allowance in [usize::MAX, 0] {
+        let sealed =
+            CompleteResult::seal(clone_answers(&answers), heap_identity(), &work, ram_allowance)
+                .expect("seal");
+        let mut cursor = sealed.into_cursor(2);
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let preview = ticket
+            .preview_page(&work, 32)
+            .expect("preview")
+            .expect("nonempty");
+        assert_eq!(
+            preview.len(),
+            2,
+            "byte allowance admits three; page_rows is 2"
+        );
+        assert_eq!(preview.get(0, 0), AnswerValue::U64(1));
+        assert_eq!(preview.get(1, 0), AnswerValue::U64(2));
+        assert_eq!(cursor.debug_next_row(), 0);
+        assert!(
+            ticket.preview_charged_bytes() > 0,
+            "multirow preview reserved before copy"
+        );
+        let adopted = ticket.adopt().expect("adopt");
+        let charge = work
+            .reserve(crate::work::ByteKind::Result, super::logical_bytes_for_test(&adopted))
+            .expect("register output");
+        drop(charge);
+        ticket.commit();
+        assert_eq!(cursor.debug_next_row(), 2);
+
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let last = ticket
+            .preview_page(&work, 32)
+            .expect("last page")
+            .expect("row 3");
+        assert_eq!(last.len(), 1);
+        assert_eq!(last.get(0, 0), AnswerValue::U64(3));
+        ticket.abort();
+        assert_eq!(cursor.debug_next_row(), 2);
+    }
+}
+
+#[test]
+fn cancelled_preview_aborts_without_advancing() {
+    let work = work();
+    let sealed = CompleteResult::seal(sample_answers(3), heap_identity(), &work, usize::MAX)
+        .expect("seal");
+    let mut cursor = sealed.into_cursor(8);
+    work.cancel();
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    assert!(
+        ticket.preview_page(&work, 1024).is_err(),
+        "cancelled work is a resource abort"
+    );
+    drop(ticket);
+    assert_eq!(cursor.debug_next_row(), 0);
+}
+
+fn cursor_next_for_test(cursor: &ResultCursor) -> u64 {
+    cursor.debug_next_row()
+}
+
+/// Preview growth is reserved onto the ticket before copy; abort refunds
+/// that owner. An oversized first row never takes a charge.
+/// Verification: NotRun.
+#[test]
+fn preview_growth_is_charged_and_oversized_leaves_no_uncharged_alloc() {
+    let work = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    answers.push_value(&AnswerValue::String("aaaaaaaa"));
+    answers.push_value(&AnswerValue::String("bbbbbbbb"));
+    let sealed = CompleteResult::seal(answers, heap_identity(), &work, usize::MAX).expect("seal");
+    let baseline = work.used(crate::work::Resource::ResultBytes);
+    let mut cursor = sealed.into_cursor(8);
+
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    let refused = ticket.preview_page(&work, 8);
+    assert!(refused.is_err(), "first row does not fit eight bytes");
+    assert_eq!(ticket.preview_charged_bytes(), 0);
+    assert_eq!(work.used(crate::work::Resource::ResultBytes), baseline);
+    drop(ticket);
+    assert_eq!(
+        work.used(crate::work::Resource::ResultBytes),
+        baseline,
+        "oversized refuse did not leave a live or refundable uncharged buffer"
+    );
+    assert_eq!(cursor.debug_next_row(), 0);
+
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    let preview = ticket
+        .preview_page(&work, 24)
+        .expect("row1 fits")
+        .expect("nonempty");
+    assert_eq!(preview.len(), 1);
+    let charged = ticket.preview_charged_bytes();
+    assert!(charged > 0, "admitted preview reserved before copy");
+    assert_eq!(
+        work.used(crate::work::Resource::ResultBytes),
+        baseline + charged,
+        "the reservation stays on the ticket, not a dropped temp"
+    );
+    ticket.abort();
+    assert_eq!(
+        work.used(crate::work::Resource::ResultBytes),
+        baseline,
+        "abort refunds the ticket-owned preview charge"
+    );
+    assert_eq!(cursor.debug_next_row(), 0);
+
+    let page = cursor
+        .next_page_with_work(&work, 24)
+        .expect("retry")
+        .expect("row1");
+    assert_eq!(page.rows.len(), 1);
+    assert!(
+        page.charged_bytes() > 0,
+        "published page owns the preview reservation"
+    );
+    let after_page = work.used(crate::work::Resource::ResultBytes);
+    assert!(after_page > baseline);
+    drop(page);
+    assert_eq!(
+        work.used(crate::work::Resource::ResultBytes),
+        baseline,
+        "dropping the page refunds its owned charge"
+    );
+}
+
+/// Consume available result capacity, attempt a pull that fits its
+/// caller cap but cannot reserve overlap, then retry the **same** cursor
+/// with sufficient resources and receive the same first row. A budget
+/// refusal is not a sticky cursor failure.
+/// Verification: NotRun.
+#[test]
+fn resource_refusal_retries_same_first_row() {
+    let seal = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    answers.push_value(&AnswerValue::String("first-row-payload"));
+    answers.push_value(&AnswerValue::String("second"));
+    for ram_allowance in [usize::MAX, 0] {
+        let sealed =
+            CompleteResult::seal(clone_answers(&answers), heap_identity(), &seal, ram_allowance)
+                .expect("seal");
+        let mut cursor = sealed.into_cursor(8);
+        let tight = crate::work::ExecutionPolicy {
+            result_bytes: 8,
+            ..UNBOUNDED_POLICY
+        }
+        .start()
+        .expect("tight delivery ledger");
+        cursor.rebind_work(&tight);
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let refused = ticket.preview_page(&tight, 1024);
+        assert!(
+            refused.is_err(),
+            "row fits the caller cap but cannot reserve result overlap"
+        );
+        drop(ticket);
+        assert_eq!(
+            cursor.debug_next_row(),
+            0,
+            "resource abort leaves next_row"
+        );
+        let retry = cursor
+            .next_page_with_work(&seal, 1024)
+            .expect("retry after resource abort must not be a failed cursor")
+            .expect("same first row");
+        assert_eq!(retry.rows.len(), 1);
+        assert_eq!(
+            retry.rows.get(0, 0),
+            AnswerValue::String("first-row-payload")
+        );
+    }
+}
+
+/// True backing / corruption failure stays terminal: later pulls return
+/// that error, never EOF or a successful page.
+/// Verification: NotRun.
+#[test]
+fn backing_failure_stays_terminal() {
+    let work = work();
+    let sealed = CompleteResult::seal(sample_answers(2), heap_identity(), &work, usize::MAX)
+        .expect("seal");
+    let mut cursor = sealed.into_cursor(8);
+    cursor.inject_backing_failure(Error::Corruption(
+        crate::error::CorruptionError::MalformedValue("result row sequence"),
+    ));
+    assert!(cursor.next_page().is_err(), "injected backing failure");
+    assert!(
+        cursor.next_page().is_err(),
+        "a failed cursor never becomes EOF"
+    );
+    assert!(
+        cursor.next_page_with_work(&work, 64).is_err(),
+        "later pulls stay failed"
+    );
+    assert_eq!(cursor.debug_next_row(), 0, "failure does not advance");
+}
+
+/// Adopt-and-abort discards the ticket-local pending advance. A fresh
+/// unpreviewed ticket's `commit` must not steal that abandoned page.
+/// Verification: NotRun.
+#[test]
+fn adopt_and_abort_leaves_nothing_a_fresh_ticket_can_commit() {
+    let work = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    answers.push_value(&AnswerValue::String("only"));
+    answers.push_value(&AnswerValue::String("next"));
+    for ram_allowance in [usize::MAX, 0] {
+        let sealed =
+            CompleteResult::seal(clone_answers(&answers), heap_identity(), &work, ram_allowance)
+                .expect("seal");
+        let mut cursor = sealed.into_cursor(8);
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        ticket
+            .preview_page(&work, 1024)
+            .expect("preview")
+            .expect("row");
+        let adopted = ticket.adopt().expect("adopt");
+        assert_eq!(adopted.get(0, 0), AnswerValue::String("only"));
+        ticket.abort();
+        assert_eq!(cursor.debug_next_row(), 0);
+        let fresh = DeliveryTicket::open(&mut cursor);
+        fresh.commit();
+        assert_eq!(
+            cursor.debug_next_row(),
+            0,
+            "fresh unpreviewed ticket cannot commit an abandoned preview"
+        );
+        let retry = cursor
+            .next_page_with_work(&work, 1024)
+            .expect("retry after adopt-abort")
+            .expect("first row still there");
+        assert_eq!(retry.rows.get(0, 0), AnswerValue::String("only"));
+    }
+}
+
+/// Large spilled results have no resident per-row length directory.
+/// Paging must stay inside the working-memory envelope (not 8 bytes ×
+/// row count of extra resident index).
+/// Verification: NotRun.
+#[test]
+fn spilled_results_stay_within_working_memory_envelope() {
+    let work = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    let n = 2048u64;
+    for i in 0..n {
+        answers.push_value(&AnswerValue::U64(i));
+    }
+    let sealed = CompleteResult::seal(answers, heap_identity(), &work, 0).expect("seal");
+    let after_seal = work.used(crate::work::Resource::WorkingBytes);
+    let mut cursor = sealed.into_cursor(8);
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    let preview = ticket
+        .preview_page(&work, 1024)
+        .expect("preview")
+        .expect("first page");
+    assert_eq!(preview.get(0, 0), AnswerValue::U64(0));
+    let after_preview = work.used(crate::work::Resource::WorkingBytes);
+    assert!(
+        after_preview.saturating_sub(after_seal) < n,
+        "one page must not grow an 8-byte-per-row resident length directory"
+    );
+    ticket.abort();
+    let mut delivered = 0u64;
+    loop {
+        match cursor.next_page_with_work(&work, 256).expect("page") {
+            None => break,
+            Some(page) => {
+                delivered += page.rows.len() as u64;
+                if page.terminal {
+                    break;
+                }
+            }
+        }
+    }
+    assert_eq!(delivered, n);
+    let after_pages = work.used(crate::work::Resource::WorkingBytes);
+    assert!(
+        after_pages.saturating_sub(after_seal) < n * 8,
+        "paging a spill must not retain an 8-byte-per-row working-memory directory"
+    );
+}
+
+#[test]
+fn encoded_value_len_matches_the_codec() {
+    let mut buf = Vec::new();
+    let values = [
+        AnswerValue::Bool(true),
+        AnswerValue::U64(7),
+        AnswerValue::I64(-3),
+        AnswerValue::String("fit-check"),
+        AnswerValue::FixedBytes(&[1, 2, 3, 4]),
+        AnswerValue::Id128(bumbledb_theory::Id128::from_bytes([0; 16])),
+    ];
+    for value in values {
+        buf.clear();
+        super::encode_value(&value, &mut buf);
+        assert_eq!(
+            buf.len() as u64,
+            super::encoded_value_len(&value),
+            "fit length must match the codec for {value:?}"
+        );
+    }
+}

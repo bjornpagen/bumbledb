@@ -293,9 +293,100 @@ pub struct Colt {
 
     /// 56–62: a token that crosses a [`Colt::reset`] is refused loudly
     epoch: u8,
+
+    /// Execution ledger used to reserve pool growth before resize.
+    work: Option<crate::work::WorkContext>,
+    /// Retained working-byte charges for reusable pool capacity (C2).
+    charges: Vec<crate::work::ByteReservation>,
 }
 
 impl Colt {
+    /// The trie's retained pool footprint in bytes — O(1) over the pools'
+    /// capacities. The executor's bounded-quantum ledger poll charges this
+    /// growth to working bytes (chapter 12 §7), so the bounded-restart
+    /// trigger can fire from join growth. The `Arc`'d image is excluded:
+    /// the image build charged its slabs; the view's survivor positions
+    /// (this colt's owned copy) are included.
+    #[must_use]
+    pub fn retained_bytes(&self) -> usize {
+        use std::mem::size_of;
+        let survivors = match &self.view {
+            View::Bound(crate::image::view::BoundView::Survivors { positions, .. }) => {
+                positions.capacity() * size_of::<u32>()
+            }
+            View::Unbound | View::Bound(crate::image::view::BoundView::All(_)) => 0,
+        };
+        survivors
+            + self.select_hits.capacity() * size_of::<Cursor>()
+            + self.select_positions.capacity() * size_of::<u32>()
+            + self.nodes.capacity() * size_of::<NodeState>()
+            + self.chunks.capacity() * size_of::<Chunk>()
+            + self.chunk_positions.capacity() * size_of::<u32>()
+            + self.maps.capacity() * size_of::<Map>()
+            + self.ctrl.capacity()
+            + self.buckets.capacity() * size_of::<u64>()
+            + self.dense.capacity() * size_of::<u32>()
+            + self.scratch.capacity() * size_of::<u64>()
+            + self.stage_keys.capacity() * size_of::<u64>()
+            + self.stage_positions.capacity() * size_of::<u32>()
+    }
+
+    /// Install this operation's ledger. Retained pool charges stay with
+    /// their reservations; a cancelled prior context cannot refuse the next
+    /// execution after rebind.
+    pub fn bind(&mut self, work: Option<&crate::work::WorkContext>) {
+        self.work = work.cloned();
+    }
+
+    pub(crate) fn bind_work(&mut self, work: Option<&crate::work::WorkContext>) {
+        self.bind(work);
+    }
+
+    pub(crate) fn charged_bytes(&self) -> u64 {
+        self.charges.iter().map(crate::work::ByteReservation::bytes).sum()
+    }
+
+    /// Charge only bytes that grow a pool's capacity. Reusing a retained
+    /// slot is free — reset/truncate must not drop reservations while the
+    /// allocation remains.
+    fn admit_bytes(&mut self, extra: usize) -> Result<(), crate::work::WorkError> {
+        if extra == 0 {
+            return Ok(());
+        }
+        let Some(work) = &self.work else {
+            return Ok(());
+        };
+        let charge = work.reserve(crate::work::ByteKind::Working, extra as u64)?;
+        self.charges.push(charge);
+        Ok(())
+    }
+
+    fn admit_needed<T>(
+        &mut self,
+        capacity: usize,
+        needed: usize,
+    ) -> Result<(), crate::work::WorkError> {
+        if needed <= capacity {
+            return Ok(());
+        }
+        self.admit_bytes(
+            needed
+                .saturating_sub(capacity)
+                .saturating_mul(std::mem::size_of::<T>()),
+        )
+    }
+
+    fn poll_force_batch(&self, units: usize) -> Result<(), crate::work::WorkError> {
+        let Some(work) = &self.work else {
+            return Ok(());
+        };
+        work.checkpoint()?;
+        if units > 0 {
+            work.step(units as u64)?;
+        }
+        Ok(())
+    }
+
     fn selection_depth(&self) -> usize {
         self.selection_kinds.len()
     }
@@ -310,6 +401,12 @@ impl Colt {
         } else {
             Start::Pending
         }
+    }
+}
+
+fn reserve_exact_for<T>(vec: &mut Vec<T>, needed: usize) {
+    if needed > vec.capacity() {
+        vec.reserve_exact(needed.saturating_sub(vec.len()));
     }
 }
 

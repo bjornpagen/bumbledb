@@ -38,7 +38,7 @@ use super::collection::AcceptedCollection;
 use super::get as get_path;
 use super::row_reader::RowReader;
 use super::tx::{encode_values, row_error};
-use super::{Fact, Key, MutationReport, OwnedInstance, embedded_work};
+use super::{Fact, Key, MutationReport, OwnedInstance};
 
 enum BuilderPhase {
     Clean,
@@ -60,10 +60,10 @@ pub struct InstanceBuilder<S> {
 
 impl<S: Theory> InstanceBuilder<S> {
     /// # Errors
-    /// Schema validation.
-    pub fn new(theory: S) -> Result<Self> {
+    /// Schema validation or stopped work.
+    pub fn new(theory: S, work: WorkContext) -> Result<Self> {
         let schema = Arc::new(theory.descriptor().validate()?);
-        let work = embedded_work()?;
+        work.checkpoint().map_err(|e| Error::from_store(crate::storage::store::StoreError::Work(e)))?;
         let closed = Arc::new(ClosedRows::build(schema.as_ref(), &work)?);
         Ok(Self {
             schema,

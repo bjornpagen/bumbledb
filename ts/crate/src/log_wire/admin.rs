@@ -15,22 +15,27 @@ use std::sync::atomic::AtomicBool;
 
 use bumbledb::SchemaDescriptor;
 use bumbledb::work::WorkContext;
-use bumbledb_log::checkpointer::{CheckpointKind, CheckpointOutcome, CheckpointPolicy};
-use bumbledb_log::codec::StreamLimits;
+use bumbledb_log::certainty::{AdminCertainty, PublicationPhase};
+use bumbledb_log::checkpointer::{
+    CheckpointError, CheckpointKind, CheckpointOutcome, CheckpointPolicy,
+};
 use bumbledb_log::gc::GcPolicy;
-use bumbledb_log::history::authority::{Access, Lifecycle};
+use bumbledb_log::history::authority::{Access, Activation, Lifecycle};
 use bumbledb_log::history::{
     DatabaseIdentity, DecisionStamp, OperationId, ReceiptEpoch, StateStamp,
 };
-use bumbledb_log::manifest::RootPolicy;
+use bumbledb_log::manifest::{RootKind, RootPolicy};
 use bumbledb_log::migration::executor::{
-    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationStatus, StepInput,
-    SuffixRequest, activate_target, initialize,
+    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationError, MigrationStatus,
+    StepInput, SuffixRequest, activate_target, initialize,
 };
+use bumbledb_log::migration::hosted::{HostedCutover, HostedMigration, HostedOutcome};
 use bumbledb_log::migration::manifest::{Manifest, parse_manifest, prefix_at};
 use bumbledb_log::migration::plan::parse_plan;
 use bumbledb_log::recovery::{self, RecoveryError};
-use bumbledb_log::store::fence::acquire_directory;
+use bumbledb_log::store::fence::acquire_repository_lock;
+use bumbledb_log::history::receive_limits_for_object;
+use bumbledb_log::store::{TransportContext, get_verified};
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::s3::S3Store;
 use bumbledb_log::writer::LocalHistory;
@@ -46,8 +51,9 @@ use crate::runtime_wire::{
 
 use super::{
     BackendSpec, CredentialsSpec, LIMITS, LogFail, MachineOutput, MachineResult, binding_spec_in,
-    fail_of_log, frame_object, hex16, hex32, identity_in, identity_wire, optional_object,
-    optional_string, protocol, s3_store, stamp_wire, state_wire, targets_root,
+    fail_of_log, fail_of_recovery, frame_object, hex16, hex32, identity_in, identity_wire,
+    optional_object, optional_string, optional_u64, protocol, publication_phase_tag, s3_store,
+    stamp_wire, state_wire, stream_limits, targets_root,
 };
 
 // ---------------------------------------------------------------------------
@@ -61,7 +67,7 @@ pub enum AdminOwned {
     /// dispatched-but-unproven hosted outcome (`outcome-unknown`).
     Failed {
         fail: LogFail,
-        dispatched: bool,
+        phase: PublicationPhase,
     },
 }
 
@@ -190,6 +196,9 @@ pub(crate) struct PlansSpec {
     /// entries + 1 rows. Requested `PlansWire` extension (P08/P10); absent
     /// snapshots refuse the verbs that must compile steps.
     snapshots: Vec<String>,
+    /// L15 ScalarNode JSON. Bound against the verified source snapshot
+    /// before any migrate/freeze/initialize artifact is written.
+    compiled_mappings: Vec<u8>,
 }
 
 fn plans_in(obj: &Object, ctx: &str) -> napi::Result<PlansSpec> {
@@ -249,6 +258,9 @@ fn plans_in(obj: &Object, ctx: &str) -> napi::Result<PlansSpec> {
         manifest_text,
         plan_texts,
         snapshots,
+        compiled_mappings: optional_string(obj, "compiledMappings")?
+            .map(String::into_bytes)
+            .unwrap_or_default(),
     })
 }
 
@@ -283,6 +295,91 @@ impl PlansSpec {
                     .map_err(|error| protocol("UnsupportedArtifact", format!("{error:?}")))
             })
             .collect()
+    }
+
+    /// Bind snapshots to the manifest and compile every plan before any
+    /// status/migrate/freeze path trusts the chain (C8). Empty data is not
+    /// a shortcut: the base snapshot is still required.
+    fn verify_compiled_chain(
+        &self,
+        manifest: &Manifest,
+        context: &WorkContext,
+    ) -> MachineResult<()> {
+        let descriptors = self.descriptors()?;
+        if descriptors.len() != manifest.entries.len() + 1 {
+            return Err(protocol(
+                "UnsupportedArtifact",
+                "snapshots must carry the base schema plus one target per entry",
+            ));
+        }
+        let base_id = bumbledb_log::schema_file::schema_id(&descriptors[0])
+            .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
+        if base_id != manifest.base_schema {
+            return Err(protocol(
+                "MigrationDrift",
+                "the base snapshot does not match the manifest base schema id",
+            ));
+        }
+        for (index, entry) in manifest.entries.iter().enumerate() {
+            let snapshot_id = bumbledb_log::schema_file::schema_id(&descriptors[index + 1])
+                .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
+            if snapshot_id != entry.to_schema {
+                return Err(protocol(
+                    "MigrationDrift",
+                    &format!(
+                        "snapshot {} schema id does not match manifest entry {}",
+                        index + 1,
+                        entry.label
+                    ),
+                ));
+            }
+        }
+        let plans = self.plans()?;
+        if plans.len() != manifest.entries.len() {
+            return Err(protocol(
+                "MigrationDrift",
+                "recorded plans and manifest entries disagree in count",
+            ));
+        }
+        for (index, plan) in plans.iter().enumerate() {
+            context.step(1)?;
+            bumbledb_log::migration::compile::compile(
+                plan,
+                &descriptors[index],
+                &descriptors[index + 1],
+            )
+            .map_err(|error| protocol("MigrationUnsupported", format!("{error:?}")))?;
+        }
+        if !self.compiled_mappings.is_empty() {
+            crate::migration_wire::bind_compiled_mappings(
+                &self.compiled_mappings,
+                &descriptors[0],
+                context,
+            )
+            .map_err(|error| protocol("MigrationUnsupported", format!("{error:?}")))?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_chain(
+        manifest_text: String,
+        plan_texts: Vec<String>,
+        snapshots: Vec<String>,
+        compiled_mappings: Vec<u8>,
+    ) -> Self {
+        Self {
+            manifest_text,
+            plan_texts,
+            snapshots,
+            compiled_mappings,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_verify(&self, context: &WorkContext) -> MachineResult<()> {
+        let manifest = self.manifest()?;
+        self.verify_compiled_chain(&manifest, context)
     }
 }
 
@@ -428,26 +525,63 @@ enum AdminVerb {
     MigrationStatus {
         binding: BindingSpec,
         plans: PlansSpec,
+        target: MigrationTargetSpec,
     },
     MigrationInitialize {
         binding: BindingSpec,
         operation: OperationId,
         plans: PlansSpec,
+        target: MigrationTargetSpec,
     },
     Migrate {
         binding: BindingSpec,
         operation: OperationId,
         plans: PlansSpec,
         to: Option<String>,
+        target: MigrationTargetSpec,
     },
     MigrationActivate {
         binding: Option<BindingSpec>,
         reference: ActivationRefSpec,
+        target: MigrationTargetSpec,
     },
     MigrationAbort {
         binding: Option<BindingSpec>,
         reference: MigrationRefSpec,
+        target: MigrationTargetSpec,
     },
+}
+
+/// The hosted migration data plane's durable coordinates (the finding-D
+/// bridge half): the planned target incarnation's object prefix (under the
+/// same bucket as the source binding) and its initial open object epoch.
+/// Local bindings never read either; hosted migration verbs REQUIRE the
+/// prefix — the wire supplies it beside the hosted backend spec, and a
+/// missing prefix is a typed pre-dispatch refusal, never a guessed
+/// namespace.
+struct MigrationTargetSpec {
+    prefix: Option<String>,
+    object_epoch: u64,
+}
+
+impl MigrationTargetSpec {
+    /// The target prefix a hosted migration verb requires.
+    fn required_prefix(&self) -> MachineResult<&str> {
+        self.prefix.as_deref().ok_or_else(|| {
+            protocol(
+                "Misuse",
+                "hosted migration verbs need `targetPrefix` (the planned target \
+                 incarnation's object prefix under the source bucket)",
+            )
+        })
+    }
+}
+
+fn migration_target_in(request: &Object, ctx: &str) -> napi::Result<MigrationTargetSpec> {
+    Ok(MigrationTargetSpec {
+        prefix: optional_string(request, "targetPrefix")?,
+        object_epoch: optional_u64(request, "targetObjectEpoch", ctx)?.unwrap_or(1),
+    })
 }
 
 struct ActivationRefSpec {
@@ -576,22 +710,26 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
         "migration-status" => AdminVerb::MigrationStatus {
             binding: binding_with_schema_in(env, request, ctx)?,
             plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
+            target: migration_target_in(request, ctx)?,
         },
         "migration-initialize" => AdminVerb::MigrationInitialize {
             binding: binding_with_schema_in(env, request, ctx)?,
             operation: operation_in(request, ctx)?,
             plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
+            target: migration_target_in(request, ctx)?,
         },
         "migration-migrate" => AdminVerb::Migrate {
             binding: binding_with_schema_in(env, request, ctx)?,
             operation: operation_in(request, ctx)?,
             plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
             to: optional_string(request, "to")?,
+            target: migration_target_in(request, ctx)?,
         },
         "migration-activate" => {
             let reference: Object = marshal::req(request, "ref", ctx)?;
             AdminVerb::MigrationActivate {
                 binding: optional_binding_in(env, request, ctx)?,
+                target: migration_target_in(request, ctx)?,
                 reference: ActivationRefSpec {
                     operation: OperationId::from_core(marshal::id128_in(
                         &marshal::req::<String>(&reference, "operationId", ctx)?,
@@ -617,6 +755,7 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
             let reference: Object = marshal::req(request, "ref", ctx)?;
             AdminVerb::MigrationAbort {
                 binding: optional_binding_in(env, request, ctx)?,
+                target: migration_target_in(request, ctx)?,
                 reference: MigrationRefSpec {
                     _identity: identity_in(
                         &marshal::req::<Object>(&reference, "identity", ctx)?,
@@ -670,7 +809,7 @@ pub(crate) fn admin_verb(
                         Err(LogFail::Core(core)) => return Err(core),
                         Err(fail) => AdminOwned::Failed {
                             fail,
-                            dispatched: false,
+                            phase: PublicationPhase::Prepared,
                         },
                     };
                     Ok(Output::Machine(MachineOutput::Admin(owned)))
@@ -704,7 +843,11 @@ impl AdminDb {
 fn open_admin_db(runtime: &Arc<Runtime>, binding: &BindingSpec) -> MachineResult<AdminDb> {
     let directory = Path::new(&binding.directory);
     if let Some(lease) = runtime.lease_database_at(directory)? {
-        return Ok(AdminDb::Leased(lease));
+        // Warm reuse: the registry matched by DIRECTORY alone — the identity
+        // gate below is what proves the request names THIS tenant.
+        let db = AdminDb::Leased(lease);
+        verify_admin_identity(&db, binding)?;
+        return Ok(db);
     }
     let Some((descriptor, _attrs)) = binding.descriptor.clone() else {
         return Err(protocol(
@@ -713,7 +856,7 @@ fn open_admin_db(runtime: &Arc<Runtime>, binding: &BindingSpec) -> MachineResult
              `schema` field (the lowered SchemaSpec)",
         ));
     };
-    let held = acquire_directory(directory).map_err(|error| {
+    let held = acquire_repository_lock(directory).map_err(|error| {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             LogFail::Core(RuntimeError::DirectoryBusy)
         } else {
@@ -726,18 +869,172 @@ fn open_admin_db(runtime: &Arc<Runtime>, binding: &BindingSpec) -> MachineResult
     }
     let db = crate::Engine::open(&ready, descriptor)
         .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
-    Ok(AdminDb::Transient {
+    let db = AdminDb::Transient {
         db: Arc::new(db),
         _lock: held,
+    };
+    verify_admin_identity(&db, binding)?;
+    Ok(db)
+}
+
+/// The opened engine as the shared `Arc` (transient and leased alike).
+fn engine_arc(db: &AdminDb) -> Arc<crate::Engine> {
+    match db {
+        AdminDb::Leased(lease) => Arc::clone(&lease.inner_arc().db),
+        AdminDb::Transient { db, .. } => Arc::clone(db),
+    }
+}
+
+/// One opened local materialization of a HOSTED tenant for an admin verb:
+/// the warm registry lease when this runtime already holds the directory,
+/// otherwise the FULL hosted recovery open (`recovery::open_hosted` — the
+/// same machine every hosted history open runs: binding verification and
+/// cold hydration included), under the tenant directory's kernel fence for
+/// exactly this job. The identity gate runs on BOTH paths.
+fn open_hosted_admin_db(
+    runtime: &Arc<Runtime>,
+    binding: &BindingSpec,
+    backend: &Arc<S3Store>,
+    prefix: &str,
+    context: &WorkContext,
+) -> MachineResult<AdminDb> {
+    let directory = Path::new(&binding.directory);
+    if let Some(lease) = runtime.lease_database_at(directory)? {
+        let db = AdminDb::Leased(lease);
+        verify_admin_identity(&db, binding)?;
+        return Ok(db);
+    }
+    let Some((descriptor, _attrs)) = binding.descriptor.clone() else {
+        return Err(protocol(
+            "Misuse",
+            "this admin verb needs the tenant open in this runtime, or the request's \
+             `schema` field (the lowered SchemaSpec)",
+        ));
+    };
+    std::fs::create_dir_all(directory)
+        .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
+    let origin = expected_binding(binding).origin;
+    let recovered = recovery::open_hosted(
+        directory,
+        descriptor,
+        backend,
+        &origin,
+        prefix,
+        LIMITS,
+        stream_limits(context),
+        LIMITS.envelope_bytes,
+        context,
+    )
+    .map_err(fail_of_recovery)?;
+    let db = AdminDb::Transient {
+        db: recovered.db,
+        _lock: recovered.lock,
+    };
+    verify_admin_identity(&db, binding)?;
+    Ok(db)
+}
+
+/// The origin binding the request claims, in the recorded grammar: local
+/// bindings are `local` + the tenant directory; hosted bindings are
+/// `s3:{bucket}` + the object prefix.
+fn expected_binding(binding: &BindingSpec) -> recovery::OriginBinding {
+    match &binding.backend {
+        BackendSpec::Local => recovery::OriginBinding {
+            origin: "local".into(),
+            prefix: binding.directory.as_str().into(),
+            identity: binding.identity,
+        },
+        BackendSpec::Hosted { bucket, prefix, .. } => recovery::OriginBinding {
+            origin: format!("s3:{bucket}").into(),
+            prefix: prefix.as_str().into(),
+            identity: binding.identity,
+        },
+    }
+}
+
+/// The materialization's recorded origin binding, when one exists.
+fn recorded_binding(db: &crate::Engine) -> MachineResult<Option<recovery::OriginBinding>> {
+    let mut owned: Option<Vec<u8>> = None;
+    let mut host_error = None;
+    db.read(|read| {
+        match read.integration_host_record(recovery::BINDING_KEY) {
+            Ok(record) => owned = record.map(<[u8]>::to_vec),
+            Err(error) => host_error = Some(error),
+        }
+        Ok(())
     })
+    .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
+    if let Some(error) = host_error {
+        return Err(protocol("Corruption", format!("{error:?}")));
+    }
+    match owned {
+        None => Ok(None),
+        Some(bytes) => {
+            Ok(Some(recovery::decode_binding(&bytes).map_err(|error| {
+                protocol("Corruption", format!("{error:?}"))
+            })?))
+        }
+    }
+}
+
+/// The local admin identity+origin gate (REP-011/SDK-016/ARCH-004), run on
+/// BOTH the warm (registry-reused) and cold (transiently opened) paths
+/// BEFORE any admin verb mutates or cleans anything:
+///
+/// 1. the committed authority attachment must record exactly the requested
+///    database/incarnation/schema identity, and
+/// 2. a recorded origin binding, when present, must agree with the requested
+///    backend origin (a hosted cache without a binding record is never
+///    adopted; a migration-installed local materialization may legitimately
+///    carry none — its authority identity is the dispositive gate).
+fn verify_admin_identity(db: &AdminDb, binding: &BindingSpec) -> MachineResult<()> {
+    bumbledb_log::admin::verify_local_identity(db.db(), binding.identity, LIMITS.envelope_bytes)
+        .map_err(fail_of_admin)?;
+    let expected = expected_binding(binding);
+    match recorded_binding(db.db())? {
+        Some(recorded) => {
+            if recorded != expected {
+                return Err(protocol(
+                    "CacheIdentityMismatch",
+                    "the materialization's recorded origin binding disagrees with the \
+                     requested binding",
+                ));
+            }
+        }
+        None => {
+            if matches!(binding.backend, BackendSpec::Hosted { .. }) {
+                return Err(protocol(
+                    "CacheIdentityMismatch",
+                    "the cache carries no binding record",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The hosted authority selected by the binding, identity-validated: reads
+/// the live head at the prefix and refuses unless it records exactly the
+/// requested identity — BEFORE any hosted mutation (selecting a prefix is
+/// not validation). `None` for local bindings.
+fn validated_backend(
+    binding: &BindingSpec,
+) -> MachineResult<Option<(Arc<S3Store>, String, bumbledb_log::manifest::HeadRecord)>> {
+    let Some((backend, prefix)) = store_of_backend(&binding.backend)? else {
+        return Ok(None);
+    };
+    let head = bumbledb_log::admin::verify_hosted_identity(
+        backend.as_ref(),
+        &prefix,
+        binding.identity,
+        LIMITS.envelope_bytes,
+    )
+    .map_err(fail_of_admin)?;
+    Ok(Some((backend, prefix, head)))
 }
 
 fn local_history_of(db: &AdminDb) -> MachineResult<LocalHistory<SchemaDescriptor>> {
-    let arc = match db {
-        AdminDb::Leased(lease) => Arc::clone(&lease.inner_arc().db),
-        AdminDb::Transient { db, .. } => Arc::clone(db),
-    };
-    LocalHistory::open(arc, LIMITS).map_err(fail_of_log)
+    LocalHistory::open(engine_arc(db), LIMITS).map_err(fail_of_log)
 }
 
 fn access_of(db: &AdminDb) -> MachineResult<(&'static str, Option<OperationId>)> {
@@ -816,14 +1113,14 @@ fn run_admin(
     match verb {
         AdminVerb::Checkpoint { binding, operation } => {
             let _ = operation;
-            let Some((backend, prefix)) = store_of_backend(&binding.backend)? else {
+            let Some((backend, prefix, _head)) = validated_backend(&binding)? else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
                         "Misuse",
                         "LocalHistory needs no checkpoint: LMDB is complete; named restore \
                          points (pin-root) are the local specialization",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let db = open_admin_db(runtime, &binding)?;
@@ -858,7 +1155,7 @@ fn run_admin(
                         "OperationConflict",
                         format!("another checkpoint already passed seq {current_base_seq}"),
                     ),
-                    dispatched: true,
+                    phase: PublicationPhase::ProvedNonpublication,
                 }),
             }
         }
@@ -886,25 +1183,26 @@ fn run_admin(
                 }))
             }
             BackendSpec::Hosted { .. } => {
-                let (backend, prefix) =
-                    store_of_backend(&binding.backend)?.expect("hosted backend");
-                let root = bumbledb_log::admin::add_named_root_hosted(
-                    &backend,
-                    &prefix,
-                    operation,
-                    bumbledb_log::manifest::RootKind::RestorePoint,
-                    &label,
-                    operation,
-                    &RootPolicy::DEFAULT,
-                    LIMITS.envelope_bytes,
-                    context,
+                let (backend, prefix, _head) =
+                    validated_backend(&binding)?.expect("hosted backend");
+                map_admin_certainty(
+                    bumbledb_log::admin::add_named_root_hosted(
+                        &backend,
+                        &prefix,
+                        operation,
+                        bumbledb_log::manifest::RootKind::RestorePoint,
+                        &label,
+                        operation,
+                        &RootPolicy::DEFAULT,
+                        LIMITS.envelope_bytes,
+                        context,
+                    ),
+                    |root| AdminValueOwned::PinRoot {
+                        root: hex16(root.id.as_core()),
+                        at: root.recovery.base,
+                        state: root.state,
+                    },
                 )
-                .map_err(fail_of_admin)?;
-                Ok(AdminOwned::Completed(AdminValueOwned::PinRoot {
-                    root: hex16(root.id.as_core()),
-                    at: root.recovery.base,
-                    state: root.state,
-                }))
             }
         },
         AdminVerb::ReleaseRoot {
@@ -930,21 +1228,22 @@ fn run_admin(
                     }))
                 }
                 BackendSpec::Hosted { .. } => {
-                    let (backend, prefix) =
-                        store_of_backend(&binding.backend)?.expect("hosted backend");
-                    let released = bumbledb_log::admin::release_named_root_hosted(
-                        &backend,
-                        &prefix,
-                        root,
-                        true,
-                        LIMITS.envelope_bytes,
-                        context,
+                    let (backend, prefix, _head) =
+                        validated_backend(&binding)?.expect("hosted backend");
+                    map_admin_certainty(
+                        bumbledb_log::admin::release_named_root_hosted(
+                            &backend,
+                            &prefix,
+                            root,
+                            true,
+                            LIMITS.envelope_bytes,
+                            context,
+                        ),
+                        |released| AdminValueOwned::ReleaseRoot {
+                            root: hex16(root.as_core()),
+                            was_current_recovery_base: released.is_some(),
+                        },
                     )
-                    .map_err(fail_of_admin)?;
-                    Ok(AdminOwned::Completed(AdminValueOwned::ReleaseRoot {
-                        root: hex16(root.as_core()),
-                        was_current_recovery_base: released.is_some(),
-                    }))
                 }
             }
         }
@@ -958,7 +1257,7 @@ fn run_admin(
                 Lifecycle::Deleted { .. } => {
                     return Ok(AdminOwned::Failed {
                         fail: protocol("DatabaseDeleted", "terminal tombstone"),
-                        dispatched: false,
+                        phase: PublicationPhase::Prepared,
                     });
                 }
             };
@@ -973,23 +1272,27 @@ fn run_admin(
                         context,
                     )
                     .map_err(fail_of_admin)?;
+                    Ok(AdminOwned::Completed(AdminValueOwned::RotateEpoch {
+                        open_epoch: next.get(),
+                    }))
                 }
                 BackendSpec::Hosted { .. } => {
-                    let (backend, prefix) =
-                        store_of_backend(&binding.backend)?.expect("hosted backend");
-                    bumbledb_log::admin::rotate_receipts_hosted(
-                        &backend,
-                        &prefix,
-                        next,
-                        LIMITS.envelope_bytes,
-                        context,
+                    let (backend, prefix, _head) =
+                        validated_backend(&binding)?.expect("hosted backend");
+                    map_admin_certainty(
+                        bumbledb_log::admin::rotate_receipts_hosted(
+                            &backend,
+                            &prefix,
+                            next,
+                            LIMITS.envelope_bytes,
+                            context,
+                        ),
+                        |_| AdminValueOwned::RotateEpoch {
+                            open_epoch: next.get(),
+                        },
                     )
-                    .map_err(fail_of_admin)?;
                 }
             }
-            Ok(AdminOwned::Completed(AdminValueOwned::RotateEpoch {
-                open_epoch: next.get(),
-            }))
         }
         AdminVerb::RetireReceipts {
             binding,
@@ -1014,8 +1317,8 @@ fn run_admin(
                 BackendSpec::Hosted { .. } => {
                     // Hosted retirement rides the checkpoint that stops
                     // promising the rows (C08), then applies locally.
-                    let (backend, prefix) =
-                        store_of_backend(&binding.backend)?.expect("hosted backend");
+                    let (backend, prefix, _head) =
+                        validated_backend(&binding)?.expect("hosted backend");
                     let db = open_admin_db(runtime, &binding)?;
                     let outcome = bumbledb_log::checkpointer::publish_checkpoint(
                         db.db(),
@@ -1033,6 +1336,7 @@ fn run_admin(
                                 &backend,
                                 &prefix,
                                 LIMITS.envelope_bytes,
+                                context,
                             )
                             .map_err(|error| protocol("Backend", format!("{error:?}")))?;
                             bumbledb_log::admin::apply_hosted_retirement_locally(
@@ -1052,17 +1356,17 @@ fn run_admin(
                                 "OperationConflict",
                                 "another checkpoint superseded the retirement capture",
                             ),
-                            dispatched: true,
+                            phase: PublicationPhase::ProvedNonpublication,
                         }),
                     }
                 }
             }
         }
         AdminVerb::CollectGarbage { binding, operation } => {
-            let Some((backend, prefix)) = store_of_backend(&binding.backend)? else {
+            let Some((backend, prefix, _head)) = validated_backend(&binding)? else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol("Misuse", "LocalHistory holds no object store to collect"),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let report = match bumbledb_log::gc::run_collection(
@@ -1079,7 +1383,7 @@ fn run_admin(
                     // certainty answer is outcome-unknown, never a claim.
                     return Ok(AdminOwned::Failed {
                         fail: protocol("Backend", format!("{error:?}")),
-                        dispatched: true,
+                        phase: PublicationPhase::DispatchedUnresolved,
                     });
                 }
             };
@@ -1087,6 +1391,7 @@ fn run_admin(
                 &backend,
                 &prefix,
                 LIMITS.envelope_bytes,
+                context,
             )
             .map_or(0, |(head, _)| head.object_epoch);
             Ok(AdminOwned::Completed(AdminValueOwned::CollectGarbage {
@@ -1103,22 +1408,16 @@ fn run_admin(
             operation,
             destination,
         } => {
-            let Some((backend, prefix)) = store_of_backend(&binding.backend)? else {
+            let Some((backend, prefix, head)) = validated_backend(&binding)? else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
                         "Misuse",
                         "LocalHistory backup is a named restore point (pin-root): the \
                          self-contained root directory IS the backup artifact",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
-            let (head, _) = bumbledb_log::checkpointer::read_live_head(
-                &backend,
-                &prefix,
-                LIMITS.envelope_bytes,
-            )
-            .map_err(|error| protocol("Backend", format!("{error:?}")))?;
             let live = head
                 .control
                 .live()
@@ -1140,7 +1439,7 @@ fn run_admin(
                     head.object_epoch,
                     operation,
                     LIMITS,
-                    StreamLimits::DEFAULT,
+                    stream_limits(context),
                     context,
                 )
                 .map_err(|error| LogFail::Protocol {
@@ -1165,13 +1464,13 @@ fn run_admin(
                         "Misuse",
                         "verify-backup needs the backup operation id (`backup`)",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let destination = store_of_destination(&destination)?;
             let (manifest, digest, report) = with_store!(destination, dest_prefix, store => {
                 let (manifest, digest) =
-                    bumbledb_log::backup::read_backup_manifest(store, &dest_prefix, backup)
+                    bumbledb_log::backup::read_backup_manifest(store, &dest_prefix, backup, context)
                         .map_err(|error| LogFail::Protocol {
                             code: "Corruption",
                             detail: format!("{error:?}"),
@@ -1181,7 +1480,7 @@ fn run_admin(
                     &dest_prefix,
                     backup,
                     LIMITS,
-                    StreamLimits::DEFAULT,
+                    stream_limits(context),
                     context,
                 )
                 .map_err(|error| LogFail::Protocol {
@@ -1209,7 +1508,7 @@ fn run_admin(
             binding,
             operation,
             retain_roots,
-        } => match store_of_backend(&binding.backend)? {
+        } => match validated_backend(&binding)? {
             None => {
                 let db = open_admin_db(runtime, &binding)?;
                 let _ = bumbledb_log::erase::erase_local(
@@ -1228,14 +1527,8 @@ fn run_admin(
                     residual: vec![("local-directory".to_string(), binding.directory.clone())],
                 }))
             }
-            Some((backend, prefix)) => {
+            Some((backend, prefix, head)) => {
                 // Release exactly the roots NOT retained.
-                let (head, _) = bumbledb_log::checkpointer::read_live_head(
-                    &backend,
-                    &prefix,
-                    LIMITS.envelope_bytes,
-                )
-                .map_err(|error| protocol("Backend", format!("{error:?}")))?;
                 let release: Vec<OperationId> = head
                     .roots
                     .iter()
@@ -1286,21 +1579,27 @@ fn run_admin(
                 }))
             }
         },
-        AdminVerb::MigrationStatus { binding, plans } => {
+        // `target` is the landed finding-D wire half (MigrationTargetSpec);
+        // the hosted execution arms that consume it are the still-open
+        // finding-D bridge work (P09.md bridge patch). Local verbs never
+        // read it; hosted verbs still refuse typed via require_local.
+        AdminVerb::MigrationStatus { binding, plans, target: _ } => {
             migration_status(runtime, &binding, &plans, context)
         }
         AdminVerb::MigrationInitialize {
             binding,
             operation,
             plans,
-        } => migration_initialize(&binding, operation, &plans, context),
+            target: _,
+        } => migration_initialize(runtime, &binding, operation, &plans, context),
         AdminVerb::Migrate {
             binding,
             operation,
             plans,
             to,
+            target: _,
         } => migrate(runtime, &binding, operation, &plans, to.as_deref(), context),
-        AdminVerb::MigrationActivate { binding, reference } => {
+        AdminVerb::MigrationActivate { binding, reference, target: _ } => {
             let Some(binding) = binding else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
@@ -1308,7 +1607,7 @@ fn run_admin(
                         "migration-activate needs the source `binding` (and `schema` for \
                          the target descriptor)",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let Some((descriptor, _)) = binding.descriptor.clone() else {
@@ -1317,7 +1616,7 @@ fn run_admin(
                         "Misuse",
                         "migration-activate needs the target `schema` (lowered SchemaSpec)",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let reference = ActivationRef {
@@ -1352,7 +1651,7 @@ fn run_admin(
                 activated_now,
             }))
         }
-        AdminVerb::MigrationAbort { binding, reference } => {
+        AdminVerb::MigrationAbort { binding, reference, target: _ } => {
             let Some(binding) = binding else {
                 return Ok(AdminOwned::Failed {
                     fail: protocol(
@@ -1360,7 +1659,7 @@ fn run_admin(
                         "migration-abort needs the source `binding` (and `schema` for the \
                          target descriptor)",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let Some((descriptor, _)) = binding.descriptor.clone() else {
@@ -1369,7 +1668,7 @@ fn run_admin(
                         "Misuse",
                         "migration-abort needs the target `schema` (lowered SchemaSpec)",
                     ),
-                    dispatched: false,
+                    phase: PublicationPhase::Prepared,
                 });
             };
             let db = open_admin_db(runtime, &binding)?;
@@ -1413,14 +1712,164 @@ impl AdminOwned {
                 code: "Backend",
                 detail,
             },
-            dispatched: true,
+            phase: PublicationPhase::DispatchedUnresolved,
         }
     }
 }
 
 #[allow(clippy::needless_pass_by_value)]
 fn fail_of_admin(error: bumbledb_log::admin::AdminError) -> LogFail {
-    protocol("Backend", format!("{error:?}"))
+    use bumbledb_log::admin::AdminError;
+    match &error {
+        AdminError::Identity(mismatch) => fail_of_identity(mismatch),
+        AdminError::NotInitialized => protocol("NotInitialized", "open never initializes"),
+        AdminError::Checkpoint(checkpoint) => fail_of_checkpoint(checkpoint),
+        AdminError::Work(work) => LogFail::Core(RuntimeError::Work(*work)),
+        AdminError::Storage(error) => {
+            LogFail::Core(crate::runtime::session::engine_error(error))
+        }
+        AdminError::Corruption(detail) => protocol("Corruption", *detail),
+        AdminError::CasExhausted => LogFail::Structured(super::StructuredReason::Contention {
+            attempts: 0,
+            detail: "bounded CAS attempts exhausted; nothing is claimed".into(),
+        }),
+        AdminError::Object(_)
+        | AdminError::Frame(_)
+        | AdminError::Head(_)
+        | AdminError::Authority(_)
+        | AdminError::Host(_) => protocol("Backend", format!("{error:?}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-verb dispatch fences (LOG-001): an error after ANY dispatched
+// mutation/CAS carries `DispatchedUnresolved` (outcome-unknown), never a
+// fabricated `not-started`; genuinely pre-dispatch refusals stay
+// `Prepared` by flowing out as `Err`.
+// ---------------------------------------------------------------------------
+
+fn admin_failed_certainty(phase: PublicationPhase) -> &'static str {
+    match phase {
+        PublicationPhase::Prepared | PublicationPhase::ProvedNonpublication => "not-started",
+        PublicationPhase::DispatchedUnresolved | PublicationPhase::Confirmed => "outcome-unknown",
+    }
+}
+
+fn map_admin_certainty<T>(
+    certainty: AdminCertainty<T>,
+    completed: impl FnOnce(T) -> AdminValueOwned,
+) -> MachineResult<AdminOwned> {
+    let phase = certainty.publication_phase();
+    match certainty {
+        AdminCertainty::Completed { value } => Ok(AdminOwned::Completed(completed(value))),
+        AdminCertainty::NotStarted { error } => Err(fail_of_admin(error)),
+        AdminCertainty::OutcomeUnknown { error } => Ok(AdminOwned::Failed {
+            fail: fail_of_admin(error),
+            phase,
+        }),
+    }
+}
+
+/// Route one hosted maintenance error through the dispatch fence:
+/// post-dispatch uncertainty becomes an embedded `outcome-unknown` value,
+/// everything else stays a thrown pre-dispatch refusal.
+fn hosted_admin_fence(error: bumbledb_log::admin::AdminError) -> MachineResult<AdminOwned> {
+    Ok(AdminOwned::Failed {
+        fail: fail_of_admin(error),
+        phase: PublicationPhase::DispatchedUnresolved,
+    })
+}
+
+/// The typed checkpoint failure mapping (shared by the checkpoint and
+/// hosted-retirement arms).
+fn fail_of_checkpoint(error: &CheckpointError) -> LogFail {
+    match error {
+        CheckpointError::NotInitialized => {
+            protocol("NotInitialized", "no head exists under this prefix")
+        }
+        CheckpointError::Deleted => protocol("DatabaseDeleted", "terminal tombstone"),
+        CheckpointError::Work(work) => LogFail::Core(RuntimeError::Work(*work)),
+        CheckpointError::Corruption(_) | CheckpointError::Frame(_) => {
+            protocol("Corruption", format!("{error:?}"))
+        }
+        _ => protocol("Backend", format!("{error:?}")),
+    }
+}
+
+/// Route one checkpoint-publication error through the dispatch fence:
+/// `Unresolved` (an explicitly unresolvable dispatched CAS) and
+/// `RebaseExhausted` (chunks + manifest uploaded, multiple CAS attempts
+/// dispatched) are `outcome-unknown`; refusals before any dispatch (no
+/// head, tombstone, corruption, transport read failures) stay thrown.
+fn checkpoint_fence(error: CheckpointError) -> MachineResult<AdminOwned> {
+    if matches!(
+        error,
+        CheckpointError::Unresolved | CheckpointError::RebaseExhausted
+    ) {
+        Ok(AdminOwned::Failed {
+            fail: fail_of_checkpoint(&error),
+            phase: PublicationPhase::DispatchedUnresolved,
+        })
+    } else {
+        Err(fail_of_checkpoint(&error))
+    }
+}
+
+/// A discarded checkpoint candidate is a DEFINITE non-publication
+/// (finding #15): the recovery base never moved and no authoritative
+/// mutation was performed — the staged uploads are collectible orphans.
+/// The wire's admin value roster has no completed(discarded) arm, so the
+/// definite spelling is `not-started` ("this invocation performed no
+/// authoritative mutation"), never `outcome-unknown` (the outcome IS
+/// known).
+fn discarded_checkpoint(current_base_seq: u64, what: &str) -> AdminOwned {
+    AdminOwned::Failed {
+        fail: protocol(
+            "OperationConflict",
+            format!(
+                "{what} discarded: another checkpoint already advanced the recovery base \
+                 past seq {current_base_seq} (definite non-publication; staged objects are \
+                 collectible orphans)"
+            ),
+        ),
+        phase: PublicationPhase::ProvedNonpublication,
+    }
+}
+
+/// The typed identity refusal (REP-011/SDK-016/ARCH-004): the request's
+/// binding named a database/incarnation/schema the selected resource does
+/// not hold. Spelled exactly like the open path's refusals — a wrong
+/// incarnation of the SAME database is `WrongLineage`; everything else is
+/// `ForeignIdentity`.
+fn fail_of_identity(mismatch: &bumbledb_log::admin::IdentityMismatch) -> LogFail {
+    match mismatch.dimension() {
+        "incarnation" => protocol(
+            "WrongLineage",
+            format!(
+                "the resource holds a different incarnation of this database (requested {}, \
+                 found {})",
+                hex16(mismatch.expected.incarnation_id.as_core()),
+                hex16(mismatch.actual.incarnation_id.as_core()),
+            ),
+        ),
+        "schema" => protocol(
+            "ForeignIdentity",
+            format!(
+                "the resource records a different schema for this database (requested {}, \
+                 found {})",
+                hex32(&mismatch.expected.schema_id.0),
+                hex32(&mismatch.actual.schema_id.0),
+            ),
+        ),
+        _ => protocol(
+            "ForeignIdentity",
+            format!(
+                "the resource belongs to a different database (requested {}, found {})",
+                hex16(mismatch.expected.database_id.as_core()),
+                hex16(mismatch.actual.database_id.as_core()),
+            ),
+        ),
+    }
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -1491,6 +1940,7 @@ fn migration_status(
     let db = open_admin_db(runtime, binding)?;
     let history = local_history_of(&db)?;
     let manifest = plans.manifest()?;
+    plans.verify_compiled_chain(&manifest, context)?;
     let runner = LocalMigration::new(&history, &targets_root(&binding.directory), LIMITS);
     let status = runner
         .status(&manifest, context)
@@ -1601,6 +2051,7 @@ fn migrate(
     let db = open_admin_db(runtime, binding)?;
     let history = local_history_of(&db)?;
     let manifest = plans.manifest()?;
+    plans.verify_compiled_chain(&manifest, context)?;
     let root = targets_root(&binding.directory);
     let runner = LocalMigration::new(&history, &root, LIMITS);
     let status = runner
@@ -1702,6 +2153,7 @@ fn migrate(
 }
 
 fn migration_initialize(
+    runtime: &Arc<Runtime>,
     binding: &BindingSpec,
     operation: OperationId,
     plans: &PlansSpec,
@@ -1709,6 +2161,7 @@ fn migration_initialize(
 ) -> MachineResult<AdminOwned> {
     require_local(binding)?;
     let manifest = plans.manifest()?;
+    plans.verify_compiled_chain(&manifest, context)?;
     if manifest.entries.is_empty() {
         return Err(protocol(
             "MigrationDrift",
@@ -1716,6 +2169,30 @@ fn migration_initialize(
         ));
     }
     let (source_descriptor, steps) = steps_of(plans, &manifest, 0, manifest.entries.len())?;
+    // If the tenant directory already holds a ready materialization, it must
+    // be exactly this initialization's target identity (the idempotent
+    // completion) — validated BEFORE any staging is written under this
+    // directory or any install/adopt happens. A stranger's directory refuses
+    // typed with nothing touched.
+    let ready = recovery::materialization_path(Path::new(&binding.directory));
+    if ready.exists() {
+        let target_descriptor = steps
+            .last()
+            .map(|step| step.to_descriptor.clone())
+            .expect("nonempty steps");
+        let attrs = binding
+            .descriptor
+            .as_ref()
+            .map(|(_, attrs)| attrs.clone())
+            .unwrap_or_default();
+        let probe = BindingSpec {
+            directory: binding.directory.clone(),
+            identity: binding.identity,
+            backend: BackendSpec::Local,
+            descriptor: Some((target_descriptor, attrs)),
+        };
+        drop(open_admin_db(runtime, &probe)?);
+    }
     let target_incarnation = binding.identity.incarnation_id;
     let root = targets_root(&binding.directory);
     std::fs::create_dir_all(&root)
@@ -1789,6 +2266,33 @@ fn finish_initialize(
     ))
 }
 
+/// One charged checkpoint chunk at a time. Restore borrows via `AsRef<[u8]>`
+/// and drops the owner as it consumes the iterator.
+pub(crate) fn verified_checkpoint_chunks<'a, B>(
+    store: &'a B,
+    prefix: &'a str,
+    checkpoint: &'a bumbledb_log::codec::CheckpointManifest,
+    context: &'a WorkContext,
+) -> impl Iterator<Item = Result<bumbledb::work::ChargedBytes, RecoveryError>> + 'a
+where
+    B: bumbledb_log::store::ReceivingStore,
+    B::Error: bumbledb_log::store::BackendError + bumbledb_log::store::ObservedError,
+{
+    checkpoint.chunks.iter().map(move |chunk_ref| {
+        context.checkpoint().map_err(RecoveryError::Work)?;
+        get_verified(
+            store,
+            prefix,
+            chunk_ref,
+            TransportContext::new(
+                context,
+                receive_limits_for_object(chunk_ref, LIMITS.envelope_bytes),
+            ),
+        )
+        .map_err(RecoveryError::Object)
+    })
+}
+
 #[allow(clippy::too_many_lines)]
 fn run_restore(
     runtime: &Arc<Runtime>,
@@ -1808,14 +2312,14 @@ fn run_restore(
                     "restore targets a local binding; hosted re-publication is the \
                      recorded C08 boundary",
                 ),
-                dispatched: false,
+                phase: PublicationPhase::Prepared,
             });
         }
     }
     let Some(backup) = backup else {
         return Ok(AdminOwned::Failed {
             fail: protocol("Misuse", "restore needs the backup operation id (`backup`)"),
-            dispatched: false,
+            phase: PublicationPhase::Prepared,
         });
     };
     let Some((descriptor, _attrs)) = target.descriptor.clone() else {
@@ -1824,18 +2328,55 @@ fn run_restore(
                 "Misuse",
                 "restore needs the target `schema` (lowered SchemaSpec)",
             ),
-            dispatched: false,
+            phase: PublicationPhase::Prepared,
         });
     };
+    // The restore target must be OURS to write: hold the tenant directory's
+    // kernel fence for the whole restore, and never overwrite an existing
+    // materialization — a directory that already holds a tenant (this one or
+    // a stranger's) is not a restore target.
+    std::fs::create_dir_all(&target.directory)
+        .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
+    let target_dir = Path::new(&target.directory);
+    let _target_fence = acquire_repository_lock(target_dir).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::WouldBlock {
+            LogFail::Core(RuntimeError::DirectoryBusy)
+        } else {
+            LogFail::Core(crate::runtime::owners::io_error(error))
+        }
+    })?;
+    if recovery::materialization_path(target_dir).exists() {
+        return Ok(AdminOwned::Failed {
+            fail: protocol(
+                "AuthorityExists",
+                "a materialization already exists at the restore target; restore never \
+                 overwrites an existing tenant",
+            ),
+            phase: PublicationPhase::Prepared,
+        });
+    }
     let destination = store_of_destination(source)?;
     let restored = with_store!(destination, dest_prefix, store => {
         let (manifest, manifest_digest) =
-            bumbledb_log::backup::read_backup_manifest(store, &dest_prefix, backup).map_err(
+            bumbledb_log::backup::read_backup_manifest(store, &dest_prefix, backup, context).map_err(
                 |error| LogFail::Protocol {
                     code: "Corruption",
                     detail: format!("{error:?}"),
                 },
             )?;
+        // The backup must be an artifact of exactly the database/schema the
+        // target binding names (the incarnation is NEW by design) — refused
+        // typed BEFORE any byte lands in the target directory.
+        let normalized = DatabaseIdentity {
+            incarnation_id: target.identity.incarnation_id,
+            ..manifest.identity
+        };
+        if normalized != target.identity {
+            return Err(fail_of_identity(&bumbledb_log::admin::IdentityMismatch {
+                expected: target.identity,
+                actual: normalized,
+            }));
+        }
         let Some(checkpoint_ref) = manifest.checkpoint else {
             return Err(protocol(
                 "UnsupportedArtifact",
@@ -1843,47 +2384,42 @@ fn run_restore(
                  C08 boundary",
             ));
         };
-        let checkpoint_bytes =
-            bumbledb_log::store::get_verified(store, &dest_prefix, &checkpoint_ref).map_err(
-                |error| LogFail::Protocol {
-                    code: "Corruption",
-                    detail: format!("{error:?}"),
-                },
-            )?;
+        let checkpoint_charged = get_verified(
+            store,
+            &dest_prefix,
+            &checkpoint_ref,
+            TransportContext::new(
+                context,
+                receive_limits_for_object(&checkpoint_ref, LIMITS.envelope_bytes),
+            ),
+        )
+        .map_err(|error| LogFail::Protocol {
+            code: "Corruption",
+            detail: format!("{error:?}"),
+        })?;
         let checkpoint =
-            bumbledb_log::codec::decode_manifest(&checkpoint_bytes, StreamLimits::DEFAULT)
+            bumbledb_log::codec::decode_manifest(checkpoint_charged.as_bytes(), stream_limits(context))
                 .map_err(|error| LogFail::Protocol {
                     code: "Corruption",
                     detail: format!("{error:?}"),
                 })?;
-        let mut chunks: Vec<Result<Vec<u8>, RecoveryError>> = Vec::new();
-        for chunk_ref in &checkpoint.chunks {
-            context.checkpoint().map_err(RuntimeError::from)?;
-            match bumbledb_log::store::get_verified(store, &dest_prefix, chunk_ref) {
-                Ok(bytes) => chunks.push(Ok(bytes)),
-                Err(error) => chunks.push(Err(RecoveryError::Object(error))),
-            }
-        }
-        let tail = bumbledb_log::backup::read_backup_tail(
+        drop(checkpoint_charged.into_owner());
+        let chunks = verified_checkpoint_chunks(store, &dest_prefix, &checkpoint, context);
+        let tail = bumbledb_log::backup::relocated_tail(
             store,
             &dest_prefix,
             &manifest,
             LIMITS,
             context,
         )
-        .map_err(|error| LogFail::Protocol {
-            code: "Corruption",
-            detail: format!("{error:?}"),
-        })?;
-        std::fs::create_dir_all(&target.directory)
-            .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
+        .map(|item| item.map_err(RecoveryError::from));
         let ready = recovery::materialization_path(Path::new(&target.directory));
         bumbledb_log::restore::restore_writable_with_tail(
             &ready,
             descriptor,
             &checkpoint,
             chunks,
-            &tail,
+            tail,
             manifest.tip,
             target.identity.incarnation_id,
             operation,
@@ -1925,21 +2461,16 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
     let value = match owned {
         AdminOwned::Completed(value) => {
             wire.set("certainty", "completed")?;
+            wire.set("publicationPhase", publication_phase_tag(PublicationPhase::Confirmed))?;
             value
         }
         AdminOwned::Report(value) => {
             wire.set("certainty", "report")?;
             value
         }
-        AdminOwned::Failed { fail, dispatched } => {
-            wire.set(
-                "certainty",
-                if dispatched {
-                    "outcome-unknown"
-                } else {
-                    "not-started"
-                },
-            )?;
+        AdminOwned::Failed { fail, phase } => {
+            wire.set("certainty", admin_failed_certainty(phase))?;
+            wire.set("publicationPhase", publication_phase_tag(phase))?;
             wire.set("error", frame_object(&env, &fail)?)?;
             return Ok(wire);
         }
@@ -2190,3 +2721,7 @@ const _: fn() = || {
     assert_send::<AdminOwned>();
     let _ = AtomicBool::new(false);
 };
+
+#[cfg(test)]
+#[path = "admin_identity_tests.rs"]
+mod admin_identity_tests;

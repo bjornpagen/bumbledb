@@ -15,10 +15,16 @@ use crate::history::admission::Submission;
 use crate::history::authority::{Activation, ActivationCause, HeadAuthority, encode_control};
 use crate::history::command::{Command, Limits};
 use crate::history::decision::{self, GenesisProvenance, GenesisRecord};
-use crate::history::receipt::{decode_receipt_row, receipt_key};
-use crate::history::{
-    CommandId, DatabaseId, DatabaseIdentity, IncarnationId, OperationId, SchemaId, TerminalReceipt,
+use crate::history::receipt::{
+    RECEIPT_KEY_PREFIX, decode_receipt_row, decode_receipt_row_at, parse_receipt_key, receipt_key,
 };
+use crate::history::{
+    DatabaseId, DatabaseIdentity, DecisionStamp, IncarnationId, OperationId, SchemaId,
+    TerminalReceipt,
+};
+use crate::replica::WitnessCheck;
+
+use crate::certainty::SubmitCertainty;
 
 use super::decide::{self, Judged, Plan, RealPrepared};
 use super::{LocalHealth, LogError, ResolveOutcome, SubmitOutcome};
@@ -52,7 +58,7 @@ impl<S> LocalHistory<S> {
             incarnation_id,
             schema_id,
         };
-        if read_attachment(&db)?.is_some() {
+        if read_attachment(&db, work)?.is_some() {
             return Err(LogError::Corruption);
         }
         let (application, system) = decision::blank_initial_digests();
@@ -101,7 +107,8 @@ impl<S> LocalHistory<S> {
     /// # Errors
     /// Refuses an uninitialized database, a foreign schema and corruption.
     pub fn open(db: Arc<Db<S>>, limits: Limits) -> Result<Self, LogError> {
-        let control = read_attachment(&db)?.ok_or(LogError::NotInitialized)?;
+        let work = crate::admin::internal_read_work();
+        let control = read_attachment(&db, &work)?.ok_or(LogError::NotInitialized)?;
         let authority = crate::history::authority::decode_control(&control, limits.envelope_bytes)?;
         if authority.identity.schema_id != fingerprint(&db) {
             return Err(LogError::Identity);
@@ -128,7 +135,12 @@ impl<S> LocalHistory<S> {
     /// # Errors
     /// Refuses corruption/uninitialized state.
     pub fn authority(&self) -> Result<HeadAuthority, LogError> {
-        let control = read_attachment(&self.db)?.ok_or(LogError::NotInitialized)?;
+        let work = crate::admin::internal_read_work();
+        self.authority_with(&work)
+    }
+
+    fn authority_with(&self, work: &WorkContext) -> Result<HeadAuthority, LogError> {
+        let control = read_attachment(&self.db, work)?.ok_or(LogError::NotInitialized)?;
         Ok(crate::history::authority::decode_control(
             &control,
             self.limits.envelope_bytes,
@@ -153,6 +165,29 @@ impl<S> LocalHistory<S> {
         }
     }
 
+    /// Phase-carrying submit for the native bridge. Phase is the certainty
+    /// arm — L14 must not infer it from error text.
+    #[must_use]
+    pub fn submit_certain(&self, command: &Command, work: &WorkContext) -> SubmitCertainty {
+        match self.submit(command, work) {
+            SubmitOutcome::Decided {
+                receipt,
+                local_health,
+            } => SubmitCertainty::Decided {
+                receipt,
+                local_health,
+            },
+            SubmitOutcome::NotSubmitted { command, error } => SubmitCertainty::NotSubmitted {
+                command,
+                error,
+            },
+            SubmitOutcome::OutcomeUnknown { command, error } => SubmitCertainty::OutcomeUnknown {
+                command,
+                error,
+            },
+        }
+    }
+
     fn try_submit(&self, command: &Command, work: &WorkContext) -> Result<SubmitOutcome, LogError> {
         work.checkpoint()?;
         let reference = command.command_ref();
@@ -163,8 +198,14 @@ impl<S> LocalHistory<S> {
         // state it will build on. The write mutex prevents any intervening
         // commit, so this snapshot is the candidate's true predecessor.
         let mut session = self.db.integration_writer(work)?;
-        let authority = self.authority()?;
-        let retained = self.retained(reference.id, work)?;
+        let frontier = self.local_frontier(reference, work)?;
+        let authority = frontier.control;
+        if frontier.row_present && frontier.receipt.is_none() {
+            // Present decided row, diagnostic decode failed: do not treat as
+            // absence and do not mint a new identity (LOG-029 / C5).
+            return Err(LogError::IncompleteRejectionEvidence);
+        }
+        let retained = frontier.receipt;
         let view = authority
             .admission_view()
             .ok_or(LogError::DatabaseDeleted)?;
@@ -199,13 +240,14 @@ impl<S> LocalHistory<S> {
                     &authority,
                     command,
                     Judged::PreconditionFailed { expected, observed },
+                    None,
                     self.limits,
                 )?
             }
             Plan::Evaluate => {
                 match decide::prepare_real(&mut session, schema, command, self.limits, work)? {
                     RealPrepared::Admitted { prepared, judged } => {
-                        decide::seal_candidate(prepared, &authority, command, judged, self.limits)?
+                        decide::seal_candidate(prepared, &authority, command, judged, None, self.limits)?
                     }
                     RealPrepared::Rejected { evidence } => {
                         let prepared = decide::prepare_empty(&mut session, schema, work)?;
@@ -214,6 +256,7 @@ impl<S> LocalHistory<S> {
                             &authority,
                             command,
                             Judged::InvariantRejected { evidence },
+                            None,
                             self.limits,
                         )?
                     }
@@ -244,12 +287,15 @@ impl<S> LocalHistory<S> {
         if command.identity != self.identity {
             return Err(LogError::Identity);
         }
-        let authority = self.authority()?;
-        let retained = self.retained(command.id, work)?;
-        let view = authority
+        let frontier = self.local_frontier(command, work)?;
+        if frontier.row_present && frontier.receipt.is_none() {
+            return Err(LogError::IncompleteRejectionEvidence);
+        }
+        let view = frontier
+            .control
             .admission_view()
             .ok_or(LogError::DatabaseDeleted)?;
-        match view.resolve(command, retained.as_ref()) {
+        match view.resolve(command, frontier.receipt.as_ref()) {
             Ok(crate::history::admission::Resolution::Found(receipt)) => {
                 Ok(ResolveOutcome::Found(receipt.clone()))
             }
@@ -266,56 +312,137 @@ impl<S> LocalHistory<S> {
         }
     }
 
-    fn retained(
+    /// Bounded same-lineage ancestry check over RETAINED authoritative
+    /// evidence (chapter 20 local specialization / chapter 30 `AtLeast`):
+    /// a sequence-zero request is judged against the one-time activation
+    /// evidence (the recorded genesis digest); any other height is judged
+    /// against the retained receipt rows, each of which recorded its
+    /// `decision_at` stamp in the same LMDB transaction that advanced the
+    /// authority. A retained stamp at the requested height either proves
+    /// (`Ancestor`) or refutes (`NotAncestor` — wrong lineage/foreign hash)
+    /// the request; a height whose evidence was retired/pruned is
+    /// `WitnessUnavailable`, never a claimed validation, and never grounds
+    /// to retain every command body forever.
+    ///
+    /// # Errors
+    /// Refuses corruption of retained rows, storage failures and stopped
+    /// work; resource exhaustion is an operational failure, not a verdict.
+    pub fn witness(
         &self,
-        id: CommandId,
+        requested: DecisionStamp,
         work: &WorkContext,
-    ) -> Result<Option<TerminalReceipt>, LogError> {
+    ) -> Result<WitnessCheck, LogError> {
+        work.checkpoint()?;
+        if requested.seq == 0 {
+            let authority = self.authority_with(work)?;
+            return Ok(match authority.activation {
+                Activation::Activated { target_genesis, .. } => {
+                    if target_genesis == requested.hash {
+                        WitnessCheck::Ancestor
+                    } else {
+                        WitnessCheck::NotAncestor
+                    }
+                }
+                Activation::NotActivated => WitnessCheck::Unavailable,
+            });
+        }
+        let mut found: Option<crate::history::DecisionDigest> = None;
+        let mut row_error: Option<LogError> = None;
+        let mut host_error = None;
+        self.db.read(work.clone(), |read| {
+            let result = read.integration_host_scan(&[RECEIPT_KEY_PREFIX], &mut |key, value| {
+                let Some(id) = parse_receipt_key(key) else {
+                    row_error = Some(LogError::Corruption);
+                    return Ok(());
+                };
+                match decode_receipt_row_at(id, value, self.limits) {
+                    Ok(receipt) => {
+                        if receipt.decision_at.seq == requested.seq {
+                            found = Some(receipt.decision_at.hash);
+                        }
+                    }
+                    Err(error) => row_error = Some(error.into()),
+                }
+                Ok(())
+            });
+            if let Err(error) = result {
+                host_error = Some(error);
+            }
+            Ok(())
+        })?;
+        if let Some(error) = host_error {
+            return Err(error.into());
+        }
+        if let Some(error) = row_error {
+            return Err(error);
+        }
+        Ok(match found {
+            Some(hash) if hash == requested.hash => WitnessCheck::Ancestor,
+            Some(_) => WitnessCheck::NotAncestor,
+            None => WitnessCheck::Unavailable,
+        })
+    }
+
+    fn local_frontier(
+        &self,
+        command: crate::history::CommandRef,
+        work: &WorkContext,
+    ) -> Result<LocalFrontier, LogError> {
         work.checkpoint()?;
         let reference = crate::history::CommandRef {
             identity: self.identity,
-            id,
-            // Digest is checked by the admission guard against the caller's
-            // ref; the stored row carries its own recorded digest.
+            id: command.id,
             digest: crate::history::CommandDigest::from_bytes([0; 32]),
         };
-        let key = receipt_key(id);
-        let row = read_host_record(&self.db, &key)?;
-        match row {
-            Some(bytes) => {
-                let receipt = decode_receipt_row(reference, &bytes, self.limits)?;
-                Ok(Some(receipt))
+        let key = receipt_key(command.id);
+        let mut attachment = None;
+        let mut row = None;
+        let mut host_error = None;
+        self.db.read(work.clone(), |read| {
+            attachment = read.integration_host_attachment()?.map(<[u8]>::to_vec);
+            match read.integration_host_record(&key) {
+                Ok(record) => row = record.map(<[u8]>::to_vec),
+                Err(error) => host_error = Some(error),
             }
-            None => Ok(None),
+            Ok(())
+        })?;
+        if let Some(error) = host_error {
+            return Err(error.into());
         }
+        let control = crate::history::authority::decode_control(
+            &attachment.ok_or(LogError::NotInitialized)?,
+            self.limits.envelope_bytes,
+        )?;
+        let (receipt, row_present) = match row {
+            None => (None, false),
+            Some(bytes) => match decode_receipt_row(reference, &bytes, self.limits) {
+                Ok(receipt) => (Some(receipt), true),
+                Err(_) => (None, true),
+            },
+        };
+        Ok(LocalFrontier {
+            control,
+            receipt,
+            row_present,
+        })
     }
+}
+
+struct LocalFrontier {
+    control: HeadAuthority,
+    receipt: Option<TerminalReceipt>,
+    row_present: bool,
 }
 
 fn fingerprint<S>(db: &Db<S>) -> SchemaId {
     bumbledb::schema::fingerprint::fingerprint(db.schema())
 }
 
-fn read_attachment<S>(db: &Db<S>) -> Result<Option<Vec<u8>>, LogError> {
+fn read_attachment<S>(db: &Db<S>, work: &WorkContext) -> Result<Option<Vec<u8>>, LogError> {
     let mut owned = None;
-    db.read(|read| {
+    db.read(work.clone(), |read| {
         owned = read.integration_host_attachment()?.map(<[u8]>::to_vec);
         Ok(())
     })?;
-    Ok(owned)
-}
-
-fn read_host_record<S>(db: &Db<S>, key: &[u8]) -> Result<Option<Vec<u8>>, LogError> {
-    let mut owned = None;
-    let mut host_error = None;
-    db.read(|read| {
-        match read.integration_host_record(key) {
-            Ok(record) => owned = record.map(<[u8]>::to_vec),
-            Err(error) => host_error = Some(error),
-        }
-        Ok(())
-    })?;
-    if let Some(error) = host_error {
-        return Err(error.into());
-    }
     Ok(owned)
 }

@@ -194,7 +194,10 @@ pub fn commit_capacity_sum(
         let id = power::DeviceId(*mint);
         *mint += 1;
         db.write(|tx| tx.insert([&power::Device { id, pool, watts: 1 }]))
-            .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
             .map_err(|e| format!("commit_capacity_sum: {e:?}"))
     })
 }
@@ -212,7 +215,10 @@ pub fn commit_capacity_baseline(
         let id = power_baseline::DeviceId(*mint);
         *mint += 1;
         db.write(|tx| tx.insert([&power_baseline::Device { id, pool, watts: 1 }]))
-            .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
             .map_err(|e| format!("commit_capacity_baseline: {e:?}"))
     })
 }
@@ -241,7 +247,10 @@ pub fn commit_capacity_duration(
                     .expect("nonempty interval"),
             }])
         })
-        .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("commit_capacity_duration: {e:?}"))
     })
 }

@@ -12,11 +12,13 @@
 
 use std::fmt::Write as _;
 
+use bumbledb::WorkContext;
+
 use crate::checkpointer::read_live_head;
 use crate::history::authority::{Access, HeadAuthority, Lifecycle};
 use crate::history::{DecisionStamp, StateStamp};
 use crate::manifest::{GcPhase, HeadRecord, RootKind};
-use crate::store::{BackendError, ConditionalStore, hex32};
+use crate::store::{BackendError, ObservedError, ReceivingStore, hex32};
 
 /// The one health classification. `StaleButValid` means the local
 /// materialization is behind a verified newer head but remains a coherent
@@ -206,16 +208,17 @@ pub fn status_of_local(authority: &HeadAuthority) -> Status {
 
 /// Read and classify one hosted head. A backend failure yields
 /// `Unavailable` with no identity claims; a malformed head yields `Corrupt`.
-pub fn status_hosted<B: ConditionalStore>(
+pub fn status_hosted<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     local_decision: Option<DecisionStamp>,
     head_cap: usize,
+    work: &WorkContext,
 ) -> Status
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
-    match read_live_head(backend, prefix, head_cap) {
+    match read_live_head(backend, prefix, head_cap, work) {
         Ok((head, _)) => status_of_head(&head, local_decision),
         Err(crate::checkpointer::CheckpointError::NotInitialized) => Status {
             condition: Condition::Missing,

@@ -59,7 +59,7 @@ fn work() -> WorkContext {
 
 fn scan_ids(db: &Db<SchemaDescriptor>) -> Vec<u64> {
     let mut ids = Vec::new();
-    db.read(|read| {
+    db.read(common::work(), |read| {
         for row in read.scan(RelationId(0))? {
             let row = row?;
             if let Some(Value::U64(id)) = row.first() {
@@ -74,7 +74,7 @@ fn scan_ids(db: &Db<SchemaDescriptor>) -> Vec<u64> {
 }
 
 fn insert(db: &Db<SchemaDescriptor>, id: u64) {
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert_dyn(RelationId(0), [vec![Value::U64(id)]])?;
         Ok(())
     })
@@ -91,7 +91,7 @@ fn insert(db: &Db<SchemaDescriptor>, id: u64) {
 #[test]
 fn close_under_load_reports_reality_then_drains_and_releases() {
     let dir = temp_dir("load");
-    let db = Db::create(&dir, theory()).expect("create store").unwrap();
+    let db = Db::create(&dir, theory(), work()).expect("create store").unwrap();
     insert(&db, 1);
 
     let (entered_tx, entered_rx) = mpsc::channel::<()>();
@@ -102,7 +102,7 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
         let db_ref = &db;
         scope.spawn(move || {
             db_ref
-                .read(|read| {
+                .read(common::work(), |read| {
                     let mut count = 0usize;
                     for row in read.scan(RelationId(0))? {
                         row?;
@@ -152,12 +152,12 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
         }
     }
     // Every new verb refuses typed — never a panic, never a silent no-op.
-    let read_refused = db.read(|_read| Ok(()));
+    let read_refused = db.read(common::work(), |_read| Ok(()));
     assert!(
         matches!(read_refused, Err(Error::Store(_))),
         "reads after close refuse with the typed store error: {read_refused:?}"
     );
-    let write_refused = db.write(|tx| {
+    let write_refused = db.write(common::work(), |tx| {
         tx.insert_dyn(RelationId(0), [vec![Value::U64(2)]])?;
         Ok(())
     });
@@ -168,7 +168,7 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
     // Real reclamation: dropping the closed owner releases the kernel lock
     // and a successor opens the same directory with the durable facts.
     drop(db);
-    let successor = Db::open(&dir, theory()).expect("the released directory reopens");
+    let successor = Db::open(&dir, theory(), common::work()).expect("the released directory reopens");
     assert_eq!(scan_ids(&successor), vec![1]);
     drop(successor);
     let _ = std::fs::remove_dir_all(&dir);
@@ -181,7 +181,7 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
 #[test]
 fn retained_owned_results_survive_close_byte_for_byte() {
     let dir = temp_dir("retained");
-    let db = Db::create(&dir, theory()).expect("create store").unwrap();
+    let db = Db::create(&dir, theory(), work()).expect("create store").unwrap();
     for id in [3u64, 1, 2] {
         insert(&db, id);
     }
@@ -212,7 +212,7 @@ fn retained_owned_results_survive_close_byte_for_byte() {
 #[test]
 fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
     let dir = temp_dir("race");
-    let db = Db::create(&dir, theory()).expect("create store").unwrap();
+    let db = Db::create(&dir, theory(), work()).expect("create store").unwrap();
 
     std::thread::scope(|scope| {
         for lane in 0..2u64 {
@@ -220,7 +220,7 @@ fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
             scope.spawn(move || {
                 for step in 0..200u64 {
                     let id = lane * 10_000 + step;
-                    let outcome = db.write(|tx| {
+                    let outcome = db.write(common::work(), |tx| {
                         tx.insert_dyn(RelationId(0), [vec![Value::U64(id)]])?;
                         Ok(())
                     });
@@ -249,7 +249,7 @@ fn writers_racing_close_refuse_typed_and_leave_a_coherent_store() {
     }
     drop(db);
 
-    let successor = Db::open(&dir, theory()).expect("reopen after racing close");
+    let successor = Db::open(&dir, theory(), common::work()).expect("reopen after racing close");
     let report = successor.verify_store().expect("offline sweep runs");
     assert_eq!(
         report.verdict,

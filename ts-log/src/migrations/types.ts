@@ -42,9 +42,9 @@ export type PlanValue =
 /**
  * The generated expression fragment: exactly the core `ScalarExpr` roster
  * with the migration context's named SOURCE-field reference in the variable
- * position. Whole-tree typing must equal the target field type; the core
- * `ScalarEvaluator` is the one meaning. No closure, module path or opaque
- * "run this code" node exists.
+ * position. Source-field arithmetic may stay unresolved until native compile
+ * binds it. The core `ScalarEvaluator` is the one meaning. No closure,
+ * module path or opaque "run this code" node exists.
  */
 export type PlanExpression =
 	| { readonly kind: "field"; readonly name: string }
@@ -154,6 +154,12 @@ export interface RuntimeContract {
 export interface GeneratedMigrations {
 	readonly manifest: MigrationManifest
 	readonly plans: readonly MigrationPlan[]
+	/**
+	 * Canonical `schema_file::render` texts: empty-base first, then each
+	 * recorded plan target — exactly `entries.length + 1` rows. Mandatory
+	 * for native chain compile (C8/D20); empty source is not a shortcut.
+	 */
+	readonly snapshots: readonly string[]
 }
 
 // ---------------------------------------------------------------------------

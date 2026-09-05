@@ -5,7 +5,8 @@
  * (64 lowercase hex). The distinct roles are nominal brands: an entity ID is
  * not a request ID, and neither is a history coordinate. Parsers here are
  * the bounded log boundary codecs for HTTP/session tokens — pure, `Result`-
- * returning, no I/O; `SchemaId` and `Id128` remain core-owned imports.
+ * returning, no I/O, no mint/generate; `SchemaId` and `Id128` remain
+ * core-owned imports. Retry uses the caller-supplied bytes again.
  */
 import type { Id128, SchemaId } from "@bjornpagen/bumbledb"
 import { Result } from "effect"

@@ -24,7 +24,7 @@
  * bridge for open/create; it is never respelled as text here. Both are
  * read-only: they never open, initialize, freeze or migrate a database.
  */
-import { internalMigrationRead, internalMigrationSchema } from "@bjornpagen/bumbledb"
+import { internalMigrationRead, internalMigrationSchema } from "@bjornpagen/bumbledb/internal/log"
 import type { ExecutionPolicy, SchemaSpec } from "@bjornpagen/bumbledb"
 import { Effect, Schema } from "effect"
 import type { LogError } from "#errors.ts"
@@ -101,6 +101,15 @@ function requestBytes(body: JsonValue): Uint8Array {
 	return encoder.encode(compactJson(body))
 }
 
+/** Native `compiledMappings` is a JSON array node, not a string wrapper. */
+function mappingsJson(text: string): JsonValue {
+	try {
+		return JSON.parse(text) as JsonValue
+	} catch {
+		return []
+	}
+}
+
 function decodeResponse(operation: string, bytes: Uint8Array): Effect.Effect<unknown, LogError> {
 	if (bytes.byteLength > MAX_RESPONSE) {
 		return Effect.fail(repository(operation, "<native response>", "response exceeds the bounded response cap"))
@@ -138,14 +147,23 @@ const verifyChain = Effect.fn("bumbledb-log.migrations.verifyChain")(function* (
 	work: ExecutionPolicy
 ) {
 	const operation = "migrations.verifyChain"
+	const mappings = mappingsJson(request.compiled.compiledMappings)
 	const raw = yield* internalMigrationRead(
 		requestBytes({
 			kind: "chain",
 			manifest: request.manifest,
 			baseSchemaId: request.baseSchemaId,
+			snapshots: request.snapshots,
 			plans: request.plans,
 			append: request.append,
-			planSet: request.planSet === null ? null : { first: request.planSet.first, count: request.planSet.count }
+			planSet: request.planSet === null ? null : { first: request.planSet.first, count: request.planSet.count },
+			compiledMappings: mappings,
+			compiled: {
+				baseSnapshot: request.compiled.baseSnapshot,
+				intermediateSnapshots: [...request.compiled.intermediateSnapshots],
+				orderedPlans: [...request.compiled.orderedPlans],
+				compiledMappings: request.compiled.compiledMappings
+			}
 		}),
 		work
 	)

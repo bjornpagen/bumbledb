@@ -1,13 +1,11 @@
-import { Result } from "effect"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 /**
  * The successor row codec: fact object ⇄ positional cell array by field
  * ordinal, schema-directed, in ONE place. The write side lowers named host
  * objects to rows in the relation's field-declaration order (declaration
  * order = ordinal ids); the read side decodes owned rows back to named
- * objects of BARE structural values. This module supersedes the fact⇄row
- * half of the legacy `marshal.ts` (P06R's cutover deletes that file's
- * copy); it covers the COMPLETE successor value roster: bool, u64, i64,
+ * objects of BARE structural values. This module is the one fact⇄row
+ * projector. It covers the COMPLETE successor value roster: bool, u64, i64,
  * f64, id128, str, bytes<N>, discrete intervals and dense float intervals,
  * plus the closed-handle bijection (name ⇄ declaration-order row id).
  *
@@ -15,18 +13,23 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * every crossing against its resident sealed roster. Shape misuse throws
  * the pure {@link AuthoringError}; the Effect ingestion boundary catches
  * and types it (never an untracked partial draft). SharedArrayBuffer-backed
- * views are refused before any copy (chapter 30).
+ * views are refused before any copy. Host length is judged before string
+ * scans and byte copies (TS-004).
  */
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { isFloatIntervalValue, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
 import { Id128 } from "#id128.ts"
 import type { AnyRelation, Fact, RelationData } from "#relation.ts"
 
+/** Converter-granularity host cell wall (64 KiB). One oversize cell refuses. */
+const HOST_CELL_MAX = 65536n
+
 /**
  * One owned cell at the private bridge boundary. The declared sealed field
- * type disambiguates the union: `string` is text (or a closed handle after
- * lowering — those cross as `bigint` row ids), `Uint8Array` is `bytes<N>`
- * or the sixteen `id128` bytes, `{ start, end }` bigints are a discrete
+ * type disambiguates the union: `string` is text, an `id128` in its
+ * canonical 32-lowercase-hex spelling (chapter 35), or a closed handle
+ * before lowering (closed handles cross as `bigint` row ids),
+ * `Uint8Array` is `bytes<N>`, `{ start, end }` bigints are a discrete
  * interval and numbers a dense float interval.
  */
 type CellValue =
@@ -58,6 +61,39 @@ function refuseShared(context: string, value: Uint8Array): void {
 			message: `${context}: SharedArrayBuffer-backed views are refused — make a synchronized stable copy into ordinary unshared input first`
 		})
 	}
+}
+
+/**
+ * Cheap host charge before any string scan or byte copy (TS-004). UTF-16
+ * code units × 2 upper-bounds UTF-8; byte views charge their length.
+ */
+function hostCellCharge(value: unknown): bigint {
+	if (typeof value === "string") {
+		return BigInt(value.length) * 2n
+	}
+	if (value instanceof Uint8Array) {
+		return BigInt(value.byteLength)
+	}
+	if (typeof value === "boolean") {
+		return 1n
+	}
+	if (typeof value === "bigint" || typeof value === "number") {
+		return 8n
+	}
+	if (value !== null && typeof value === "object" && "start" in value && "end" in value) {
+		return 16n
+	}
+	return 0n
+}
+
+function assertHostCellFits(context: string, value: unknown, limit: bigint): bigint {
+	const charge = hostCellCharge(value)
+	if (charge > limit) {
+		throw new AuthoringError({
+			message: `${context}: host cell of ${charge} bytes exceeds the ${limit}-byte converter bound — refuse before copy or scan`
+		})
+	}
+	return charge
 }
 
 /**
@@ -134,6 +170,7 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 			if (typeof value !== "string") {
 				throw literalShapeError(context, "string", value)
 			}
+			assertHostCellFits(context, value, HOST_CELL_MAX)
 			if (!value.isWellFormed()) {
 				throw literalShapeError(context, "well-formed string", value)
 			}
@@ -149,14 +186,17 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 			if (!Id128.isId128(value)) {
 				throw literalShapeError(context, "an Id128 (32 lowercase hex characters)", value)
 			}
-			const bytes = Id128.toBytes(value)
-			return bytes
+			// Chapter 35: id128 crosses the bridge as the canonical
+			// 32-lowercase-hex STRING (the native marshal's spelling),
+			// never as sixteen raw bytes.
+			return value
 		}
 		case "bytes": {
 			if (!(value instanceof Uint8Array)) {
 				throw literalShapeError(context, "Uint8Array", value)
 			}
 			refuseShared(context, value)
+			assertHostCellFits(context, value, HOST_CELL_MAX)
 			if (value.byteLength !== field.width) {
 				throw new AuthoringError({
 					message: `${context}: bytes<${field.width}> takes exactly ${field.width} bytes (got ${value.byteLength})`
@@ -280,14 +320,15 @@ function decodeCell(context: string, field: AnyField, cell: unknown): unknown {
 			return cell
 		}
 		case "id128": {
-			if (!(cell instanceof Uint8Array) || cell.length !== 16) {
-				throw new SdkInvariantError({ message: `${context}: expected 16 id128 bytes` })
+			// The native renderer spells id128 as the canonical
+			// 32-lowercase-hex string (marshal.rs `id128_hex`); the read
+			// side revalidates the spelling and keeps the string value.
+			if (!Id128.isId128(cell)) {
+				throw new SdkInvariantError({
+					message: `${context}: expected an id128 cell (32 lowercase hex characters)`
+				})
 			}
-			const decoded = Id128.fromBytes(cell)
-			if (!Result.isSuccess(decoded)) {
-				throw new SdkInvariantError({ message: `${context}: id128 bytes did not decode` })
-			}
-			return decoded.success
+			return cell
 		}
 		case "bytes": {
 			if (!(cell instanceof Uint8Array)) {
@@ -335,7 +376,9 @@ function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]
 	data.fields.forEach(function decodeOne(declared, ordinal) {
 		const cell = row[ordinal]
 		if (cell === undefined) {
-			throw new SdkInvariantError({ message: `relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent` })
+			throw new SdkInvariantError({
+				message: `relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`
+			})
 		}
 		decoded[declared.name] = decodeCell(`relation ${data.name} field ${declared.name}`, declared.field, cell)
 	})
@@ -347,4 +390,15 @@ function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]
 }
 
 export type { CellValue, FlatRows }
-export { cellBytes, cellOf, decodeCell, factOfCells, flatRowsOf, handleOf, keyCellsOf, recordOf }
+export {
+	assertHostCellFits,
+	cellBytes,
+	cellOf,
+	decodeCell,
+	factOfCells,
+	flatRowsOf,
+	handleOf,
+	hostCellCharge,
+	keyCellsOf,
+	recordOf
+}

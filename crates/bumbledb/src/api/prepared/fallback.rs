@@ -18,16 +18,18 @@
 
 use std::sync::Arc;
 
+use super::derived::SealedStage;
+use super::reach::SealedStageRef;
 use super::source::QuerySource;
 use crate::error::{Error, Result};
-use crate::exec::run::{Bindings, Sink};
+use crate::exec::run::{Bindings, Flow, Sink};
 use crate::image::RelationImage;
-use crate::image::canon::{RowWords, TextWords};
+use crate::image::canon::RowWords;
 use crate::image::intern::InternerHandle;
-use crate::image::view::{Const, FilterPredicate, ImageRow, Loaded, OperandAddr, Operands, holds};
+use crate::image::view::{Const, FilterPredicate, ImageRow, Loaded, OperandAddr, Operands};
 use crate::ir::VarId;
 use crate::ir::normalize::{AntiProbe, OccBind, Occurrence, Role};
-use crate::schema::Schema;
+use crate::schema::{DistinctnessWitness, Schema, VisitControl, VisitOutcome};
 use bumbledb_theory::schema::{FieldId, RelationId, ValueType};
 
 /// How a bound variable's slots load for residual comparison.
@@ -49,10 +51,20 @@ pub(super) struct FallbackRule {
     anti_probes: Vec<AntiProbe>,
     /// `(var, slot, width, kind)` in the plan's layout.
     slots: Vec<(VarId, usize, usize, LoadKind)>,
+    /// True at a string variable's first slot. Numeric words can equal
+    /// `SCRATCH_TOKEN_TAG`; only text slots dispatch on the token tag.
+    text_slots: Vec<bool>,
     slot_count: usize,
     /// Per occurrence: this execution's resolved filters (params/literals
     /// substituted); refilled by `resolve` before every run.
     resolved: Vec<Vec<FilterPredicate>>,
+    /// Per occurrence, per selection level: resolved key words for
+    /// key-aware indexed probes and early stopping.
+    resolved_selections: Vec<Vec<Vec<u64>>>,
+    /// Plan-side selection templates (not carried on normalized occurrences).
+    selection_templates: Vec<Vec<crate::plan::fj::Selection>>,
+    /// Plan-side trie schemas for keyed fallback probes.
+    trie_schemas: Vec<Vec<Vec<VarId>>>,
 }
 
 impl FallbackRule {
@@ -61,11 +73,16 @@ impl FallbackRule {
         plan: &crate::plan::fj::ValidatedPlan,
         var_type: impl Fn(VarId) -> ValueType,
     ) -> Self {
+        let mut text_slots = vec![false; plan.slot_count()];
         let slots = plan
             .slot_spans()
             .into_iter()
             .map(|(var, slot, width)| {
-                let kind = match var_type(var) {
+                let ty = var_type(var);
+                if matches!(ty, ValueType::String) {
+                    text_slots[slot] = true;
+                }
+                let kind = match ty {
                     ValueType::Interval { .. } | ValueType::FixedInterval { .. } => LoadKind::Pair,
                     ValueType::Id128 => LoadKind::Block(2),
                     ValueType::FixedBytes { len } => {
@@ -81,6 +98,17 @@ impl FallbackRule {
             .collect::<Vec<_>>();
         let occurrences = normalized.occurrences.clone();
         let resolved = vec![Vec::new(); occurrences.len()];
+        let resolved_selections = vec![Vec::new(); occurrences.len()];
+        let selection_templates = plan
+            .occurrences()
+            .iter()
+            .map(|occurrence| occurrence.selections.clone())
+            .collect();
+        let trie_schemas = plan
+            .occurrences()
+            .iter()
+            .map(|occurrence| occurrence.trie_schema.clone())
+            .collect();
         Self {
             occurrences,
             residuals: normalized.residuals.clone(),
@@ -88,8 +116,12 @@ impl FallbackRule {
             allen_residuals: normalized.allen_residuals.clone(),
             anti_probes: normalized.anti_probes.clone(),
             slots,
+            text_slots,
             slot_count: plan.slot_count(),
             resolved,
+            resolved_selections,
+            selection_templates,
+            trie_schemas,
         }
     }
 
@@ -102,15 +134,44 @@ impl FallbackRule {
     }
 }
 
-/// Everything one fallback run reads.
+fn slot_words_equal(
+    rule: &FallbackRule,
+    interner: &InternerHandle<'_>,
+    store: &mut Option<crate::image::NonresidentTextStore>,
+    bindings: &Bindings,
+    slot: usize,
+    width: usize,
+    span_words: &[u64],
+) -> Result<bool> {
+    if width == 1 && rule.text_slots.get(slot).copied().unwrap_or(false) {
+        return super::text::words_equal(interner, store, bindings.get(slot), span_words[0]);
+    }
+    Ok((0..width).all(|w| bindings.get(slot + w) == span_words[w]))
+}
+
+/// Everything one fallback run reads (immutable operation context).
 pub(super) struct FallbackCtx<'a> {
     pub(super) source: &'a QuerySource<'a>,
     pub(super) schema: &'a Schema,
     pub(super) interner: &'a InternerHandle<'a>,
     pub(super) params: &'a [Const],
     pub(super) missed: &'a [bool],
-    /// Derived sources: interior/rec tables by the occurrence's bind.
-    pub(super) derived: &'a dyn Fn(OccBind) -> Option<Arc<RelationImage>>,
+    /// Production beyond-memory text: opened only on `BeyondMemory`.
+    pub(super) nonresident: &'a mut Option<crate::image::NonresidentTextStore>,
+}
+
+fn resolve_derived<'a>(
+    published: &'a mut [SealedStage],
+    rec_delta: Option<&'a mut SealedStage>,
+    rec_acc: Option<&'a mut SealedStage>,
+    bind: OccBind,
+) -> Option<SealedStageRef<'a>> {
+    match bind {
+        OccBind::Finished(id) => published.get_mut(id.index()).map(SealedStageRef::Stage),
+        OccBind::RecDelta(_) => rec_delta.map(SealedStageRef::Stage),
+        OccBind::RecAcc(_) => rec_acc.map(SealedStageRef::Stage),
+        OccBind::Edb(_) => None,
+    }
 }
 
 /// Run one rule through the cursor fallback into `sink`.
@@ -120,7 +181,10 @@ pub(super) struct FallbackCtx<'a> {
 /// the rule contributes nothing on this snapshot.
 pub(super) fn run_fallback<S: Sink>(
     rule: &mut FallbackRule,
-    ctx: &FallbackCtx<'_>,
+    ctx: &mut FallbackCtx<'_>,
+    published: &mut [SealedStage],
+    rec_delta: Option<&mut SealedStage>,
+    rec_acc: Option<&mut SealedStage>,
     bindings: &mut Bindings,
     sink: &mut S,
     latched: &mut u32,
@@ -131,8 +195,10 @@ pub(super) fn run_fallback<S: Sink>(
     let FallbackRule {
         occurrences,
         resolved,
+        resolved_selections,
+        selection_templates,
         ..
-    } = &mut *rule;
+    } = rule;
     for (occ_idx, occurrence) in occurrences.iter_mut().enumerate() {
         if occurrence.role.discharged() {
             continue;
@@ -144,13 +210,35 @@ pub(super) fn run_fallback<S: Sink>(
             filters.extend(occurrence.filters.iter().cloned());
         }
         for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
-            if !crate::image::view::resolve_filter_into(
+            if !super::bind::resolve_filter_admitted(
                 ctx.interner,
+                ctx.nonresident,
+                ctx.source.work(),
                 template,
                 ctx.params,
                 ctx.missed,
                 negated,
                 slot,
+                latched,
+            )? {
+                return Ok(());
+            }
+        }
+        let selections = &mut resolved_selections[occ_idx];
+        let templates = &mut selection_templates[occ_idx];
+        if selections.len() != templates.len() {
+            selections.clear();
+            selections.resize_with(templates.len(), Vec::new);
+        }
+        for (selection, words) in templates.iter_mut().zip(selections.iter_mut()) {
+            if !super::bind::resolve_selection_into(
+                ctx.interner,
+                ctx.nonresident,
+                ctx.source.work(),
+                selection,
+                ctx.params,
+                ctx.missed,
+                words,
                 latched,
             )? {
                 return Ok(());
@@ -170,6 +258,9 @@ pub(super) fn run_fallback<S: Sink>(
     let mut state = Search {
         rule,
         ctx,
+        published,
+        rec_delta,
+        rec_acc,
         positives,
         bound: vec![false; rule_slots(rule)],
         deferred_points: Vec::new(),
@@ -183,7 +274,10 @@ fn rule_slots(rule: &FallbackRule) -> usize {
 
 struct Search<'a, 'c> {
     rule: &'a FallbackRule,
-    ctx: &'a FallbackCtx<'c>,
+    ctx: &'a mut FallbackCtx<'c>,
+    published: &'a mut [SealedStage],
+    rec_delta: Option<&'a mut SealedStage>,
+    rec_acc: Option<&'a mut SealedStage>,
     positives: Vec<usize>,
     bound: Vec<bool>,
     /// `(start, end, var, dense)` membership checks whose point variable
@@ -225,35 +319,36 @@ impl Search<'_, '_> {
             let image = crate::image::synthesize_closed(relation, rel);
             return self.scan_image_rows(depth, occ_idx, &image, bindings, sink);
         }
+        let selections = &self.rule.resolved_selections[occ_idx];
+        if self.try_scan_stored_keyed(depth, occ_idx, relation, selections, bindings, sink)? {
+            return Ok(());
+        }
         let fields = rel.fields();
         let field_types: Vec<ValueType> = fields.iter().map(|f| f.value_type).collect();
         let mut row = RowWords::new(&field_types);
         let mut failure: Option<Error> = None;
-        // The borrow shape wants one closure; errors tunnel out.
-        let mut visit = |bytes: &[u8],
-                         search: &mut Self,
-                         bindings: &mut Bindings,
-                         sink: &mut S|
-         -> Result<()> {
-            let mut text = TextWords::HandleIntern(search.ctx.interner);
-            row.decode(fields, bytes, &mut text)?;
-            search.try_row(depth, occ_idx, &row, bindings, sink)
-        };
-        // `QuerySource::scan` drives the iteration; descend re-enters from
-        // inside, so the source must tolerate reentrant scans (multiple
-        // LMDB read cursors on one transaction, and slice walks, both do).
         let source = self.ctx.source;
-        let result = source.scan(relation, &mut |bytes| {
+        let result = source.scan_early(relation, &mut |bytes| {
             if failure.is_some() {
-                return Ok(());
+                return Ok(false);
             }
-            // SAFETY of the self-reborrow dance: `visit` needs `self`,
-            // `bindings`, `sink` — all disjoint from the scan's own state.
-            match visit(bytes, self, bindings, sink) {
-                Ok(()) => Ok(()),
+            if let Err(error) = super::text::decode_row(
+                &mut row,
+                fields,
+                bytes,
+                self.ctx.interner,
+                self.ctx.nonresident,
+                self.ctx.source.work(),
+                true,
+            ) {
+                failure = Some(error);
+                return Ok(false);
+            }
+            match self.try_row(depth, occ_idx, &row, bindings, sink) {
+                Ok(()) => Ok(true),
                 Err(error) => {
                     failure = Some(error);
-                    Ok(())
+                    Ok(false)
                 }
             }
         });
@@ -261,6 +356,113 @@ impl Search<'_, '_> {
         match failure {
             Some(error) => Err(error),
             None => Ok(()),
+        }
+    }
+
+    /// Key-bound walk through the compiled witness. Missing compiled
+    /// projections refuse this path (no full-scan key fallback).
+    fn try_scan_stored_keyed<S: Sink>(
+        &mut self,
+        depth: usize,
+        occ_idx: usize,
+        relation: RelationId,
+        selections: &[Vec<u64>],
+        bindings: &mut Bindings,
+        sink: &mut S,
+    ) -> Result<bool> {
+        if selections.is_empty() || !selections.iter().all(|level| level.len() == 1) {
+            return Ok(false);
+        }
+        let occurrence = &self.rule.occurrences[occ_idx];
+        let trie_schema = &self.rule.trie_schemas[occ_idx];
+        if trie_schema.is_empty() {
+            return Ok(false);
+        }
+        let key_words: Vec<u64> = selections.iter().map(|level| level[0]).collect();
+        let key_fields: Vec<FieldId> = trie_schema[0]
+            .iter()
+            .filter_map(|var| {
+                occurrence
+                    .vars
+                    .iter()
+                    .find(|(_, v)| v == var)
+                    .map(|(field, _)| *field)
+            })
+            .collect();
+        if key_fields.len() != key_words.len() {
+            return Ok(false);
+        }
+        let Ok(theory) = self.ctx.schema.compiled_theory() else {
+            return Ok(false);
+        };
+        let Some(projection) = theory.key_projections_of(relation).iter().find_map(|id| {
+            let compiled = theory.projection(*id)?;
+            (compiled.projection.as_ref() == key_fields.as_slice()).then_some(compiled)
+        }) else {
+            return Ok(false);
+        };
+        let last_positive = self.positives.get(depth + 1).is_none();
+        let all_bound = occurrence.vars.iter().all(|(_, var)| {
+            let (slot, _, _) = self.rule.locate(*var);
+            self.bound[slot]
+        });
+        let witness = if last_positive && all_bound {
+            DistinctnessWitness::ExistenceOnly {
+                projection: projection.id,
+            }
+        } else {
+            match theory.distinctness_witness(projection.id) {
+                Some(DistinctnessWitness::ScalarKeyUnique { projection }) => {
+                    DistinctnessWitness::ScalarKeyUnique { projection }
+                }
+                Some(witness) => witness,
+                None => return Ok(false),
+            }
+        };
+        let rel = self.ctx.schema.relation(relation);
+        let fields = rel.fields();
+        let field_types: Vec<ValueType> = fields.iter().map(|f| f.value_type).collect();
+        let mut row = RowWords::new(&field_types);
+        let mut failure: Option<Error> = None;
+        let unique = matches!(witness, DistinctnessWitness::ScalarKeyUnique { .. });
+        let existence = matches!(witness, DistinctnessWitness::ExistenceOnly { .. });
+        let visited = self.ctx.source.consume_compiled_visits(
+            self.ctx.schema,
+            relation,
+            witness,
+            &key_fields,
+            &key_words,
+            &mut |bytes| {
+                if failure.is_some() {
+                    return Ok(VisitControl::Stop);
+                }
+                if let Err(error) = super::text::decode_row(
+                    &mut row,
+                    fields,
+                    bytes,
+                    self.ctx.interner,
+                    self.ctx.nonresident,
+                    self.ctx.source.work(),
+                    true,
+                ) {
+                    failure = Some(error);
+                    return Ok(VisitControl::Stop);
+                }
+                match self.try_row(depth, occ_idx, &row, bindings, sink) {
+                    Ok(()) if existence || unique => Ok(VisitControl::Sufficient),
+                    Ok(()) => Ok(VisitControl::Continue),
+                    Err(error) => {
+                        failure = Some(error);
+                        Ok(VisitControl::Stop)
+                    }
+                }
+            },
+        )?;
+        match (visited, failure) {
+            (_, Some(error)) => Err(error),
+            (None, None) => Ok(false),
+            (Some(VisitOutcome::Stopped { .. }), None) => Ok(true),
+            (Some(_), None) => Ok(true),
         }
     }
 
@@ -272,10 +474,106 @@ impl Search<'_, '_> {
         sink: &mut S,
     ) -> Result<()> {
         let bind = self.rule.occurrences[occ_idx].bind;
-        let image = (self.ctx.derived)(bind).ok_or(Error::Corruption(
-            crate::error::CorruptionError::MalformedValue("fallback derived source"),
-        ))?;
-        self.scan_image_rows(depth, occ_idx, &image, bindings, sink)
+        match bind {
+            OccBind::Edb(_) => Err(Error::Corruption(
+                crate::error::CorruptionError::MalformedValue("fallback derived source"),
+            )),
+            OccBind::RecDelta(_) | OccBind::RecAcc(_) => {
+                self.scan_rec_stage(depth, occ_idx, bind, bindings, sink)
+            }
+            OccBind::Finished(id) => self.scan_scratch_stage_at(depth, occ_idx, id.index(), bindings, sink),
+        }
+    }
+
+    fn scan_rec_stage<S: Sink>(
+        &mut self,
+        depth: usize,
+        occ_idx: usize,
+        bind: OccBind,
+        bindings: &mut Bindings,
+        sink: &mut S,
+    ) -> Result<()> {
+        let stage = match bind {
+            OccBind::RecDelta(_) => self.rec_delta.as_mut(),
+            OccBind::RecAcc(_) => self.rec_acc.as_mut(),
+            _ => None,
+        };
+        let Some(stage) = stage else {
+            return Err(Error::Corruption(
+                crate::error::CorruptionError::MalformedValue("fallback derived source"),
+            ));
+        };
+        match stage {
+            SealedStage::Resident(image) => {
+                let image = Arc::clone(image);
+                self.scan_image_rows(depth, occ_idx, &image, bindings, sink)
+            }
+            SealedStage::Scratch(scratch) => {
+                let count = scratch.count;
+                let row_words = scratch.row_words;
+                let field_types = scratch.field_types.clone();
+                for index in 0..count {
+                    self.ctx
+                        .source
+                        .work()
+                        .step(1)
+                        .map_err(super::source::work_error)?;
+                    let mut words = vec![0u64; row_words];
+                    super::derived::SealedStage::scratch_row_words(scratch, index, &mut words)?;
+                    let row = ScratchRow {
+                        field_types: &field_types,
+                        words: &words,
+                    };
+                    self.try_row(depth, occ_idx, &row, bindings, sink)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn scan_scratch_stage_at<S: Sink>(
+        &mut self,
+        depth: usize,
+        occ_idx: usize,
+        stage_idx: usize,
+        bindings: &mut Bindings,
+        sink: &mut S,
+    ) -> Result<()> {
+        match self.published.get(stage_idx) {
+            Some(SealedStage::Resident(image)) => {
+                let image = Arc::clone(image);
+                self.scan_image_rows(depth, occ_idx, &image, bindings, sink)
+            }
+            Some(SealedStage::Scratch(stage)) => {
+                let count = stage.count;
+                let row_words = stage.row_words;
+                let field_types = stage.field_types.clone();
+                for index in 0..count {
+                    self.ctx
+                        .source
+                        .work()
+                        .step(1)
+                        .map_err(super::source::work_error)?;
+                    let mut words = vec![0u64; row_words];
+                    {
+                        let scratch = match &mut self.published[stage_idx] {
+                            SealedStage::Scratch(scratch) => scratch,
+                            _ => unreachable!("scratch stage"),
+                        };
+                        super::derived::SealedStage::scratch_row_words(scratch, index, &mut words)?;
+                    }
+                    let row = ScratchRow {
+                        field_types: &field_types,
+                        words: &words,
+                    };
+                    self.try_row(depth, occ_idx, &row, bindings, sink)?;
+                }
+                Ok(())
+            }
+            None => Err(Error::Corruption(
+                crate::error::CorruptionError::MalformedValue("fallback derived source"),
+            )),
+        }
     }
 
     fn scan_image_rows<S: Sink>(
@@ -311,9 +609,14 @@ impl Search<'_, '_> {
     {
         let occurrence = &self.rule.occurrences[occ_idx];
         for filter in &self.rule.resolved[occ_idx] {
-            if !holds(filter, row, self.ctx.params)
-                .map_err(Error::from)?
-                .unwrap_or(false)
+            if !super::text::holds_with_text(
+                filter,
+                row,
+                self.ctx.params,
+                self.ctx.interner,
+                self.ctx.nonresident,
+            )?
+            .unwrap_or(false)
             {
                 return Ok(());
             }
@@ -328,7 +631,15 @@ impl Search<'_, '_> {
             let count = load_span(row, *field, width, &mut span_words)?;
             debug_assert_eq!(count, width, "slot width equals field span width");
             if self.bound[slot] {
-                if (0..width).any(|w| bindings.get(slot + w) != span_words[w]) {
+                if !slot_words_equal(
+                    self.rule,
+                    self.ctx.interner,
+                    self.ctx.nonresident,
+                    bindings,
+                    slot,
+                    width,
+                    &span_words,
+                )? {
                     matched = false;
                     break;
                 }
@@ -403,7 +714,15 @@ impl Search<'_, '_> {
             .chain(&self.rule.word_residuals)
             .chain(&self.rule.allen_residuals)
         {
-            if !holds(residual, &ops, self.ctx.params)?.unwrap_or(false) {
+            if !super::text::holds_with_text(
+                residual,
+                &ops,
+                self.ctx.params,
+                self.ctx.interner,
+                self.ctx.nonresident,
+            )?
+            .unwrap_or(false)
+            {
                 return Ok(());
             }
         }
@@ -414,7 +733,32 @@ impl Search<'_, '_> {
                 return Ok(());
             }
         }
-        let _ = sink.emit(bindings);
+        self.canonicalize_text_bindings(bindings)?;
+        let emitted = sink.emit(bindings);
+        let progress = Flow::from_sink_progress(sink.progress()).or_skip(emitted);
+        if progress.is_terminal() {
+            return Err(sink.take_error().unwrap_or_else(|| {
+                Error::Corruption(crate::error::CorruptionError::MalformedValue(
+                    "fallback sink stop",
+                ))
+            }));
+        }
+        Ok(())
+    }
+
+    fn canonicalize_text_bindings(&self, bindings: &mut Bindings) -> Result<()> {
+        for (slot, is_text) in self.rule.text_slots.iter().enumerate() {
+            if !*is_text {
+                continue;
+            }
+            if let Some(canon) = super::text::canonical_token(
+                self.ctx.interner,
+                self.ctx.nonresident.as_ref(),
+                bindings.get(slot),
+            )? {
+                bindings.set(slot, canon);
+            }
+        }
         Ok(())
     }
 
@@ -423,7 +767,7 @@ impl Search<'_, '_> {
         reason = "the anti-probe's bound/deferred arms read as one walk"
     )]
     fn negated_hit(
-        &self,
+        &mut self,
         occ_idx: usize,
         probe_bindings: &[(FieldId, VarId)],
         bindings: &Bindings,
@@ -435,9 +779,19 @@ impl Search<'_, '_> {
             "anti-probes name negated atoms"
         );
         let mut hit = false;
-        let check_row = |row: &dyn ErasedOperands| -> Result<bool> {
+        let check_row = |row: &dyn ErasedOperands,
+                         store: &mut Option<crate::image::NonresidentTextStore>|
+         -> Result<bool> {
             for filter in &self.rule.resolved[occ_idx] {
-                if !row.holds_filter(filter, self.ctx.params)?.unwrap_or(false) {
+                if !row
+                    .holds_filter(
+                        filter,
+                        self.ctx.params,
+                        self.ctx.interner,
+                        store,
+                    )?
+                    .unwrap_or(false)
+                {
                     return Ok(false);
                 }
             }
@@ -446,7 +800,15 @@ impl Search<'_, '_> {
                 let (slot, width, _) = self.rule.locate(*var);
                 let count = row.span(*field, &mut span_words)?;
                 debug_assert_eq!(count, width, "probe width equals span width");
-                if (0..width).any(|w| bindings.get(slot + w) != span_words[w]) {
+                if !slot_words_equal(
+                    self.rule,
+                    self.ctx.interner,
+                    store,
+                    bindings,
+                    slot,
+                    width,
+                    &span_words,
+                )? {
                     return Ok(false);
                 }
             }
@@ -476,7 +838,7 @@ impl Search<'_, '_> {
                             image: &image,
                             position,
                         };
-                        if check_row(&row)? {
+                        if check_row(&row, self.ctx.nonresident)? {
                             hit = true;
                             break;
                         }
@@ -487,43 +849,161 @@ impl Search<'_, '_> {
                 let field_types: Vec<ValueType> = fields.iter().map(|f| f.value_type).collect();
                 let mut row = RowWords::new(&field_types);
                 let mut failure: Option<Error> = None;
-                self.ctx.source.scan(relation, &mut |bytes| {
+                self.ctx.source.scan_early(relation, &mut |bytes| {
                     if hit || failure.is_some() {
-                        return Ok(());
+                        return Ok(false);
                     }
-                    let mut text = TextWords::HandleLookup(self.ctx.interner);
-                    if let Err(error) = row.decode(fields, bytes, &mut text) {
+                    if let Err(error) = super::text::decode_row(
+                        &mut row,
+                        fields,
+                        bytes,
+                        self.ctx.interner,
+                        self.ctx.nonresident,
+                        self.ctx.source.work(),
+                        false,
+                    ) {
                         failure = Some(error);
-                        return Ok(());
+                        return Ok(false);
                     }
-                    match check_row(&row) {
+                    match check_row(&row, self.ctx.nonresident) {
                         Ok(matched) => hit |= matched,
-                        Err(error) => failure = Some(error),
+                        Err(error) => {
+                            failure = Some(error);
+                            return Ok(false);
+                        }
                     }
-                    Ok(())
+                    Ok(!hit)
                 })?;
                 if let Some(error) = failure {
                     return Err(error);
                 }
                 Ok(hit)
             }
-            OccBind::Finished(_) | OccBind::RecDelta(_) | OccBind::RecAcc(_) => {
-                let image = (self.ctx.derived)(occurrence.bind).ok_or(Error::Corruption(
-                    crate::error::CorruptionError::MalformedValue("fallback derived source"),
-                ))?;
-                for position in 0..image.row_count() {
-                    self.ctx
-                        .source
-                        .work()
-                        .step(1)
-                        .map_err(super::source::work_error)?;
-                    let row = ImageRow {
-                        image: &image,
-                        position,
-                    };
-                    if check_row(&row)? {
-                        hit = true;
-                        break;
+            OccBind::Finished(id) => {
+                let stage_idx = id.index();
+                match self.published.get(stage_idx) {
+                    Some(SealedStage::Resident(image)) => {
+                        for position in 0..image.row_count() {
+                            self.ctx
+                                .source
+                                .work()
+                                .step(1)
+                                .map_err(super::source::work_error)?;
+                            let row = ImageRow { image, position };
+                            if check_row(&row, self.ctx.nonresident)? {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    Some(SealedStage::Scratch(stage)) => {
+                        let count = stage.count;
+                        let row_words = stage.row_words;
+                        let field_types = stage.field_types.clone();
+                        for index in 0..count {
+                            self.ctx
+                                .source
+                                .work()
+                                .step(1)
+                                .map_err(super::source::work_error)?;
+                            let mut words = vec![0u64; row_words];
+                            {
+                                let scratch = match &mut self.published[stage_idx] {
+                                    SealedStage::Scratch(scratch) => scratch,
+                                    _ => unreachable!("scratch stage"),
+                                };
+                                super::derived::SealedStage::scratch_row_words(
+                                    scratch,
+                                    index,
+                                    &mut words,
+                                )?;
+                            }
+                            let row = ScratchRow {
+                                field_types: &field_types,
+                                words: &words,
+                            };
+                            if check_row(&row, self.ctx.nonresident)? {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    None => {
+                        return Err(Error::Corruption(
+                            crate::error::CorruptionError::MalformedValue("fallback derived source"),
+                        ));
+                    }
+                }
+                Ok(hit)
+            }
+            OccBind::RecDelta(_) | OccBind::RecAcc(_) => {
+                let Some(resolved) = resolve_derived(
+                    self.published,
+                    self.rec_delta.as_deref_mut(),
+                    self.rec_acc.as_deref_mut(),
+                    occurrence.bind,
+                ) else {
+                    return Err(Error::Corruption(
+                        crate::error::CorruptionError::MalformedValue("fallback derived source"),
+                    ));
+                };
+                match resolved {
+                    SealedStageRef::Resident(image) => {
+                        for position in 0..image.row_count() {
+                            self.ctx
+                                .source
+                                .work()
+                                .step(1)
+                                .map_err(super::source::work_error)?;
+                            let row = ImageRow { image, position };
+                            if check_row(&row, self.ctx.nonresident)? {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    SealedStageRef::Stage(SealedStage::Resident(image)) => {
+                        for position in 0..image.row_count() {
+                            self.ctx
+                                .source
+                                .work()
+                                .step(1)
+                                .map_err(super::source::work_error)?;
+                            let row = ImageRow {
+                                image,
+                                position,
+                            };
+                            if check_row(&row, self.ctx.nonresident)? {
+                                hit = true;
+                                break;
+                            }
+                        }
+                    }
+                    SealedStageRef::Stage(SealedStage::Scratch(scratch)) => {
+                        let count = scratch.count;
+                        let row_words = scratch.row_words;
+                        let field_types = scratch.field_types.clone();
+                        for index in 0..count {
+                            self.ctx
+                                .source
+                                .work()
+                                .step(1)
+                                .map_err(super::source::work_error)?;
+                            let mut words = vec![0u64; row_words];
+                            super::derived::SealedStage::scratch_row_words(
+                                scratch,
+                                index,
+                                &mut words,
+                            )?;
+                            let row = ScratchRow {
+                                field_types: &field_types,
+                                words: &words,
+                            };
+                            if check_row(&row, self.ctx.nonresident)? {
+                                hit = true;
+                                break;
+                            }
+                        }
                     }
                 }
                 Ok(hit)
@@ -535,13 +1015,25 @@ impl Search<'_, '_> {
 /// Object-safe row access for the negation walker (two operand providers
 /// behind one loop).
 trait ErasedOperands {
-    fn holds_filter(&self, filter: &FilterPredicate, params: &[Const]) -> Result<Option<bool>>;
+    fn holds_filter(
+        &self,
+        filter: &FilterPredicate,
+        params: &[Const],
+        interner: &InternerHandle<'_>,
+        store: &mut Option<crate::image::NonresidentTextStore>,
+    ) -> Result<Option<bool>>;
     fn span(&self, field: FieldId, out: &mut [u64; 8]) -> Result<usize>;
 }
 
 impl ErasedOperands for RowWords {
-    fn holds_filter(&self, filter: &FilterPredicate, params: &[Const]) -> Result<Option<bool>> {
-        holds(filter, self, params)
+    fn holds_filter(
+        &self,
+        filter: &FilterPredicate,
+        params: &[Const],
+        interner: &InternerHandle<'_>,
+        store: &mut Option<crate::image::NonresidentTextStore>,
+    ) -> Result<Option<bool>> {
+        super::text::holds_with_text(filter, self, params, interner, store)
     }
 
     fn span(&self, field: FieldId, out: &mut [u64; 8]) -> Result<usize> {
@@ -552,10 +1044,16 @@ impl ErasedOperands for RowWords {
 }
 
 impl ErasedOperands for ImageRow<'_> {
-    fn holds_filter(&self, filter: &FilterPredicate, params: &[Const]) -> Result<Option<bool>> {
-        match holds(filter, self, params) {
+    fn holds_filter(
+        &self,
+        filter: &FilterPredicate,
+        params: &[Const],
+        interner: &InternerHandle<'_>,
+        store: &mut Option<crate::image::NonresidentTextStore>,
+    ) -> Result<Option<bool>> {
+        match super::text::holds_with_text(filter, self, params, interner, store) {
             Ok(verdict) => Ok(verdict),
-            Err(infallible) => match infallible {},
+            Err(error) => Err(error),
         }
     }
 
@@ -581,6 +1079,24 @@ impl ErasedOperands for ImageRow<'_> {
             }
             Err(infallible) => match infallible {},
         })
+    }
+}
+
+impl ErasedOperands for ScratchRow<'_> {
+    fn holds_filter(
+        &self,
+        filter: &FilterPredicate,
+        params: &[Const],
+        interner: &InternerHandle<'_>,
+        store: &mut Option<crate::image::NonresidentTextStore>,
+    ) -> Result<Option<bool>> {
+        super::text::holds_with_text(filter, self, params, interner, store)
+    }
+
+    fn span(&self, field: FieldId, out: &mut [u64; 8]) -> Result<usize> {
+        let words = self.span_words(field);
+        out[..words.len()].copy_from_slice(words);
+        Ok(words.len())
     }
 }
 
@@ -690,5 +1206,157 @@ impl Operands for BindingOps<'_> {
 
     fn loaded(&self, at: OperandAddr) -> Result<Loaded> {
         Ok(self.var_loaded(at))
+    }
+
+    fn string_field(&self, at: OperandAddr) -> bool {
+        let (slot, _, _) = self.rule.locate(at.var());
+        self.rule.text_slots.get(slot).copied().unwrap_or(false)
+    }
+}
+
+/// Flat column words for one scratch-backed derived row.
+struct ScratchRow<'a> {
+    field_types: &'a [ValueType],
+    words: &'a [u64],
+}
+
+impl Operands for ScratchRow<'_> {
+    type Error = Error;
+
+    fn word(&self, at: OperandAddr) -> Result<u64> {
+        Ok(match self.operand(at.field()) {
+            crate::exec::dispatch::FactOperand::Word(w) => w,
+            crate::exec::dispatch::FactOperand::Pair(..)
+            | crate::exec::dispatch::FactOperand::Block { .. } => {
+                unreachable!("validated: word operands are scalar fields")
+            }
+        })
+    }
+
+    fn pair(&self, at: OperandAddr) -> Result<(u64, u64)> {
+        Ok(match self.operand(at.field()) {
+            crate::exec::dispatch::FactOperand::Pair(s, e) => (s, e),
+            crate::exec::dispatch::FactOperand::Word(_)
+            | crate::exec::dispatch::FactOperand::Block { .. } => {
+                unreachable!("validated: interval predicates read interval fields")
+            }
+        })
+    }
+
+    fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8)> {
+        Ok(match self.operand(at.field()) {
+            crate::exec::dispatch::FactOperand::Block { words, count } => (words, count),
+            crate::exec::dispatch::FactOperand::Word(_)
+            | crate::exec::dispatch::FactOperand::Pair(..) => {
+                unreachable!("validated: block operands are bytes<N>")
+            }
+        })
+    }
+
+    fn loaded(&self, at: OperandAddr) -> Result<Loaded> {
+        Ok(match self.operand(at.field()) {
+            crate::exec::dispatch::FactOperand::Word(w) => Loaded::Word(w),
+            crate::exec::dispatch::FactOperand::Pair(s, e) => Loaded::Pair(s, e),
+            crate::exec::dispatch::FactOperand::Block { words, count } => Loaded::Block {
+                words,
+                count,
+            },
+        })
+    }
+
+    fn string_field(&self, at: OperandAddr) -> bool {
+        self.field_types
+            .get(usize::from(at.field().0))
+            .is_some_and(|ty| matches!(ty, ValueType::String))
+    }
+}
+
+impl ScratchRow<'_> {
+    fn span_words(&self, field: FieldId) -> &[u64] {
+        let spans = crate::image::column_spans(self.field_types);
+        let span = spans[usize::from(field.0)];
+        let first = usize::from(span.first_column);
+        match span.width {
+            crate::image::ColumnWidth::Byte | crate::image::ColumnWidth::Word => {
+                &self.words[first..first + 1]
+            }
+            crate::image::ColumnWidth::WordPair => &self.words[first..first + 2],
+            crate::image::ColumnWidth::Words { count } => {
+                &self.words[first..first + usize::from(count)]
+            }
+        }
+    }
+
+    fn operand(&self, field: FieldId) -> crate::exec::dispatch::FactOperand {
+        let spans = crate::image::column_spans(self.field_types);
+        let span = spans[usize::from(field.0)];
+        let first = usize::from(span.first_column);
+        match span.width {
+            crate::image::ColumnWidth::Byte | crate::image::ColumnWidth::Word => {
+                crate::exec::dispatch::FactOperand::Word(self.words[first])
+            }
+            crate::image::ColumnWidth::WordPair => crate::exec::dispatch::FactOperand::Pair(
+                self.words[first],
+                self.words[first + 1],
+            ),
+            crate::image::ColumnWidth::Words { count } => {
+                let count = usize::from(count);
+                let mut words = [0u64; 8];
+                words[..count].copy_from_slice(&self.words[first..first + count]);
+                crate::exec::dispatch::FactOperand::Block {
+                    words,
+                    count: u8::try_from(count).expect("bytes width is at most 8 words"),
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::run::Bindings;
+    use crate::image::view::{OperandAddr, Operands};
+    use crate::ir::VarId;
+    use bumbledb_theory::schema::{FieldId, ValueType};
+
+    /// String columns take TextEq; i64 high-bit words do not.
+    /// Verification: NotRun.
+    #[test]
+    fn fallback_operands_mark_string_columns() {
+        let field_types = [ValueType::U64, ValueType::String, ValueType::I64];
+        let words = [7u64, 0, 1u64 << 63];
+        let row = ScratchRow {
+            field_types: &field_types,
+            words: &words,
+        };
+        assert!(!row.string_field(OperandAddr::from(FieldId(0))));
+        assert!(row.string_field(OperandAddr::from(FieldId(1))));
+        assert!(!row.string_field(OperandAddr::from(FieldId(2))));
+
+        let rule = FallbackRule {
+            occurrences: Vec::new(),
+            residuals: Vec::new(),
+            word_residuals: Vec::new(),
+            allen_residuals: Vec::new(),
+            anti_probes: Vec::new(),
+            slots: vec![
+                (VarId(0), 0, 1, LoadKind::Word),
+                (VarId(1), 1, 1, LoadKind::Word),
+            ],
+            text_slots: vec![false, true],
+            slot_count: 2,
+            resolved: Vec::new(),
+            resolved_selections: Vec::new(),
+            selection_templates: Vec::new(),
+            trie_schemas: Vec::new(),
+        };
+        let bindings = Bindings::new(2);
+        let ops = BindingOps {
+            rule: &rule,
+            bindings: &bindings,
+        };
+        assert!(!ops.string_field(OperandAddr::from(VarId(0))));
+        assert!(ops.string_field(OperandAddr::from(VarId(1))));
     }
 }

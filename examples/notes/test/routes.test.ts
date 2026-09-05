@@ -28,33 +28,30 @@ function hex(): string {
 	return Buffer.from(randomBytes(16)).toString("hex")
 }
 
+async function jsonObject(response: Response): Promise<Record<string, unknown>> {
+	const body: unknown = await response.json()
+	assert.ok(typeof body === "object" && body !== null && !Array.isArray(body))
+	return body
+}
+
 async function provision(tenantId: string): Promise<void> {
-	const [{ Effect }, { NativeRuntime }, log, migrations, bindings, policy] = await Promise.all([
+	const [{ Effect }, { NativeRuntime }, log, migrations, bindings, policy, generated] = await Promise.all([
 		import("effect"),
 		import("@bjornpagen/bumbledb"),
 		import("@bjornpagen/bumbledb-log"),
 		import("@bjornpagen/bumbledb-log/migrations"),
 		import("../src/db/bindings.ts"),
-		import("../src/db/runtime-policy.ts")
+		import("../src/db/runtime-policy.ts"),
+		import("../src/db/generated.ts")
 	])
 	const { Id128 } = await import("@bjornpagen/bumbledb")
 	const { Result } = await import("effect")
-	const migrationsDir = path.join(process.cwd(), "bumbledb", "migrations")
-	assert.ok(
-		fs.existsSync(path.join(migrationsDir, "manifest.json")),
-		"generated migrations are required: run `pnpm run generate` (F3) before the route tests"
+	const plans = generated.loadGeneratedMigrations()
+	assert.equal(plans.snapshots.length, plans.manifest.entries.length + 1, "snapshots are empty-base plus one target per entry")
+	const contractDecoded = migrations.decodeRuntimeContract(
+		JSON.parse(fs.readFileSync(path.join(generated.generatedDirectory(), "runtime-contract.json"), "utf8"))
 	)
-	const manifest = JSON.parse(fs.readFileSync(path.join(migrationsDir, "manifest.json"), "utf8")) as {
-		entries: ReadonlyArray<{ id: string }>
-	}
-	const plans = manifest.entries.map((entry) =>
-		JSON.parse(fs.readFileSync(path.join(migrationsDir, `${entry.id}.plan.json`), "utf8"))
-	)
-	const decoded = migrations.decodeGeneratedMigrations({ manifest, plans })
-	assert.ok(decoded.ok, "the committed chain decodes")
-	const contract = JSON.parse(fs.readFileSync(path.join(migrationsDir, "runtime-contract.json"), "utf8")) as {
-		schemaId: string
-	}
+	assert.ok(contractDecoded.ok, "the runtime contract decodes")
 	const dbId = Id128.fromHex(hex())
 	const incId = Id128.fromHex(hex())
 	const opId = Id128.fromHex(hex())
@@ -62,7 +59,7 @@ async function provision(tenantId: string): Promise<void> {
 	const databaseId = log.DatabaseId.from(dbId.success)
 	const incarnationId = log.IncarnationId.from(incId.success)
 	const operation = log.OperationId.from(opId.success)
-	const schemaId = log.parseSchemaId(contract.schemaId)
+	const schemaId = log.parseSchemaId(contractDecoded.value.schemaId)
 	assert.ok(
 		Result.isSuccess(databaseId) && Result.isSuccess(incarnationId) && Result.isSuccess(operation) && Result.isSuccess(schemaId)
 	)
@@ -78,7 +75,7 @@ async function provision(tenantId: string): Promise<void> {
 						schemaId: schemaId.success
 					}
 				},
-				decoded.value,
+				plans,
 				{ ...policy.adminWork, operationId: operation.success }
 			)
 			.pipe(Effect.provide(NativeRuntime.layer(policy.runtimePolicy.native)))
@@ -135,14 +132,15 @@ test("create is idempotent under the client-supplied id", async () => {
 	const noteId = hex()
 	const first = await routes.POST(request("POST", "/api/notes", token, { id: noteId, text: "hello" }))
 	assert.equal(first.status, 200)
-	const firstBody = (await first.json()) as { outcome: string }
+	const firstBody = await jsonObject(first)
 	assert.equal(firstBody.outcome, "committed")
-	// The identical retried request resolves to a decided receipt, never a
-	// duplicate business effect or a fresh identity.
+	assert.equal(typeof firstBody.command, "string")
+	assert.ok(firstBody.command.length > 0, "the durable command ref is returned")
 	const retry = await routes.POST(request("POST", "/api/notes", token, { id: noteId, text: "hello" }))
 	assert.equal(retry.status, 200)
-	const retryBody = (await retry.json()) as { outcome: string }
+	const retryBody = await jsonObject(retry)
 	assert.ok(retryBody.outcome === "committed" || retryBody.outcome === "no-change")
+	assert.equal(retryBody.command, firstBody.command, "same-ID retry keeps the original command identity")
 })
 
 test("reads see committed notes; tenants are isolated", async () => {
@@ -152,14 +150,16 @@ test("reads see committed notes; tenants are isolated", async () => {
 	assert.equal(created.status, 200)
 	const list = await routes.GET(request("GET", "/api/notes", token))
 	assert.equal(list.status, 200)
-	const rows = (await list.json()) as ReadonlyArray<{ id: string }>
-	assert.ok(rows.some((row) => row.id === noteId))
+	const rows = await list.json()
+	assert.ok(Array.isArray(rows))
+	assert.ok(rows.some((row) => typeof row === "object" && row !== null && "id" in row && row.id === noteId))
 	// Tenant B never observes tenant A's facts (same schema, distinct
 	// identity — the cache cannot cross bindings).
 	const other = await routes.GET(request("GET", "/api/notes", tokenB))
 	assert.equal(other.status, 200)
-	const otherRows = (await other.json()) as ReadonlyArray<{ id: string }>
-	assert.ok(!otherRows.some((row) => row.id === noteId))
+	const otherRows = await other.json()
+	assert.ok(Array.isArray(otherRows))
+	assert.ok(!otherRows.some((row) => typeof row === "object" && row !== null && "id" in row && row.id === noteId))
 })
 
 test("witnessed pin toggles and a missing note is 404", async () => {
@@ -177,10 +177,13 @@ test("witnessed pin toggles and a missing note is 404", async () => {
 		params: Promise.resolve({ id: noteId })
 	})
 	assert.equal(read.status, 200)
-	const row = (await read.json()) as { pinned: boolean }
+	const row = await jsonObject(read)
 	assert.equal(row.pinned, true)
+	assert.equal(row.text, "pin me")
 	const missing = await item.GET(request("GET", `/api/notes/${hex()}`, token), {
 		params: Promise.resolve({ id: hex() })
 	})
 	assert.equal(missing.status, 404)
+	const missingBody = await jsonObject(missing)
+	assert.equal(missingBody.error, "NotFound")
 })

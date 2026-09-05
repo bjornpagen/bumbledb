@@ -1,34 +1,18 @@
 /**
  * The `bumbledb-log generate|check` CLI boundary (TS-MIG-10): argument and
  * authoring-module refusals exit 2 with usage/diagnostics and never reach the
- * native runtime. The CLI shares the exact production generator Effects with
- * the direct API (`#migrations/workflow.ts`), so the shared paths need no
- * duplicate coverage here; full generate/check runs through the CLI are the
- * F3 packed-consumer lane (the production codec needs the wired native
- * entrypoints).
+ * native runtime. Framework runners stay at this executable-test boundary.
  */
 import assert from "node:assert/strict"
 import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
-import { cli } from "#migrations/cli.ts"
-
-interface Capture {
-	out: string[]
-	err: string[]
-	stdout: (line: string) => void
-	stderr: (line: string) => void
-}
-
-function capture(): Capture {
-	const out: string[] = []
-	const err: string[] = []
-	return { out, err, stdout: (line) => out.push(line), stderr: (line) => err.push(line) }
-}
+import { Effect, Exit } from "effect"
+import { CLI_USAGE, loadAuthoring, parseCliArguments } from "#migrations/cli.ts"
 
 describe("CLI refusals", function suite() {
-	test("unknown commands and malformed flags print usage and exit 2", async function usage() {
+	test("unknown commands and malformed flags print usage and exit 2", function usage() {
 		for (const argv of [
 			[],
 			["migrate"],
@@ -38,40 +22,58 @@ describe("CLI refusals", function suite() {
 			["generate", "--schema", "x.ts", "--out", "dir", "--bogus", "v"],
 			["check", "--schema", "x.ts", "--out", "dir", "--timeout-ms", "-5"]
 		]) {
-			const io = capture()
-			const code = await cli(argv, io.stdout, io.stderr)
-			assert.equal(code, 2, `argv ${JSON.stringify(argv)} must refuse`)
-			assert.ok(io.err[0]?.includes("bumbledb-log <generate|check>"), "usage goes to stderr")
-			assert.deepEqual(io.out, [])
+			const parsed = parseCliArguments(argv)
+			assert.equal(parsed, CLI_USAGE, `argv ${JSON.stringify(argv)} must refuse`)
 		}
 	})
 
 	test("a missing schema module is a load refusal, not a crash", async function missingModule() {
-		const io = capture()
-		const code = await cli(
-			["check", "--schema", "/nonexistent/schema-module.ts", "--out", "/nonexistent/migrations"],
-			io.stdout,
-			io.stderr
-		)
-		assert.equal(code, 2)
-		assert.ok(io.err[0]?.includes("schema module failed to load"))
+		const parsed = parseCliArguments([
+			"check",
+			"--schema",
+			"/nonexistent/schema-module.ts",
+			"--out",
+			"/nonexistent/migrations"
+		])
+		assert.notEqual(typeof parsed, "string")
+		if (typeof parsed === "string") {
+			return
+		}
+		const exit = await Effect.runPromiseExit(loadAuthoring(parsed))
+		assert.ok(Exit.isFailure(exit))
+		const failure = Exit.findErrorOption(exit)
+		assert.ok(failure._tag === "Some")
+		assert.ok(String(failure.value).includes("schema module failed to load"))
 	})
 
 	test("a module without a schema value names the export it looked for", async function notSchema() {
 		const directory = await mkdtemp(path.join(tmpdir(), "bumbledb-migrations-cli-"))
 		const modulePath = path.join(directory, "not-schema.mjs")
 		await writeFile(modulePath, "export const shape = { just: 'data' }\n", "utf8")
-		const io = capture()
-		const code = await cli(["check", "--schema", modulePath, "--out", directory], io.stdout, io.stderr)
-		assert.equal(code, 2)
-		assert.ok(io.err[0]?.includes("is not a schema value"))
-		// Explicitly named exports that do not exist are named precisely.
-		const io2 = capture()
-		const code2 = await cli(
-			["check", "--schema", modulePath, "--out", directory, "--intent", "evolution"],
-			io2.stdout,
-			io2.stderr
-		)
-		assert.equal(code2, 2)
+		const parsed = parseCliArguments(["check", "--schema", modulePath, "--out", directory])
+		assert.notEqual(typeof parsed, "string")
+		if (typeof parsed === "string") {
+			return
+		}
+		const exit = await Effect.runPromiseExit(loadAuthoring(parsed))
+		assert.ok(Exit.isFailure(exit))
+		const failure = Exit.findErrorOption(exit)
+		assert.ok(failure._tag === "Some")
+		assert.ok(String(failure.value).includes("is not a schema value"))
+		const parsedIntent = parseCliArguments([
+			"check",
+			"--schema",
+			modulePath,
+			"--out",
+			directory,
+			"--intent",
+			"evolution"
+		])
+		assert.notEqual(typeof parsedIntent, "string")
+		if (typeof parsedIntent === "string") {
+			return
+		}
+		const exit2 = await Effect.runPromiseExit(loadAuthoring(parsedIntent))
+		assert.ok(Exit.isFailure(exit2))
 	})
 })

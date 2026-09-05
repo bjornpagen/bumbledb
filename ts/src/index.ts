@@ -3,9 +3,7 @@
  * bumbledb embedded relational engine (chapter 35 surface). Pure
  * schema/query/scalar construction is synchronous metadata; all work is
  * lazy, scoped and bounded on the one native runtime. No Promise, sync,
- * or disposal twin. The raw native bridge is not exported; the internal*
- * and runtime wire exports are the private cross-package seams the log
- * package consumes literally.
+ * or disposal twin. The raw native bridge is not exported from this barrel.
  */
 
 export type {
@@ -19,7 +17,7 @@ export type {
 } from "#capacity.ts"
 export { duration, ref, weigh, within } from "#capacity.ts"
 export type { ChangeDraft } from "#changes.ts"
-export { ChangeSet, internalChanges } from "#changes.ts"
+export { ChangeSet } from "#changes.ts"
 export type {
 	AnyClosed,
 	AnySelectedClosed,
@@ -49,7 +47,7 @@ export type {
 	QueryReader,
 	Snapshot
 } from "#db.ts"
-export { Db, internalPublishedReader } from "#db.ts"
+export { Db } from "#db.ts"
 export {
 	AuthoringError,
 	NativeLoadError,
@@ -99,36 +97,9 @@ export { bool, bytes, f64, i64, id128, interval, span, str, u64 } from "#fields.
 export { Id128 } from "#id128.ts"
 export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
-export { lower } from "#lower.ts"
-export { internalMigrationRead, internalMigrationSchema } from "#migration.ts"
-export type {
-	FactValue,
-	SealedDescriptor,
-	SealedHi,
-	SealedSide,
-	SealedStatement,
-	SealedWeight,
-	StatementKindTag,
-	Violation,
-	ViolationFact
-} from "#native.ts"
-export { internalBlake3, internalDescriptor, internalLogIdentities, internalLogSchema } from "#native.ts"
-export type {
-	AnyCond,
-	BindingInput,
-	Cmp,
-	FindColumn,
-	InteriorData,
-	MatchShape,
-	NotAtom,
-	RecData,
-	RuleData,
-	Tree
-} from "#query/atom.ts"
-export { ALLEN } from "#query/atom.ts"
-export type { AnyComputeExpr, ComputeData, ComputeExpr, ComputeKind } from "#query/compute.ts"
+export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"
 export { Compute } from "#query/compute.ts"
-export type { Agg, FindEntry } from "#query/find.ts"
+export type { Agg, FindColumn } from "#query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -177,12 +148,20 @@ export type { CompleteResult } from "#result.ts"
 export type { CellValue } from "#rows.ts"
 export { cellBytes, cellOf, factOfCells, flatRowsOf, keyCellsOf } from "#rows.ts"
 export type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
-export { finalizeClose, NativeRuntime, nativeOperation, nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+export { NativeRuntime } from "#runtime.ts"
 export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
-export type { CloseWire, DirectoryHandle, InspectionWire, OperationHandle, PolicyWire, RuntimeHandle } from "#runtime-native.ts"
-export { runtimeNative } from "#runtime-native.ts"
-export type { NumericCast, ScalarExpr, ScalarNode } from "#scalar.ts"
+export type {
+	NumericCast,
+	ScalarExpr,
+	ScalarFieldRef,
+	ScalarKind,
+	ScalarLeafScope,
+	ScalarLiteral,
+	ScalarNode,
+	ScalarResultKind,
+	ScalarValue
+} from "#scalar.ts"
 export { Scalar } from "#scalar.ts"
 export type { AnySchema, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"

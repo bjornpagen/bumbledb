@@ -18,6 +18,10 @@
  * In an ordinary repo only the CURRENT stage lives in schema.ts and the
  * intent is deleted once its plan is recorded; the stage roster here is
  * the reproducibility fixture, not an app import.
+ *
+ * Field-arithmetic convert
+ * (`Scalar.add(Scalar.field("units"), Scalar.u64(1n))`) lives on the
+ * Learning packed consumer so this App schema stays intact.
  */
 import { bool, contained, Id128, id128, key, on, relation, Scalar, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { backfill, migrationIntent, renameField, seed } from "@bjornpagen/bumbledb-log/schema"
@@ -41,7 +45,7 @@ export const App0 = schema("App", { Note: Note0 }, [key(Note0, ["id"])])
 export const Note1 = relation("Note", { id: id128, body: str, pinned: bool })
 export const App1 = schema("App", { Note: Note1 }, [key(Note1, ["id"])])
 
-export const evolution1 = migrationIntent(App1, [backfill(Note1, "pinned", Scalar.literal(false))])
+export const evolution1 = migrationIntent(App1, [backfill(Note1, "pinned", Scalar.bool(false))])
 
 // --- Stage 2: a new relation with declarative seed rows ---------------------
 // Seed identity is EXPLICIT application-owned Id128 data: a migration can

@@ -96,8 +96,8 @@ impl AggregateSink {
         Self::build(finds, slot_count, DedupRegime::Union, hint, &[])
     }
 
-    /// 2026-07-23, R2): the union seen-set re-keys on the **shared slot
-    /// law, `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+    /// DNF union seen-set re-keys on the shared slot arrays
+    /// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
     #[must_use]
     pub fn for_dnf_union(
         finds: &[FindSpec],
@@ -224,6 +224,8 @@ impl AggregateSink {
             budget: None,
             spill: None,
             error: None,
+            finished: false,
+            terminal: crate::exec::sink::SinkProgress::Continue,
             pack_bytes: 0,
             dedup,
             groups,
@@ -276,9 +278,9 @@ impl AggregateSink {
 
     /// Live groups. Exact while resident; once the group state spilled it
     /// is an upper bound (a group folded across flushes counts in both
-    /// tiers) — downstream it is only a capacity hint, and the exact
-    /// stage-budget judgment never sees a spilled sink (stage sinks carry
-    /// no allowance).
+    /// tiers) — downstream it is a capacity hint, and the stage-budget
+    /// judgment over it is conservative (a spilled interior stage may
+    /// refuse early on the bound, never publish past the budget).
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
@@ -293,8 +295,8 @@ impl AggregateSink {
     }
 
     /// Install this execution's allowance on the dedup seen-set AND the
-    /// group-state pressure check (None = RAM-only stage sink, whose
-    /// growth the derived-tuples budget bounds at seal).
+    /// group-state pressure check (None = RAM-only harness sink; the
+    /// prepared query budgets main and interior stage sinks alike).
     pub(crate) fn begin(&mut self, budget: Option<SinkBudget>) {
         if let Some(seen) = self.dedup.seen_mut() {
             seen.begin(budget.clone());
@@ -305,9 +307,35 @@ impl AggregateSink {
     /// The sticky failure recorded by the infallible emit path, if any —
     /// the group-spill failure first, then the dedup seen-set's.
     pub(crate) fn take_error(&mut self) -> Option<crate::error::Error> {
-        self.error
+        let error = self
+            .error
             .take()
-            .or_else(|| self.dedup.seen_mut().and_then(SpillSet::take_error))
+            .or_else(|| self.dedup.seen_mut().and_then(SpillSet::take_error));
+        if let Some(error) = &error {
+            self.terminal = crate::exec::sink::classify_progress(error);
+        }
+        error
+    }
+
+    /// L05 Continue/Stop/Error during emit; Finish after successful finalize.
+    #[must_use]
+    pub(crate) fn progress(&self) -> crate::exec::sink::SinkProgress {
+        use crate::exec::sink::{SinkProgress, classify_progress};
+        if self.finished {
+            return SinkProgress::Finish;
+        }
+        if self.cardinality_overflow {
+            return SinkProgress::Error;
+        }
+        if self.terminal != SinkProgress::Continue {
+            return self.terminal;
+        }
+        if let Some(error) = &self.error {
+            return classify_progress(error);
+        }
+        self.dedup
+            .seen()
+            .map_or(SinkProgress::Continue, SpillSet::progress)
     }
 
     #[cfg(test)]
@@ -331,6 +359,8 @@ impl AggregateSink {
         // unlinking the directory (the relation's drop-order contract).
         self.spill = None;
         self.error = None;
+        self.finished = false;
+        self.terminal = crate::exec::sink::SinkProgress::Continue;
         self.pack_bytes = 0;
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
             accs.clear();
@@ -346,11 +376,8 @@ impl AggregateSink {
 #[derive(Debug, Clone, Copy)]
 enum DedupRegime<'k> {
     Bindings,
-
     Union,
-
     DnfUnion(&'k [(usize, usize)]),
-
     Elided(crate::plan::fj::DistinctWitness),
 }
 

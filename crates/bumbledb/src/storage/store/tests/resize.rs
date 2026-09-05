@@ -12,7 +12,9 @@ fn big_note(id: u64, bytes: usize) -> Vec<Value> {
 #[test]
 fn the_candidate_path_grows_the_map_and_reapplies_the_same_delta() {
     let (_dir, path) = store_dir("resize-grow-replay");
-    let store = Store::create(&path, &schema(), tiny_map()).expect("create tiny store");
+    let store = Store::create(&path, &schema(), tiny_map())
+        .expect("create tiny store")
+        .0;
     let initial = store.current_map_bytes();
     // Well beyond the 1 MiB initial map: prepare must hit MDB_MAP_FULL,
     // abort, grow geometrically, and reapply the same owned delta.
@@ -50,7 +52,9 @@ fn the_candidate_path_grows_the_map_and_reapplies_the_same_delta() {
 fn growth_survives_reopen_and_the_populated_file_is_reported_distinctly() {
     let (_dir, path) = store_dir("resize-reopen");
     {
-        let store = Store::create(&path, &schema(), tiny_map()).expect("create");
+        let store = Store::create(&path, &schema(), tiny_map())
+            .expect("create")
+            .0;
         for id in 0..4u64 {
             commit_changes(
                 &store,
@@ -78,7 +82,9 @@ fn growth_survives_reopen_and_the_populated_file_is_reported_distinctly() {
 #[test]
 fn a_pinned_reader_blocks_growth_as_a_typed_refusal_with_age() {
     let (_dir, path) = store_dir("resize-blocked");
-    let store = Store::create(&path, &schema(), tiny_map()).expect("create");
+    let store = Store::create(&path, &schema(), tiny_map())
+        .expect("create")
+        .0;
     let pinned = store.snapshot(&work()).expect("pinned reader");
     std::thread::sleep(std::time::Duration::from_millis(5));
     match store.grow(&short_work(std::time::Duration::from_millis(50)), None) {
@@ -109,7 +115,9 @@ fn a_growth_ceiling_is_a_typed_exhaustion_never_a_wrap() {
         initial_map_bytes: 1 << 20,
         max_map_bytes: Some(2 << 20),
     };
-    let store = Store::create(&path, &schema(), ceiling).expect("create");
+    let store = Store::create(&path, &schema(), ceiling)
+        .expect("create")
+        .0;
     // First growth reaches the ceiling.
     let report = store.grow(&work(), None).expect("grow to ceiling");
     assert_eq!(report.new_map_bytes, 2 << 20);
@@ -144,7 +152,9 @@ fn map_full_during_seal_dispatches_nothing_and_growth_recovers() {
     // drops, nothing commits, and after growth the same immutable inputs
     // replay successfully.
     let (_dir, path) = store_dir("resize-seal-mapfull");
-    let store = Store::create(&path, &schema(), tiny_map()).expect("create");
+    let store = Store::create(&path, &schema(), tiny_map())
+        .expect("create")
+        .0;
     let before = store.committed_generation(&work()).expect("generation");
     let huge = vec![0xABu8; 3 * 1024 * 1024];
     let records = host_put(b"receipt/huge", &huge);
@@ -217,7 +227,9 @@ fn map_full_during_seal_dispatches_nothing_and_growth_recovers() {
 #[test]
 fn cancellation_while_waiting_for_exclusive_access_is_cancelled_not_blocked() {
     let (_dir, path) = store_dir("resize-cancel");
-    let store = Store::create(&path, &schema(), tiny_map()).expect("create");
+    let store = Store::create(&path, &schema(), tiny_map())
+        .expect("create")
+        .0;
     let _pinned = store.snapshot(&work()).expect("pinned");
     let context = work();
     context.cancel();
@@ -230,7 +242,9 @@ fn cancellation_while_waiting_for_exclusive_access_is_cancelled_not_blocked() {
 #[test]
 fn map_report_quantities_are_distinct_and_ordered_sanely() {
     let (_dir, path) = store_dir("resize-report");
-    let store = Store::create(&path, &schema(), MapPolicy::default()).expect("create");
+    let store = Store::create(&path, &schema(), MapPolicy::default())
+        .expect("create")
+        .0;
     commit_changes(
         &store,
         &change_set(&schema(), &[(NOTE, note(1, "row"))], &[]),
@@ -248,4 +262,50 @@ fn map_report_quantities_are_distinct_and_ordered_sanely() {
         assert!(allocated < report.virtual_map_bytes / 4);
     }
     assert_eq!(report.live_transactions, 0);
+}
+
+#[test]
+fn explicit_ceiling_never_silently_increases_and_supports_above_32_gib() {
+    let above = MapPolicy {
+        initial_map_bytes: 4 << 30,
+        max_map_bytes: Some(64 << 30),
+    };
+    assert_eq!(
+        above.grown_map_bytes(32 << 30, None),
+        Some(64 << 30),
+        "growth may cross the former 32 GiB folklore bound"
+    );
+    let unaligned = MapPolicy {
+        initial_map_bytes: 1 << 20,
+        max_map_bytes: Some((2 << 20) + 1),
+    };
+    assert!(
+        unaligned.open_map_bytes(0).is_err(),
+        "unaligned ceiling refuses rather than rounding up"
+    );
+    let too_small = MapPolicy {
+        initial_map_bytes: 4 << 30,
+        max_map_bytes: Some(1 << 20),
+    };
+    assert!(
+        too_small.open_map_bytes(0).is_err(),
+        "explicit ceiling smaller than initial extent refuses"
+    );
+}
+
+#[test]
+fn a_callers_own_pinned_reader_blocks_same_thread_growth() {
+    let (_dir, path) = store_dir("resize-self-pin");
+    let store = Store::create(&path, &schema(), tiny_map())
+        .expect("create")
+        .0;
+    let pinned = store.snapshot(&work()).expect("own pin");
+    match store.grow(&short_work(std::time::Duration::from_millis(50)), None) {
+        Err(StoreError::ResizeBlockedByReaders {
+            live_transactions, ..
+        }) => assert_eq!(live_transactions, 1),
+        other => panic!("expected ResizeBlockedByReaders, got {other:?}"),
+    }
+    drop(pinned);
+    store.grow(&work(), None).expect("grow after own pin drops");
 }

@@ -1,6 +1,22 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use bumbledb::{Admission, Committed, Result, Violations};
+use bumbledb::{Admission, Committed, ExecutionPolicy, Result, Violations, WorkContext};
+
+#[allow(dead_code)]
+pub fn work() -> WorkContext {
+    ExecutionPolicy {
+        input_bytes: 1 << 30,
+        working_bytes: 1 << 30,
+        scratch_bytes: 1 << 30,
+        result_bytes: 1 << 30,
+        rows: 1 << 30,
+        work_units: 1 << 30,
+        timeout: Duration::from_secs(3600),
+    }
+    .start()
+    .expect("work")
+}
 
 #[allow(dead_code)]
 #[track_caller]

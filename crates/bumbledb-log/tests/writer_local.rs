@@ -61,7 +61,7 @@ fn theory() -> SchemaDescriptor {
 fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
     let dir = temp_dir(tag).join("db");
     Arc::new(
-        Db::create(&dir, theory())
+        Db::create(&dir, theory(), work())
             .expect("create store")
             .expect("empty store admits"),
     )
@@ -335,15 +335,20 @@ fn same_command_id_with_different_bytes_conflicts_after_publication() {
             draft.insert(RelationId(0), &[Value::U64(2)]).unwrap();
         },
     );
-    match history.submit(&forged, &work()) {
-        SubmitOutcome::NotSubmitted { error, .. } => {
+    let certainty = history.submit_certain(&forged, &work());
+    match &certainty {
+        bumbledb_log::certainty::SubmitCertainty::NotSubmitted { error, .. } => {
             assert_eq!(
-                error,
+                *error,
                 bumbledb_log::writer::LogError::CommandIdentityConflict
             );
         }
         other => panic!("expected identity conflict, got {other:?}"),
     }
+    assert_eq!(
+        certainty.publication_phase(),
+        bumbledb_log::certainty::PublicationPhase::Prepared
+    );
 }
 
 /// The independent history model's Deleted-refuses-before-lookup rule as a
@@ -450,4 +455,110 @@ fn foreign_identity_and_uninitialized_open_refuse() {
         LocalHistory::open(empty, LIMITS),
         Err(bumbledb_log::writer::LogError::NotInitialized)
     ));
+}
+
+#[test]
+fn same_tip_receipt_retirement_does_not_mint_a_user_decision() {
+    let (_db, history, identity) = open("same-tip");
+    let insert = command(
+        history.db(),
+        identity,
+        1,
+        Condition::Unconditional,
+        |draft| {
+            draft.insert(RelationId(0), &[Value::U64(1)]).unwrap();
+        },
+    );
+    let receipt = match history.submit(&insert, &work()) {
+        SubmitOutcome::Decided { receipt, .. } => receipt,
+        other => panic!("{other:?}"),
+    };
+    let before = history.authority().unwrap();
+    let decision_before = before.position().unwrap().decision;
+    bumbledb_log::admin::retire_receipts_local(history.db(), 1, LIMITS.envelope_bytes, &work())
+        .expect("same-tip retirement");
+    let after = history.authority().unwrap();
+    assert_eq!(
+        after.position().unwrap().decision,
+        decision_before,
+        "retirement must not manufacture a user decision"
+    );
+    assert!(after.revision.0 > before.revision.0);
+    assert!(matches!(
+        history.resolve(receipt.command, &work()),
+        Ok(ResolveOutcome::ReceiptExpiredUnknown)
+            | Err(bumbledb_log::writer::LogError::ReceiptExpiredUnknown)
+    ));
+}
+
+/// A dest whose name matches L07's staging pattern is still ready once
+/// create admitted it and authority is committed. Filename is not readiness.
+#[test]
+fn oddly_named_admitted_dest_is_not_unpublished() {
+    use bumbledb_log::apply::{self, ApplyError};
+
+    let dest = temp_dir("odd-name").join("tenant.staging.0000000000000001");
+    let db = Db::create(&dest, theory(), work())
+        .expect("create oddly named dest")
+        .expect("admits");
+    let identity = identity(&db);
+    let history = LocalHistory::create(
+        Arc::clone(&db),
+        identity.database_id,
+        identity.incarnation_id,
+        OperationId::from_core(Id128::from_bytes([0xc3; 16])),
+        LIMITS,
+        &work(),
+    )
+    .expect("genesis on oddly named dest");
+    let authority = history.authority().expect("authority");
+    apply::require_published_destination(&db, &work()).expect("admitted+authority is ready");
+    let error = apply::materialize(&db, &authority, b"", LIMITS, &work())
+        .expect_err("empty bytes refuse as frame, not unpublished");
+    assert!(
+        !matches!(error, ApplyError::UnpublishedDestination),
+        "odd dest name must not look unpublished: {error:?}"
+    );
+    assert!(dest.exists(), "ready dest stays installed");
+}
+
+/// No authority attachment: ready-only materialize refuses before decode.
+#[test]
+fn materialize_without_authority_is_unpublished_not_a_name_check() {
+    use bumbledb_log::apply::{self, ApplyError};
+    use bumbledb_log::history::authority::{Activation, ActivationCause, HeadAuthority};
+    use bumbledb_log::history::decision::{self, GenesisProvenance, GenesisRecord};
+
+    let dest = temp_dir("no-auth").join("incarnation");
+    let db = Db::create(&dest, theory(), work())
+        .expect("create")
+        .expect("admits");
+    let identity = identity(&db);
+    let (application, system) = decision::blank_initial_digests();
+    let genesis = decision::genesis_stamp(
+        &GenesisRecord {
+            identity,
+            initial_application_digest: application,
+            initial_system_digest: system,
+            provenance: GenesisProvenance::Create,
+        },
+        LIMITS.envelope_bytes,
+    )
+    .expect("genesis");
+    let authority = HeadAuthority::genesis(
+        identity,
+        genesis,
+        Activation::Activated {
+            operation: OperationId::from_core(Id128::from_bytes([0xc3; 16])),
+            target_genesis: genesis.hash,
+            cause: ActivationCause::Create,
+        },
+    )
+    .expect("authority");
+    let error = apply::materialize(&db, &authority, b"not-a-decision", LIMITS, &work())
+        .expect_err("no authority");
+    assert!(
+        matches!(error, ApplyError::UnpublishedDestination),
+        "must refuse before decode: {error:?}"
+    );
 }

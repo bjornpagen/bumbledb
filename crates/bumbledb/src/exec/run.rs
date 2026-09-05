@@ -10,14 +10,43 @@ use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
 use crate::image::view::OperandAddr;
 use crate::plan::fj::ValidatedPlan;
 
-/// The sink's reply to one emitted binding: `SkipSuffix` requests the D2
-/// subtree skip (legal only for the projection sink; the executor enforces
-/// the plan's per-node sink-relevance bits, the sink just reports
-/// staleness).
+/// The sink's reply to one emitted binding (L06 contract).
+///
+/// `SkipSuffix` requests the D2 subtree skip (legal only for the projection
+/// sink). `Stop` is work/deadline/scratch refusal; `Error` is cardinality
+/// or corruption. L05 propagates all four; ignored `Stop` is deleted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
     Continue,
     SkipSuffix,
+    Stop,
+    Error,
+}
+
+impl Flow {
+    /// Work/scratch refusal or a recorded sink error — later probes must not run.
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Stop | Self::Error)
+    }
+
+    pub(crate) fn from_sink_progress(progress: crate::exec::sink::SinkProgress) -> Self {
+        match progress {
+            crate::exec::sink::SinkProgress::Continue
+            | crate::exec::sink::SinkProgress::Finish => Self::Continue,
+            crate::exec::sink::SinkProgress::Stop => Self::Stop,
+            crate::exec::sink::SinkProgress::Error => Self::Error,
+        }
+    }
+
+    /// Prefer a terminal progress over a licensed skip.
+    pub(crate) const fn or_skip(self, emitted: Self) -> Self {
+        if self.is_terminal() {
+            self
+        } else {
+            emitted
+        }
+    }
 }
 
 /// One leaf batch, borrowed from the executor: the
@@ -79,6 +108,16 @@ pub trait Sink {
     fn emit(&mut self, bindings: &Bindings) -> Flow;
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow;
+
+    /// Sticky L06 progress after emit. Default is silent Continue so
+    /// harness sinks stay unchanged; production sinks override.
+    fn progress(&self) -> crate::exec::sink::SinkProgress {
+        crate::exec::sink::SinkProgress::Continue
+    }
+
+    fn take_error(&mut self) -> Option<crate::error::Error> {
+        None
+    }
 
     fn emit_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
         self.emit_batch(batch)
@@ -483,6 +522,10 @@ pub struct Executor {
 
     drive: Drive,
 
+    /// This execution's work ledger, if the caller installed one
+    /// ([`Executor::begin_work`]); cleared when `execute` returns.
+    ledger: Option<ExecLedger>,
+
     cancelled: Vec<u32>,
     cancel_epoch: u32,
     next_origin: u32,
@@ -504,6 +547,29 @@ enum DriveState {
 
 enum Poison {
     OriginOverflow,
+    /// The per-execution ledger refused at a bounded-quantum poll:
+    /// cancellation, deadline, work-unit exhaustion, or a working-byte
+    /// reservation refusal on COLT growth. Surfaced as the typed work
+    /// error by [`Executor::execute`].
+    Work(crate::work::WorkError),
+    /// Sink Stop/Error — later probes must not run (D10).
+    SinkStop,
+    SinkError,
+}
+
+/// The warm executor's per-execution ledger handle (chapter 12 §7):
+/// binding exploration steps and COLT pool growth are charged in bounded
+/// quanta — one poll per [`crate::exec::sink::STEP_QUANTUM`] explored
+/// cover entries, the same published maximum unpolled quantum as the
+/// sinks' — so cancellation/deadlines fire inside the join recursion
+/// (emitting nothing included, and under the Elided-witness regime) and
+/// the bounded-restart trigger can fire from join growth. Installed per
+/// execution by `run_join`; absent (executor unit harnesses) nothing is
+/// polled or charged.
+pub(super) struct ExecLedger {
+    work: crate::work::WorkContext,
+    /// Explored cover entries not yet charged (bounded by the quantum).
+    pending: u32,
 }
 
 enum Drive {
@@ -573,6 +639,7 @@ mod cover;
 mod execute;
 mod leaf;
 mod leaf_precompute;
+mod ledger;
 mod overlap_leaf;
 mod pipe_tables;
 mod probe_pass;

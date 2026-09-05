@@ -95,7 +95,7 @@ pub fn work() -> WorkContext {
 pub fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
     let dir = temp_dir(tag).join("db");
     Arc::new(
-        Db::create(&dir, theory())
+        Db::create(&dir, theory(), work())
             .expect("create store")
             .expect("empty store admits"),
     )
@@ -273,6 +273,7 @@ where
                 identity: self.identity,
                 seq: receipt.decision_at.seq,
                 parent: self.parent,
+                parent_object: None,
                 before_state: self.before_state,
                 after_state: receipt.state_at,
                 canonical_command: &canonical_command,
@@ -289,7 +290,7 @@ where
         // Publish: object first, then the composed head CAS.
         let (head, version) =
             read_live_head(self.backend, &self.prefix, HEAD_CAP).expect("head reads");
-        put_verified(
+        let decision_ref = put_verified(
             self.backend,
             &self.prefix,
             head.object_epoch,
@@ -302,6 +303,7 @@ where
             .decided(
                 new_control,
                 decision_bytes.len() as u64,
+                Some(decision_ref),
                 &TailPolicy::UNBOUNDED,
             )
             .expect("head composes");

@@ -37,12 +37,13 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
     let mut facts = 0u64;
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
+        let work = bumbledb::start_operation(crate::harness::bench_policy())?;
         facts += db
-            .write(|tx| {
+            .write(work, |tx| {
                 tx.insert_dyn(rel, relation_rows(cfg, rel))
                     .map(bumbledb::MutationReport::changed)
             })?
-            .unwrap()
+            .expect("load insert admits")
             .value;
     }
     Ok(LoadStats::of(facts, start.elapsed()))
@@ -185,18 +186,14 @@ mod tests {
     use super::*;
     use crate::corpus_gen::Scale;
 
-    fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("bumbledb-bench-{tag}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        dir
-    }
-
     #[test]
     fn both_stores_load_the_same_corpus() {
-        let dir = scratch("corpus-load");
+        let scratch = crate::fixture::TempDir::new("corpus-load");
+        let dir = scratch.path();
         let cfg = GenConfig {
             seed: 1,
-            scale: Scale::S,
+            // Loader parity needs all relations, not a benchmark-sized corpus.
+            scale: Scale::Tiny,
         };
         let db = Db::create(&dir.join("db"), Ledger)
             .expect("create")
@@ -217,6 +214,5 @@ mod tests {
         assert_eq!(sync, 2, "FULL");
 
         drop((db, conn));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

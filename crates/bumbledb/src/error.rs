@@ -95,6 +95,9 @@ pub enum CorruptionError {
     /// 2026-07-23, R18). A half-created store (no `_meta` over an empty
     MetaMissing,
 
+    /// A projected query text token that the answering image's process-scoped
+    /// interner never minted (the persisted dictionary is deleted; tokens are
+    /// query-image-scoped).
     DanglingInternId(InternId),
 
     MissingFact {
@@ -129,10 +132,6 @@ pub enum CorruptionError {
     },
 
     MalformedValue(&'static str),
-
-    DictReverseIdReuse,
-
-    NonUtf8Intern(u64),
 
     NonzeroFixedBytesPad([u8; 8]),
 
@@ -197,43 +196,6 @@ pub enum CorruptionError {
         relation: RelationId,
         stored: u64,
         max_row_id: u64,
-    },
-
-    FreshRowDesync {
-        relation: RelationId,
-        row_id: u64,
-        fresh: u64,
-    },
-
-    FreshNextValueLow {
-        relation: RelationId,
-        field: FieldId,
-        stored: u64,
-        max_fresh: u64,
-    },
-
-    DictForwardDesync {
-        intern_id: InternId,
-
-        forward: Option<InternId>,
-    },
-
-    DictNextIdLow {
-        stored: InternId,
-        reverse_id: InternId,
-    },
-
-    FreshRowDeterminantEntry {
-        relation: RelationId,
-        statement: StatementId,
-        determinant_key: Box<[u8]>,
-    },
-
-    InternBeyondNextId {
-        relation: RelationId,
-        row_id: u64,
-        intern_id: InternId,
-        next_id: InternId,
     },
 
     ClosedRelationEntry {
@@ -1553,6 +1515,16 @@ mod zero_dyn_census {
         (
             "crates/bumbledb/src/storage/store/error.rs",
             "fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {",
+        ),
+        // P00-sanctioned (P01 hub note 4): the judge's scratch-spill shim —
+        // a safe TypeId-guarded Box<dyn Any> downcast that grants the disk
+        // channel when the state's error type IS StoreError, keeping the
+        // frozen C03 `judge_final_state` signature. No query dispatch uses
+        // the trait; retire with the shim once judge_bridge/verify adopt the
+        // explicit `judge_final_state_with_scratch` channel.
+        (
+            "crates/bumbledb/src/schema/judge/grouped.rs",
+            "let boxed: Box<dyn std::any::Any> = Box::new(store_fault(fault));",
         ),
     ];
 

@@ -11,15 +11,17 @@ impl Sink for ProjectionSink {
         }
         self.seen.insert(&self.scratch);
 
-        Flow::SkipSuffix
+        Flow::from_sink_progress(ProjectionSink::progress(self)).or_skip(Flow::SkipSuffix)
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        self.project_batch(batch)
+        let emitted = self.project_batch(batch);
+        Flow::from_sink_progress(ProjectionSink::progress(self)).or_skip(emitted)
     }
 
     fn emit_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
-        self.project_batch_until_skip(batch)
+        let emitted = self.project_batch_until_skip(batch);
+        Flow::from_sink_progress(ProjectionSink::progress(self)).or_skip(emitted)
     }
 
     fn skip_capability(&self) -> crate::exec::run::SkipCapability {
@@ -105,6 +107,14 @@ impl Sink for ProjectionSink {
 
     fn end_scan(&mut self, _: &LeafScan<'_>) -> u64 {
         self.scan_count
+    }
+
+    fn progress(&self) -> crate::exec::sink::SinkProgress {
+        ProjectionSink::progress(self)
+    }
+
+    fn take_error(&mut self) -> Option<crate::error::Error> {
+        ProjectionSink::take_error(self)
     }
 }
 

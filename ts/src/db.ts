@@ -22,6 +22,7 @@ import type { CloseReport } from "#runtime-errors.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { DirectoryHandle } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
+import type { NativeRuntime } from "#runtime.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
 import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
 import type { AnySchema } from "#schema.ts"
@@ -37,10 +38,11 @@ import type { Key, QueryTemplate, Rel } from "#shape.ts"
  * finalizers. There is no Promise/sync/disposal twin, no transaction
  * callback, no per-row fiber and no Proxy row anywhere.
  *
- * Database open is the managed two-step handshake (C09/P06.md): acquire the
- * kernel-held directory owner, then open the managed child database under
- * it. `Db.open` NEVER creates on missing/error; `Db.create` refuses
- * existing authority.
+ * Database open is the managed two-step handshake: acquire the kernel-held
+ * directory owner and register its finalizer before the interruptible
+ * child-open step. `Db.open` NEVER creates on missing/error; `Db.create`
+ * refuses existing authority. Published log snapshots use this same
+ * `QueryReader` literally — no second reader or adapter.
  */
 
 /** The core-local witness: catalog/store identity plus generation — never a log StateStamp. */
@@ -110,7 +112,7 @@ interface Db<S extends AnySchema> {
 	close(): Effect.Effect<CloseReport>
 }
 
-function refusal(operation: string, reason: "InvalidArgument" | "Incompatible" | "ClosedHandle"): DbError {
+function refusal(operation: string, reason: "InvalidArgument" | "ClosedHandle"): DbError {
 	return new DbError({ operation, reason: { _tag: reason } })
 }
 
@@ -142,7 +144,7 @@ function preparedOf<S extends AnySchema>(
 	params: Readonly<Record<string, unknown>>
 ): { readonly ir: ReturnType<typeof lowerQuery>; readonly wire: ReturnType<typeof wireParams>; readonly finds: AnyQuery["data"]["finds"] } {
 	if (query.schema !== theory) {
-		throw refusal("QueryReader.execute", "Incompatible")
+		throw refusal("QueryReader.execute", "InvalidArgument")
 	}
 	const ir = lowerQuery(query)
 	const wire = wireParams(query.data.params, params)
@@ -177,7 +179,7 @@ function executeOn<S extends AnySchema, A>(
 				dbNative.runtimeResultTake,
 				(value) => value
 			)
-			return makeCompleteResult<A>(handle, prepared.finds, work)
+			return makeCompleteResult<A>(handle, prepared.finds)
 		}),
 		(result) =>
 			Effect.suspend(() => {
@@ -328,7 +330,7 @@ function makeDb<S extends AnySchema>(theory: S, state: DbState): Db<S> {
 					return yield* Effect.fail(refusal("Db.apply", "InvalidArgument"))
 				}
 				if (internal.schemaId !== state.schemaId) {
-					return yield* Effect.fail(refusal("Db.apply", "Incompatible"))
+					return yield* Effect.fail(refusal("Db.apply", "InvalidArgument"))
 				}
 				const expected: ExpectedWire =
 					options.expected.kind === "any"
@@ -364,7 +366,7 @@ function makeDb<S extends AnySchema>(theory: S, state: DbState): Db<S> {
 			// The one close authority: database child first, then the
 			// directory owner releases its kernel lock LAST (C09). Both
 			// joins are idempotent natively.
-			return drainClose("Db.close", (callback) => dbNative.runtimeManagedDbClose(state.db, callback)).pipe(
+			return drainClose("Db.close", (callback) => runtimeNative.runtimeManagedDbClose(state.db, callback)).pipe(
 				Effect.flatMap((report) =>
 					drainClose("Db.directoryClose", (callback) => runtimeNative.runtimeDirectoryClose(state.directory, false, callback)).pipe(
 						Effect.map((directoryReport) => (report.kind === "closed" ? directoryReport : report))
@@ -392,39 +394,50 @@ function openDatabase<S extends AnySchema>(
 	schema: S,
 	work: ExecutionPolicy,
 	create: boolean
-): Effect.Effect<Db<S>, DbError, Scope.Scope> {
+): Effect.Effect<Db<S>, DbError, NativeRuntime | Scope.Scope> {
 	return Effect.gen(function* () {
 		const runtime = yield* runtimeHandle()
 		const compiled: CompiledSchema<S> = yield* CoreSchema.compile(schema, work)
 		const spec = lower(schema)
-		const wire = policyWire(work, operation)
+		const wire = yield* Effect.try({
+			try: () => policyWire(work, operation),
+			catch: () => refusal(operation, "InvalidArgument")
+		})
+		// Compound acquisition (TS-003): register the directory owner and
+		// its finalizer BEFORE any interruptible child-open step.
+		const directory = yield* Effect.acquireRelease(
+			nativeOperationWith(
+				operation,
+				(callback) => runtimeNative.runtimeDirectoryAcquire(runtime, wire, path, callback),
+				runtimeNative.runtimeDirectoryTake,
+				(value) => value
+			),
+			(dir) =>
+				releaseOwner(`${operation}.directoryClose`, (callback) =>
+					runtimeNative.runtimeDirectoryClose(dir, false, callback)
+				),
+			{ interruptible: true }
+		)
 		return yield* Effect.acquireRelease(
 			Effect.gen(function* () {
-				const directory = yield* nativeOperationWith(
-					operation,
-					(callback) => runtimeNative.runtimeDirectoryAcquire(runtime, wire, path, callback),
-					runtimeNative.runtimeDirectoryTake,
-					(value) => value
-				)
 				const outcome = yield* nativeOperationWith(
 					operation,
-					(callback) => runtimeNative.runtimeDirectoryDbOpen(directory, wire, CHILD, spec, create, callback),
+					(callback) =>
+						runtimeNative.runtimeDirectoryDbOpen(directory, wire, CHILD, spec, create, callback),
 					runtimeNative.runtimeDbTake,
 					(value) => value
 				).pipe(
 					Effect.catch((error) =>
-						// The directory owner never leaks past a failed child
-						// open: release the kernel lock, then fail.
-						drainClose(operation, (callback) => runtimeNative.runtimeDirectoryClose(directory, false, callback)).pipe(
-							Effect.andThen(Effect.fail(error))
-						)
+						drainClose(`${operation}.directoryClose`, (callback) =>
+							runtimeNative.runtimeDirectoryClose(directory, false, callback)
+						).pipe(Effect.andThen(Effect.fail(error)))
 					)
 				)
 				if (outcome.tag !== "accepted") {
-					yield* drainClose(operation, (callback) => runtimeNative.runtimeDirectoryClose(directory, false, callback))
-					// Schema rejection/refusal is an operational open failure
-					// here (a store admission refusal), reported typed.
-					return yield* Effect.fail(refusal(operation, "Incompatible"))
+					yield* drainClose(`${operation}.directoryClose`, (callback) =>
+						runtimeNative.runtimeDirectoryClose(directory, false, callback)
+					)
+					return yield* Effect.fail(refusal(operation, "InvalidArgument"))
 				}
 				const state: DbState = { theory: schema, db: outcome.db, directory, schemaId: compiled.schemaId }
 				const db = makeDb(schema, state)
@@ -437,7 +450,7 @@ function openDatabase<S extends AnySchema>(
 					if (state === undefined) {
 						return Effect.void
 					}
-					return releaseOwner("Db.close", (callback) => dbNative.runtimeManagedDbClose(state.db, callback)).pipe(
+					return releaseOwner("Db.close", (callback) => runtimeNative.runtimeManagedDbClose(state.db, callback)).pipe(
 						Effect.ensuring(
 							releaseOwner("Db.directoryClose", (callback) =>
 								runtimeNative.runtimeDirectoryClose(state.directory, false, callback)

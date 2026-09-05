@@ -10,7 +10,12 @@ use std::fmt;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
 use crate::writer::verbs::{
-    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
+    ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, PutOutcome,
+};
+
+use super::receive::{
+    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
+    ReceivingStore, TransportContext, TransportObservation, RECEIVE_CHUNK_BYTES,
 };
 
 /// Which verb a scripted fault applies to.
@@ -38,16 +43,48 @@ pub enum Behavior {
     IndeterminateDropped,
 }
 
-/// The backend's transport failure. Carries the op for schedule assertions.
+/// The backend's transport failure. Carries the op for schedule assertions
+/// and the same observation contract as the real adapters.
 #[derive(Debug)]
 pub struct MemFault {
     pub op: Op,
     pub key: String,
+    pub observation: TransportObservation,
+}
+
+impl MemFault {
+    #[must_use]
+    pub fn injected(op: Op, key: impl Into<String>) -> Self {
+        Self {
+            op,
+            key: key.into(),
+            observation: TransportObservation::Indeterminate,
+        }
+    }
+
+    #[must_use]
+    pub fn observed(op: Op, key: impl Into<String>, observation: TransportObservation) -> Self {
+        Self {
+            op,
+            key: key.into(),
+            observation,
+        }
+    }
+}
+
+impl ObservedError for MemFault {
+    fn observation(&self) -> TransportObservation {
+        self.observation
+    }
 }
 
 impl fmt::Display for MemFault {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "injected transport fault: {:?} on {}", self.op, self.key)
+        write!(
+            f,
+            "injected transport fault: {:?} on {} ({:?})",
+            self.op, self.key, self.observation
+        )
     }
 }
 
@@ -232,25 +269,6 @@ fn version(generation: u64) -> HeadVersion {
 impl ConditionalStore for MemStore {
     type Error = MemFault;
 
-    fn read_head(&self, head_key: &str) -> Result<HeadRead, MemFault> {
-        self.consult_gate(Op::ReadHead, head_key);
-        let mut state = self.lock();
-        Self::observe(&mut state, Op::ReadHead, head_key);
-        if Self::take_fault(&mut state, Op::ReadHead).is_some() {
-            return Err(MemFault {
-                op: Op::ReadHead,
-                key: head_key.to_string(),
-            });
-        }
-        Ok(match state.heads.get(head_key) {
-            Some(head) => HeadRead::Present {
-                version: version(head.generation),
-                body: Box::from(head.body.as_slice()),
-            },
-            None => HeadRead::Absent,
-        })
-    }
-
     fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, MemFault> {
         self.consult_gate(Op::CreateHead, head_key);
         let mut state = self.lock();
@@ -258,10 +276,7 @@ impl ConditionalStore for MemStore {
         let fault = Self::take_fault(&mut state, Op::CreateHead);
         match fault {
             Some(Behavior::Error) => {
-                return Err(MemFault {
-                    op: Op::CreateHead,
-                    key: head_key.to_string(),
-                });
+                return Err(MemFault::injected(Op::CreateHead, head_key));
             }
             Some(Behavior::IndeterminateDropped) => {
                 return Ok(ConditionalOutcome::Indeterminate);
@@ -298,10 +313,7 @@ impl ConditionalStore for MemStore {
         let fault = Self::take_fault(&mut state, Op::ReplaceHead);
         match fault {
             Some(Behavior::Error) => {
-                return Err(MemFault {
-                    op: Op::ReplaceHead,
-                    key: head_key.to_string(),
-                });
+                return Err(MemFault::injected(Op::ReplaceHead, head_key));
             }
             Some(Behavior::IndeterminateDropped) => {
                 return Ok(ConditionalOutcome::Indeterminate);
@@ -332,10 +344,7 @@ impl ConditionalStore for MemStore {
         let fault = Self::take_fault(&mut state, Op::PutObject);
         match fault {
             Some(Behavior::Error) => {
-                return Err(MemFault {
-                    op: Op::PutObject,
-                    key: key.to_string(),
-                });
+                return Err(MemFault::injected(Op::PutObject, key));
             }
             Some(Behavior::IndeterminateDropped) => return Ok(PutOutcome::Indeterminate),
             _ => {}
@@ -346,10 +355,11 @@ impl ConditionalStore for MemStore {
         if let Some(existing) = state.objects.get(key)
             && existing != body
         {
-            return Err(MemFault {
-                op: Op::PutObject,
-                key: key.to_string(),
-            });
+            return Err(MemFault::observed(
+                Op::PutObject,
+                key,
+                TransportObservation::Conflict,
+            ));
         }
         state.objects.insert(key.to_string(), body.to_vec());
         if fault == Some(Behavior::IndeterminateApplied) {
@@ -358,33 +368,12 @@ impl ConditionalStore for MemStore {
         Ok(PutOutcome::Stored)
     }
 
-    fn get_object(&self, key: &str) -> Result<ObjectRead, MemFault> {
-        self.consult_gate(Op::GetObject, key);
-        let mut state = self.lock();
-        Self::observe(&mut state, Op::GetObject, key);
-        if Self::take_fault(&mut state, Op::GetObject).is_some() {
-            return Err(MemFault {
-                op: Op::GetObject,
-                key: key.to_string(),
-            });
-        }
-        Ok(match state.objects.get(key) {
-            Some(bytes) => ObjectRead::Present {
-                body: Box::from(bytes.as_slice()),
-            },
-            None => ObjectRead::Absent,
-        })
-    }
-
     fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, MemFault> {
         self.consult_gate(Op::ListObjects, prefix);
         let mut state = self.lock();
         Self::observe(&mut state, Op::ListObjects, prefix);
         if Self::take_fault(&mut state, Op::ListObjects).is_some() {
-            return Err(MemFault {
-                op: Op::ListObjects,
-                key: prefix.to_string(),
-            });
+            return Err(MemFault::injected(Op::ListObjects, prefix));
         }
         let resume = after
             .map(|token| String::from_utf8_lossy(token).into_owned())
@@ -410,21 +399,79 @@ impl ConditionalStore for MemStore {
         Self::observe(&mut state, Op::DeleteObject, key);
         let fault = Self::take_fault(&mut state, Op::DeleteObject);
         if let Some(Behavior::Error | Behavior::IndeterminateDropped) = fault {
-            return Err(MemFault {
-                op: Op::DeleteObject,
-                key: key.to_string(),
-            });
+            return Err(MemFault::injected(Op::DeleteObject, key));
         }
         state.objects.remove(key);
         if fault == Some(Behavior::IndeterminateApplied) {
             // The delete landed but the response was lost.
-            return Err(MemFault {
-                op: Op::DeleteObject,
-                key: key.to_string(),
-            });
+            return Err(MemFault::injected(Op::DeleteObject, key));
         }
         Ok(())
     }
+}
+
+impl ReceivingStore for MemStore {
+    fn receive_object(
+        &self,
+        key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedBody, MemFault> {
+        self.consult_gate(Op::GetObject, key);
+        let mut state = self.lock();
+        Self::observe(&mut state, Op::GetObject, key);
+        if Self::take_fault(&mut state, Op::GetObject).is_some() {
+            return Err(MemFault::injected(Op::GetObject, key));
+        }
+        let Some(bytes) = state.objects.get(key) else {
+            return Err(MemFault::observed(
+                Op::GetObject,
+                key,
+                TransportObservation::Missing,
+            ));
+        };
+        copy_capped(Op::GetObject, key, bytes, ctx)
+    }
+
+    fn receive_head(
+        &self,
+        head_key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedHead, MemFault> {
+        self.consult_gate(Op::ReadHead, head_key);
+        let mut state = self.lock();
+        Self::observe(&mut state, Op::ReadHead, head_key);
+        if Self::take_fault(&mut state, Op::ReadHead).is_some() {
+            return Err(MemFault::injected(Op::ReadHead, head_key));
+        }
+        let Some(head) = state.heads.get(head_key) else {
+            return Ok(ReceivedHead::Absent);
+        };
+        let generation = head.generation;
+        let body = copy_capped(Op::ReadHead, head_key, &head.body, ctx)?;
+        Ok(ReceivedHead::Present {
+            version: version(generation),
+            body,
+        })
+    }
+}
+
+fn copy_capped(
+    op: Op,
+    key: &str,
+    bytes: &[u8],
+    ctx: TransportContext<'_>,
+) -> Result<ReceivedBody, MemFault> {
+    let mut acc = ReceiveAccumulator::new(ctx);
+    for chunk in bytes.chunks(RECEIVE_CHUNK_BYTES) {
+        acc.push(chunk)
+            .map_err(|fault| mem_receive_fault(op, key, fault))?;
+    }
+    acc.finish()
+        .map_err(|fault| mem_receive_fault(op, key, fault))
+}
+
+fn mem_receive_fault(op: Op, key: &str, fault: ReceiveFault) -> MemFault {
+    MemFault::observed(op, key, fault.observation())
 }
 
 #[cfg(test)]
@@ -434,7 +481,10 @@ mod tests {
     #[test]
     fn conditional_grammar_is_exact_and_versions_are_monotone() {
         let store = MemStore::new();
-        assert_eq!(store.read_head("p/HEAD").unwrap(), HeadRead::Absent);
+        assert!(matches!(
+            store.receive_head("p/HEAD", TransportContext::limited(64)).unwrap(),
+            ReceivedHead::Absent
+        ));
         let v1 = match store.create_head("p/HEAD", b"one").unwrap() {
             ConditionalOutcome::Published { version } => version,
             other => panic!("create publishes: {other:?}"),
@@ -468,9 +518,14 @@ mod tests {
             store.replace_head("p/HEAD", &v1, b"two").unwrap(),
             ConditionalOutcome::Indeterminate
         );
-        match store.read_head("p/HEAD").unwrap() {
-            HeadRead::Present { body, .. } => assert_eq!(&*body, b"two", "the CAS landed"),
-            HeadRead::Absent => panic!("head exists"),
+        match store
+            .receive_head("p/HEAD", TransportContext::limited(64))
+            .unwrap()
+        {
+            ReceivedHead::Present { body, .. } => {
+                assert_eq!(body.as_bytes(), b"two", "the CAS landed")
+            }
+            ReceivedHead::Absent => panic!("head exists"),
         }
         store.fail_next(Op::PutObject, Behavior::IndeterminateDropped);
         assert_eq!(
@@ -478,8 +533,11 @@ mod tests {
             PutOutcome::Indeterminate
         );
         assert_eq!(
-            store.get_object("p/objects/1/chunk/aa").unwrap(),
-            ObjectRead::Absent,
+            store
+                .receive_object("p/objects/1/chunk/aa", TransportContext::limited(64))
+                .expect_err("absent")
+                .observation,
+            TransportObservation::Missing,
             "the dropped request never arrived"
         );
     }
@@ -499,5 +557,37 @@ mod tests {
         let next = first.next.expect("continuation");
         let second = store.list_objects("p/objects/", Some(&next)).unwrap();
         assert_eq!(second.keys, vec!["p/objects/2/chunk/cc".to_string()]);
+        assert_eq!(
+            second.next, None,
+            "durable progress is the last canonical key, not a provider token"
+        );
+    }
+
+    #[test]
+    fn receive_caps_during_the_copy_and_reports_missing_not_success() {
+        let store = MemStore::new();
+        store
+            .put_object("p/objects/1/chunk/aa", b"0123456789")
+            .unwrap();
+        let capped = store.receive_object(
+            "p/objects/1/chunk/aa",
+            TransportContext {
+                work: None,
+                receive: ReceiveLimits::capped(4),
+            },
+        );
+        let error = capped.expect_err("cap");
+        assert_eq!(error.observation(), TransportObservation::Capped);
+        let missing = store.receive_object(
+            "p/objects/1/chunk/zz",
+            TransportContext {
+                work: None,
+                receive: ReceiveLimits::capped(8),
+            },
+        );
+        assert_eq!(
+            missing.expect_err("absent").observation(),
+            TransportObservation::Missing
+        );
     }
 }

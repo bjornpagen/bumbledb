@@ -219,3 +219,21 @@ impl<'a> Reader<'a> {
         }
     }
 }
+
+pub(crate) fn read_object_ref(input: &mut Reader<'_>) -> Result<crate::store::ObjectRef, FrameError> {
+    use crate::store::ObjectKind;
+    let epoch = input.u64()?;
+    let kind = match input.tag()? {
+        (_, 0) => ObjectKind::Decision,
+        (_, 1) => ObjectKind::Chunk,
+        (_, 2) => ObjectKind::Checkpoint,
+        (_, 3) => ObjectKind::Mark,
+        (at, got) => return Err(FrameError::Tag { at, got }),
+    };
+    Ok(crate::store::ObjectRef {
+        epoch,
+        kind,
+        digest: input.array()?,
+        length: input.u64()?,
+    })
+}

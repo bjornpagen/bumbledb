@@ -354,6 +354,10 @@ def ingest_report(inputs, path):
 
 NIGHT_LANE_REPORTS = (
     ("storage/storage-report.json", "storage_report", None),
+    ("app-perf-warm/app-perf.json", "app_perf_warm", None),
+    ("app-perf-cold/app-perf.json", "app_perf_cold", None),
+    ("app-perf-tenants/app-perf.json", "app_perf_tenants", None),
+    ("hash-probe/hash-probe.json", "hash_probe", None),
     ("writes/writes-report.json", "writes_rates", None),
     ("curves/curves-report.json", "curves_report", None),
     ("crud/crud.json", "crud_report", load_crud_report),

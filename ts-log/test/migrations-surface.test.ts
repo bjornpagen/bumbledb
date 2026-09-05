@@ -30,6 +30,6 @@ describe("module boundaries", function suite() {
 	test("generator entrypoints exist once, bound over the one production codec", function generator() {
 		assert.equal(typeof migrations.generateMigrations, "function")
 		assert.equal(typeof migrations.checkMigrations, "function")
-		assert.equal(typeof migrations.cli, "function")
+		assert.equal("cli" in migrations, false, "the public async CLI twin is deleted")
 	})
 })

@@ -138,8 +138,8 @@ The engine ACCEPTS the form at declaration
 premises — the statement's target key, the weight/bound typing
 roster, and the interval-projection refusal) and JUDGES it per
 commit: the checker and delta machinery this term describes
-are `storage/commit/judgment.rs::check_capacity` over
-`storage/commit/plan.rs`'s touched sets. No
+are `schema/judge.rs::capacity` over
+`schema/compiled.rs::delta_local_statements`. No
 `Bridge.lean` row cites this module directly: the acceptance row
 cites the plan theorem (`Oracle.lean`), the enforcement row cites
 the delta-restriction theorem (`Txn/DeltaRestriction.lean`), and

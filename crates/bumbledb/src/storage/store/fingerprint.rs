@@ -13,7 +13,9 @@
 //! no production constructor can select it (P14 request, recorded in
 //! `implementation/packets/P02.md`).
 
-use bumbledb_theory::schema::{RelationId, StatementId};
+use bumbledb_theory::schema::RelationId;
+
+use crate::schema::ProjectionId;
 
 /// The exact-checked local fingerprint width (chapter 41 default).
 pub const FP_LEN: usize = 16;
@@ -50,12 +52,12 @@ impl Fingerprinter {
         }
     }
 
-    pub(crate) fn determinant(self, statement: StatementId, projected: &[u8]) -> [u8; FP_LEN] {
+    pub(crate) fn determinant(self, projection: ProjectionId, projected: &[u8]) -> [u8; FP_LEN] {
         match self {
             Self::Blake3 => {
                 let mut digest = crate::digest::Digest::new();
                 digest.update(DETERMINANT_DOMAIN);
-                digest.update(&statement.0.to_be_bytes());
+                digest.update(&projection.0.to_be_bytes());
                 digest.update(projected);
                 truncate(digest.finalize())
             }

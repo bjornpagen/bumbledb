@@ -651,3 +651,49 @@ fn empty_unordered_and_pointwise_inputs_refuse() {
         Err(EvidenceError::PointwiseConflict)
     );
 }
+
+/// D05 — evidence bytes are a function of logical facts, not insertion or
+/// remint order. Sorting already-selected row-id examples would fail this.
+#[test]
+fn d05_evidence_bytes_survive_opposite_insertion_and_remint() {
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "User".into(),
+            fields: vec![
+                field("id", ValueType::U64),
+                field("email", ValueType::String),
+            ],
+        }],
+        statements: vec![fd(RelationId(0), &[FieldId(0)]), fd(RelationId(0), &[FieldId(1)])],
+    }
+    .validate()
+    .expect("valid");
+    let mut forward = MapState::new();
+    let mut reverse = MapState::new();
+    for id in 0..6u64 {
+        let row = vec![Value::U64(id), Value::String("shared@ex".into())];
+        forward.insert(RelationId(0), row.clone());
+        reverse.insert(
+            RelationId(0),
+            vec![Value::U64(5 - id), Value::String("shared@ex".into())],
+        );
+    }
+    let budget = JudgeBudget {
+        examples_per_statement: 2,
+    };
+    let left = match judge_final_state(&schema, &forward, &work(), budget).expect("forward") {
+        Judgment::Rejected(violations) => violations,
+        Judgment::Admitted => panic!("must reject"),
+    };
+    let right = match judge_final_state(&schema, &reverse, &work(), budget).expect("reverse") {
+        Judgment::Rejected(violations) => violations,
+        Judgment::Admitted => panic!("must reject"),
+    };
+    assert_eq!(
+        encode_judged(&schema, &left, BUDGET, &work()).expect("left"),
+        encode_judged(&schema, &right, BUDGET, &work()).expect("right"),
+        "receipt bytes must agree across remint order"
+    );
+    assert!(left[0].examples_truncated);
+}

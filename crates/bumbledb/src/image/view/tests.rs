@@ -1,5 +1,24 @@
 use super::*;
 use crate::encoding::{encode_i64, encode_u64};
+use std::sync::Arc;
+
+use crate::image::RelationImage;
+
+fn view_apply(
+    image: &Arc<RelationImage>,
+    predicates: &[FilterPredicate],
+    params: &[Const],
+    buf: Vec<u32>,
+) -> View {
+    apply(
+        image,
+        predicates,
+        params,
+        buf,
+        image.generation().text_eq(None),
+    )
+    .expect("apply")
+}
 use crate::image::testsupport::TestSource;
 use crate::ir::ParamId;
 use crate::ir::Value;
@@ -110,7 +129,7 @@ fn conjunction_over_mixed_width_fields_matches_the_naive_oracle() {
             value: Const::Word(u64::from_be_bytes(encode_i64(15))),
         },
     ];
-    let view = apply(&image, &predicates, &[], Vec::new());
+    let view = view_apply(&image, &predicates, &[], Vec::new());
     let expected = oracle(|_, flag, a, _| flag && (-10..15).contains(&a));
     assert_eq!(survivor_ids(&view), expected);
     assert!(!expected.is_empty(), "fixture exercises the filter");
@@ -126,7 +145,7 @@ fn same_fact_field_equality_pairs_work() {
         right: FieldId(3).into(),
         op: WordCmp::Eq,
     }];
-    let view = apply(&image, &predicates, &[], Vec::new());
+    let view = view_apply(&image, &predicates, &[], Vec::new());
     let expected = oracle(|_, _, a, b| a == b);
     assert_eq!(survivor_ids(&view), expected);
     assert!(!expected.is_empty(), "fixture exercises the equality");
@@ -142,7 +161,7 @@ fn unsatisfiable_filter_yields_an_empty_survivor_set() {
         op: WordCmp::Eq,
         value: Const::Word(u64::MAX),
     }];
-    let view = apply(&image, &predicates, &[], Vec::new());
+    let view = view_apply(&image, &predicates, &[], Vec::new());
     assert_eq!(view.len(), 0);
     assert!(view.is_empty());
     assert_eq!(view.positions().count(), 0);
@@ -153,7 +172,7 @@ fn no_predicates_yield_the_all_variant() {
     let schema = schema();
     let source = populated(&schema);
     let (_cache, image) = source.image_with_cache(R);
-    let view = apply(&image, &[], &[], Vec::new());
+    let view = view_apply(&image, &[], &[], Vec::new());
     assert!(matches!(view, View::Bound(BoundView::All(_))));
     assert_eq!(view.len(), 50);
     let positions: Vec<u32> = view.positions().collect();
@@ -171,8 +190,8 @@ fn reapplying_the_same_filter_to_the_built_image_is_stable() {
         value: Const::Word(u64::from_be_bytes(encode_u64(40))),
     }];
 
-    let view = apply(&image, &predicates, &[], Vec::new());
-    let reapplied = apply(&image, &predicates, &[], Vec::new());
+    let view = view_apply(&image, &predicates, &[], Vec::new());
+    let reapplied = view_apply(&image, &predicates, &[], Vec::new());
     assert_eq!(
         view.positions().collect::<Vec<_>>(),
         reapplied.positions().collect::<Vec<_>>()
@@ -264,7 +283,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         point: ViewWordSource::Word(w(9)),
         dense: false,
     }];
-    assert_eq!(sorted_ids(&apply(&image, &at_nine, &[], Vec::new())), [2]);
+    assert_eq!(sorted_ids(&view_apply(&image, &at_nine, &[], Vec::new())), [2]);
 
     let at_two = vec![FilterPredicate::PointIn {
         field: P_DURING.into(),
@@ -272,7 +291,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         dense: false,
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &at_two, &[], Vec::new())),
+        sorted_ids(&view_apply(&image, &at_two, &[], Vec::new())),
         [1, 4, 5]
     );
 
@@ -282,7 +301,7 @@ fn point_in_keeps_start_boundary_and_drops_end_boundary() {
         dense: false,
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
+        sorted_ids(&view_apply(&image, &via_param, &[Const::Word(w(9))], Vec::new())),
         [2]
     );
 }
@@ -298,19 +317,19 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
 
     let params = [Const::WordSet(vec![w(-4), w(10)])];
     assert_eq!(
-        sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
+        sorted_ids(&view_apply(&image, &predicates, &params, Vec::new())),
         [2, 3]
     );
 
     let empty = [Const::WordSet(Vec::new())];
-    assert!(apply(&image, &predicates, &empty, Vec::new()).is_empty());
+    assert!(view_apply(&image, &predicates, &empty, Vec::new()).is_empty());
 }
 
 #[test]
 fn same_atom_interval_shapes_evaluate_their_fixed_compositions() {
     let image = interval_image();
     let run =
-        |predicate: FilterPredicate| sorted_ids(&apply(&image, &[predicate], &[], Vec::new()));
+        |predicate: FilterPredicate| sorted_ids(&view_apply(&image, &[predicate], &[], Vec::new()));
 
     assert_eq!(
         run(FilterPredicate::FieldsAllen {
@@ -379,7 +398,7 @@ fn field_within_is_scalar_membership_in_the_constant_interval() {
         dense: false,
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &scalar_within, &[], Vec::new())),
+        sorted_ids(&view_apply(&image, &scalar_within, &[], Vec::new())),
         [1, 3, 4]
     );
 }
@@ -396,7 +415,7 @@ fn interval_constants_compare_pairwise_under_eq() {
         },
     }];
     assert_eq!(
-        sorted_ids(&apply(&image, &predicates, &[], Vec::new())),
+        sorted_ids(&view_apply(&image, &predicates, &[], Vec::new())),
         [1]
     );
 }
@@ -411,7 +430,7 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
     }];
     let params = [Const::WordSet(vec![1u64, 3])];
     assert_eq!(
-        sorted_ids(&apply(&image, &predicates, &params, Vec::new())),
+        sorted_ids(&view_apply(&image, &predicates, &params, Vec::new())),
         [1, 3]
     );
 }

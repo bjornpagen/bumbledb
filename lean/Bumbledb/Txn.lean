@@ -11,13 +11,13 @@ law: the PROTOCOL is modeled, never the mutex). Durability and crash
 are REFUSED here (the covenant refusals): the crashpoint estate owns
 that axis whole; this level models committed-state transitions only.
 
-## The FinalStateView seam, as a signature
+## The final-state seam, as a signature
 
 `judge: Theory → Instance → Result` — dependency judgment's ONLY
 input is a theory and one final instance. Operation order is not in
 the signature, so it cannot influence a verdict: the constitution made
-judgment's input a type (`storage/commit/judgment.rs::FinalStateView`,
-"operation order is representable here"), and this file
+judgment's input a type (`schema/judge.rs::CandidateFacts` /
+`judge_complete`), and this file
 gives that type its theorems (`final_state_judgment_order_free`).
 `Delta` is a SET pair and `apply` is set algebra — order-free BY
 CONSTRUCTION; the sequential write surface (`Op` lists) exists exactly
@@ -38,21 +38,20 @@ critical section (the `ConditionalWrite::Moved` return) is
 
 ## Bridges
 
-* `judge` / `commit` — `storage/commit/judgment.rs::judge` over
- `FinalStateView` (phases 1–2 applied the plan; read-your-writes is
- exactly `base + delta` in final set semantics).
+* `judge` / `commit` — `schema/judge.rs::judge_complete` over
+ `CandidateFacts` (the proposed final state; read-your-writes is
+ exactly `base + delta` in final set semantics). Incremental
+ `judge_incremental` additionally requires `LawfulParent`.
 * `violationSet` / `rejection_is_complete` —
  `crate::error::Violations`: one rejected commit's complete violation
  set OF THE FAILING PHASE — the violated key statements when any key
- fails (`storage/commit/apply.rs::apply` seals them before the
- judgment phase runs), else the statement phase's violated
+ fails (`schema/judge.rs` key pass seals them before containment
+ and capacity run), else the statement phase's violated
  statements. The engine's statement phase judges both non-key
- forms (`storage/commit/judgment.rs::judge`: the containment sides,
- the capacity checks — each scan-complete), so one sealed rejection
- can mix containment and capacity citations in materialized
- statement order — the 2026-07-14 vocabulary campaign's enforcement
- stage, discharged (the delta-restriction ledger rows,
- `Bridge.lean`).
+ forms (`containment`, `capacity` — each scan-complete), so one
+ sealed rejection can mix containment and capacity citations.
+ Example rows are selected by `fact_sort_key` before top-k
+ truncation (`Bridge.lean`).
 * `completeKeyViolations` / `completeStatementViolations` — the
  instance-dependent complete roster over a raw `Instance` (L1): the
  citation sets restricted to statements that still depend on
@@ -96,8 +95,7 @@ when a key fails, and both the engine and the naive model preempt
 (spec-fidelity F2). `rejection_is_complete` is per-phase completeness
 (sound, nonempty, complete within the failing phase);
 `rejection_never_mixes` is the never-a-mix law. Bridge:
-`storage/commit/apply.rs::apply` (the key phase seals first);
-`storage/commit/judgment.rs::judge` (the statement phase).
+`schema/judge.rs` (key pass first, then containment/capacity).
 
 ## Narrowings recorded (law 5: narrow and record)
 
@@ -176,8 +174,8 @@ structure State (T : Theory) where
 
 /-- A transaction's net write: insert/delete fact multiop as a SET
 pair. No order exists in this representation — that is the point
-(`storage/delta.rs::WriteDelta`, whose per-fact coalescing computes
-exactly this net pair). -/
+(`changes.rs::ChangeSet`, whose sealed parse admits at most one
+action per canonical row and add-wins inside the builder). -/
 structure Delta where
   /-- The facts the transaction establishes, per relation. -/
   adds : RelId → Set Fact
@@ -274,9 +272,9 @@ theorem holds_iff_no_violation (T : Theory) (I : Instance) :
    fun h st hmem => Classical.byContradiction fun hj => h st ⟨hmem, hj⟩⟩
 
 /-- The key-phase violations: the violated FUNCTIONALITY statements of
-one final state. Bridge: `storage/commit/apply.rs::apply` — key
-conflicts record during the insert scan and seal into the rejection
-before the judgment phase runs. -/
+one final state. Bridge: `schema/judge.rs` key pass — conflicts
+record during the determinant walk and seal into the rejection
+before containment and capacity run. -/
 def keyViolationSet (T : Theory) (I : Instance) : Set Statement :=
   fun st => st ∈ violationSet T I ∧ st.isKey = true
 
@@ -431,20 +429,18 @@ inductive Result (α : Type u) (ε : Type v) where
   | reject (err : ε)
 
 open Classical in
-/-- **The FinalStateView seam, two-phase.** Dependency judgment's
+/-- **The final-state seam, two-phase.** Dependency judgment's
 whole input is this signature: a theory and ONE final instance —
 accept iff `holds`; else, if any KEY statement is violated, reject
 with exactly the complete violated-key set (the preemption: the
 statement phase never runs, because its probes are defined over the
 keyed final state — module doc); else reject with exactly the
 complete violated non-key set. Operation order is not a parameter, so
-no verdict can depend on it. Bridge: `storage/commit/apply.rs::apply`
-(the key phase, sealed first) and
-`storage/commit/judgment.rs::judge(view: &FinalStateView)` (the
-statement phase); classical choice decides the propositions here
-because the model judges arbitrary (not-necessarily-listable) fact
-sets — the engine's instances are finite and its two phases are the
-decision procedure. -/
+no verdict can depend on it. Bridge: `judge_complete` over
+`CandidateFacts` (key pass, then containment/capacity); classical
+choice decides the propositions here because the model judges
+arbitrary (not-necessarily-listable) fact sets — the engine's
+instances are finite and its two phases are the decision procedure. -/
 noncomputable def judge (T : Theory) (I : Instance) :
     Result (State T) (Set Statement) :=
   if h : holds T I then .ok ⟨I, h⟩
@@ -497,10 +493,9 @@ theorem judge_not_holds {T : Theory} {I : Instance} (h : ¬ holds T I) :
 
 /-- `commit` — judge the delta's final state against the theory:
 accept iff `holds`, else the failing phase's complete violation set.
-Bridge: `Db::write`'s commit phase (`storage/commit`): phases 1–2
-apply the plan (and seal any key violations — the key phase), phase 3
-is `judge` over the `FinalStateView` (the statement phase), and a
-rejection aborts the whole transaction (`Admission::Rejected`). -/
+Bridge: `Db::write` applies the sealed `ChangeSet` then
+`judge_complete` (or `judge_incremental` only with `LawfulParent`);
+a rejection aborts the whole transaction (`Admission::Rejected`). -/
 noncomputable def commit {T : Theory} (s : State T) (d : Delta) :
     Result (State T) (Set Statement) :=
   judge T (apply s d)
@@ -530,10 +525,11 @@ theorem commit_ok_inst {T : Theory} {s : State T} {d : Delta}
 /-- **Item 1.** Any two op sequences with equal `apply` results
 receive identical verdicts: insert/delete order inside a transaction
 cannot change validity, because the verdict is a function of the final
-state alone — `judge`'s signature (the FinalStateView law). The
+state alone — `judge`'s signature (the `CandidateFacts` /
+`judge_complete` law). The
 transiently-violating-but-valid witness that a per-operation judge
 would wrongly reject is `Countermodels.per_op_judgment_wrong`.
-Bridge: `judgment.rs::FinalStateView`, the sole judge input. -/
+Bridge: `CandidateFacts`, the sole complete-judge input. -/
 theorem final_state_judgment_order_free {T : Theory} (s : State T)
     (ops₁ ops₂ : List Op)
     (h : applyOps s.inst ops₁ = applyOps s.inst ops₂) :

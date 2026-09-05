@@ -12,11 +12,7 @@ import type { SchemaSpec, ValueSpec, ValueTypeSpec } from "#spec.ts"
  */
 type DbHandle = { readonly __brand: "bumbledb.db" }
 
-/** Owned generation evidence (a value clone, never a borrow). */
-type WitnessHandle = { readonly __brand: "bumbledb.witness" }
-
-type BuilderHandle = { readonly __brand: "bumbledb.builder" }
-
+/** Admitted owned instance attached through directory publish — not a JS builder. */
 type OwnedHandle = { readonly __brand: "bumbledb.owned" }
 
 /**
@@ -25,11 +21,6 @@ type OwnedHandle = { readonly __brand: "bumbledb.owned" }
  * command/decision grammar. Immutable plain data; no lifecycle verbs.
  */
 type LogSchemaHandle = { readonly __brand: "bumbledb.logSchema" }
-
-interface WireMutationReport {
-	readonly submitted: bigint
-	readonly changed: bigint
-}
 
 /** A discrete half-open interval `[start, end)` over u64/i64. */
 interface IntervalValue {
@@ -503,67 +494,6 @@ interface Native {
 
 	descriptor(spec: SchemaSpec): SealedDescriptor
 
-	dbManifest(db: DbHandle): Manifest
-
-	dbFingerprint(db: DbHandle): string
-
-	dbGeneration(db: DbHandle): bigint
-
-	/**
-	 * blake3 over the canonical catalog enumeration — the replication
-	 * equality oracle: equal digests imply identical judged content
-	 * regardless of page layout or allocation history.
-	 */
-	dbCatalogDigest(db: DbHandle): Uint8Array
-
-	witnessClose(witness: WitnessHandle): void
-
-	instanceBuilderNew(spec: SchemaSpec): BuilderHandle
-
-	/**
-	 * Records a collection of inserts into the draft; returns the engine
-	 * `{ submitted, changed }` report. `cells` is ONE flat row-major array
-	 * (length rows×arity) in sealed field order, and `rows` is the EXPLICIT
-	 * row count the caller states; the bridge verifies
-	 * `cells.length === rows × arity` exactly against its resident sealed
-	 * roster before building the engine's shape-proved collection.
-	 */
-	instanceBuilderLoad(
-		builder: BuilderHandle,
-		relationId: number,
-		rows: bigint,
-		cells: readonly FactValue[]
-	): WireMutationReport
-	instanceBuilderDelete(
-		builder: BuilderHandle,
-		relationId: number,
-		rows: bigint,
-		cells: readonly FactValue[]
-	): WireMutationReport
-	instanceBuilderContains(builder: BuilderHandle, relationId: number, values: readonly FactValue[]): boolean
-	instanceBuilderGet(
-		builder: BuilderHandle,
-		relationId: number,
-		keyStatementId: number,
-		keyValues: readonly FactValue[]
-	): FactValue[] | null
-	instanceBuilderClose(builder: BuilderHandle): void
-	// Admission moved onto the one executor: `runtimeBuilderAdmit` →
-	// `runtimeAdmitTake` in #runtime-native.ts. No AsyncTask/Promise verb.
-
-	ownedInstanceClose(instance: OwnedHandle): void
-	// Owned-instance point reads are bounded owned-heap work and stay
-	// synchronous; scans and queries ride the executor
-	// (`runtimeOwnedScan`/`runtimeOwnedQuery` in #runtime-native.ts).
-	ownedCount(instance: OwnedHandle, relationId: number): bigint
-	ownedContains(instance: OwnedHandle, relationId: number, values: readonly FactValue[]): boolean
-	ownedGet(
-		instance: OwnedHandle,
-		relationId: number,
-		keyStatementId: number,
-		keyValues: readonly FactValue[]
-	): FactValue[] | null
-
 	// --- successor log grammar (small frames; command/decision lanes are
 	// executor verbs in #runtime-native.ts) ---
 
@@ -604,6 +534,29 @@ const requireNative = createRequire(import.meta.url)
 
 type NativeBinding = Native
 
+function ensureNativeBinding(): NativeBinding {
+	const loaded = bindingCache
+	if (loaded !== undefined) {
+		return loaded
+	}
+	const next = loadNativeBinding(process.platform, process.arch)
+	bindingCache = next
+	return next
+}
+
+/** Lazy singleton: the addon loads on first native access, not module evaluation. */
+const native: NativeBinding = new Proxy({} as NativeBinding, {
+	get(_target, property, receiver) {
+		return Reflect.get(ensureNativeBinding(), property, receiver)
+	}
+})
+
+let bindingCache: NativeBinding | undefined
+
+function nativeBindingIsLoaded(): boolean {
+	return bindingCache !== undefined
+}
+
 function loadNativeBinding(platform: string, arch: string): NativeBinding {
 	const platformPackage = `@bjornpagen/bumbledb-${platform}-${arch}`
 
@@ -629,9 +582,6 @@ function loadNativeBinding(platform: string, arch: string): NativeBinding {
 	return loaded.success
 }
 
-const binding: NativeBinding = loadNativeBinding(process.platform, process.arch)
-const native: Native = binding
-
 /**
  * @internal blake3 of the given bytes via the resident native binding —
  * the engine's own hash, lent to the replication driver
@@ -640,7 +590,7 @@ const native: Native = binding
  */
 function internalBlake3(data: Uint8Array): Uint8Array {
 	return bridged("bumbledb blake3", function hashBytes() {
-		return binding.blake3Hash(data)
+		return ensureNativeBinding().blake3Hash(data)
 	})
 }
 
@@ -653,7 +603,7 @@ function internalBlake3(data: Uint8Array): Uint8Array {
  */
 function internalDescriptor(spec: SchemaSpec): SealedDescriptor {
 	return bridged("bumbledb descriptor", function sealSpec() {
-		return binding.descriptor(spec)
+		return ensureNativeBinding().descriptor(spec)
 	})
 }
 
@@ -663,7 +613,7 @@ function internalDescriptor(spec: SchemaSpec): SealedDescriptor {
  */
 function internalLogIdentities(): string {
 	return bridged("bumbledb-log identities", function emitIdentities() {
-		return binding.logIdentities()
+		return ensureNativeBinding().logIdentities()
 	})
 }
 
@@ -674,7 +624,7 @@ function internalLogIdentities(): string {
  */
 function internalLogSchema(spec: SchemaSpec): LogSchemaHandle {
 	return bridged("bumbledb-log schema", function sealSchema() {
-		return binding.logSchema(spec)
+		return ensureNativeBinding().logSchema(spec)
 	})
 }
 
@@ -714,7 +664,6 @@ export type {
 	AggOpIr,
 	AtomIr,
 	AtomSourceIr,
-	BuilderHandle,
 	CmpOpIr,
 	ComparisonIr,
 	ConditionTreeIr,
@@ -748,7 +697,6 @@ export type {
 	LogResult,
 	LogSchemaHandle,
 	LogStateStamp,
-	Manifest,
 	NumericCastIr,
 	OpenKind,
 	OwnedHandle,
@@ -768,8 +716,6 @@ export type {
 	TermIr,
 	Violation,
 	ViolationFact,
-	WireMutationReport,
-	WitnessHandle,
 	WriteTag
 }
 export {
@@ -781,5 +727,6 @@ export {
 	internalLogSchema,
 	loadNativeBinding,
 	native,
+	nativeBindingIsLoaded,
 	SHIPPED_PLATFORMS
 }

@@ -16,11 +16,14 @@ use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::history::authority::{HeadAuthority, Lifecycle, decode_control, encode_control};
+use crate::history::authority::{
+    Activation, HeadAuthority, Lifecycle, decode_control, encode_control,
+};
 use crate::history::{FrameError, IncarnationId};
 
 /// Namespace layout under one caller-supplied stable root:
 /// `<hex>.lock` (kernel lock), `<hex>.tombstone` (durable cancellation),
+/// `<hex>.activation` (durable one-time activation evidence),
 /// `<hex>/` (the published target), `~stage/` (private staging builds).
 pub struct TargetNamespace {
     root: PathBuf,
@@ -50,6 +53,9 @@ pub enum NamespaceError {
     Symlink,
     /// The tombstone bytes are malformed or bind a different operation.
     ForeignTombstone,
+    /// The activation-evidence bytes are malformed, not an activated
+    /// authority, or bind a different activation.
+    ForeignActivation,
     /// The target materialization already exists (no-overwrite).
     TargetExists,
     Frame(FrameError),
@@ -74,6 +80,9 @@ impl std::fmt::Display for NamespaceError {
             Self::Busy => write!(f, "target namespace is owned"),
             Self::Symlink => write!(f, "target namespace path is a symlink"),
             Self::ForeignTombstone => write!(f, "tombstone binds a different operation"),
+            Self::ForeignActivation => {
+                write!(f, "activation evidence binds a different activation")
+            }
             Self::TargetExists => write!(f, "target materialization already exists"),
             Self::Frame(error) => write!(f, "tombstone frame: {error:?}"),
         }
@@ -124,6 +133,10 @@ impl TargetNamespace {
 
     fn tombstone_path(&self) -> PathBuf {
         self.root.join(format!("{}.tombstone", self.hex))
+    }
+
+    fn activation_path(&self) -> PathBuf {
+        self.root.join(format!("{}.activation", self.hex))
     }
 
     /// A fresh private staging directory path for one build attempt. Never
@@ -209,6 +222,71 @@ impl TargetNamespace {
         }
         let bytes = encode_control(tombstone, cap)?;
         let path = self.tombstone_path();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        if let Err(error) = file.write_all(&bytes).and_then(|()| file.sync_all()) {
+            drop(file);
+            let _ = fs::remove_file(&path);
+            return Err(error.into());
+        }
+        drop(file);
+        File::open(&self.root)?.sync_all()?;
+        Ok(())
+    }
+
+    /// Read the durable activation evidence, if any. The bytes are the P04
+    /// control frame captured AT the one-time activation commit — recorded
+    /// evidence derived from the target's control (which stays the ONE
+    /// authority), readable while a live owner holds the target store open.
+    /// Malformed or non-activated bytes are corruption evidence, never an
+    /// absent marker.
+    /// # Errors
+    /// Filesystem failures, malformed frames and non-activated controls.
+    pub fn read_activation(&self, cap: usize) -> Result<Option<HeadAuthority>, NamespaceError> {
+        let path = self.activation_path();
+        refuse_symlink(&path)?;
+        let mut file = match File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        let authority = decode_control(&bytes, cap)?;
+        if !matches!(authority.activation, Activation::Activated { .. }) {
+            return Err(NamespaceError::ForeignActivation);
+        }
+        Ok(Some(authority))
+    }
+
+    /// Durably record the one-time activation evidence under the held lock:
+    /// create-new, write, fsync file and directory. An existing marker whose
+    /// identity and activation match is idempotent evidence (an activate
+    /// retry heals the crash window between the control commit and this
+    /// write); a conflicting one refuses. The marker is never removed.
+    /// # Errors
+    /// Conflicting recorded activation and filesystem failures.
+    pub fn record_activation(
+        &self,
+        _lock: &NamespaceLock,
+        activated: &HeadAuthority,
+        cap: usize,
+    ) -> Result<(), NamespaceError> {
+        if !matches!(activated.activation, Activation::Activated { .. }) {
+            return Err(NamespaceError::ForeignActivation);
+        }
+        if let Some(existing) = self.read_activation(cap)? {
+            if existing.identity == activated.identity
+                && existing.activation == activated.activation
+            {
+                return Ok(());
+            }
+            return Err(NamespaceError::ForeignActivation);
+        }
+        let bytes = encode_control(activated, cap)?;
+        let path = self.activation_path();
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)

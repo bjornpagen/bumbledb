@@ -22,14 +22,14 @@ bumbledb::schema! {
 #[test]
 fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
     let dir = common::TempDir::new("mutation-noop-not-applied");
-    let db = bumbledb::Db::create(dir.path(), CutoverNamed)
+    let db = bumbledb::Db::create(dir.path(), CutoverNamed, common::work())
         .expect("create")
         .expect("accepted");
     let row = [Value::String("keep".into())];
-    db.write(|tx| tx.insert_dyn(Label::RELATION, [&row]).map(|_| ()))
+    db.write(common::work(), |tx| tx.insert_dyn(Label::RELATION, [&row]).map(|_| ()))
         .expect("seed")
         .unwrap();
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         assert_eq!(
             tx.insert_dyn(Label::RELATION, [&row])?.changed(),
             0,
@@ -53,10 +53,10 @@ fn a_noop_insert_does_not_mark_applied_so_shape_fail_stays_clean() {
 #[test]
 fn poison_preserves_the_original_error_and_empty_insert_is_no_engine_request() {
     let dir = common::TempDir::new("mutation-poison-kind");
-    let db = bumbledb::Db::create(dir.path(), CutoverIds)
+    let db = bumbledb::Db::create(dir.path(), CutoverIds, common::work())
         .expect("create")
         .expect("accepted");
-    let outcome = db.write(|tx| {
+    let outcome = db.write(common::work(), |tx| {
         // An empty collection is no engine request at any point.
         assert_eq!(
             tx.insert_dyn(Cell::RELATION, Vec::<Vec<Value>>::new())

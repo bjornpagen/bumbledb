@@ -34,8 +34,8 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20          files (a generator, never a measurement)\n\
     \x20 hash-probe  BLAKE3/AEGIS candidate probe: equivalence, KATs and\n\
     \x20          per-size timing before the format freeze (report-class)\n\
-    \x20 app-perf application regimes: cold-open, warm, post-write first\n\
-    \x20          read, large-result split, tenant churn (report-class)\n\
+    \x20 app-perf compact scorecard: cold-open, warm, post-write first\n\
+    \x20          read, large-result, tenant churn; --plan prints L21 inputs\n\
     \x20 queries  print the versioned query list (QUERIES.md)\n\
     \x20 help     print this text\n";
 
@@ -184,6 +184,7 @@ pub fn help() -> String {
          \x20                 log lanes)\n\
          \x20 --samples N     measured samples per regime cell\n\
          \x20 --tenants N     churn tenant count       (default 8, min 2)\n\
+         \x20 --plan          print the scorecard/input plan; no timing\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-app-perf)\n\
          \n\
          SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\

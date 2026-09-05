@@ -82,6 +82,24 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 		}, /rec base is empty/)
 	})
 
+	test("a compute find term requires the shared expr grammar arm", function computeRequiresExpr() {
+		assert.throws(function missingExpr() {
+			parseQueryIr({
+				kind: "cq",
+				interiors: [],
+				head: [{ kind: "compute" }],
+				rules: [
+					{
+						finds: [{ kind: "compute" }],
+						atoms: [],
+						negated: [],
+						conditions: []
+					}
+				]
+			} as unknown as QueryIr)
+		}, /compute requires expr/)
+	})
+
 	test("rejects Count-with-over", function countWithOver() {
 		assert.throws(function countOver() {
 			parseQueryIr({

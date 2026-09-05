@@ -88,7 +88,7 @@ fn create_history(
 ) -> (Arc<Db<SchemaDescriptor>>, LocalHistory<SchemaDescriptor>) {
     let dir = temp_dir(tag).join("db");
     let db = Arc::new(
-        Db::create(&dir, schema)
+        Db::create(&dir, schema, work())
             .expect("create store")
             .expect("empty store admits"),
     );
@@ -132,7 +132,7 @@ fn seal_with(
 
 fn rows_in(db: &Db<SchemaDescriptor>, relation: RelationId) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
-    db.read(|read| {
+    db.read(work(), |read| {
         for row in read.scan(relation)? {
             rows.push(row?);
         }
@@ -196,7 +196,7 @@ fn rep020_a_multi_relation_command_is_all_or_none_with_one_receipt() {
 fn sdk001_a_later_command_preserves_the_earlier_attempts_resolution() {
     let dir = temp_dir("sdk001").join("db");
     let db = Arc::new(
-        Db::create(&dir, two_relation_schema())
+        Db::create(&dir, two_relation_schema(), work())
             .expect("create store")
             .expect("empty store admits"),
     );
@@ -386,7 +386,9 @@ fn eng007_exhaustion_is_operational_not_a_semantic_rejection() {
 fn rep001_a_stale_writers_staging_is_an_orphan_never_history() {
     use bumbledb_log::checkpointer::read_live_head;
     use bumbledb_log::gc::{GcPolicy, run_collection};
-    use bumbledb_log::store::{ObjectKind, get_verified, put_verified};
+    use bumbledb_log::store::{
+        ObjectKind, ReceiveLimits, TransportContext, get_verified, put_verified,
+    };
 
     let store = MemStore::new();
     let mut mirror = lane_support::Mirror::create("rep001", &store, "t");
@@ -414,7 +416,13 @@ fn rep001_a_stale_writers_staging_is_an_orphan_never_history() {
         .expect("collection converges");
     assert!(report.finished);
     assert!(
-        get_verified(&store, "t", &orphan).is_err(),
+        get_verified(
+            &store,
+            "t",
+            &orphan,
+            TransportContext::new(&work(), ReceiveLimits::exact(orphan.length)),
+        )
+        .is_err(),
         "the stale writer's staging is collected, never adopted"
     );
     // Every protected decision the recovery root names is still verifiable.

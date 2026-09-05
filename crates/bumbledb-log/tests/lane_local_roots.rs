@@ -234,7 +234,7 @@ fn local03_an_old_point_preserves_its_original_evidence_and_restores_a_new_linea
     let mut count = 0;
     restored
         .db
-        .read(|read| {
+        .read(work(), |read| {
             for row in read.scan(RelationId(0)).expect("scan") {
                 row.expect("row");
                 count += 1;
@@ -301,4 +301,43 @@ fn capacity_and_labels_are_bounded_without_discarding_other_roots() {
         &work(),
     );
     assert!(long_label.is_err(), "labels are bounded metadata");
+}
+
+/// Registration and release are exclusive writer transactions: a second
+/// create of the same ID cannot discard the first point, and a stale
+/// release cannot remove a different registered root.
+#[test]
+fn local_root_races_serialize_and_never_drop_a_registered_point() {
+    let fixture = fixture("lr-race");
+    submit(&fixture, &insert_user(&fixture.db, fixture.identity, 1, 10));
+    let first = create_restore_point(
+        &fixture.db,
+        &fixture.dir,
+        op(0x11),
+        "first",
+        &ckpt_policy(),
+        &RootPolicy::DEFAULT,
+        &work(),
+    )
+    .expect("first registers");
+    submit(&fixture, &insert_user(&fixture.db, fixture.identity, 2, 20));
+    let second = create_restore_point(
+        &fixture.db,
+        &fixture.dir,
+        op(0x12),
+        "second",
+        &ckpt_policy(),
+        &RootPolicy::DEFAULT,
+        &work(),
+    )
+    .expect("second registers");
+    let stale = release_restore_point(&fixture.db, &fixture.dir, op(0x99), &work());
+    assert!(
+        matches!(stale, Err(LocalRootError::UnknownRoot)),
+        "{stale:?}"
+    );
+    let roots = registered_roots(&fixture.db).expect("registry");
+    assert_eq!(roots.len(), 2);
+    assert!(roots.iter().any(|root| root.id == first.id));
+    assert!(roots.iter().any(|root| root.id == second.id));
 }

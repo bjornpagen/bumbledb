@@ -21,14 +21,15 @@ use bumbledb::{WorkContext, WorkError};
 use crate::checkpointer::read_live_head;
 use crate::codec::{StreamLimits, decode_manifest};
 use crate::history::command::Limits;
-use crate::history::decision;
-use crate::history::{FrameError, OperationId};
+use crate::history::authority::{AuthorityError, HeadAuthority};
+use crate::history::locator::{self, ChainVisitor};
+use crate::history::{FrameError, HeadRevision, OperationId};
 use crate::manifest::wire::{self, Reader};
 use crate::manifest::{Barrier, GcPhase, HeadError, HeadRecord, RecoveryRoot, encode_head};
 use crate::store::{
     BackendError, ConditionalOutcome, ConditionalStore, ObjectError, ObjectKind, ObjectRef,
-    backend as backend_error, fetch_decision, get_verified, head_key, objects_prefix,
-    parse_object_key, put_verified,
+    ObservedError, ReceivingStore, TransportContext, backend as backend_error,
+    get_verified, head_key, objects_prefix, parse_object_key, put_verified,
 };
 
 pub const MARK_FAMILY: &[u8] = b"bumbledb.mark.v1\0";
@@ -114,11 +115,17 @@ impl From<crate::checkpointer::CheckpointError> for GcError {
     }
 }
 
+impl From<AuthorityError> for GcError {
+    fn from(error: AuthorityError) -> Self {
+        Self::Head(HeadError::from(error))
+    }
+}
+
 /// One durable-progress CAS: read the exact current head, let `compose`
 /// build the successor from it (preserving intervening data changes), and
 /// conditionally replace. `compose` refuses with `CollectionMoved` when the
 /// observed state is no longer the one this collector is driving.
-fn cas_head<B: ConditionalStore>(
+fn cas_head<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     policy: &GcPolicy,
@@ -126,7 +133,7 @@ fn cas_head<B: ConditionalStore>(
     mut compose: impl FnMut(&HeadRecord) -> Result<HeadRecord, GcError>,
 ) -> Result<HeadRecord, GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     for _ in 0..policy.cas_attempts {
         work.checkpoint()?;
@@ -161,7 +168,7 @@ where
 ///
 /// # Errors
 /// A running collection refuses with `CollectionMoved`.
-pub fn close_epoch<B: ConditionalStore>(
+pub fn close_epoch<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     operation: OperationId,
@@ -169,7 +176,7 @@ pub fn close_epoch<B: ConditionalStore>(
     work: &WorkContext,
 ) -> Result<Barrier, GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     let mut barrier_out = None;
     cas_head(backend, prefix, policy, work, |current| {
@@ -194,9 +201,19 @@ where
         // live; deleted controls keep their recorded revision).
         let control = match current.control.maintained() {
             Ok(control) => control,
-            // A tombstone cannot be "maintained"; its GC bookkeeping rides
-            // the same head object without an authority transition.
-            Err(_) => current.control,
+            Err(AuthorityError::Deleted) => {
+                let revision = current
+                    .control
+                    .revision
+                    .0
+                    .checked_add(1)
+                    .ok_or(GcError::Corruption("head revision exhausted"))?;
+                HeadAuthority {
+                    revision: HeadRevision(revision),
+                    ..current.control
+                }
+            }
+            Err(error) => return Err(error.into()),
         };
         Ok(HeadRecord {
             control,
@@ -223,11 +240,11 @@ where
 /// without deletion. Chunk leaves are named by a verified manifest and are
 /// marked without a body download (they carry no nested references).
 #[expect(clippy::too_many_arguments, reason = "one bounded mark walk")]
-fn mark_root<B: ConditionalStore>(
+fn mark_root<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     root: &RecoveryRoot,
-    cutoff: u64,
+    _cutoff: u64,
     limits: Limits,
     policy: &GcPolicy,
     budget: &mut u64,
@@ -235,7 +252,7 @@ fn mark_root<B: ConditionalStore>(
     work: &WorkContext,
 ) -> Result<(), GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     let charge = |key: &String, budget: &mut u64| -> Result<(), GcError> {
         let cost = key.len() as u64 + 16;
@@ -246,9 +263,17 @@ where
         Ok(())
     };
     if let Some(checkpoint) = &root.checkpoint {
-        let bytes = get_verified(backend, prefix, checkpoint)
-            .map_err(|_| GcError::Corruption("protected checkpoint manifest unavailable"))?;
-        let manifest = decode_manifest(&bytes, policy.stream)?;
+        let charged = get_verified(
+            backend,
+            prefix,
+            checkpoint,
+            TransportContext::new(
+                work,
+                locator::receive_limits_for_object(checkpoint, policy.stream.manifest_bytes),
+            ),
+        )
+        .map_err(|_| GcError::Corruption("protected checkpoint manifest unavailable"))?;
+        let manifest = decode_manifest(charged.as_bytes(), policy.stream)?;
         let key = checkpoint.key(prefix);
         charge(&key, budget)?;
         marks.insert(key);
@@ -258,34 +283,66 @@ where
             charge(&key, budget)?;
             marks.insert(key);
         }
+        drop(charged.into_owner());
     }
-    // Decisions of exactly the tail (base, tip]; a genesis root (no
-    // checkpoint) retains its whole chain down to the sequence-zero sentinel,
-    // which has no object.
-    let mut cursor = root.tip;
-    let mut steps = 0u64;
-    while cursor != root.base && cursor.seq > 0 {
-        work.checkpoint()?;
-        steps += 1;
-        if steps > policy.walk_budget {
-            return Err(GcError::MarkBudget);
+    // Decisions of exactly the tail (base, tip]. The shared walker stops at
+    // the captured base and never epoch-probes.
+    struct MarkVisitor<'a> {
+        prefix: &'a str,
+        budget: &'a mut u64,
+        marks: &'a mut BTreeSet<String>,
+        work: &'a WorkContext,
+        charge: &'a dyn Fn(&String, &mut u64) -> Result<(), GcError>,
+    }
+    impl ChainVisitor for MarkVisitor<'_> {
+        type Error = GcError;
+        fn visit(
+            &mut self,
+            _stamp: crate::history::DecisionStamp,
+            _bytes: &[u8],
+            reference: ObjectRef,
+        ) -> Result<bool, GcError> {
+            self.work.checkpoint()?;
+            let key = reference.key(self.prefix);
+            (self.charge)(&key, self.budget)?;
+            self.marks.insert(key);
+            Ok(true)
         }
-        let (epoch, bytes) =
-            fetch_decision(backend, prefix, root.epoch_floor, cutoff, &cursor.hash)
-                .map_err(|_| GcError::Corruption("protected tail decision unavailable"))?;
-        let envelope = decision::decode_decision(&bytes, limits)
-            .map_err(|_| GcError::Corruption("protected tail decision malformed"))?;
-        if envelope.stamp() != cursor {
-            return Err(GcError::Corruption("protected tail digest mismatch"));
+    }
+    let mut walk_budget = policy.walk_budget;
+    let mut visitor = MarkVisitor {
+        prefix,
+        budget,
+        marks,
+        work,
+        charge: &charge,
+    };
+    locator::walk_decision_chain(
+        backend,
+        prefix,
+        root.tip,
+        root.base,
+        root.tip_object,
+        limits,
+        &mut walk_budget,
+        work,
+        &mut visitor,
+    )
+    .map_err(|error| match error {
+        GcError::Object(ObjectError::Backend(inner))
+            if inner.to_string().contains("decision walk budget exhausted") =>
+        {
+            GcError::MarkBudget
         }
-        let key = crate::store::decision_key(prefix, epoch, &cursor.hash);
-        charge(&key, budget)?;
-        marks.insert(key);
-        cursor = envelope.parent;
-    }
-    if cursor != root.base {
-        return Err(GcError::Corruption("tail walk did not reach its base"));
-    }
+        GcError::Object(ObjectError::Missing { .. }) => {
+            GcError::Corruption("parent locator missing before recovery base")
+        }
+        GcError::Object(ObjectError::WrongDigest { .. }) => {
+            GcError::Corruption("protected tail digest mismatch")
+        }
+        GcError::Object(_) => GcError::Corruption("protected tail decision unavailable"),
+        other => other,
+    })?;
     Ok(())
 }
 
@@ -345,7 +402,7 @@ pub fn decode_marks(
 /// # Errors
 /// Corruption stops GC without deletion; stale collectors get
 /// `CollectionMoved`/`AlreadyFinished`.
-pub fn mark<B: ConditionalStore>(
+pub fn mark<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     limits: Limits,
@@ -353,7 +410,7 @@ pub fn mark<B: ConditionalStore>(
     work: &WorkContext,
 ) -> Result<ObjectRef, GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
     let barrier = match &head.gc {
@@ -388,17 +445,20 @@ where
         &bytes,
     )?;
     let installed = cas_head(backend, prefix, policy, work, |current| match &current.gc {
-        GcPhase::Marking { barrier: recorded } if recorded.id == barrier.id => Ok(HeadRecord {
-            control: current.control,
-            recovery: current.recovery,
-            roots: current.roots.clone(),
-            object_epoch: current.object_epoch,
-            gc: GcPhase::Sweeping {
-                barrier: recorded.clone(),
-                marks: marks_ref,
-                cursor: None,
-            },
-        }),
+        GcPhase::Marking { barrier: recorded } if recorded.id == barrier.id => {
+            let control = current.control.maintained().map_err(GcError::from)?;
+            Ok(HeadRecord {
+                control,
+                recovery: current.recovery,
+                roots: current.roots.clone(),
+                object_epoch: current.object_epoch,
+                gc: GcPhase::Sweeping {
+                    barrier: recorded.clone(),
+                    marks: marks_ref,
+                    cursor: None,
+                },
+            })
+        }
         GcPhase::Sweeping {
             barrier: recorded,
             marks,
@@ -450,14 +510,14 @@ pub struct SweepReport {
 /// # Errors
 /// Stale collectors get `CollectionMoved`; failed deletions return
 /// `DeleteFailed` with resumable durable progress retained.
-pub fn sweep<B: ConditionalStore>(
+pub fn sweep<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     policy: &GcPolicy,
     work: &WorkContext,
 ) -> Result<SweepReport, GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
     let (barrier, marks_ref, mut cursor) = match &head.gc {
@@ -469,9 +529,18 @@ where
         GcPhase::Marking { .. } => return Err(GcError::CollectionMoved),
         GcPhase::Idle => return Err(GcError::AlreadyFinished),
     };
-    let marks_bytes = get_verified(backend, prefix, &marks_ref)
-        .map_err(|_| GcError::Corruption("mark manifest unavailable"))?;
-    let marks = decode_marks(&marks_bytes, barrier.id, policy.stream.manifest_bytes)?;
+    let charged = get_verified(
+        backend,
+        prefix,
+        &marks_ref,
+        TransportContext::new(
+            work,
+            locator::receive_limits_for_object(&marks_ref, policy.stream.manifest_bytes),
+        ),
+    )
+    .map_err(|_| GcError::Corruption("mark manifest unavailable"))?;
+    let marks = decode_marks(charged.as_bytes(), barrier.id, policy.stream.manifest_bytes)?;
+    drop(charged.into_owner());
     let mut report = SweepReport::default();
     let listing_prefix = objects_prefix(prefix);
     loop {
@@ -518,6 +587,8 @@ where
             }
             last_processed = Some(key.clone());
         }
+        // L11: ListPage.next is the last fully processed canonical key on a
+        // complete page, not an opaque provider token.
         match page.next {
             Some(next) => {
                 persist_cursor(
@@ -539,13 +610,16 @@ where
     cas_head(backend, prefix, policy, work, |current| match &current.gc {
         GcPhase::Sweeping {
             barrier: recorded, ..
-        } if recorded.id == barrier.id => Ok(HeadRecord {
-            control: current.control,
-            recovery: current.recovery,
-            roots: current.roots.clone(),
-            object_epoch: current.object_epoch,
-            gc: GcPhase::Idle,
-        }),
+        } if recorded.id == barrier.id => {
+            let control = current.control.maintained().map_err(GcError::from)?;
+            Ok(HeadRecord {
+                control,
+                recovery: current.recovery,
+                roots: current.roots.clone(),
+                object_epoch: current.object_epoch,
+                gc: GcPhase::Idle,
+            })
+        }
         GcPhase::Idle => Err(GcError::AlreadyFinished),
         _ => Err(GcError::CollectionMoved),
     })
@@ -558,7 +632,7 @@ where
     Ok(report)
 }
 
-fn persist_cursor<B: ConditionalStore>(
+fn persist_cursor<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     policy: &GcPolicy,
@@ -568,7 +642,7 @@ fn persist_cursor<B: ConditionalStore>(
     cursor: Option<&[u8]>,
 ) -> Result<(), GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     cas_head(backend, prefix, policy, work, |current| match &current.gc {
         GcPhase::Sweeping {
@@ -576,15 +650,16 @@ where
             marks,
             cursor: held_cursor,
         } if recorded.id == barrier.id && *marks == marks_ref => {
-            // A cursor never regresses: durable progress wins over a stale
-            // collector's older page.
+            // A last-completed canonical key never regresses: durable
+            // progress wins over a stale collector's older page.
             if let (Some(held_cursor), Some(proposed)) = (held_cursor.as_deref(), cursor)
                 && held_cursor > proposed
             {
                 return Err(GcError::CollectionMoved);
             }
+            let control = current.control.maintained().map_err(GcError::from)?;
             Ok(HeadRecord {
-                control: current.control,
+                control,
                 recovery: current.recovery,
                 roots: current.roots.clone(),
                 object_epoch: current.object_epoch,
@@ -605,7 +680,7 @@ where
 ///
 /// # Errors
 /// Every phase's typed refusal propagates with durable progress retained.
-pub fn run_collection<B: ConditionalStore>(
+pub fn run_collection<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     operation: OperationId,
@@ -614,7 +689,7 @@ pub fn run_collection<B: ConditionalStore>(
     work: &WorkContext,
 ) -> Result<SweepReport, GcError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     let (head, _) = read_live_head(backend, prefix, policy.head_cap)?;
     match &head.gc {

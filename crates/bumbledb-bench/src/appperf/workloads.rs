@@ -1,91 +1,74 @@
-//! The frozen application scorecard (chapter 40 §6): representative schemas,
-//! populations, parameter schedules and pass criteria fixed **before** the
-//! first replacement hot path lands. These are benchmark inputs, not tenant
-//! product caps. Fixtures use actual successor encoded bytes and 16-byte
-//! identity widths — an all-u64 fixture that omits the new layout's cost is
-//! not a matched workload.
+//! Compact chapter-40 scorecard. Six families, no cartesian ritual.
+//!
+//! Corpora: ledger (native-ledger-shaped), calendar/temporal (intervals),
+//! rings/points (joins/keys). Existing verified oracles stay; this table
+//! names which cell they serve.
 
 use super::{Gate, Regime};
 
-/// The six application families of the scorecard table.
+/// The six qualification families (chapter 40).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
-    /// Keyed profile/attempt lookup; assignment → attempt → mastery joins;
-    /// small per-course count/sum/mean; insert then immediately refreshed
-    /// results.
-    StudentLearning,
-    /// Point membership, overlap/exclusion, coverage, packed availability;
-    /// integer time plus separate continuous F64 range fixtures; booking
-    /// accept/reject and consequence reads.
-    Scheduling,
-    /// Neighborhood, two-hop, mutual edges, cyclic/triangle joins, bounded
-    /// linear reachability; varied selectivity and frontier width/depth.
-    Graph,
-    /// Small insert, keyed replacement, deletion, batch write,
-    /// read/modify/write condition, no-change and rejected update;
-    /// app-owned 16-byte IDs chosen before sealing.
-    ObjectCrud,
-    /// Repeated short labels and unique text churn; inline payload sizes,
-    /// exact key probes, long-key collisions/range fallback,
-    /// delete/export/reopen.
-    TextRich,
-    /// Many unopened/idle databases, skewed hot users, sequential activation,
-    /// prepared reuse, pressure eviction with actual native release;
-    /// concurrent small queries beside one large query.
-    TenantFleet,
+    /// Exact key hit/miss, selective Free Join, fanout/existence, anti-join,
+    /// named-stage reuse, small positive recursion, migration field arithmetic.
+    ResidentRead,
+    /// Insert/replace/delete/no-change/rejection then the prepared read.
+    MutationRead,
+    /// Exact sum/mean, intervals, Pack. Bits before timing.
+    NumericInterval,
+    /// >RAM text/derived/results and actual >32 GiB populated data.
+    Nonresident,
+    /// Many idle tenants, open storms, LRU, retained snapshots, noisy neighbor.
+    TenantLifecycle,
+    /// 1/2/4 contenders, full named-decision cost, checkpoint under writes.
+    HostedLifecycle,
 }
 
 pub const FAMILIES: [Family; 6] = [
-    Family::StudentLearning,
-    Family::Scheduling,
-    Family::Graph,
-    Family::ObjectCrud,
-    Family::TextRich,
-    Family::TenantFleet,
+    Family::ResidentRead,
+    Family::MutationRead,
+    Family::NumericInterval,
+    Family::Nonresident,
+    Family::TenantLifecycle,
+    Family::HostedLifecycle,
 ];
 
 impl Family {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::StudentLearning => "student-learning",
-            Self::Scheduling => "scheduling",
-            Self::Graph => "graph",
-            Self::ObjectCrud => "object-crud",
-            Self::TextRich => "text-rich",
-            Self::TenantFleet => "tenant-fleet",
+            Self::ResidentRead => "resident-read",
+            Self::MutationRead => "mutation-read",
+            Self::NumericInterval => "numeric-interval",
+            Self::Nonresident => "nonresident",
+            Self::TenantLifecycle => "tenant-lifecycle",
+            Self::HostedLifecycle => "hosted-lifecycle",
+        }
+    }
+
+    #[must_use]
+    pub const fn corpus(self) -> &'static str {
+        match self {
+            Self::ResidentRead => "ledger + rings/points (verified families)",
+            Self::MutationRead => "ledger POSTING_TAG delta + calendar booking",
+            Self::NumericInterval => "corpus-float + temporal Pack",
+            Self::Nonresident => "largefix populated + enforced RAM",
+            Self::TenantLifecycle => "tiny ledger × N tenants",
+            Self::HostedLifecycle => "object-crud over successor log / real S3",
         }
     }
 }
 
-/// One scorecard cell: a family under a regime, owned by a gate, with its
-/// verification and reporting obligations spelled out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
     pub id: String,
     pub family: Family,
     pub regime: Regime,
     pub gate: Gate,
-    /// Every cell verifies complete result sets/errors/final states against
-    /// the independent oracle before timing (APP-METHOD rule 1).
     pub oracle: &'static str,
-    /// What the cell must report beyond p50/p95/p99 (chapter 40 §6's
-    /// per-cell reporting law is global; this names cell-specific extras).
     pub extra_outputs: &'static [&'static str],
-    /// Pass criterion, frozen now. `report-only` cells feed the P00 cost
-    /// decision without a numeric gate of their own.
     pub criterion: &'static str,
 }
-
-/// Regimes every family must cover (chapter 40 §6: warm reuse, first
-/// execution after open, first read after mutation, memory-pressure /
-/// displacement variants).
-pub const CORE_REGIMES: [Regime; 4] = [
-    Regime::Warm,
-    Regime::ColdOpen,
-    Regime::PostWrite,
-    Regime::LargeResult,
-];
 
 fn cell(
     family: Family,
@@ -106,218 +89,161 @@ fn cell(
     }
 }
 
-/// The complete frozen matrix. Structure tests assert: every family covers
-/// [`CORE_REGIMES`]; every gate has at least one cell; selective probes,
-/// tenant churn, hosted contention and maintenance each exist; numeric cells
-/// carry exact-bits oracles.
+/// Frozen compact matrix. Structure tests refuse missing families/gates
+/// and refuse a cartesian explosion (one cell per needed regime only).
 #[must_use]
-#[expect(clippy::too_many_lines, reason = "the scorecard is one frozen table")]
 pub fn scorecard() -> Vec<Cell> {
-    let mut cells = Vec::new();
-    // Core regimes for every family.
-    for family in FAMILIES {
-        let gate = match family {
-            Family::ObjectCrud => Gate::AppMutate,
-            Family::TenantFleet => Gate::AppTenants,
-            _ => Gate::AppFast,
-        };
-        cells.push(cell(
-            family,
+    vec![
+        cell(
+            Family::ResidentRead,
             Regime::Warm,
-            gate,
+            Gate::AppFast,
             "naive/SQLite verified result sets before timing",
             &[
-                "prepared-reuse hit rate",
-                "allocations",
-                "retained capacity",
+                "source_visits",
+                "group_visits",
+                "prepared-reuse",
+                "owner snapshot",
             ],
-            "retains the agreed warm fast-path budget on direct probe, preferred Free Join \
-             and forced cursor paths — not victory over a deliberately slow fallback",
-        ));
-        cells.push(cell(
-            family,
+            "warm keyed probe and selective Free Join keep visit counts local; \
+             not victory over a deliberately slow fallback",
+        ),
+        cell(
+            Family::ResidentRead,
+            Regime::Selective,
+            Gate::AppFast,
+            "keyed oracle rows + CompiledTheory::consume_visits",
+            &["probe path", "source_visits", "index roster"],
+            "direct typed AST reaches the image-free lookup; existence-only \
+             suffixes stop after the first sufficient witness",
+        ),
+        cell(
+            Family::ResidentRead,
             Regime::ColdOpen,
-            gate,
+            Gate::AppFast,
             "same verified results as warm",
-            &[
-                "open time",
-                "first-execution time",
-                "bytes decoded",
-                "peak RSS",
-            ],
-            "activation plus first read fits the per-user activation budget; a per-user \
-             database is not evaluated only after all users are warm",
-        ));
-        cells.push(cell(
-            family,
+            &["open work_units", "bytes decoded", "peak RSS"],
+            "activation plus first read is counted; a per-user database is not \
+             evaluated only after all users are warm",
+        ),
+        cell(
+            Family::MutationRead,
             Regime::PostWrite,
             Gate::AppMutate,
             "post-state comparison against the independent write model",
             &[
                 "first-read rebuild bytes",
                 "copy bytes",
-                "ID-allocation work (must be absent)",
+                "invalidated relation versions",
+                "judge groups/rows",
             ],
-            "first read after insert/replace/delete reports rebuild/copy bytes separately; \
+            "first read after insert/replace/delete reports rebuild/copy bytes; \
              no persisted ID-allocation work remains",
-        ));
-        cells.push(cell(
-            family,
-            Regime::LargeResult,
-            Gate::AppFast,
-            "streaming exact-check oracle",
+        ),
+        cell(
+            Family::NumericInterval,
+            Regime::Warm,
+            Gate::AppNumeric,
+            "independent bit/rational reduction fixtures (never the production accumulator)",
             &[
-                "execute vs deliver split",
-                "page pull cadence",
-                "scratch bytes",
+                "exact-bits agreement",
+                "accumulator owner bytes",
+                "single+many groups",
             ],
-            "complete owned results only; delivery is bounded pages, cap failure keeps the \
-             sealed backing available",
-        ));
-    }
-    // Selective probes (APP-FAST's direct-probe leg).
-    for family in [
-        Family::StudentLearning,
-        Family::ObjectCrud,
-        Family::TextRich,
-    ] {
-        cells.push(cell(
-            family,
+            "sum and mean alone/together, distinct-witness and dedup-required: \
+             bits agree before any timing",
+        ),
+        cell(
+            Family::NumericInterval,
             Regime::Selective,
-            Gate::AppFast,
-            "keyed oracle rows",
+            Gate::AppNumeric,
+            "dense float-interval endpoint oracle + temporal Pack naive",
+            &["interval kernel path", "Pack logical merge", "length errors"],
+            "dense intervals and Pack agree with the endpoint/sweep oracle; \
+             D11 order is logical, not insertion-token",
+        ),
+        cell(
+            Family::Nonresident,
+            Regime::LargeResult,
+            Gate::AppLarge,
+            "streaming chunk-checksum oracle (crate::largefix)",
             &[
-                "probe path taken (classifier evidence)",
-                "per-probe allocations",
+                "forced-spill transitions",
+                "allocated_disk_bytes",
+                "scratch owner",
+                "virtual_map_bytes (separate)",
             ],
-            "a direct typed AST reaches the image-free lookup path without a generic join \
-             setup toll",
-        ));
-    }
-    // Numeric cells (APP-NUMERIC): exact float sum/mean and dense intervals.
-    cells.push(cell(
-        Family::StudentLearning,
-        Regime::Warm,
-        Gate::AppNumeric,
-        "independent bit/rational reduction fixtures (never the production accumulator)",
-        &[
-            "exact-bits agreement",
-            "accumulator state bytes charged",
-            "single+many groups",
-        ],
-        "sum and mean alone/together, single and high-cardinality groups, distinct-witness \
-         and dedup-required inputs: bits agree and full numerical state is charged",
-    ));
-    cells.push(cell(
-        Family::Scheduling,
-        Regime::Warm,
-        Gate::AppNumeric,
-        "dense float-interval endpoint oracle",
-        &[
-            "interval kernel path",
-            "length-overflow and unbounded-measure errors",
-        ],
-        "dense float interval kernels agree with the endpoint oracle including adjacency, \
-         rays and gap cases; errors are distinct, not NaN results",
-    ));
-    // Beyond-memory (APP-LARGE) — the fixtures live in crate::largefix.
-    cells.push(cell(
-        Family::Graph,
-        Regime::LargeResult,
-        Gate::AppLarge,
-        "streaming chunk-checksum oracle (crate::largefix)",
-        &[
-            "forced-spill transitions",
-            "bounded RAM/scratch",
-            "fallback work reported",
-        ],
-        ">RAM and >40 GiB populated execution stays correct through the same public \
-         semantics; report fallback work and usability, not merely a successful open",
-    ));
-    // Tenant fleet (APP-TENANTS).
-    cells.push(cell(
-        Family::TenantFleet,
-        Regime::TenantChurn,
-        Gate::AppTenants,
-        "per-tenant post-state checks",
-        &[
-            "activation p99",
-            "native bytes released on eviction",
-            "filesystem space",
-            "queue/event-loop tail under a noisy neighbor",
-        ],
-        "per-user activation/churn and mixed-size noisy neighbors hold the queue and \
-         event-loop tail budgets; eviction actually releases native bytes",
-    ));
-    // Hosted commit (PERF-003 / APP-TENANTS + APP-METHOD shared evidence).
-    cells.push(cell(
-        Family::ObjectCrud,
-        Regime::HostedContention,
-        Gate::AppTenants,
-        "independent history model receipts (P04/P11 traces)",
-        &[
-            "requests per terminal outcome",
-            "bytes per terminal outcome",
-            "retry/loss recovery term",
-            "queue/judgment/publication/catch-up/commit split",
-        ],
-        "1/2/4/8 writers on one history vs independent histories, same-key vs disjoint-key: \
-         complete named-decision cost is counted, not one winning PUT",
-    ));
-    // Maintenance overlap.
-    cells.push(cell(
-        Family::TenantFleet,
-        Regime::Maintenance,
-        Gate::AppTenants,
-        "post-maintenance state equality",
-        &[
-            "checkpoint completion time under writes",
-            "bytes reread",
-            "stall distribution",
-        ],
-        "checkpoint/GC beside a live workload makes progress without relation-sized stalls \
-         or lost maintenance progress",
-    ));
-    // Targets and method are cross-cutting cells.
-    cells.push(cell(
-        Family::ObjectCrud,
-        Regime::Warm,
-        Gate::AppTargets,
-        "identical verified answers on every named target",
-        &[
-            "target-local calibration",
-            "unsupported host-resource envelope",
-        ],
-        "fresh artifacts on named Apple Silicon, Graviton ARM and x86-64 Node targets give \
-         identical answers; M2 constants are not inherited",
-    ));
-    cells.push(cell(
-        Family::ObjectCrud,
-        Regime::Warm,
-        Gate::AppMethod,
-        "baseline/baseline control comparisons",
-        &[
-            "interleaved A/B arms",
-            "raw distributions",
-            "ambient/clock flags",
-            "work denominators",
-        ],
-        "binary/data-bound verification, baseline controls, interleaving, real work counts \
-         and truthful unrun/drift/timeout reporting",
-    ));
-    cells.push(cell(
-        Family::ObjectCrud,
-        Regime::Warm,
-        Gate::AppMagic,
-        "structural invariant tests per constant (docs/perf/magic-number-review.md)",
-        &[
-            "constant class",
-            "owner",
-            "sweep result",
-            "fallback correctness",
-        ],
-        "every high-impact constant classified and owned; hardware crossovers measured; \
-         no public knob explosion",
-    ));
-    cells
+            ">RAM and >40 GiB populated execution stays correct; a huge sparse \
+             map with tiny contents is not this cell",
+        ),
+        cell(
+            Family::TenantLifecycle,
+            Regime::TenantChurn,
+            Gate::AppTenants,
+            "per-tenant post-state checks",
+            &[
+                "native bytes released",
+                "owner snapshot baseline",
+                "queue/event-loop tail",
+                "live_transactions",
+            ],
+            "eviction releases native bytes; no runtime-global mutex covers \
+             scratch/conversion; fixed workers, not parked sessions",
+        ),
+        cell(
+            Family::TenantLifecycle,
+            Regime::Maintenance,
+            Gate::AppTenants,
+            "post-maintenance state equality",
+            &["checkpoint completion", "bytes reread", "request counts"],
+            "checkpoint/GC beside writes makes progress without relation-sized \
+             stalls or lost maintenance progress",
+        ),
+        cell(
+            Family::HostedLifecycle,
+            Regime::HostedContention,
+            Gate::AppTenants,
+            "independent history model receipts",
+            &[
+                "requests per terminal outcome",
+                "bytes per terminal outcome",
+                "retries",
+                "1/2/4 writers",
+            ],
+            "complete named-decision cost is counted, not one winning PUT; \
+             missing S3 credentials = NotRun",
+        ),
+        cell(
+            Family::ResidentRead,
+            Regime::Warm,
+            Gate::AppTargets,
+            "identical verified answers on every named host",
+            &["host-local calibration", "unsupported envelope"],
+            "Apple Silicon, real Graviton ARM64 and x86 Node give identical \
+             answers; M2 constants are not inherited",
+        ),
+        cell(
+            Family::ResidentRead,
+            Regime::Warm,
+            Gate::AppMethod,
+            "baseline/baseline control comparisons",
+            &[
+                "raw distributions",
+                "admitted work denominators",
+                "cold/warm split",
+                "interleaved A/B",
+            ],
+            "record raw samples and request counts, not just best times; \
+             timeouts stay timeouts",
+        ),
+        cell(
+            Family::ResidentRead,
+            Regime::Warm,
+            Gate::AppMagic,
+            "structural tests per constant (appperf::constants)",
+            &["constant class", "owner lane", "crossover host"],
+            "every high-impact constant is a representation bound, host policy, \
+             or measured crossover; AEGIS stays optional",
+        ),
+    ]
 }

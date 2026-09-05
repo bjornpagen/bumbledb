@@ -12,15 +12,30 @@ mod decode;
 mod distinct;
 mod epoch;
 pub(crate) mod intern;
+mod nonresident;
 mod stride;
 #[cfg(test)]
 pub(crate) mod testsupport;
 
 pub(crate) use bind::{ImageBind, SourceImages};
 pub(crate) use build::build_from_source;
-pub(crate) use epoch::ViewEpoch;
+pub(crate) use epoch::{CacheGeneration, TextGeneration, ViewEpoch};
 
 pub use build::{TransientImage, synthesize_closed};
+/// Production intern/image refusal. L05 execute/spill matches
+/// [`ResidentAdmit::BeyondMemory`] and calls
+/// [`ResidentTextExhausted::open_nonresident`]. The one equality is
+/// [`TextEq::tokens_equal`] / [`TextEq::canonical`] (`Result`, not raw
+/// `u64 ==`; resolver failure is `Err`, never inequality).
+/// Stamp memos with [`NonresidentTextStore::epoch`] (full owner id, not
+/// packed into tokens). Invalidate on mismatch or drop.
+pub use intern::{
+    is_resident_token, is_scratch_token, ResidentAdmit, ResidentTextExhausted, SCRATCH_TOKEN_TAG,
+};
+pub use nonresident::{
+    scratch_token_epoch, NonresidentTextStore, TextEq, TextStoreEpoch,
+};
+pub use crate::work::cache::WeakGenerationHandle;
 
 const SET_STRIDE: usize = 16_384;
 
@@ -126,7 +141,9 @@ pub enum ColumnView<'a> {
 }
 
 /// The immutable full-width columnar image of one relation at one
-/// generation.
+/// generation. The shared allocation owns the generation handle and,
+/// when cache-admitted, the slab charge. Dropping a cache map entry
+/// does not refund a still-held image.
 #[derive(Debug)]
 pub struct RelationImage {
     row_count: usize,
@@ -140,12 +157,40 @@ pub struct RelationImage {
     words: Vec<u64>,
 
     bytes: Vec<u8>,
+
+    generation: crate::work::GenerationHandle,
+    charge: Option<crate::work::ChargedImage>,
+    strings: Box<[bool]>,
 }
 
 impl RelationImage {
     #[must_use]
     pub fn byte_size(&self) -> usize {
         self.words.capacity() * std::mem::size_of::<u64>() + self.bytes.capacity()
+    }
+
+    #[must_use]
+    pub fn generation(&self) -> &crate::work::GenerationHandle {
+        &self.generation
+    }
+
+    #[must_use]
+    pub fn resolver(&self) -> crate::work::ResolverView<'_> {
+        self.generation.resolver()
+    }
+
+    #[must_use]
+    pub fn charged_bytes(&self) -> Option<u64> {
+        self.charge.as_ref().map(crate::work::ChargedImage::charged_bytes)
+    }
+
+    /// True when this field's column words are intern/scratch text tokens.
+    #[must_use]
+    pub fn field_is_string(&self, field: bumbledb_theory::schema::FieldId) -> bool {
+        self.strings
+            .get(usize::from(field.0))
+            .copied()
+            .unwrap_or(false)
     }
 
     #[must_use]

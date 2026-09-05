@@ -9,6 +9,7 @@
 //! digest, frame or scalar judgment lives here.
 
 use bumbledb::work::WorkContext;
+use bumbledb_log::migration::compile::{CompileError, compile};
 use bumbledb_log::migration::manifest::{
     Manifest, ManifestError, append_entry, parse_manifest, plan_set_digest, render_manifest,
     verify_manifest,
@@ -22,6 +23,190 @@ use crate::runtime::RuntimeError;
 /// provisional until the F3 format freeze (C12) selects the deployment
 /// envelope; a change here is a re-emit, never a reinterpretation.
 pub(crate) const MIGRATION_CAP: usize = 16 << 20;
+
+/// F0: every verified snapshot is mandatory before artifact commit (C1/C8).
+/// L14 binds symbolic fields against this complete chain; empty source is
+/// not a shortcut. Extra L15 `scope`/`result`/`depth` fields are authoring
+/// summaries, not a second grammar. `result: "unresolved"` is not typechecked.
+pub struct CompiledChainInput<'a> {
+    pub base_snapshot: &'a [u8],
+    pub intermediate_snapshots: &'a [&'a [u8]],
+    pub ordered_plans: &'a [&'a [u8]],
+    pub compiled_mappings: &'a [u8],
+}
+
+/// Bind and compile every snapshot/plan/mapping before any append, freeze or
+/// manifest write. Wrong field name or kind refuses even with zero rows.
+pub fn verify_compiled_chain(
+    input: CompiledChainInput<'_>,
+    context: &WorkContext,
+) -> Result<(), RuntimeError> {
+    context.checkpoint()?;
+    let snapshots = std::iter::once(input.base_snapshot)
+        .chain(input.intermediate_snapshots.iter().copied())
+        .collect::<Vec<_>>();
+    if snapshots.is_empty() {
+        return Err(envelope_error(
+            "migration chain verification requires the base snapshot",
+        ));
+    }
+    if snapshots.len() != input.ordered_plans.len() + 1 {
+        return Err(envelope_error(
+            "recorded snapshots and ordered plans disagree: need the base plus one target per plan",
+        ));
+    }
+    let mut descriptors = Vec::with_capacity(snapshots.len());
+    for (index, bytes) in snapshots.iter().enumerate() {
+        context.step(1)?;
+        context.input(bytes.len() as u64)?;
+        let text = std::str::from_utf8(bytes).map_err(|_| {
+            envelope_error("a compiled-chain snapshot is not UTF-8 schema text")
+        })?;
+        let descriptor = schema_file::parse(text).map_err(|error| RuntimeError::Engine {
+            kind: "migrationEnvelope",
+            message: format!("snapshot {index} is not canonical schema text: {error}"),
+        })?;
+        let _id = schema_file::schema_id(&descriptor).map_err(|error| RuntimeError::Engine {
+            kind: "migrationEnvelope",
+            message: format!("snapshot {index} has no canonical schema id: {error:?}"),
+        })?;
+        descriptors.push(descriptor);
+    }
+    for (index, plan_bytes) in input.ordered_plans.iter().enumerate() {
+        context.step(1)?;
+        context.input(plan_bytes.len() as u64)?;
+        let text = std::str::from_utf8(plan_bytes).map_err(|_| {
+            envelope_error("a compiled-chain plan is not UTF-8")
+        })?;
+        let plan = parse_plan(text).map_err(|error| RuntimeError::Engine {
+            kind: "migrationEnvelope",
+            message: format!("plan {index} is not a canonical plan: {error:?}"),
+        })?;
+        compile(&plan, &descriptors[index], &descriptors[index + 1]).map_err(|error| {
+            RuntimeError::Engine {
+                kind: "migrationEnvelope",
+                message: format!("plan {index} failed schema-bound compile: {error:?}"),
+            }
+        })?;
+    }
+    if !input.compiled_mappings.is_empty() {
+        bind_compiled_mappings(input.compiled_mappings, &descriptors[0], context)?;
+    }
+    Ok(())
+}
+
+/// Walk L15 ScalarNode JSON and bind `{ kind: "field", name }` against the
+/// verified source snapshot. Extra `scope`/`result`/`depth` fields are
+/// ignored. `result: "unresolved"` is not a typecheck. Unknown or
+/// wrong-kind names refuse before any side effect.
+pub(crate) fn bind_compiled_mappings(
+    bytes: &[u8],
+    source: &bumbledb::SchemaDescriptor,
+    context: &WorkContext,
+) -> Result<(), RuntimeError> {
+    context.checkpoint()?;
+    context.input(bytes.len() as u64)?;
+    let tree = read_envelope(bytes).map_err(envelope_error)?;
+    bind_scalar_node(&tree, source)
+}
+
+fn bind_scalar_node(
+    node: &Envelope,
+    source: &bumbledb::SchemaDescriptor,
+) -> Result<(), RuntimeError> {
+    match node {
+        Envelope::Array(items) => {
+            for item in items {
+                bind_scalar_node(item, source)?;
+            }
+            Ok(())
+        }
+        Envelope::Object(_) => bind_one_scalar(node, source),
+        Envelope::Null => Ok(()),
+        _ => Err(envelope_error(
+            "compiled mappings must be ScalarNode objects or an array of them",
+        )),
+    }
+}
+
+fn bind_one_scalar(
+    node: &Envelope,
+    source: &bumbledb::SchemaDescriptor,
+) -> Result<(), RuntimeError> {
+    let kind = node
+        .get("kind")
+        .and_then(Envelope::as_str)
+        .ok_or_else(|| envelope_error("compiled mapping node is missing kind"))?;
+    // Authoring summaries — not a second grammar and not a typecheck.
+    let _ = node.get("scope");
+    let _ = node.get("depth");
+    let claimed = node.get("result").and_then(Envelope::as_str);
+    if claimed == Some("unresolved") {
+        // Honest authoring residue: never treated as a checked kind.
+    }
+    match kind {
+        "field" => {
+            let name = node
+                .get("name")
+                .and_then(Envelope::as_str)
+                .ok_or_else(|| envelope_error("a field node needs a source field name"))?;
+            let field = source
+                .relations
+                .iter()
+                .flat_map(|relation| relation.fields.iter())
+                .find(|field| field.name.as_ref() == name)
+                .ok_or_else(|| RuntimeError::Engine {
+                    kind: "migrationEnvelope",
+                    message: format!(
+                        "source field `{name}` is not on the verified source snapshot"
+                    ),
+                })?;
+            if let Some(claimed) = claimed.filter(|value| *value != "unresolved") {
+                let actual = match field.value_type {
+                    bumbledb::schema::ValueType::U64 => "u64",
+                    bumbledb::schema::ValueType::I64 => "i64",
+                    bumbledb::schema::ValueType::F64 => "f64",
+                    bumbledb::schema::ValueType::Bool => "bool",
+                    _ => "other",
+                };
+                if claimed != actual {
+                    return Err(RuntimeError::Engine {
+                        kind: "migrationEnvelope",
+                        message: format!(
+                            "source field `{name}` has kind {actual}, not {claimed}"
+                        ),
+                    });
+                }
+            }
+            Ok(())
+        }
+        "literal" | "var" => Ok(()),
+        "negate" | "isNaN" | "isFinite" | "cast" => node
+            .get("expr")
+            .ok_or_else(|| envelope_error("unary mapping node is missing expr"))
+            .and_then(|expr| bind_scalar_node(expr, source)),
+        "add" | "subtract" | "multiply" | "divide" => {
+            let left = node
+                .get("left")
+                .ok_or_else(|| envelope_error("binary mapping node is missing left"))?;
+            let right = node
+                .get("right")
+                .ok_or_else(|| envelope_error("binary mapping node is missing right"))?;
+            bind_scalar_node(left, source)?;
+            bind_scalar_node(right, source)
+        }
+        other => Err(envelope_error_owned(format!(
+            "unknown compiled-mapping node kind `{other}`"
+        ))),
+    }
+}
+
+fn envelope_error_owned(detail: String) -> RuntimeError {
+    RuntimeError::Engine {
+        kind: "migrationEnvelope",
+        message: detail,
+    }
+}
 
 // ---------------------------------------------------------------------------
 // A minimal strict JSON envelope reader/renderer. Objects, arrays, strings,
@@ -411,6 +596,140 @@ fn plan_refusal(error: &PlanError) -> Vec<u8> {
     refused("MigrationUnsupported", &format!("{error:?}"))
 }
 
+fn compile_refusal(error: &CompileError) -> Vec<u8> {
+    refused("MigrationUnsupported", &format!("{error:?}"))
+}
+
+/// Parse, identity-bind and compile every plan against snapshot-bound
+/// descriptors. Refuses before bind/append when semantics are invalid
+/// (C8 — hash identity is not valid semantics).
+fn verify_and_compile_chain(
+    manifest: &Manifest,
+    plans: &[bumbledb_log::migration::plan::Plan],
+    snapshots: &[Envelope],
+    append_plan: Option<&bumbledb_log::migration::plan::Plan>,
+    compiled_mappings: Option<&Envelope>,
+    context: &WorkContext,
+    cap: usize,
+) -> Result<(), Vec<u8>> {
+    if snapshots.is_empty() {
+        return Err(refused(
+            "UnsupportedArtifact",
+            "migration chain verification requires schema snapshots (base first, then each \
+             entry's target)",
+        ));
+    }
+    let items = snapshots;
+    let required = manifest.entries.len() + 1 + usize::from(append_plan.is_some());
+    if items.len() != required {
+        return Err(refused(
+            "MigrationDrift",
+            &format!(
+                "recorded snapshots ({}) and required chain bindings ({required}) disagree",
+                items.len()
+            ),
+        ));
+    }
+    let mut descriptors = Vec::with_capacity(items.len());
+    for (index, item) in items.iter().enumerate() {
+        context.step(1).map_err(|error| {
+            refused(
+                "Misuse",
+                &format!("migration chain verification exceeded its work budget: {error}"),
+            )
+        })?;
+        let text = subtree_text(item);
+        context.input(text.len() as u64).map_err(|error| {
+            refused(
+                "Misuse",
+                &format!("migration chain verification exceeded its input budget: {error}"),
+            )
+        })?;
+        let descriptor = match schema_file::parse(&text) {
+            Ok(descriptor) => descriptor,
+            Err(error) => {
+                return Err(refused(
+                    "MigrationDrift",
+                    &format!("snapshot {index} is not canonical schema text: {error}"),
+                ));
+            }
+        };
+        let snapshot_id = match schema_file::schema_id(&descriptor) {
+            Ok(id) => id,
+            Err(error) => {
+                return Err(refused(
+                    "MigrationDrift",
+                    &format!("snapshot {index} has no canonical schema id: {error:?}"),
+                ));
+            }
+        };
+        match index {
+            0 if snapshot_id != manifest.base_schema => {
+                return Err(refused(
+                    "MigrationDrift",
+                    "the base snapshot does not match the manifest base schema id",
+                ));
+            }
+            0 => {}
+            index => {
+                let entry = &manifest.entries[index - 1];
+                if snapshot_id != entry.to_schema {
+                    return Err(refused(
+                        "MigrationDrift",
+                        &format!(
+                            "snapshot {index} schema id does not match manifest entry {}",
+                            entry.label
+                        ),
+                    ));
+                }
+            }
+        }
+        descriptors.push(descriptor);
+    }
+    if plans.len() != manifest.entries.len() {
+        return Err(refused(
+            "MigrationDrift",
+            "recorded plans and manifest entries disagree in count",
+        ));
+    }
+    for (index, plan) in plans.iter().enumerate() {
+        context.step(1).map_err(|error| {
+            refused(
+                "Misuse",
+                &format!("migration chain verification exceeded its work budget: {error}"),
+            )
+        })?;
+        if let Err(error) = compile(plan, &descriptors[index], &descriptors[index + 1]) {
+            return Err(compile_refusal(&error));
+        }
+    }
+    if let Some(plan) = append_plan {
+        let from = manifest.entries.len();
+        context.step(1).map_err(|error| {
+            refused(
+                "Misuse",
+                &format!("migration chain verification exceeded its work budget: {error}"),
+            )
+        })?;
+        if let Err(error) = compile(plan, &descriptors[from], &descriptors[from + 1]) {
+            return Err(compile_refusal(&error));
+        }
+    }
+    if let Some(mappings) = compiled_mappings.filter(|node| !node.is_null()) {
+        context.step(1).map_err(|error| {
+            refused(
+                "Misuse",
+                &format!("compiled-mapping bind exceeded its work budget: {error}"),
+            )
+        })?;
+        if let Err(error) = bind_scalar_node(mappings, &descriptors[0]) {
+            return Err(refused("MigrationUnsupported", &format!("{error:?}")));
+        }
+    }
+    let _ = cap;
+    Ok(())
+}
+
 /// `runtimeMigrationRead` (`kind: "chain"`): parse + verify the manifest,
 /// bind every recorded plan's canonical digest, optionally validate/append
 /// one new plan (returning its canonical rendered text, the new manifest
@@ -469,6 +788,36 @@ pub(crate) fn chain_response(
             }
         }
     }
+    let append_plan = match tree.get("append") {
+        Some(value) if !value.is_null() => {
+            let text = subtree_text(value);
+            context.input(text.len() as u64)?;
+            Some(parse_plan(&text).map_err(|error| plan_refusal(&error))?)
+        }
+        _ => None,
+    };
+    let snapshots = match tree.get("snapshots") {
+        Some(Envelope::Array(items)) => items.as_slice(),
+        Some(value) if value.is_null() => &[][..],
+        None => &[][..],
+        Some(_) => {
+            return Ok(refused(
+                "UnsupportedArtifact",
+                "snapshots must be an array (base first, then each entry's target)",
+            ));
+        }
+    };
+    if let Err(refusal) = verify_and_compile_chain(
+        &manifest,
+        &plans,
+        snapshots,
+        append_plan.as_ref(),
+        tree.get("compiledMappings"),
+        context,
+        cap,
+    ) {
+        return Ok(refusal);
+    }
     {
         let refs: Vec<&Plan> = plans.iter().collect();
         if let Err(error) = bumbledb_log::migration::manifest::bind_plans(&manifest, 0, &refs, cap)
@@ -476,22 +825,10 @@ pub(crate) fn chain_response(
             return Ok(manifest_refusal(&error));
         }
     }
-    if plans.len() != manifest.entries.len() {
-        return Ok(refused(
-            "MigrationDrift",
-            "recorded plans and manifest entries disagree in count",
-        ));
-    }
     // 3. Optional append: validate the new plan and extend the chain.
     let mut head_prefix = head_prefix;
-    let appended = match tree.get("append") {
-        Some(value) if !value.is_null() => {
-            let text = subtree_text(value);
-            context.input(text.len() as u64)?;
-            let plan = match parse_plan(&text) {
-                Ok(plan) => plan,
-                Err(error) => return Ok(plan_refusal(&error)),
-            };
+    let appended = match append_plan {
+        Some(plan) => {
             let entry = match append_entry(&mut manifest, &plan, cap) {
                 Ok(entry) => entry,
                 Err(error) => return Ok(manifest_refusal(&error)),
@@ -506,7 +843,7 @@ pub(crate) fn chain_response(
             };
             Some((entry, plan_text, manifest_text))
         }
-        _ => None,
+        None => None,
     };
     // 4. Optional pending plan-set digest.
     let plan_set = match tree.get("planSet") {
@@ -567,7 +904,34 @@ pub(crate) fn chain_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bumbledb::Theory as _;
     use bumbledb_log::migration::manifest::base_prefix_digest;
+
+    bumbledb::schema! {
+        pub Mini;
+        relation Item { a: u64, b: u64 }
+        Item(a) -> Item;
+    }
+
+    fn work() -> WorkContext {
+        bumbledb::work::ExecutionPolicy {
+            input_bytes: 1 << 20,
+            working_bytes: 1 << 20,
+            scratch_bytes: 1 << 20,
+            result_bytes: 1 << 20,
+            rows: 1 << 20,
+            work_units: 1 << 20,
+            timeout: std::time::Duration::from_secs(5),
+        }
+        .start()
+        .expect("work context")
+    }
+
+    fn mini_snapshot() -> (bumbledb::SchemaFingerprint, String) {
+        let descriptor = Mini.descriptor();
+        let id = schema_file::schema_id(&descriptor).expect("schema id");
+        (id, schema_file::render(&descriptor))
+    }
 
     #[test]
     fn envelope_reader_is_strict_and_total_over_the_request_grammar() {
@@ -609,27 +973,17 @@ mod tests {
 
     #[test]
     fn fresh_chain_reports_the_base_prefix_digest() {
-        // A fresh chain (no manifest) must answer with the base prefix of
-        // the declared empty-base schema — the same digest the native
-        // manifest module derives.
-        let base = bumbledb::SchemaFingerprint([7; 32]);
+        // A fresh chain still binds the base snapshot (C8). The head prefix
+        // is the native empty-base digest of that schema id.
+        let (base, snapshot) = mini_snapshot();
         let expected = base_prefix_digest(&base, MIGRATION_CAP).expect("base prefix");
+        let mut snapshot_json = String::new();
+        push_json_string(&mut snapshot_json, &snapshot);
         let request = format!(
-            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null}}"#,
+            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null,"snapshots":[{snapshot_json}]}}"#,
             hex32(&base.0)
         );
-        let work = bumbledb::work::ExecutionPolicy {
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 1 << 20,
-            work_units: 1 << 20,
-            timeout: std::time::Duration::from_secs(5),
-        }
-        .start()
-        .expect("work context");
-        let response = chain_response(request.as_bytes(), &work).expect("chain response");
+        let response = chain_response(request.as_bytes(), &work()).expect("chain response");
         let tree = read_envelope(&response).expect("response parses");
         assert_eq!(
             tree.get("headPrefixDigest").and_then(Envelope::as_str),
@@ -637,5 +991,80 @@ mod tests {
         );
         assert!(tree.get("planSetDigest").expect("key").is_null());
         assert!(tree.get("appended").expect("key").is_null());
+    }
+
+    #[test]
+    fn d20_missing_snapshot_refuses_before_append() {
+        let (base, _) = mini_snapshot();
+        let request = format!(
+            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null}}"#,
+            hex32(&base.0)
+        );
+        let response = chain_response(request.as_bytes(), &work()).expect("typed refusal");
+        let tree = read_envelope(&response).expect("response parses");
+        let refused = tree.get("refused").expect("missing snapshots refuse");
+        assert_eq!(
+            refused.get("code").and_then(Envelope::as_str),
+            Some("UnsupportedArtifact")
+        );
+        assert!(tree.get("appended").is_none());
+    }
+
+    #[test]
+    fn d20_invalid_field_mapping_refuses_on_empty_source() {
+        let (base, snapshot) = mini_snapshot();
+        let mut snapshot_json = String::new();
+        push_json_string(&mut snapshot_json, &snapshot);
+        let mappings = r#"{"kind":"field","name":"units","scope":"source-field","result":"unresolved","depth":1}"#;
+        let request = format!(
+            r#"{{"kind":"chain","manifest":null,"baseSchemaId":"{}","plans":[],"append":null,"planSet":null,"snapshots":[{snapshot_json}],"compiledMappings":{mappings}}}"#,
+            hex32(&base.0)
+        );
+        let response = chain_response(request.as_bytes(), &work()).expect("typed refusal");
+        let tree = read_envelope(&response).expect("response parses");
+        let refused = tree.get("refused").expect("unknown field refuses");
+        assert_eq!(
+            refused.get("code").and_then(Envelope::as_str),
+            Some("MigrationUnsupported")
+        );
+        assert!(
+            refused
+                .get("detail")
+                .and_then(Envelope::as_str)
+                .is_some_and(|detail| detail.contains("units")),
+            "the refusal names the missing source field"
+        );
+        assert!(tree.get("appended").is_none(), "no append side effect");
+    }
+
+    #[test]
+    fn d20_wrong_kind_claim_refuses_even_when_unresolved_is_honest() {
+        let descriptor = Mini.descriptor();
+        let snapshot = schema_file::render(&descriptor);
+        let mut text = String::new();
+        push_json_string(&mut text, &snapshot);
+        let tree = read_envelope(text.as_bytes()).expect("snapshot text is a JSON string");
+        let parsed = schema_file::parse(&snapshot).expect("canonical");
+        let mappings = read_envelope(
+            br#"{"kind":"field","name":"a","scope":"source-field","result":"i64","depth":1}"#,
+        )
+        .expect("mapping parses");
+        let error = bind_scalar_node(&mappings, &parsed).expect_err("u64 field is not i64");
+        assert!(
+            format!("{error:?}").contains("a"),
+            "wrong-kind bind names the field: {error:?}"
+        );
+        let _ = tree;
+    }
+
+    #[test]
+    fn d20_unresolved_field_that_exists_binds_without_claiming_a_kind() {
+        let parsed = schema_file::parse(&mini_snapshot().1).expect("canonical");
+        let mappings = read_envelope(
+            br#"{"kind":"add","scope":"source-field","result":"unresolved","depth":2,"left":{"kind":"field","name":"a","scope":"source-field","result":"unresolved","depth":1},"right":{"kind":"literal","value":{"u64":1},"scope":"source-field","result":"u64","depth":1}}"#,
+        )
+        .expect("L15 arithmetic parses");
+        bind_scalar_node(&mappings, &parsed)
+            .expect("existing source field binds; unresolved is not typechecked");
     }
 }

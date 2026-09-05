@@ -13,7 +13,20 @@ use bumbledb_log::gc::GcPolicy;
 use bumbledb_log::history::authority::{DeleteOutcome, DeletedReason};
 use bumbledb_log::manifest::{RootKind, RootPolicy};
 use bumbledb_log::store::mem::MemStore;
+use bumbledb_log::store::{ObjectRef, ReceiveLimits, TransportContext, get_verified};
 use lane_support::{HEAD_CAP, LIMITS, Mirror, delete_user, insert_user, op, work};
+
+fn try_verified(
+    store: &MemStore,
+    reference: &ObjectRef,
+) -> Result<bumbledb::work::ChargedBytes, bumbledb_log::store::ObjectError> {
+    get_verified(
+        store,
+        "t",
+        reference,
+        TransportContext::new(&work(), ReceiveLimits::exact(reference.length)),
+    )
+}
 
 fn gc_policy() -> GcPolicy {
     GcPolicy {
@@ -78,19 +91,20 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
         .expect("recovery")
         .checkpoint
         .expect("ckpt");
-    let current_bytes =
-        bumbledb_log::store::get_verified(&store, "t", &current_ref).expect("current manifest");
-    let current = bumbledb_log::codec::decode_manifest(&current_bytes, ckpt_policy().stream)
+    let current_bytes = try_verified(&store, &current_ref).expect("current manifest");
+    let current = bumbledb_log::codec::decode_manifest(current_bytes.as_bytes(), ckpt_policy().stream)
         .expect("decodes");
+    drop(current_bytes.into_owner());
     assert_eq!(
         current.rows, 0,
         "the current logical state excludes the value"
     );
     // The retained root still holds the old state until explicit release.
     let old_ref = pinned.recovery.checkpoint.expect("pinned ckpt");
-    let old_bytes = bumbledb_log::store::get_verified(&store, "t", &old_ref).expect("old manifest");
+    let old_bytes = try_verified(&store, &old_ref).expect("old manifest");
     let old =
-        bumbledb_log::codec::decode_manifest(&old_bytes, ckpt_policy().stream).expect("decodes");
+        bumbledb_log::codec::decode_manifest(old_bytes.as_bytes(), ckpt_policy().stream).expect("decodes");
+    drop(old_bytes.into_owner());
     assert_eq!(
         old.rows, 1,
         "retained history intentionally keeps the value"
@@ -136,10 +150,10 @@ fn erase02_tombstone_prevents_publication_preserves_retained_roots_then_collects
     );
     // The retained root's closure survived collection.
     let old_ref = retained.recovery.checkpoint.expect("ckpt");
-    bumbledb_log::store::get_verified(&store, "t", &old_ref).expect("retained closure survives");
+    try_verified(&store, &old_ref).expect("retained closure survives");
     // A delayed old writer cannot publish: ordinary admission refuses on the
     // tombstone, and its stale exact-version CAS loses on the moved head.
-    let refused = admin::fence_revision_hosted(&store, "t", HEAD_CAP, &work());
+    let refused = admin::hosted_result(admin::fence_revision_hosted(&store, "t", HEAD_CAP, &work()));
     assert!(
         refused.is_err(),
         "no maintenance revives a tombstone: {refused:?}"
@@ -158,7 +172,7 @@ fn erase02_tombstone_prevents_publication_preserves_retained_roots_then_collects
     let final_report = erase_hosted(&store, "t", op(0x23), &[], LIMITS, &gc_policy(), &work())
         .expect("later pass");
     assert!(
-        bumbledb_log::store::get_verified(&store, "t", &old_ref).is_err(),
+        try_verified(&store, &old_ref).is_err(),
         "released closure is collected in a later pass"
     );
     assert!(

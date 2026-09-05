@@ -7,15 +7,8 @@
  * Everything effectful is lazy, scoped and bounded; there is no Promise,
  * sync, or disposal twin anywhere on this surface.
  */
-import type {
-	AnySchema,
-	ChangeSet,
-	CloseReport,
-	DbError,
-	ExecutionPolicy,
-	ExecutionSession,
-	QueryReader
-} from "@bjornpagen/bumbledb"
+import type { AnySchema, CloseReport, DbError, ExecutionPolicy, ExecutionSession } from "@bjornpagen/bumbledb"
+import type { Capability, ChangeSet, CompleteResult, QueryReader } from "@bjornpagen/bumbledb/internal/log"
 import type { Effect, Scope } from "effect"
 import type { LogError } from "#errors.ts"
 import type {
@@ -35,12 +28,21 @@ export interface PublishedSnapshot<S extends AnySchema> extends QueryReader<S> {
 	readonly decisionStamp: DecisionStamp
 	readonly stateStamp: StateStamp
 	readonly freshness: Freshness
+	/** Core QueryReader.execute: the CompleteResult owner, not a copied page. */
+	execute: QueryReader<S>["execute"]
 	session(work: ExecutionPolicy): Effect.Effect<ExecutionSession<S>, DbError, Scope.Scope>
 	close(): Effect.Effect<CloseReport>
 }
 
+/** Published snapshot is a QueryReader over a native Capability, never a writable Db. */
+export type PublishedCapability = Capability
+/** Re-export so execute sites name the core CompleteResult owner. */
+export type { CompleteResult }
+
 export interface Command<S extends AnySchema> {
 	readonly ref: CommandRef
+	/** Phantom schema brand: a command submits only to its own S's history. */
+	readonly schema?: S
 	close(): Effect.Effect<CloseReport>
 }
 

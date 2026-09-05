@@ -1523,30 +1523,82 @@ pub(crate) fn answers_out(answers: &Answers) -> Vec<Vec<ValueOut>> {
     (0..answers.len())
         .map(|row| {
             (0..answers.arity())
-                .map(|column| match answers.get(row, column) {
-                    AnswerValue::Bool(v) => ValueOut::Bool(v),
-                    AnswerValue::U64(v) => ValueOut::U64(v),
-                    AnswerValue::I64(v) => ValueOut::I64(v),
-                    AnswerValue::F64(v) => ValueOut::F64(v),
-                    AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
-                    AnswerValue::Id128(v) => ValueOut::Id128(id128_hex(v)),
-                    AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_vec()),
-                    AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
-                        start: v.start(),
-                        end: v.end(),
-                    },
-                    AnswerValue::IntervalI64(v) => ValueOut::IntervalI64 {
-                        start: v.start(),
-                        end: v.end(),
-                    },
-                    AnswerValue::IntervalF64(v) => ValueOut::IntervalF64 {
-                        start: v.start(),
-                        end: v.end(),
-                    },
-                })
+                .map(|column| value_out_from_answer(answers.get(row, column)))
                 .collect()
         })
         .collect()
+}
+
+fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
+    match value {
+        AnswerValue::Bool(v) => ValueOut::Bool(v),
+        AnswerValue::U64(v) => ValueOut::U64(v),
+        AnswerValue::I64(v) => ValueOut::I64(v),
+        AnswerValue::F64(v) => ValueOut::F64(v),
+        AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
+        AnswerValue::Id128(v) => ValueOut::Id128(id128_hex(v)),
+        AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_vec()),
+        AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
+            start: v.start(),
+            end: v.end(),
+        },
+        AnswerValue::IntervalI64(v) => ValueOut::IntervalI64 {
+            start: v.start(),
+            end: v.end(),
+        },
+        AnswerValue::IntervalF64(v) => ValueOut::IntervalF64 {
+            start: v.start(),
+            end: v.end(),
+        },
+    }
+}
+
+/// Logical outbound size of one answer cell (payload plus a fixed word).
+pub(crate) fn answer_cell_bytes(value: AnswerValue<'_>) -> u64 {
+    8 + match value {
+        AnswerValue::String(text) => text.len() as u64,
+        AnswerValue::Id128(_) => 32,
+        AnswerValue::FixedBytes(bytes) => bytes.len() as u64,
+        AnswerValue::IntervalU64(_) | AnswerValue::IntervalI64(_) | AnswerValue::IntervalF64(_) => {
+            16
+        }
+        _ => 8,
+    }
+}
+
+/// Bound every cell's string/byte work, then report the page charge.
+pub(crate) fn answers_out_bytes(
+    work: &bumbledb::work::WorkContext,
+    answers: &Answers,
+) -> Result<u64, bumbledb::work::WorkError> {
+    let mut bytes = 0u64;
+    for row in 0..answers.len() {
+        for column in 0..answers.arity() {
+            work.step(1)?;
+            let cell = answers.get(row, column);
+            let size = answer_cell_bytes(cell);
+            match cell {
+                AnswerValue::String(text) => work.input(text.len() as u64)?,
+                AnswerValue::FixedBytes(payload) => work.input(payload.len() as u64)?,
+                _ => {}
+            }
+            bytes = bytes.saturating_add(size);
+        }
+    }
+    Ok(bytes)
+}
+
+/// Reserve overlapping result charge, then copy. Never convert first.
+pub(crate) fn answers_out_charged(
+    work: &bumbledb::work::WorkContext,
+    answers: &Answers,
+) -> Result<(Vec<Vec<ValueOut>>, bumbledb::work::ByteReservation), crate::runtime::RuntimeError>
+{
+    let bytes = answers_out_bytes(work, answers).map_err(crate::runtime::RuntimeError::from)?;
+    let charge = work
+        .reserve(bumbledb::work::ByteKind::Result, bytes)
+        .map_err(crate::runtime::RuntimeError::from)?;
+    Ok((answers_out(answers), charge))
 }
 
 fn statement_kind_out(kind: StatementKind) -> &'static str {

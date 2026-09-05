@@ -4,9 +4,12 @@
 //! captured head, uploads the one immutable decision object, then conditionally
 //! replaces HEAD. The successful atomic replacement is the linearization point;
 //! only then does the local LMDB transaction commit. A losing CAS re-evaluates
-//! the *same* immutable command against the winner. An unknown CAS/upload never
-//! becomes a fabricated success or rejection — it resolves by reading the head
-//! and the retained receipt, or returns `OutcomeUnknown` with the retained ref.
+//! the *same* immutable command against the winner. An unknown CAS/upload —
+//! including an adapter transport error DURING the dispatched CAS — never
+//! becomes a fabricated success, rejection or `NotSubmitted`: it resolves by
+//! reading the head and the retained receipt (a receipt is the decision; a
+//! consumed version token with no receipt is a proven loss that re-attempts),
+//! or returns `OutcomeUnknown` with the retained ref when nothing is provable.
 //!
 //! The remote HEAD body is the composed [`crate::manifest::HeadRecord`] (C08):
 //! P04's authority control projection embedded verbatim inside P05's retention
@@ -36,6 +39,8 @@ use bumbledb::integration::{AttachmentChange, HostChanges};
 use bumbledb::{ChangeSet, Db, WorkContext};
 
 use crate::apply::{self, ApplyError};
+use crate::certainty::{CoveredNegativeProof, LocalParent, SubmitCertainty};
+use crate::history::admission::{Resolution, Refusal};
 use crate::checkpointer::{Headroom, admission_headroom};
 use crate::history::admission::Submission;
 use crate::history::authority::{
@@ -43,22 +48,41 @@ use crate::history::authority::{
 };
 use crate::history::command::{Command, Limits};
 use crate::history::decision::{self, GenesisProvenance, GenesisRecord};
+use crate::history::locator::{ChainVisitor, walk_decision_chain};
 use crate::history::receipt::{decode_receipt_row, receipt_key};
 use crate::history::{
-    CommandId, CommandRef, DatabaseId, DatabaseIdentity, DecisionStamp, IncarnationId, OperationId,
+    CommandRef, DatabaseId, DatabaseIdentity, DecisionStamp, IncarnationId, OperationId,
     SchemaId, TerminalReceipt,
 };
 use crate::manifest::{self, HeadRecord, TailPolicy};
-use crate::store::{self, BackendError, ObjectError, ObjectKind};
+use crate::replica::WitnessCheck;
+use crate::store::{
+    self, BackendError, ChargedBytes, ObjectError, ObjectKind, ObservedError, ReceiveLimits,
+    ReceivedHead, ReceivingStore, TransportContext, TransportObservation, read_head_bounded,
+};
 
 use super::decide::{self, Judged, Plan, RealPrepared};
-use super::verbs::{ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion};
+use super::verbs::{ConditionalOutcome, HeadVersion};
 use super::{LocalHealth, LogError, ResolveOutcome, SubmitOutcome};
 
 /// Default bounded publication-attempt budget across CAS losses.
 pub const DEFAULT_ATTEMPTS: u32 = 16;
 /// Default bounded catch-up decisions applied per refresh.
 pub const DEFAULT_CATCH_UP: u32 = 4096;
+/// The default FINITE durable-tail envelope every hosted machine enforces
+/// (C08). `create`/`open` start here; `UNBOUNDED` exists only by explicit
+/// [`HostedHistory::with_tail_policy`] configuration — an unconfigured
+/// deployment must not grow an unbounded tail.
+///
+/// The bounds are justified against the machine's own walk budget: a tail of
+/// at most [`DEFAULT_CATCH_UP`] decisions means any warm cache inside the
+/// tail window catches up (or witnesses ancestry) within one default-budget
+/// walk, and the 1 GiB byte bound caps cold recovery's tail-replay I/O
+/// whatever the individual decision sizes are.
+pub const DEFAULT_TAIL_POLICY: TailPolicy = TailPolicy {
+    max_count: DEFAULT_CATCH_UP as u64,
+    max_bytes: 1 << 30,
+};
 /// The machine's own per-delay backoff bound: a per-call override can never
 /// park an owning worker longer than this between contended attempts,
 /// whatever the wire requested.
@@ -124,9 +148,10 @@ pub struct HostedHistory<S, B> {
     prefix: String,
     identity: DatabaseIdentity,
     limits: Limits,
-    /// The configured durable-tail envelope (C08). `UNBOUNDED` until a
-    /// deployment qualifies one; the composed-head grammar enforces whatever
-    /// is configured on every decided composition, no-ops included.
+    /// The configured durable-tail envelope (C08). Starts at the finite
+    /// [`DEFAULT_TAIL_POLICY`]; `UNBOUNDED` only by the explicit
+    /// [`Self::with_tail_policy`] option. The composed-head grammar enforces
+    /// whatever is configured on every decided composition, no-ops included.
     tail_policy: TailPolicy,
     attempts: u32,
     catch_up_bound: u32,
@@ -134,18 +159,28 @@ pub struct HostedHistory<S, B> {
 
 impl<S, B> HostedHistory<S, B>
 where
-    B: ConditionalStore,
-    B::Error: BackendError,
+    B: ReceivingStore,
+    B::Error: BackendError + ObservedError,
 {
     /// Create a hosted incarnation: install the genesis composed head by
     /// conditional create. The local materialization is initialized to the
-    /// same genesis. Refuses an existing head. `object_epoch` is the initial
-    /// open object epoch recorded in the genesis head (GC barriers advance it
-    /// afterwards; this machine reads the current epoch from the head).
+    /// same genesis. Refuses a foreign existing head. `object_epoch` is the
+    /// initial open object epoch recorded in the genesis head (GC barriers
+    /// advance it afterwards; this machine reads the current epoch from the
+    /// head).
+    ///
+    /// Creation certainty is resolved by EVIDENCE, never by status guessing
+    /// (the backup manifest install pattern): a create whose conditional
+    /// outcome is ambiguous — or whose precondition failed — reads the head
+    /// back and compares it against this call's deterministic genesis. Our
+    /// own bytes (or our own activation evidence on an advanced head) are an
+    /// idempotent created-by-us success; foreign bytes are a real
+    /// `CommandIdentityConflict` (the wire's `AuthorityExists`); an unreadable
+    /// head stays unknown-typed (`Backend`), never a fabricated refusal.
     ///
     /// # Errors
-    /// Refuses an existing head, a foreign-schema local database, backend
-    /// failures and frame/work limits.
+    /// Refuses a foreign existing head (`CommandIdentityConflict`), a
+    /// foreign-schema local database, backend failures and frame/work limits.
     #[allow(clippy::too_many_arguments)]
     pub fn create(
         db: Arc<Db<S>>,
@@ -185,15 +220,25 @@ where
         write_local_genesis(&db, &authority, limits, work)?;
         let head_key = store::head_key(&prefix);
         let body = manifest::genesis_head_body(&authority, object_epoch, limits.envelope_bytes)?;
-        match backend
-            .create_head(&head_key, &body)
-            .map_err(|_| LogError::Backend)?
-        {
-            ConditionalOutcome::Published { .. } => {}
-            ConditionalOutcome::PreconditionFailed => {
-                return Err(LogError::CommandIdentityConflict);
+        match backend.create_head(&head_key, &body) {
+            Ok(ConditionalOutcome::Published { .. }) => {}
+            // Publication is only a typed Published arm. Predispatch
+            // PreconditionFailed, typed Indeterminate, and transport
+            // observations (Denied/Capped/generic Indeterminate) are not
+            // published or lost — resolve by reading the evidence.
+            Ok(ConditionalOutcome::PreconditionFailed | ConditionalOutcome::Indeterminate)
+            | Err(_) => {
+                resolve_create_evidence(
+                    &backend,
+                    &head_key,
+                    &body,
+                    identity,
+                    operation,
+                    genesis.hash,
+                    limits,
+                    work,
+                )?;
             }
-            ConditionalOutcome::Indeterminate => return Err(LogError::Backend),
         }
         Ok(Self {
             db,
@@ -201,7 +246,7 @@ where
             prefix,
             identity,
             limits,
-            tail_policy: TailPolicy::UNBOUNDED,
+            tail_policy: DEFAULT_TAIL_POLICY,
             attempts: DEFAULT_ATTEMPTS,
             catch_up_bound: DEFAULT_CATCH_UP,
         })
@@ -223,13 +268,7 @@ where
         work: &WorkContext,
     ) -> Result<Self, LogError> {
         let head_key = store::head_key(&prefix);
-        let record = match backend
-            .read_head(&head_key)
-            .map_err(|_| LogError::Backend)?
-        {
-            HeadRead::Present { body, .. } => decode_record(&body, limits)?,
-            HeadRead::Absent => return Err(LogError::NotInitialized),
-        };
+        let record = read_decoded_head(&backend, &head_key, limits, work)?;
         if record.control.identity.schema_id != fingerprint(&db) {
             return Err(LogError::Identity);
         }
@@ -239,7 +278,7 @@ where
             prefix,
             identity: record.control.identity,
             limits,
-            tail_policy: TailPolicy::UNBOUNDED,
+            tail_policy: DEFAULT_TAIL_POLICY,
             attempts: DEFAULT_ATTEMPTS,
             catch_up_bound: DEFAULT_CATCH_UP,
         };
@@ -265,10 +304,23 @@ where
 
     /// Configure the durable-tail envelope this writer enforces (C08). The
     /// values are deployment-qualified policy; the composed head refuses any
-    /// decided composition that would exceed them.
+    /// decided composition that would exceed them. Machines start at the
+    /// finite [`DEFAULT_TAIL_POLICY`]; [`TailPolicy::UNBOUNDED`] is available
+    /// only through this explicit option.
     #[must_use]
     pub const fn with_tail_policy(mut self, policy: TailPolicy) -> Self {
         self.tail_policy = policy;
+        self
+    }
+
+    /// Configure the bounded decision-window walk budget shared by catch-up
+    /// and the ancestry witness ([`Self::witness_ancestor`]). At least one
+    /// step is always taken; the budget bounds fetches, never correctness —
+    /// an exhausted witness budget is `WitnessUnavailable`, and an exhausted
+    /// catch-up reports failure rather than a partial materialization.
+    #[must_use]
+    pub const fn with_catch_up_bound(mut self, bound: u32) -> Self {
+        self.catch_up_bound = if bound == 0 { 1 } else { bound };
         self
     }
 
@@ -277,6 +329,48 @@ where
     #[must_use]
     pub fn submit(&self, command: &Command, work: &WorkContext) -> SubmitOutcome {
         self.submit_with(command, SubmitOptions::DEFAULT, work)
+    }
+
+    /// Submit with per-call bounds, returning phase-carrying certainty for the
+    /// native bridge (chapter 61 captured authority).
+    #[must_use]
+    pub fn submit_certain_with(
+        &self,
+        command: &Command,
+        options: SubmitOptions,
+        work: &WorkContext,
+    ) -> SubmitCertainty {
+        let reference = command.command_ref();
+        match self.try_submit(command, options, work) {
+            Ok(SubmitOutcome::Decided {
+                receipt,
+                local_health,
+            }) => SubmitCertainty::Decided {
+                receipt,
+                local_health,
+            },
+            Ok(SubmitOutcome::NotSubmitted { command, error }) => SubmitCertainty::NotSubmitted {
+                command,
+                error,
+            },
+            Ok(SubmitOutcome::OutcomeUnknown { command, error }) => {
+                SubmitCertainty::OutcomeUnknown { command, error }
+            }
+            Err(SubmitFailure::NotSubmitted(error)) => SubmitCertainty::NotSubmitted {
+                command: reference,
+                error,
+            },
+            Err(SubmitFailure::Unknown(error)) => SubmitCertainty::OutcomeUnknown {
+                command: reference,
+                error,
+            },
+        }
+    }
+
+    /// Phase-carrying submit under the machine's configured bounds.
+    #[must_use]
+    pub fn submit_certain(&self, command: &Command, work: &WorkContext) -> SubmitCertainty {
+        self.submit_certain_with(command, SubmitOptions::DEFAULT, work)
     }
 
     /// Submit with per-call bounds (the C09 `SubmitOptions` wire seam,
@@ -316,36 +410,43 @@ where
             return Err(SubmitFailure::NotSubmitted(LogError::Identity));
         }
         let attempts = effective_attempts(self.attempts, options.attempts);
+        let mut dispatched = false;
         for attempt in 0..attempts {
-            work.checkpoint()
-                .map_err(|e| SubmitFailure::NotSubmitted(e.into()))?;
-            let head_key = store::head_key(&self.prefix);
-            let (record, body, version) = match self
-                .backend
-                .read_head(&head_key)
-                .map_err(|_| LogError::Backend)?
-            {
-                HeadRead::Present { version, body } => {
-                    let record = decode_record(&body, self.limits)?;
-                    (record, body, version)
-                }
-                HeadRead::Absent => {
-                    return Err(SubmitFailure::NotSubmitted(LogError::NotInitialized));
+            let predispatch = |error: LogError| {
+                if dispatched {
+                    SubmitFailure::Unknown(error)
+                } else {
+                    SubmitFailure::NotSubmitted(error)
                 }
             };
+            work.checkpoint()
+                .map_err(|e| predispatch(e.into()))?;
+            let head_key = store::head_key(&self.prefix);
+            let (record, version, body) = read_captured_head(
+                &self.backend,
+                &head_key,
+                self.limits,
+                work,
+            )
+            .map_err(predispatch)?;
             // Bring the local materialization to this captured tip before
             // preparing a candidate against it.
             self.catch_up_to(&record, work)
-                .map_err(SubmitFailure::NotSubmitted)?;
+                .map_err(predispatch)?;
 
-            let retained = self
-                .retained(reference.id, work)
-                .map_err(SubmitFailure::NotSubmitted)?;
+            let frontier = self.local_frontier(reference, work).map_err(predispatch)?;
+            if frontier.row_present && frontier.receipt.is_none() {
+                return Err(predispatch(LogError::IncompleteRejectionEvidence));
+            }
             let view = record
                 .control
                 .admission_view()
-                .ok_or(SubmitFailure::NotSubmitted(LogError::DatabaseDeleted))?;
-            let plan = match view.submit(reference, command.metadata().condition, retained.as_ref())
+                .ok_or_else(|| predispatch(LogError::DatabaseDeleted))?;
+            let plan = match view.submit(
+                reference,
+                command.metadata().condition,
+                frontier.receipt.as_ref(),
+            )
             {
                 Ok(Submission::AlreadyDecided(receipt)) => {
                     return Ok(SubmitOutcome::Decided {
@@ -357,7 +458,7 @@ where
                     Plan::PreconditionFailed { expected, observed }
                 }
                 Ok(Submission::Evaluate) => Plan::Evaluate,
-                Err(refusal) => return Err(SubmitFailure::NotSubmitted(refusal.into())),
+                Err(refusal) => return Err(predispatch(refusal.into())),
             };
 
             // Envelope backpressure (C08): a retained receipt above still
@@ -370,7 +471,7 @@ where
                     Headroom::MaintenanceRequired
                 )
             {
-                return Err(SubmitFailure::NotSubmitted(LogError::MaintenanceRequired {
+                return Err(predispatch(LogError::MaintenanceRequired {
                     count: recovery.tail_count(),
                     bytes: recovery.tail_bytes,
                 }));
@@ -379,7 +480,15 @@ where
             // `attempt_publish` returns with its writer session already
             // dropped, so resolving an unknown CAS here cannot deadlock on the
             // writer lock.
-            match self.attempt_publish(command, &record, &body, &version, plan, work)? {
+            match self.attempt_publish(
+                command,
+                &record,
+                body.as_bytes(),
+                &version,
+                plan,
+                dispatched,
+                work,
+            )? {
                 AttemptResult::Published {
                     receipt,
                     local_health,
@@ -399,19 +508,39 @@ where
                         std::thread::sleep(delay);
                     }
                 }
-                AttemptResult::Unknown { stamp } => {
-                    return match self.resolve_after_unknown(reference, stamp, work)? {
-                        AttemptResult::Published {
+                AttemptResult::Unknown { stamp, attempted } => {
+                    dispatched = true;
+                    match self.resolve_after_unknown(reference, stamp, &attempted, work)? {
+                        UnknownResolution::Decided {
                             receipt,
                             local_health,
-                        } => Ok(SubmitOutcome::Decided {
-                            receipt,
-                            local_health,
-                        }),
-                        AttemptResult::Lost | AttemptResult::Unknown { .. } => {
-                            Err(SubmitFailure::Unknown(LogError::Backend))
+                        } => {
+                            return Ok(SubmitOutcome::Decided {
+                                receipt,
+                                local_health,
+                            });
                         }
-                    };
+                        // The version token this attempt conditioned on was
+                        // consumed by ANOTHER writer and the complete retained
+                        // lookup after catch-up holds no receipt for this
+                        // command: the dispatched CAS provably lost and can
+                        // never win (head versions are never reused). Chapter
+                        // 20's ladder: a proven loss re-attempts under the
+                        // bounded budget, exactly like a typed CAS loss.
+                        UnknownResolution::ProvenLoss => {
+                            if attempt + 1 < attempts
+                                && let Some(delay) = backoff_delay(options, attempt)
+                            {
+                                std::thread::sleep(delay);
+                            }
+                        }
+                        UnknownResolution::ExpiredUnprovable => {
+                            return Err(SubmitFailure::Unknown(LogError::ReceiptExpiredUnknown));
+                        }
+                        UnknownResolution::Unresolved => {
+                            return Err(SubmitFailure::Unknown(LogError::Backend));
+                        }
+                    }
                 }
             }
         }
@@ -427,49 +556,67 @@ where
         parent_body: &[u8],
         version: &HeadVersion,
         plan: Plan,
+        already_dispatched: bool,
         work: &WorkContext,
     ) -> Result<AttemptResult, SubmitFailure> {
+        let fail = |error: LogError| {
+            if already_dispatched {
+                SubmitFailure::Unknown(error)
+            } else {
+                SubmitFailure::NotSubmitted(error)
+            }
+        };
         // Prepare and seal the private candidate on the owning worker. The
         // sealed LMDB transaction is held across the remote attempt and only
-        // commits after publication is known.
+        // commits after publication is known. Encode/admit bytes before the
+        // HEAD CAS (C5).
         let mut session = self
             .db
             .integration_writer(work)
-            .map_err(|e| SubmitFailure::NotSubmitted(e.into()))?;
+            .map_err(|e| fail(e.into()))?;
         let schema = self.db.schema();
         let authority = &parent.control;
+        let parent_object = parent.recovery.and_then(|recovery| recovery.tip_object);
         let candidate = match plan {
             Plan::PreconditionFailed { expected, observed } => {
-                let prepared = decide::prepare_empty(&mut session, schema, work)
-                    .map_err(SubmitFailure::NotSubmitted)?;
+                let prepared = decide::prepare_empty(&mut session, schema, work).map_err(fail)?;
                 decide::seal_candidate(
                     prepared,
                     authority,
                     command,
                     Judged::PreconditionFailed { expected, observed },
+                    parent_object,
                     self.limits,
                 )
-                .map_err(SubmitFailure::NotSubmitted)?
+                .map_err(fail)?
             }
             Plan::Evaluate => {
                 match decide::prepare_real(&mut session, schema, command, self.limits, work)
-                    .map_err(SubmitFailure::NotSubmitted)?
+                    .map_err(fail)?
                 {
                     RealPrepared::Admitted { prepared, judged } => {
-                        decide::seal_candidate(prepared, authority, command, judged, self.limits)
-                            .map_err(SubmitFailure::NotSubmitted)?
+                        decide::seal_candidate(
+                            prepared,
+                            authority,
+                            command,
+                            judged,
+                            parent_object,
+                            self.limits,
+                        )
+                        .map_err(fail)?
                     }
                     RealPrepared::Rejected { evidence } => {
-                        let prepared = decide::prepare_empty(&mut session, schema, work)
-                            .map_err(SubmitFailure::NotSubmitted)?;
+                        let prepared =
+                            decide::prepare_empty(&mut session, schema, work).map_err(fail)?;
                         decide::seal_candidate(
                             prepared,
                             authority,
                             command,
                             Judged::InvariantRejected { evidence },
+                            parent_object,
                             self.limits,
                         )
-                        .map_err(SubmitFailure::NotSubmitted)?
+                        .map_err(fail)?
                     }
                 }
             }
@@ -480,37 +627,35 @@ where
         // open object epoch (the GC reference-introduction rule). Immutable
         // content equality absorbs an ambiguous re-PUT; an unresolved upload
         // is a local abort — the candidate was never proven durable, no CAS.
-        match store::put_verified(
+        let decision_ref = match store::put_verified(
             &self.backend,
             &self.prefix,
             parent.object_epoch,
             ObjectKind::Decision,
             &candidate.decision_bytes,
         ) {
-            Ok(_) => {}
+            Ok(reference) => reference,
             Err(error) => {
-                return Err(SubmitFailure::NotSubmitted(map_object_error(&error)));
+                return Err(fail(map_object_error(&error)));
             }
-        }
+        };
 
         // Compose HEAD' from this exact parent body — control advanced,
         // retention fields preserved, tail accounting grown and the envelope
-        // enforced — and conditionally replace it.
+        // enforced — and conditionally replace it. Encoding finishes before
+        // the dispatch boundary.
         let body = manifest::decided_head_body(
             parent_body,
             &candidate.new_authority,
             candidate.decision_bytes.len() as u64,
+            Some(decision_ref),
             &self.tail_policy,
             self.limits.envelope_bytes,
         )
-        .map_err(|error| SubmitFailure::NotSubmitted(error.into()))?;
+        .map_err(|error| fail(error.into()))?;
         let head_key = store::head_key(&self.prefix);
-        match self
-            .backend
-            .replace_head(&head_key, version, &body)
-            .map_err(|_| LogError::Backend)?
-        {
-            ConditionalOutcome::Published { .. } => {
+        match self.backend.replace_head(&head_key, version, &body) {
+            Ok(ConditionalOutcome::Published { .. }) => {
                 let receipt = candidate.receipt.clone();
                 // Publication known: commit/apply the local transaction. A
                 // local commit failure keeps the Published receipt with
@@ -528,62 +673,106 @@ where
                     }),
                 }
             }
-            ConditionalOutcome::PreconditionFailed => {
-                // Another writer won this head. Abort the private candidate
-                // (drop the sealed transaction) and retry the same command.
+            Ok(ConditionalOutcome::PreconditionFailed) => {
                 drop(candidate);
                 Ok(AttemptResult::Lost)
             }
-            ConditionalOutcome::Indeterminate => {
-                // The CAS outcome is unknown. Abort the private candidate so the
-                // writer session releases at return; the caller resolves the
-                // uncertainty once the writer lock is free.
+            Ok(ConditionalOutcome::Indeterminate) => {
+                let attempted = version.clone();
                 drop(candidate);
-                Ok(AttemptResult::Unknown { stamp })
+                Ok(AttemptResult::Unknown { stamp, attempted })
+            }
+            Err(error) => {
+                // Transport observations are never a publication verdict.
+                match error.observation() {
+                    TransportObservation::Missing
+                    | TransportObservation::Denied
+                    | TransportObservation::Bucket
+                    | TransportObservation::Region
+                    | TransportObservation::Precondition
+                    | TransportObservation::Conflict
+                    | TransportObservation::Capped
+                    | TransportObservation::Indeterminate => {
+                        let attempted = version.clone();
+                        drop(candidate);
+                        Ok(AttemptResult::Unknown { stamp, attempted })
+                    }
+                }
             }
         }
     }
 
-    // After an unknown CAS, read the head and the retained receipt to decide
-    // whether this exact decision published. A fresh head at our stamp, or a
-    // retained receipt for our command, is publication; otherwise uncertainty.
+    // After an unknown CAS, install the applicable authority then read one
+    // owned local snapshot of control + receipt (C5 / LOG-005). A remote
+    // retirement floor plus a later unrelated local lookup is not a proof.
+    // Changed HEAD alone is never proved loss; retirement is expired-unprovable.
     fn resolve_after_unknown(
         &self,
         reference: CommandRef,
         stamp: DecisionStamp,
+        attempted: &HeadVersion,
         work: &WorkContext,
-    ) -> Result<AttemptResult, SubmitFailure> {
+    ) -> Result<UnknownResolution, SubmitFailure> {
         let head_key = store::head_key(&self.prefix);
-        let record = match self
-            .backend
-            .read_head(&head_key)
-            .map_err(|_| LogError::Backend)?
-        {
-            HeadRead::Present { body, .. } => {
-                decode_record(&body, self.limits).map_err(SubmitFailure::Unknown)?
-            }
-            HeadRead::Absent => return Err(SubmitFailure::Unknown(LogError::Backend)),
-        };
-        // Catch up so the retained receipt is locally visible if it published.
+        let (record, current, charged) = read_captured_head(
+            &self.backend,
+            &head_key,
+            self.limits,
+            work,
+        )
+        .map_err(SubmitFailure::Unknown)?;
+        drop(charged);
         self.catch_up_to(&record, work)
             .map_err(SubmitFailure::Unknown)?;
-        if let Some(receipt) = self
-            .retained(reference.id, work)
-            .map_err(SubmitFailure::Unknown)?
-            && receipt.command.digest == reference.digest
-            && receipt.decision_at == stamp
-        {
-            return Ok(AttemptResult::Published {
+        let frontier = self
+            .local_frontier(reference, work)
+            .map_err(SubmitFailure::Unknown)?;
+        if let Some(receipt) = frontier.receipt {
+            let _ = stamp;
+            if receipt.command.digest != reference.digest {
+                return Err(SubmitFailure::Unknown(LogError::CommandIdentityConflict));
+            }
+            return Ok(UnknownResolution::Decided {
                 receipt,
-                local_health: self.local_health(&record.control, work),
+                local_health: self.local_health(&frontier.control, work),
             });
         }
-        // Either the head advanced to exactly our decision (publication proven
-        // but the receipt is not yet locally materialized) or it moved past a
-        // version we could still win. In both cases this invocation cannot
-        // establish the terminal receipt: the retained ref resolves it later.
-        let _ = stamp;
-        Err(SubmitFailure::Unknown(LogError::Backend))
+        if frontier.row_present {
+            // A present row that failed optional diagnostic decode is not
+            // absence (LOG-029). The original identity stays resolvable.
+            return Ok(UnknownResolution::Unresolved);
+        }
+        let version_consumed = current != *attempted;
+        if !version_consumed {
+            return Ok(UnknownResolution::Unresolved);
+        }
+        let view = frontier
+            .control
+            .admission_view()
+            .ok_or(SubmitFailure::Unknown(LogError::DatabaseDeleted))?;
+        let decision_at = match view.resolve(reference, None) {
+            Err(Refusal::ReceiptExpiredUnknown) => {
+                return Ok(UnknownResolution::ExpiredUnprovable);
+            }
+            Ok(Resolution::NotRecordedAt { decision_at }) => decision_at,
+            Err(Refusal::CommandEpochClosed) => view.decision,
+            Ok(Resolution::Found(_)) => unreachable!("same snapshot had no receipt"),
+            Err(refusal) => return Err(SubmitFailure::Unknown(refusal.into())),
+        };
+        match CoveredNegativeProof::try_covered_loss(
+            reference,
+            attempted.0.clone(),
+            frontier.control.identity,
+            decision_at,
+            frontier.control.revision,
+            view.receipts.retired_through(),
+            view.receipts.open_epoch(),
+            true,
+            frontier.row_present,
+        ) {
+            Some(_) => Ok(UnknownResolution::ProvenLoss),
+            None => Ok(UnknownResolution::ExpiredUnprovable),
+        }
     }
 
     /// Resolve a retained ref against the current head and local receipt state.
@@ -599,21 +788,19 @@ where
             return Err(LogError::Identity);
         }
         let head_key = store::head_key(&self.prefix);
-        let record = match self
-            .backend
-            .read_head(&head_key)
-            .map_err(|_| LogError::Backend)?
-        {
-            HeadRead::Present { body, .. } => decode_record(&body, self.limits)?,
-            HeadRead::Absent => return Err(LogError::NotInitialized),
-        };
+        let record = read_decoded_head(&self.backend, &head_key, self.limits, work)?;
         self.catch_up_to(&record, work)?;
-        let retained = self.retained(command.id, work)?;
-        let view = record
+        let frontier = self.local_frontier(command, work)?;
+        let view = frontier
             .control
             .admission_view()
             .ok_or(LogError::DatabaseDeleted)?;
-        match view.resolve(command, retained.as_ref()) {
+        if frontier.row_present && frontier.receipt.is_none() {
+            // Present receipt row, diagnostic decode failed: not absence
+            // and not a discarded decided receipt (LOG-029).
+            return Err(LogError::IncompleteRejectionEvidence);
+        }
+        match view.resolve(command, frontier.receipt.as_ref()) {
             Ok(crate::history::admission::Resolution::Found(receipt)) => {
                 Ok(ResolveOutcome::Found(receipt.clone()))
             }
@@ -647,14 +834,7 @@ where
     /// `MaterializationStale`, corruption evidence and backend failures.
     pub fn catch_up(&self, work: &WorkContext) -> Result<DecisionStamp, LogError> {
         let head_key = store::head_key(&self.prefix);
-        let record = match self
-            .backend
-            .read_head(&head_key)
-            .map_err(|_| LogError::Backend)?
-        {
-            HeadRead::Present { body, .. } => decode_record(&body, self.limits)?,
-            HeadRead::Absent => return Err(LogError::NotInitialized),
-        };
+        let record = read_decoded_head(&self.backend, &head_key, self.limits, work)?;
         let target = record
             .control
             .position()
@@ -664,13 +844,111 @@ where
         Ok(target)
     }
 
-    /// Walk decision objects from the captured tip back to the local decision,
-    /// then apply them forward. Decisions are fetched through the bounded
-    /// epoch window `[recovery.epoch_floor, head.object_epoch]` (a decision
-    /// lives under the epoch open at its publication; barriers advance the
-    /// epoch afterwards). Bounded by the catch-up budget; a missing protected
-    /// decision is corruption, and a local cache older than the checkpoint
-    /// base is `MaterializationStale` — never an empty fallback.
+    /// Bounded same-lineage ancestry check over RETAINED authoritative
+    /// evidence (chapter 20 receipts/roots / chapter 30 `AtLeast`): prove
+    /// that `requested` is an ancestor of the CAPTURED `tip` using the
+    /// composed head's root evidence and the protected decision chain — a
+    /// sequence-zero request is judged against the one-time activation
+    /// evidence, the checkpoint base stamp is itself root evidence, and any
+    /// other retained height is reached by walking the verified decision
+    /// objects backward from `tip` (each object is fetched by the digest its
+    /// parent named, so the walk authenticates the exact lineage). Evidence
+    /// pruned below the checkpoint base — or a walk that exhausts the
+    /// bounded window budget — is `WitnessUnavailable`, never a claimed
+    /// validation and never a sequence-integer comparison.
+    ///
+    /// # Errors
+    /// Refuses backend transport failures (`Backend`), verified-object
+    /// corruption, a tombstoned head (`DatabaseDeleted`), a missing head
+    /// (`NotInitialized`) and stopped work.
+    pub fn witness_ancestor(
+        &self,
+        tip: DecisionStamp,
+        requested: DecisionStamp,
+        work: &WorkContext,
+    ) -> Result<WitnessCheck, LogError> {
+        work.checkpoint()?;
+        let head_key = store::head_key(&self.prefix);
+        let record = read_decoded_head(&self.backend, &head_key, self.limits, work)?;
+        if record.control.position().is_none() {
+            return Err(LogError::DatabaseDeleted);
+        }
+        // Exact-height shortcuts over retained control/root evidence.
+        if requested.seq == tip.seq {
+            return Ok(if requested.hash == tip.hash {
+                WitnessCheck::Ancestor
+            } else {
+                WitnessCheck::NotAncestor
+            });
+        }
+        if requested.seq > tip.seq {
+            // A future coordinate is the caller's NotYetAvailable lane, not
+            // an ancestry verdict; nothing retained can witness it.
+            return Ok(WitnessCheck::Unavailable);
+        }
+        if requested.seq == 0 {
+            return Ok(match record.control.activation {
+                crate::history::authority::Activation::Activated { target_genesis, .. } => {
+                    if target_genesis == requested.hash {
+                        WitnessCheck::Ancestor
+                    } else {
+                        WitnessCheck::NotAncestor
+                    }
+                }
+                crate::history::authority::Activation::NotActivated => WitnessCheck::Unavailable,
+            });
+        }
+        let recovery = record.recovery.ok_or(LogError::Corruption)?;
+        if recovery.base.seq == requested.seq {
+            // The checkpoint base stamp IS retained root evidence.
+            return Ok(if recovery.base.hash == requested.hash {
+                WitnessCheck::Ancestor
+            } else {
+                WitnessCheck::NotAncestor
+            });
+        }
+        if requested.seq < recovery.base.seq {
+            // C6: walk stops at the captured base. Below-base evidence is
+            // unavailable, never a private older fetch.
+            return Ok(WitnessCheck::Unavailable);
+        }
+        // Checkpoint-only: base == tip, no tip locator, no suffix walk.
+        if recovery.base == recovery.tip {
+            return Ok(WitnessCheck::Unavailable);
+        }
+        if tip != recovery.tip {
+            return Ok(WitnessCheck::Unavailable);
+        }
+        let tip_object = recovery.tip_object.ok_or(LogError::Corruption)?;
+        let mut budget = self.catch_up_bound as u64;
+        let mut visitor = AncestryVisitor {
+            requested,
+            found: None,
+        };
+        walk_decision_chain(
+            &self.backend,
+            &self.prefix,
+            recovery.tip,
+            recovery.base,
+            Some(tip_object),
+            self.limits,
+            &mut budget,
+            work,
+            &mut visitor,
+        )
+        .map_err(map_object_error)?;
+        Ok(match visitor.found {
+            Some(hash) if hash == requested.hash => WitnessCheck::Ancestor,
+            Some(_) => WitnessCheck::NotAncestor,
+            None => WitnessCheck::Unavailable,
+        })
+    }
+
+    /// Stream the authenticated suffix from the captured tip back to the
+    /// local decision, then apply oldest-first within `catch_up_bound`.
+    /// Checkpoint-only roots (`base == tip`) have no tip locator and cannot
+    /// walk a suffix. A local cache older than the checkpoint base is
+    /// `MaterializationStale` — never an empty fallback or epoch probe.
     fn catch_up_to(&self, record: &HeadRecord, work: &WorkContext) -> Result<(), LogError> {
         let target_stamp = match record.control.position() {
             Some(position) => position.decision,
@@ -681,56 +959,164 @@ where
             .position()
             .map(|position| position.decision)
             .ok_or(LogError::DatabaseDeleted)?;
-        if local_stamp == target_stamp {
+        let target_revision = record.control.revision;
+        let local_revision = local.revision;
+        if local_stamp == target_stamp && local_revision == target_revision {
             return Ok(());
         }
-        // A live composed head names its recovery root (decode invariant).
         let recovery = record.recovery.ok_or(LogError::Corruption)?;
-        // Collect decision bytes from the tip backward until reaching local.
-        let mut pending: Vec<Vec<u8>> = Vec::new();
-        let mut cursor = target_stamp;
-        for _ in 0..self.catch_up_bound {
-            if cursor == local_stamp {
-                break;
-            }
-            if recovery.checkpoint.is_some() && cursor == recovery.base {
-                // The tail stops at the checkpoint base; the decisions below
-                // it may be legitimately collected. This warm cache cannot
-                // catch up — it must rehydrate through recovery (C08).
+        if local_stamp != target_stamp {
+            if recovery.base == recovery.tip {
                 return Err(LogError::MaterializationStale);
             }
-            if cursor.seq == 0 {
-                // Reached a genesis different from the local one: divergent
-                // lineage or missing history.
+            if local_stamp.seq < recovery.base.seq {
+                return Err(LogError::MaterializationStale);
+            }
+            if local_stamp.seq == recovery.base.seq && local_stamp != recovery.base {
                 return Err(LogError::Corruption);
             }
-            let (_, bytes) = store::fetch_decision(
+            if target_stamp != recovery.tip {
+                return Err(LogError::Corruption);
+            }
+            let tip_object = recovery.tip_object.ok_or(LogError::Corruption)?;
+            let mut budget = self.catch_up_bound as u64;
+            let mut visitor = CatchUpBuffer {
+                pending: Vec::new(),
+                cap: self.catch_up_bound,
+            };
+            walk_decision_chain(
                 &self.backend,
                 &self.prefix,
-                recovery.epoch_floor,
-                record.object_epoch,
-                &cursor.hash,
+                recovery.tip,
+                local_stamp,
+                Some(tip_object),
+                self.limits,
+                &mut budget,
+                work,
+                &mut visitor,
             )
-            .map_err(|error| map_object_error(&error))?;
-            let envelope = decision::decode_decision(&bytes, self.limits)?;
-            cursor = envelope.parent;
-            pending.push(bytes);
-            work.checkpoint()?;
+            .map_err(map_object_error)?;
+            // Stream is newest-first; apply the bounded suffix oldest-first.
+            for bytes in visitor.pending.into_iter().rev() {
+                local = apply::materialize(&self.db, &local, &bytes, self.limits, work)
+                    .map_err(map_apply_error)?;
+            }
         }
-        if cursor != local_stamp {
-            return Err(LogError::Backend); // Budget exhausted before catching up.
-        }
-        // Apply forward (oldest first).
-        for bytes in pending.into_iter().rev() {
-            local = apply::materialize(&self.db, &local, &bytes, self.limits, work)
-                .map_err(map_apply_error)?;
+        // Control-only HEAD changes still need installation (LOG-004).
+        if local.revision != target_revision || local != record.control {
+            self.install_captured_control(&record.control, work)?;
         }
         Ok(())
     }
 
-    fn local_authority(&self, _work: &WorkContext) -> Result<HeadAuthority, LogError> {
-        let control = read_attachment(&self.db)?.ok_or(LogError::NotInitialized)?;
+    fn install_captured_control(
+        &self,
+        control: &HeadAuthority,
+        work: &WorkContext,
+    ) -> Result<(), LogError> {
+        let control_bytes =
+            crate::history::authority::encode_control(control, self.limits.envelope_bytes)
+                .map_err(|_| LogError::Corruption)?;
+        let mut session = self
+            .db
+            .integration_writer(work)
+            .map_err(|e| LogError::from(e))?;
+        // Revalidate identity + decision + control under this writer (C5).
+        // Same-tip maintenance is legal; a newer local revision must not regress.
+        let local = read_attachment(&self.db, work)?
+            .ok_or(LogError::NotInitialized)
+            .and_then(|bytes| {
+                decode_control(&bytes, self.limits.envelope_bytes).map_err(LogError::from)
+            })?;
+        if local.identity != control.identity {
+            return Err(LogError::Identity);
+        }
+        match (local.position(), control.position()) {
+            (Some(here), Some(incoming)) if here.decision != incoming.decision => {
+                return Err(LogError::Corruption);
+            }
+            (Some(_), Some(_)) if local.revision.0 > control.revision.0 => {
+                return Err(LogError::Corruption);
+            }
+            _ => {}
+        }
+        if local == *control {
+            return Ok(());
+        }
+        let _captured = LocalParent {
+            identity: local.identity,
+            decision: local
+                .position()
+                .map(|position| position.decision)
+                .ok_or(LogError::DatabaseDeleted)?,
+            revision: local.revision,
+        };
+        let empty = bumbledb::ChangeSet::builder(self.db.schema(), work.clone())
+            .finish()
+            .map_err(|e| LogError::Core(e.into()))?;
+        let prepared = match session.prepare(&empty)? {
+            bumbledb::Admission::Accepted(prepared) => prepared,
+            bumbledb::Admission::Rejected(_) => return Err(LogError::Corruption),
+        };
+        prepared
+            .seal(bumbledb::integration::HostChanges {
+                records: &[],
+                attachment: bumbledb::integration::AttachmentChange::Put(&control_bytes),
+            })
+            .map_err(|e| LogError::from(e))?
+            .commit()
+            .map_err(|e| LogError::from(e))?;
+        Ok(())
+    }
+
+    fn local_authority(&self, work: &WorkContext) -> Result<HeadAuthority, LogError> {
+        let control = read_attachment(&self.db, work)?.ok_or(LogError::NotInitialized)?;
         Ok(decode_control(&control, self.limits.envelope_bytes)?)
+    }
+
+    /// Control and receipt from one owned read (C5 coherent frontier).
+    fn local_frontier(
+        &self,
+        command: CommandRef,
+        work: &WorkContext,
+    ) -> Result<LocalFrontier, LogError> {
+        work.checkpoint()?;
+        let key = receipt_key(command.id);
+        let scoped = CommandRef {
+            identity: self.identity,
+            id: command.id,
+            digest: crate::history::CommandDigest::from_bytes([0; 32]),
+        };
+        let mut attachment = None;
+        let mut row = None;
+        let mut host_error = None;
+        self.db.read(work.clone(), |read| {
+            attachment = read.integration_host_attachment()?.map(<[u8]>::to_vec);
+            match read.integration_host_record(&key) {
+                Ok(record) => row = record.map(<[u8]>::to_vec),
+                Err(error) => host_error = Some(error),
+            }
+            Ok(())
+        })?;
+        if let Some(error) = host_error {
+            return Err(error.into());
+        }
+        let control = decode_control(
+            &attachment.ok_or(LogError::NotInitialized)?,
+            self.limits.envelope_bytes,
+        )?;
+        let (receipt, row_present) = match row {
+            None => (None, false),
+            Some(bytes) => match decode_receipt_row(scoped, &bytes, self.limits) {
+                Ok(receipt) => (Some(receipt), true),
+                Err(_) => (None, true),
+            },
+        };
+        Ok(LocalFrontier {
+            control,
+            receipt,
+            row_present,
+        })
     }
 
     fn local_health(&self, target: &HeadAuthority, work: &WorkContext) -> LocalHealth {
@@ -747,29 +1133,113 @@ where
         }
     }
 
-    fn retained(
-        &self,
-        id: CommandId,
-        work: &WorkContext,
-    ) -> Result<Option<TerminalReceipt>, LogError> {
-        work.checkpoint()?;
-        let reference = CommandRef {
-            identity: self.identity,
-            id,
-            digest: crate::history::CommandDigest::from_bytes([0; 32]),
-        };
-        let key = receipt_key(id);
-        match read_host_record(&self.db, &key)? {
-            Some(bytes) => Ok(Some(decode_receipt_row(reference, &bytes, self.limits)?)),
-            None => Ok(None),
-        }
-    }
 }
 
 /// Decode a composed head body to its record. Malformed composed frames are
 /// corruption-class at this boundary.
 fn decode_record(body: &[u8], limits: Limits) -> Result<HeadRecord, LogError> {
     Ok(manifest::decode_head(body, limits.envelope_bytes)?)
+}
+
+fn read_captured_head<B>(
+    backend: &B,
+    head_key: &str,
+    limits: Limits,
+    work: &WorkContext,
+) -> Result<(HeadRecord, HeadVersion, ChargedBytes), LogError>
+where
+    B: ReceivingStore,
+    B::Error: BackendError + ObservedError,
+{
+    work.checkpoint()?;
+    match read_head_bounded(
+        backend,
+        head_key,
+        TransportContext::new(work, ReceiveLimits::capped(limits.envelope_bytes as u64)),
+    )
+    .map_err(map_object_error)?
+    {
+        ReceivedHead::Present { version, body } => {
+            let charged = body.into_charged().ok_or(LogError::Backend)?;
+            let record = decode_record(charged.as_bytes(), limits)?;
+            Ok((record, version, charged.into_owner()))
+        }
+        ReceivedHead::Absent => Err(LogError::NotInitialized),
+    }
+}
+
+fn read_decoded_head<B>(
+    backend: &B,
+    head_key: &str,
+    limits: Limits,
+    work: &WorkContext,
+) -> Result<HeadRecord, LogError>
+where
+    B: ReceivingStore,
+    B::Error: BackendError + ObservedError,
+{
+    let (record, _, charged) = read_captured_head(backend, head_key, limits, work)?;
+    drop(charged);
+    Ok(record)
+}
+
+/// Resolve an uncertain (or precondition-failed) hosted creation by EVIDENCE
+/// (the backup manifest install pattern): read the head back and compare it
+/// against this call's own deterministic genesis.
+///
+/// - Byte-exact genesis body: created by us (this attempt, or an earlier
+///   identical one) — idempotent success.
+/// - A decodable head whose identity AND one-time activation evidence
+///   (operation + target genesis) are ours: our creation already advanced —
+///   still success.
+/// - Any other decodable head: a foreign authority holds this prefix —
+///   `CommandIdentityConflict` (the wire's `AuthorityExists`).
+/// - A malformed body is corruption-class evidence; an unreadable or absent
+///   head stays unknown-typed (`Backend`) — the create may still land, and
+///   uncertainty is never rewritten into a refusal.
+fn resolve_create_evidence<B>(
+    backend: &B,
+    head_key: &str,
+    genesis_body: &[u8],
+    identity: DatabaseIdentity,
+    operation: OperationId,
+    target_genesis: crate::history::DecisionDigest,
+    limits: Limits,
+    work: &WorkContext,
+) -> Result<(), LogError>
+where
+    B: ReceivingStore,
+    B::Error: BackendError + ObservedError,
+{
+    let found = match read_head_bounded(
+        backend,
+        head_key,
+        TransportContext::new(work, ReceiveLimits::capped(limits.envelope_bytes as u64)),
+    )
+    .map_err(map_object_error)?
+    {
+        ReceivedHead::Present { body, .. } => body,
+        ReceivedHead::Absent => return Err(LogError::Backend),
+    };
+    if found.as_bytes() == genesis_body {
+        drop(found);
+        return Ok(());
+    }
+    let record = decode_record(found.as_bytes(), limits)?;
+    drop(found);
+    if record.control.identity == identity
+        && matches!(
+            record.control.activation,
+            Activation::Activated {
+                operation: held,
+                target_genesis: held_genesis,
+                ..
+            } if held == operation && held_genesis == target_genesis
+        )
+    {
+        return Ok(());
+    }
+    Err(LogError::CommandIdentityConflict)
 }
 
 /// Map a verified-object failure onto the machine's certainty vocabulary:
@@ -779,6 +1249,11 @@ fn decode_record(body: &[u8], limits: Limits) -> Result<HeadRecord, LogError> {
 fn map_object_error(error: &ObjectError) -> LogError {
     match error {
         ObjectError::Backend(_) | ObjectError::Unverified { .. } => LogError::Backend,
+        // Denied/bucket/region are transport observations, not publication
+        // and not a covered loss.
+        ObjectError::Denied { .. } | ObjectError::Bucket { .. } | ObjectError::Region { .. } => {
+            LogError::Backend
+        }
         ObjectError::Missing { .. }
         | ObjectError::WrongLength { .. }
         | ObjectError::WrongDigest { .. }
@@ -792,6 +1267,8 @@ fn map_apply_error(error: ApplyError) -> LogError {
         ApplyError::Frame(_) | ApplyError::Chain(_) | ApplyError::OutcomeMismatch => {
             LogError::Corruption
         }
+        // No authority yet — not a post-install settlement failure.
+        ApplyError::UnpublishedDestination => LogError::NotInitialized,
         ApplyError::Command(error) | ApplyError::Local(error) => error,
     }
 }
@@ -802,10 +1279,17 @@ fn write_local_genesis<S>(
     limits: Limits,
     work: &WorkContext,
 ) -> Result<(), LogError> {
-    if read_attachment(db)?.is_some() {
+    let control = encode_control(authority, limits.envelope_bytes)?;
+    if let Some(existing) = read_attachment(db, work)? {
+        // The genesis control encoding is deterministic: a byte-identical
+        // attachment is an earlier attempt of THIS same creation — idempotent
+        // evidence (a create retry must resolve, not refuse). Anything else
+        // is a foreign local materialization.
+        if existing == control {
+            return Ok(());
+        }
         return Err(LogError::Corruption);
     }
-    let control = encode_control(authority, limits.envelope_bytes)?;
     let mut session = db.integration_writer(work)?;
     let empty = ChangeSet::builder(db.schema(), work.clone())
         .finish()
@@ -823,16 +1307,12 @@ fn write_local_genesis<S>(
     Ok(())
 }
 
+/// There is deliberately NO blanket `From<LogError> for SubmitFailure`: every
+/// conversion names its certainty arm explicitly, so a post-dispatch failure
+/// can never silently ride a `?` into a fabricated `NotSubmitted`.
 enum SubmitFailure {
     NotSubmitted(LogError),
     Unknown(LogError),
-}
-
-impl From<LogError> for SubmitFailure {
-    fn from(error: LogError) -> Self {
-        // A bare LogError at a read boundary means no dispatch happened.
-        Self::NotSubmitted(error)
-    }
 }
 
 #[expect(
@@ -847,38 +1327,101 @@ enum AttemptResult {
     },
     Lost,
     /// The CAS outcome is unknown; resolve it after the writer session drops.
+    /// `attempted` is the exact head version the CAS conditioned on — the
+    /// evidence that distinguishes a proven loss from genuine uncertainty.
     Unknown {
         stamp: DecisionStamp,
+        attempted: HeadVersion,
     },
+}
+
+/// What the post-Indeterminate evidence ladder established.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "consumed immediately on the resolving frame; the terminal \
+              receipt is a fixed-size value, not stored state"
+)]
+enum UnknownResolution {
+    /// The command is durably decided; the retained receipt is authoritative.
+    Decided {
+        receipt: TerminalReceipt,
+        local_health: LocalHealth,
+    },
+    /// The conditioned version token was consumed by another writer and the
+    /// coherent receipt frontier excludes this command: re-attempt.
+    ProvenLoss,
+    /// The receipt epoch was retired; loss cannot be proved from absence.
+    ExpiredUnprovable,
+    /// Nothing provable: the dispatched request may still land.
+    Unresolved,
 }
 
 fn fingerprint<S>(db: &Db<S>) -> SchemaId {
     bumbledb::schema::fingerprint::fingerprint(db.schema())
 }
 
-fn read_attachment<S>(db: &Db<S>) -> Result<Option<Vec<u8>>, LogError> {
+fn read_attachment<S>(db: &Db<S>, work: &WorkContext) -> Result<Option<Vec<u8>>, LogError> {
     let mut owned = None;
-    db.read(|read| {
+    db.read(work.clone(), |read| {
         owned = read.integration_host_attachment()?.map(<[u8]>::to_vec);
         Ok(())
     })?;
     Ok(owned)
 }
 
-fn read_host_record<S>(db: &Db<S>, key: &[u8]) -> Result<Option<Vec<u8>>, LogError> {
-    let mut owned = None;
-    let mut host_error = None;
-    db.read(|read| {
-        match read.integration_host_record(key) {
-            Ok(record) => owned = record.map(<[u8]>::to_vec),
-            Err(error) => host_error = Some(error),
+struct LocalFrontier {
+    control: HeadAuthority,
+    receipt: Option<TerminalReceipt>,
+    row_present: bool,
+}
+
+/// Bounded newest-first suffix records. The walk contract is the visitor;
+/// this buffer exists only so apply can run oldest-first within `cap`.
+struct CatchUpBuffer {
+    pending: Vec<Vec<u8>>,
+    cap: u32,
+}
+
+impl ChainVisitor for CatchUpBuffer {
+    type Error = crate::store::ObjectError;
+
+    fn visit(
+        &mut self,
+        _stamp: DecisionStamp,
+        bytes: &[u8],
+        _reference: crate::store::ObjectRef,
+    ) -> Result<bool, Self::Error> {
+        if self.pending.len() as u32 >= self.cap {
+            return Err(crate::store::ObjectError::Backend(Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "decision walk budget exhausted",
+            ))));
         }
-        Ok(())
-    })?;
-    if let Some(error) = host_error {
-        return Err(error.into());
+        self.pending.push(bytes.to_vec());
+        Ok(true)
     }
-    Ok(owned)
+}
+
+struct AncestryVisitor {
+    requested: DecisionStamp,
+    found: Option<crate::history::DecisionDigest>,
+}
+
+impl ChainVisitor for AncestryVisitor {
+    type Error = crate::store::ObjectError;
+
+    fn visit(
+        &mut self,
+        stamp: DecisionStamp,
+        _bytes: &[u8],
+        _reference: crate::store::ObjectRef,
+    ) -> Result<bool, Self::Error> {
+        if stamp.seq == self.requested.seq {
+            self.found = Some(stamp.hash);
+            return Ok(false);
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

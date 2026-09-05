@@ -27,27 +27,13 @@ import * as path from "node:path"
 import { Id128, NativeRuntime } from "@bjornpagen/bumbledb"
 import type { DatabaseIdentity, HistoryBinding } from "@bjornpagen/bumbledb-log"
 import { DatabaseId, IncarnationId, OperationId, parseSchemaId, renderDatabaseIdentity } from "@bjornpagen/bumbledb-log"
-import type { GeneratedMigrations } from "@bjornpagen/bumbledb-log/migrations"
-import { decodeGeneratedMigrations, initialize } from "@bjornpagen/bumbledb-log/migrations"
+import { decodeRuntimeContract, initialize } from "@bjornpagen/bumbledb-log/migrations"
 import { Effect, Result } from "effect"
 import { saveTenantBinding } from "../src/db/bindings.ts"
+import { generatedDirectory, loadGeneratedMigrations } from "../src/db/generated.ts"
 import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
 
-const MIGRATIONS_DIR = path.join(process.cwd(), "bumbledb", "migrations")
-
-function loadPlans(): GeneratedMigrations {
-	const manifest = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, "manifest.json"), "utf8")) as {
-		entries?: ReadonlyArray<{ sequence: string; id: string }>
-	}
-	const plans = (manifest.entries ?? []).map((entry) =>
-		JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, `${entry.id}.plan.json`), "utf8"))
-	)
-	const decoded = decodeGeneratedMigrations({ manifest, plans })
-	if (!decoded.ok) {
-		throw new Error(`generated migrations refuse decoding: ${decoded.detail}`)
-	}
-	return decoded.value
-}
+const MIGRATIONS_DIR = generatedDirectory()
 
 function id128Of(name: string, hex: string | undefined): Id128 {
 	if (hex === undefined) {
@@ -78,13 +64,13 @@ async function main(): Promise<void> {
 	const databaseId = unwrap("database id", DatabaseId.from(id128Of("database id", databaseHex)))
 	const incarnationId = unwrap("incarnation id", IncarnationId.from(id128Of("incarnation id", incarnationHex)))
 
-	const plans = loadPlans()
+	const plans = loadGeneratedMigrations(MIGRATIONS_DIR)
 
-	// The generated contract names the target canonical schema identity.
-	const contract = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, "runtime-contract.json"), "utf8")) as {
-		schemaId: string
+	const contractDecoded = decodeRuntimeContract(JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, "runtime-contract.json"), "utf8")))
+	if (!contractDecoded.ok) {
+		throw new Error(`runtime contract refuses decoding: ${contractDecoded.detail}`)
 	}
-	const schemaId = unwrap("contract schemaId", parseSchemaId(contract.schemaId))
+	const schemaId = unwrap("contract schemaId", parseSchemaId(contractDecoded.value.schemaId))
 
 	const identity: DatabaseIdentity = { databaseId, incarnationId, schemaId }
 	const binding: HistoryBinding =

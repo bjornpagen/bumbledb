@@ -12,7 +12,9 @@ fn idiom_schema() -> Schema {
         name: name.into(),
         value_type: ty,
     };
-    let fresh = |name: &str| FieldDescriptor {
+    // Application-owned unique ids (the successor contract): uniqueness is
+    // a DECLARED key statement, not a database-issued fresh generation.
+    let id = |name: &str| FieldDescriptor {
         name: name.into(),
         value_type: ValueType::U64,
     };
@@ -21,19 +23,24 @@ fn idiom_schema() -> Schema {
             RelationDescriptor {
                 extension: None,
                 name: "A".into(),
-                fields: vec![fresh("id"), field("v", ValueType::I64)],
+                fields: vec![id("id"), field("v", ValueType::I64)],
             },
             RelationDescriptor {
                 extension: None,
                 name: "B".into(),
                 fields: vec![
-                    fresh("id"),
+                    id("id"),
                     field("a", ValueType::U64),
                     field("at", ValueType::I64),
                 ],
             },
         ],
-        statements: vec![],
+        // A(id) -> A: the absence-half witness proof rides this declared
+        // key (A's occurrence binds id only, not the whole row).
+        statements: vec![bumbledb_theory::schema::StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }],
     }
     .validate()
     .expect("valid fixture")

@@ -49,6 +49,13 @@ pub enum StoreError {
     StoreLocked { path: PathBuf },
     /// `create` refused because the destination already exists.
     DestinationExists { path: PathBuf },
+    /// Staging rename reached the destination, but a later sync/open step
+    /// failed. The destination path may exist; callers retain cleanup
+    /// ownership of the exact staging identity.
+    InstallSettlementFailed {
+        path: PathBuf,
+        detail: Box<StoreError>,
+    },
     /// Live read transactions blocked exclusive map access within the
     /// caller's budget. The caller can release snapshots and retry.
     ResizeBlockedByReaders {
@@ -97,6 +104,9 @@ pub enum StoreError {
     Changes(crate::changes::ChangeError),
     /// The recognized store contains impossible bytes.
     Corruption(StoreCorruption),
+    /// Schema compilation failed (interned projection ids exhausted).
+    /// Distinct from corruption: the on-disk store is intact.
+    Compile(crate::schema::CompileError),
 }
 
 impl StoreError {
@@ -139,6 +149,12 @@ impl From<crate::canonical::RowError> for StoreError {
     }
 }
 
+impl From<crate::schema::CompileError> for StoreError {
+    fn from(error: crate::schema::CompileError) -> Self {
+        Self::Compile(error)
+    }
+}
+
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -156,6 +172,13 @@ impl std::fmt::Display for StoreError {
             }
             Self::DestinationExists { path } => {
                 write!(f, "create destination {} already exists", path.display())
+            }
+            Self::InstallSettlementFailed { path, detail } => {
+                write!(
+                    f,
+                    "install settlement failed at {} after publish: {detail}",
+                    path.display()
+                )
             }
             Self::ResizeBlockedByReaders {
                 live_transactions,
@@ -197,6 +220,7 @@ impl std::fmt::Display for StoreError {
             Self::Allocation => f.write_str("in-memory allocation refused"),
             Self::Changes(err) => err.fmt(f),
             Self::Corruption(what) => write!(f, "store corruption: {what:?}"),
+            Self::Compile(err) => write!(f, "store compile: {err}"),
         }
     }
 }
@@ -206,6 +230,8 @@ impl std::error::Error for StoreError {
         match self {
             Self::Work(err) => Some(err),
             Self::Changes(err) => Some(err),
+            Self::Compile(err) => Some(err),
+            Self::InstallSettlementFailed { detail, .. } => Some(detail),
             _ => None,
         }
     }

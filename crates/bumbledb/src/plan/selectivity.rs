@@ -211,10 +211,16 @@ fn distinct_of(
     rows: u64,
 ) -> crate::error::Result<u64> {
     let descriptor = schema.relation(relation);
-    let keyed = descriptor
-        .keys()
-        .iter()
-        .any(|id| schema.key(*id).projection.as_ref() == [field]);
+    let keyed = schema.compiled_theory().ok().is_some_and(|theory| {
+        theory.key_projections_of(relation).iter().any(|id| {
+            matches!(
+                theory.distinctness_witness(*id),
+                Some(crate::schema::DistinctnessWitness::ScalarKeyUnique { .. })
+            ) && theory
+                .projection(*id)
+                .is_some_and(|projection| projection.projection.as_ref() == [field])
+        })
+    });
     if keyed {
         let distinct = rows.max(1);
         ladder_event(0, distinct);

@@ -14,7 +14,7 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
-    colt.ensure_forced(root, 0);
+    colt.ensure_forced(root, 0).expect("force");
 
     let k_col: Vec<u64> = view.column_words(0).to_vec();
     let mut model: std::collections::HashMap<u64, Vec<u32>> = std::collections::HashMap::new();
@@ -107,7 +107,9 @@ fn hoisted_gathers_match_the_per_position_reference() {
         let mut token = BatchToken::default();
         let mut out = Vec::new();
         loop {
-            let (n, next) = colt.iter_batch(cursor, level, token, &mut keys, &mut children, size);
+            let (n, next) = colt
+                .iter_batch(cursor, level, token, &mut keys, &mut children, size)
+                .expect("iter");
             if n == 0 {
                 break;
             }
@@ -120,7 +122,11 @@ fn hoisted_gathers_match_the_per_position_reference() {
     };
 
     for &size in &[1usize, 3, 8, 64, 128] {
-        let mut colt = Colt::new(apply(&image, &[], &[], Vec::new()), &[], vec![vec![0, 2]]);
+        let mut colt = Colt::new(
+            apply(&image, &[], &[], Vec::new(), image.generation().text_eq(None)),
+            &[],
+            vec![vec![0, 2]],
+        );
         let got = drain_at(&mut colt, Colt::root(), 0, size);
         let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
             .map(|pos| {
@@ -133,7 +139,7 @@ fn hoisted_gathers_match_the_per_position_reference() {
         assert_eq!(got, expected, "identity root, batch {size}");
 
         let mut colt = Colt::new(
-            apply(&image, &[], &[], Vec::new()),
+            apply(&image, &[], &[], Vec::new(), image.generation().text_eq(None)),
             &[],
             vec![vec![0], vec![1, 2]],
         );

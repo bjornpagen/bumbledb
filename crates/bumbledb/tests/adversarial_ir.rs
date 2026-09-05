@@ -566,7 +566,7 @@ fn mutate(rng: &mut Rng, query: &mut Query) {
 #[test]
 fn adversarial_ir_never_panics() {
     let dir = common::TempDir::new("adversarial-ir");
-    let db = Db::create(dir.path(), Gauntlet)
+    let db = Db::create(dir.path(), Gauntlet, common::work())
         .expect("create")
         .expect("accepted");
 
@@ -612,7 +612,7 @@ fn adversarial_ir_never_panics() {
 #[test]
 fn adversarial_query_with_interiors_never_panics() {
     let dir = common::TempDir::new("adversarial-interiors");
-    let db = Db::create(dir.path(), Gauntlet)
+    let db = Db::create(dir.path(), Gauntlet, common::work())
         .expect("create")
         .expect("accepted");
 
@@ -752,7 +752,7 @@ fn a_hundred_thousand_interiors_is_not_too_many_ctes() {
 #[test]
 fn deep_predicate_nesting_is_a_typed_rejection() {
     let dir = common::TempDir::new("adversarial-ir-nesting");
-    let db = Db::create(dir.path(), Gauntlet)
+    let db = Db::create(dir.path(), Gauntlet, common::work())
         .expect("create")
         .expect("accepted");
     let leaf = || {

@@ -1,7 +1,13 @@
-use super::{CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, hash_words};
+use super::{
+    CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, PoolMark, Positions, hash_words,
+    reserve_exact_for,
+};
+use crate::work::WorkError;
 
 impl Colt {
-    pub fn select(&mut self, keys: &[Vec<u64>]) -> Option<Cursor> {
+    /// # Errors
+    /// Returns the force/growth refusal. A selection miss is `Ok(None)`.
+    pub fn select(&mut self, keys: &[Vec<u64>]) -> Result<Option<Cursor>, WorkError> {
         debug_assert_eq!(
             keys.len(),
             self.selection_depth(),
@@ -14,18 +20,29 @@ impl Colt {
         let mut cursor = Self::root();
         for (level, words) in keys.iter().enumerate() {
             cursor = if matches!(self.selection_kinds[level], super::SelectionKind::Set) {
-                self.select_union(cursor, level, words)?
+                match self.select_union(cursor, level, words)? {
+                    Some(hit) => hit,
+                    None => return Ok(None),
+                }
             } else {
                 debug_assert_eq!(words.len(), self.arity_at(level), "one key per level");
-                self.probe_child_at(cursor, level, words, hash_words(words))?
+                match self.probe_child_at(cursor, level, words, hash_words(words))? {
+                    Some(hit) => hit,
+                    None => return Ok(None),
+                }
             };
         }
         self.start = super::Start::Selected(cursor);
-        Some(cursor)
+        Ok(Some(cursor))
     }
 
     /// invariant `union_positions` reads.
-    fn select_union(&mut self, cursor: Cursor, level: usize, words: &[u64]) -> Option<Cursor> {
+    fn select_union(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        words: &[u64],
+    ) -> Result<Option<Cursor>, WorkError> {
         let arity = self.arity_at(level);
         debug_assert_eq!(words.len() % arity, 0, "flat element-major rows");
         debug_assert!(
@@ -39,68 +56,88 @@ impl Colt {
         debug_assert!(!words.is_empty(), "an empty set short-circuits at resolve");
         let mut hits = std::mem::take(&mut self.select_hits);
         hits.clear();
-        for key in words.chunks_exact(arity) {
-            if let Some(child) = self.probe_child_at(cursor, level, key, hash_words(key)) {
-                hits.push(child);
+        let needed_hits = words.len() / arity.max(1);
+        let probed = (|| -> Result<Option<Cursor>, WorkError> {
+            self.admit_needed::<Cursor>(hits.capacity(), needed_hits)?;
+            reserve_exact_for(&mut hits, needed_hits);
+            for key in words.chunks_exact(arity) {
+                if let Some(child) = self.probe_child_at(cursor, level, key, hash_words(key))? {
+                    hits.push(child);
+                }
             }
-        }
-        let union = self.union_of(&hits);
+            self.union_of(&hits)
+        })();
         self.select_hits = hits;
-        union
+        probed
     }
 
-    fn union_of(&mut self, hits: &[Cursor]) -> Option<Cursor> {
+    fn union_of(&mut self, hits: &[Cursor]) -> Result<Option<Cursor>, WorkError> {
         let mut positions = std::mem::take(&mut self.select_positions);
         positions.clear();
-        for hit in hits {
-            self.union_positions(*hit, |position| positions.push(position));
-        }
-        let cursor = match positions.as_slice() {
-            [] => None,
-            [only] => Some(Cursor::Row(*only)),
-            all => {
-                if self.union_mark.is_none() {
-                    self.union_mark = Some(self.pool_mark());
-                }
-
-                // build verifies it outright before concatenating.
-                debug_assert!(
-                    {
-                        let mut seen = std::collections::BTreeSet::new();
-                        all.iter().all(|position| seen.insert(*position))
-                    },
-                    "positions under distinct keys are disjoint by construction"
-                );
-                let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
-                for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
-                    let start =
-                        u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
-                    self.chunk_positions.extend_from_slice(segment);
-                    let len = u8::try_from(segment.len()).expect("CHUNK_LEN fits u8");
-                    if idx > 0 {
-                        let previous = self.chunks.len() - 1;
-                        self.chunks[previous].next =
-                            u32::try_from(self.chunks.len()).expect("fits u32");
-                    }
-                    self.chunks.push(Chunk {
-                        start,
-                        cap: len,
-                        len,
-                        next: u32::MAX,
-                    });
-                }
-                let last = u32::try_from(self.chunks.len() - 1).expect("fits u32");
-                let node = NodeRef(u32::try_from(self.nodes.len()).expect("fits u32"));
-                self.nodes.push(NodeState::Unforced(Positions::Chunks {
-                    first,
-                    last,
-                    count: u32::try_from(all.len()).expect("positions fit u32"),
-                }));
-                Some(Cursor::Node(node))
+        let built = (|| -> Result<Option<Cursor>, WorkError> {
+            let mut counted = 0usize;
+            for hit in hits {
+                self.union_positions(*hit, |_| counted += 1);
             }
-        };
+            self.admit_needed::<u32>(positions.capacity(), counted)?;
+            reserve_exact_for(&mut positions, counted);
+            for hit in hits {
+                self.union_positions(*hit, |position| positions.push(position));
+            }
+            match positions.as_slice() {
+                [] => Ok(None),
+                [only] => Ok(Some(Cursor::Row(*only))),
+                all => {
+                    if self.union_mark.is_none() {
+                        self.union_mark = Some(self.pool_mark());
+                    }
+
+                    debug_assert!(
+                        {
+                            let mut seen = std::collections::BTreeSet::new();
+                            all.iter().all(|position| seen.insert(*position))
+                        },
+                        "positions under distinct keys are disjoint by construction"
+                    );
+                    let pos_needed = self.chunk_positions.len() + all.len();
+                    let chunk_needed = self.chunks.len() + all.len().div_ceil(CHUNK_LEN);
+                    self.admit_needed::<u32>(self.chunk_positions.capacity(), pos_needed)?;
+                    self.admit_needed::<Chunk>(self.chunks.capacity(), chunk_needed)?;
+                    self.admit_needed::<NodeState>(self.nodes.capacity(), self.nodes.len() + 1)?;
+                    reserve_exact_for(&mut self.chunk_positions, pos_needed);
+                    reserve_exact_for(&mut self.chunks, chunk_needed);
+                    reserve_exact_for(&mut self.nodes, self.nodes.len() + 1);
+                    let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
+                    for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
+                        let start = u32::try_from(self.chunk_positions.len())
+                            .expect("position slab fits u32");
+                        self.chunk_positions.extend_from_slice(segment);
+                        let len = u8::try_from(segment.len()).expect("CHUNK_LEN fits u8");
+                        if idx > 0 {
+                            let previous = self.chunks.len() - 1;
+                            self.chunks[previous].next =
+                                u32::try_from(self.chunks.len()).expect("fits u32");
+                        }
+                        self.chunks.push(Chunk {
+                            start,
+                            cap: len,
+                            len,
+                            next: u32::MAX,
+                        });
+                    }
+                    let last = u32::try_from(self.chunks.len() - 1).expect("fits u32");
+                    let node = NodeRef(u32::try_from(self.nodes.len()).expect("fits u32"));
+                    self.nodes.push(NodeState::Unforced(Positions::Chunks {
+                        first,
+                        last,
+                        count: u32::try_from(all.len()).expect("positions fit u32"),
+                    }));
+                    Ok(Some(Cursor::Node(node)))
+                }
+            }
+        })();
         self.select_positions = positions;
-        cursor
+        built
     }
 
     /// row or an unforced chunk list by the `select_union` invariant.
@@ -127,7 +164,7 @@ impl Colt {
         }
     }
 
-    fn pool_mark(&self) -> PoolMark {
+    pub(super) fn pool_mark(&self) -> PoolMark {
         PoolMark {
             nodes: self.nodes.len(),
             chunks: self.chunks.len(),
@@ -139,7 +176,7 @@ impl Colt {
         }
     }
 
-    fn truncate_to(&mut self, mark: PoolMark) {
+    pub(super) fn truncate_to(&mut self, mark: PoolMark) {
         self.nodes.truncate(mark.nodes);
         self.chunks.truncate(mark.chunks);
         self.chunk_positions.truncate(mark.chunk_positions);

@@ -31,6 +31,7 @@ import {
 	query,
 	ref,
 	relation,
+	Scalar,
 	schema,
 	span,
 	str,
@@ -203,7 +204,7 @@ const readBooks = (reader: QueryReader<typeof Library>, name: string) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const result = yield* reader.execute(booksBy, { name }, work)
-			return yield* result.collect({ maxBytes: work.resultBytes })
+			return yield* result.collect({ maxBytes: work.resultBytes }, work)
 		})
 	)
 void readBooks
@@ -264,8 +265,8 @@ void labeled
 
 ## 8. Bounded results: capped collect, one-shot page stream
 
-`collect({ maxBytes })` is database-enforced total materialization and
-leaves the result available. `pages({ pageBytes })` is a ONE-SHOT consuming
+`collect({ maxBytes }, work)` is database-enforced total materialization and
+leaves the result available. `pages({ pageBytes }, work)` is a ONE-SHOT consuming
 stream over the completed result: the first run moves the backing into a
 private scoped cursor; a second run refuses. Every element is one owned page
 array — pages, not rows — delivered after complete evaluation.
@@ -280,7 +281,7 @@ const everything = query(Feed).rule((r) => {
 })
 
 const drain = (result: CompleteResult<{ readonly id: Id128; readonly at: bigint }>) =>
-	result.pages({ pageBytes: 65536n }).pipe(
+	result.pages({ pageBytes: 65536n }, work).pipe(
 		Stream.runForEach((page) =>
 			Effect.sync(() => {
 				// One owned page array; caller mutation cannot reach native
@@ -386,3 +387,16 @@ const explicitClose = Effect.scoped(
 )
 void explicitClose
 ```
+
+## 13. Unresolved field arithmetic is authoring metadata
+
+`Scalar.field("units")` is not a typed program. Builders accept it inside
+arithmetic. Native compilation binds it against the verified source
+schema — including empty input — before any manifest write or freeze.
+
+```ts
+const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
+const asFloat = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
+void [incrementUnits, asFloat]
+```
+

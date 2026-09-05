@@ -21,35 +21,15 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { Id128, NativeRuntime } from "@bjornpagen/bumbledb"
-import type { GeneratedMigrations } from "@bjornpagen/bumbledb-log/migrations"
-import {
-	activateMigration,
-	decodeGeneratedMigrations,
-	migrate,
-	migrationStatus
-} from "@bjornpagen/bumbledb-log/migrations"
+import { activateMigration, decodeReadyToSwitchActivation, migrate, migrationStatus } from "@bjornpagen/bumbledb-log/migrations"
 import { OperationId } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
+import { generatedDirectory, loadGeneratedMigrations } from "../src/db/generated.ts"
 import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
 
-const MIGRATIONS_DIR = path.join(process.cwd(), "bumbledb", "migrations")
+const MIGRATIONS_DIR = generatedDirectory()
 const OUTCOME_DIR = path.join(process.cwd(), ".bumbledb", "admin")
-
-/** Bounded read + strict decode of the committed generated artifacts. */
-function loadPlans(): GeneratedMigrations {
-	const manifest = JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, "manifest.json"), "utf8")) as {
-		entries?: ReadonlyArray<{ sequence: string; id: string }>
-	}
-	const plans = (manifest.entries ?? []).map((entry) =>
-		JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, `${entry.id}.plan.json`), "utf8"))
-	)
-	const decoded = decodeGeneratedMigrations({ manifest, plans })
-	if (!decoded.ok) {
-		throw new Error(`generated migrations refuse decoding: ${decoded.detail}`)
-	}
-	return decoded.value
-}
 
 /** Persist admin evidence — refs and outcomes survive this process. */
 function saveOutcome(name: string, body: unknown): void {
@@ -78,7 +58,7 @@ async function main(): Promise<void> {
 		process.exitCode = 2
 		return
 	}
-	const plans = loadPlans()
+	const plans = loadGeneratedMigrations(MIGRATIONS_DIR)
 	const layer = NativeRuntime.layer(runtimePolicy.native)
 
 	if (command === "status") {
@@ -124,20 +104,15 @@ async function main(): Promise<void> {
 			process.exitCode = 2
 			return
 		}
-		const record = JSON.parse(fs.readFileSync(saved, "utf8")) as {
-			kind?: string
-			value?: { kind?: string; activation?: unknown }
-		}
-		if (record.kind !== "completed" || record.value?.kind !== "ready-to-switch") {
-			console.error(`latest migrate outcome is not ready-to-switch: ${saved}`)
+		const record = JSON.parse(fs.readFileSync(saved, "utf8"))
+		const activation = decodeReadyToSwitchActivation(record)
+		if (!activation.ok) {
+			console.error(`latest migrate outcome is not ready-to-switch: ${saved} (${activation.detail})`)
 			process.exitCode = 2
 			return
 		}
 		const outcome = await Effect.runPromise(
-			// The saved ref is inert data; activateMigration verifies it natively.
-			activateMigration(record.value.activation as Parameters<typeof activateMigration>[0], adminWork).pipe(
-				Effect.provide(layer)
-			)
+			activateMigration(activation.value, adminWork).pipe(Effect.provide(layer))
 		)
 		saveOutcome(`activate-${tenantId}`, outcome)
 		console.log(`activate: ${outcome.kind}`)

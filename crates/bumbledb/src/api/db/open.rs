@@ -8,22 +8,23 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use super::{Db, OwnedInstance, embedded_work};
+use super::Db;
 use crate::error::{Admission, Error, Result};
+use crate::image::cache::ImageCache;
 use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
-use crate::storage::store::{MapPolicy, Store, UnindexedRows};
+use crate::storage::store::{MapPolicy, Store};
+use crate::work::{CachePolicy, WorkContext};
 
 impl<S: Theory> Db<S> {
-    /// Create a new durable database. The declared theory is judged over
-    /// the empty state (with its sealed closed extensions) before any
-    /// directory is touched; an unsatisfiable declaration is a rejection,
-    /// not a store.
+    /// Create a new durable database under an explicit operation allowance.
+    /// The declared theory is judged over the empty state (with its sealed
+    /// closed extensions) before any directory is touched; an unsatisfiable
+    /// declaration is a rejection, not a store.
     /// # Errors
-    /// Schema validation, destination refusals, storage failure.
-    pub fn create(path: &Path, schema: S) -> Result<Admission<Self>> {
+    /// Schema validation, destination refusals, storage failure, stopped work.
+    pub fn create(path: &Path, schema: S, work: WorkContext) -> Result<Admission<Self>> {
         let schema = schema.descriptor().validate()?;
-        let work = embedded_work()?;
         match judge_final_state(&schema, &MapState::new(), &work, JudgeBudget::default())
             .map_err(super::violations::judge_refusal)?
         {
@@ -34,24 +35,27 @@ impl<S: Theory> Db<S> {
                 ));
             }
         }
-        let store =
+        let (store, _fresh) =
             Store::create(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
         crate::obs::event(
             crate::obs::names::CREATE_DURABLE,
             crate::obs::TraceArgs::Count(1),
         );
-        Ok(Admission::Accepted(Self::assemble(store, schema)?))
+        Ok(Admission::Accepted(Self::assemble(store, schema, work)?))
     }
 
-    /// Open an existing database. Family, layout and schema fingerprint are
-    /// verified against one read view before adoption; refusal mutates
-    /// nothing.
+    /// Open an existing database under an explicit operation allowance.
+    /// Family, layout and schema fingerprint are verified against one read
+    /// view before adoption; refusal mutates nothing.
     /// # Errors
-    /// Schema validation, recognition/lock refusals, storage failure.
-    pub fn open(path: &Path, schema: S) -> Result<Self> {
+    /// Schema validation, recognition/lock refusals, storage failure, stopped work.
+    pub fn open(path: &Path, schema: S, work: WorkContext) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
+        work.checkpoint().map_err(|error| {
+            Error::from_store(crate::storage::store::StoreError::Work(error))
+        })?;
         let store = Store::open(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
-        Self::assemble(store, schema)
+        Self::assemble(store, schema, work)
     }
 
     /// Create without the empty-state admission judgment — grounding-off
@@ -59,31 +63,41 @@ impl<S: Theory> Db<S> {
     /// # Errors
     /// As [`Db::open`].
     #[cfg(any(test, feature = "ground-off"))]
-    pub fn create_store_without_admission(path: &Path, schema: S) -> Result<Self> {
+    pub fn create_store_without_admission(
+        path: &Path,
+        schema: S,
+        work: WorkContext,
+    ) -> Result<Self> {
         let schema = schema.descriptor().validate()?;
-        let store =
+        let (store, _fresh) =
             Store::create(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
-        Self::assemble(store, schema)
+        Self::assemble(store, schema, work)
     }
 }
 
 impl<S> Db<S> {
-    pub(super) fn assemble(store: Store, schema: Schema) -> Result<Self> {
-        let work = embedded_work()?;
+    pub(super) fn assemble(store: Store, schema: Schema, work: WorkContext) -> Result<Self> {
+        work.checkpoint().map_err(|error| {
+            Error::from_store(crate::storage::store::StoreError::Work(error))
+        })?;
         let schema = Arc::new(schema);
         let closed = Arc::new(super::closed::ClosedRows::build(schema.as_ref(), &work)?);
+        let cache = Arc::new(ImageCache::with_policy(
+            schema.as_ref(),
+            CachePolicy::platform_default(),
+        ));
         Ok(Self {
             store,
             schema,
             closed,
+            cache,
             marker: std::marker::PhantomData,
         })
     }
 
     /// Publish an admitted heap instance as a new durable database at
-    /// `path`: create the store, then adopt every admitted row in one
-    /// durable transaction (already-judged content; the store's own copy
-    /// protocol re-derives membership physically).
+    /// `path` through the staged install protocol: populate and judge in a
+    /// private staging directory, then publish atomically (CORE-016).
     ///
     /// ```compile_fail
     /// fn require_builder(path: &std::path::Path, builder: &bumbledb::InstanceBuilder<()>) {
@@ -94,48 +108,24 @@ impl<S> Db<S> {
     /// # Errors
     /// `DestinationExists` if `path` already exists; storage failure
     /// otherwise.
-    pub fn from_instance(path: &Path, instance: &OwnedInstance<S>) -> Result<Self> {
-        let work = embedded_work()?;
-        let store = Store::create(path, instance.schema(), MapPolicy::default())
-            .map_err(Error::from_store)?;
-        let db = Self::assemble(store, instance.schema().clone())?;
-        // One judged commit adopts the whole admitted content: the store
-        // prepare path re-judges the final state (an admitted instance
-        // passes) and commits facts + generation together.
+    pub fn from_instance(
+        path: &Path,
+        instance: &super::OwnedInstance<S>,
+        work: WorkContext,
+    ) -> Result<Self> {
+        let schema = instance.schema().clone();
         let changes = instance.change_set_of_rows(&work)?;
-        let judge = crate::storage::store::SchemaJudge::new(db.schema.as_ref());
-        // The writer borrows `db.store`; the whole judged commit lives in
-        // this block so the borrow ends before `db` moves out.
-        {
-            let mut owner = db.store.writer(&work).map_err(Error::from_store)?;
-            match owner
-                .prepare(&changes, &UnindexedRows, &judge)
-                .map_err(Error::from_store)?
-            {
-                crate::storage::store::Prepared::Rejected(judged) => {
-                    // `OwnedInstance` is unconstructible except through a
-                    // completed admission by this same judge over this same
-                    // final state, so a re-judgment rejection means the
-                    // invariant was violated somewhere between admit and
-                    // publish — an integrity failure, not a domain outcome.
-                    drop(judged);
-                    return Err(Error::Corruption(
-                        crate::error::CorruptionError::MalformedValue(
-                            "admitted instance failed re-judgment at publish",
-                        ),
-                    ));
-                }
-                crate::storage::store::Prepared::Admitted(prepared) => {
-                    let sealed = prepared
-                        .seal(crate::storage::store::HostChanges {
-                            records: &[],
-                            attachment: crate::storage::store::AttachmentChange::Keep,
-                        })
-                        .map_err(Error::from_store)?;
-                    sealed.commit().map_err(Error::from_store)?;
-                }
-            }
-        }
-        Ok(db)
+        let store = Store::install_populated(
+            path,
+            &schema,
+            MapPolicy::default(),
+            &work,
+            |stage, work| {
+                stage.apply(&changes, work)?;
+                Ok(())
+            },
+        )
+        .map_err(Error::from_store)?;
+        Self::assemble(store, schema, work)
     }
 }

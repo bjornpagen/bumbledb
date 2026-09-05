@@ -6,9 +6,55 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { Result } from "effect"
 import { BuildInputError, BuildOperationError } from "./errors.ts"
 
+/** Repository root (three levels above ts-log/scripts/). */
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url))
+
+/** Pack provenance bound to the same candidate/spec digests as release qualification. */
+export type PackProvenance = {
+	candidateSourceDigest: string
+	specificationRevision: string
+	stagedAt: string
+	package: string
+	version: string
+}
+
+function readReleaseDigest(flag: "--candidate-digest" | "--specification-revision"): string {
+	const out = spawnSync("node", ["scripts/release-results.mjs", flag], {
+		cwd: repoRoot,
+		encoding: "utf8"
+	})
+	if (out.error) {
+		throw new BuildOperationError({ message: `spawn release-results.mjs ${flag}`, cause: out.error })
+	}
+	if (out.status !== 0) {
+		throw new BuildInputError({
+			message: `release-results.mjs ${flag} exited with status ${out.status}: ${out.stderr}`
+		})
+	}
+	const digest = out.stdout.trim()
+	if (!/^[a-f0-9]{64}$/.test(digest)) {
+		throw new BuildInputError({ message: `release-results.mjs ${flag} returned an invalid digest` })
+	}
+	return digest
+}
+
+export function packProvenance(packageName: string, version: string): PackProvenance {
+	return {
+		candidateSourceDigest: readReleaseDigest("--candidate-digest"),
+		specificationRevision: readReleaseDigest("--specification-revision"),
+		stagedAt: new Date().toISOString(),
+		package: packageName,
+		version
+	}
+}
+
+function writePackProvenance(stagedDir: string, provenance: PackProvenance): void {
+	fs.writeFileSync(path.join(stagedDir, "pack-provenance.json"), `${JSON.stringify(provenance, null, "\t")}\n`)
+}
+
 /**
- * Immutable pack staging for `@bjornpagen/bumbledb-log` (chapter 32
- * "Build and publish without mutating the checkout"). The already-built
+ * Immutable pack staging for `@bjornpagen/bumbledb-log`
+ * (docs/reference/packaging.md). The already-built
  * `dist/` and the committed docs are copied into an isolated staging
  * tree, the packed manifest is derived there (repo-only fields dropped;
  * the exact peer handshake asserted), and `pnpm pack` runs inside that
@@ -16,7 +62,7 @@ import { BuildInputError, BuildOperationError } from "./errors.ts"
  * phase leaves it byte-identical.
  *
  * The exact peer handshake this stage refuses to pack without:
- *  - `peerDependencies.effect === "4.0.0-rc.112"` (chapter 35's one pin),
+ *  - `peerDependencies.effect === "4.0.0-rc.112"` (docs/reference/api.md),
  *  - `peerDependencies["@bjornpagen/bumbledb"] === <this version>` — the
  *    log package can never silently select a different native
  *    command/runtime contract; both packages resolve the SAME shared
@@ -26,7 +72,7 @@ import { BuildInputError, BuildOperationError } from "./errors.ts"
  *   `<dir>/bjornpagen-bumbledb-log-<v>.tgz`.
  */
 
-/** The one selected TypeScript peer/dev dependency (chapter 35). */
+/** The one selected TypeScript peer/dev dependency. */
 const EFFECT_PIN = "4.0.0-rc.112"
 
 /** Files staged beside dist/ when present (pnpm also allowlists these). */
@@ -157,6 +203,7 @@ function stageLogPackage(packageRoot: string, stagingDir: string, outDir: string
 		}
 	}
 	fs.writeFileSync(path.join(staged, "package.json"), `${JSON.stringify(manifest, null, "\t")}\n`)
+	writePackProvenance(staged, packProvenance("@bjornpagen/bumbledb-log", version))
 
 	const tarball = path.join(outDir, `bjornpagen-bumbledb-log-${version}.tgz`)
 	packInto(staged, tarball)
@@ -194,4 +241,4 @@ if (invokedDirectly) {
 	main()
 }
 
-export { EFFECT_PIN, packedLogManifest, stageLogPackage, tarballFile, tarballFiles }
+export { EFFECT_PIN, packedLogManifest, packProvenance, stageLogPackage, tarballFile, tarballFiles }

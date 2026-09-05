@@ -11,7 +11,8 @@ evolution history in `src/db/evolution-stages.ts`:
 0004-outbox-attachment.plan.json
 meta/0000.schema.json … meta/0004.schema.json
 manifest.json
-index.ts
+snapshots.json
+index.ts                    default export { manifest, plans, snapshots }
 runtime-contract.json
 ```
 

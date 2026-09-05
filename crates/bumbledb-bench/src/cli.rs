@@ -126,8 +126,8 @@ impl Cmd {
             | Self::Churn(_)
             | Self::Heap(_)
             | Self::Primerlane(_)
-            | Self::HashProbe(_)
-            | Self::AppPerf(_) => true,
+            | Self::HashProbe(_) => true,
+            Self::AppPerf(args) => !args.plan,
             Self::Help
             | Self::Queries
             | Self::Gen(_)
@@ -407,6 +407,8 @@ pub struct AppPerfArgs {
     /// Tenant count for the churn regime.
     pub tenants: u32,
     pub out: Option<PathBuf>,
+    /// Print the scorecard/input plan and exit. Not a measurement.
+    pub plan: bool,
 }
 
 impl Default for AppPerfArgs {
@@ -419,6 +421,7 @@ impl Default for AppPerfArgs {
             samples: None,
             tenants: 8,
             out: None,
+            plan: false,
         }
     }
 }

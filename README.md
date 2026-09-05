@@ -11,55 +11,70 @@ run without parsing or interpreting SQL. Relations use set semantics, so a
 record is either present or absent: duplicate inserts are harmless, deletes
 are idempotent, and query results do not need a separate deduplication step.
 
-Here is a complete Rust example:
+Here is a complete Rust example. Operations take an explicit finite
+`WorkContext`. There is no write/read callback and no unlimited work twin.
 
 ```rust
+use bumbledb::{ApplyExpected, ApplyOutcome, ChangeSet, ChangeSetBuilder, CloseReport, Db, Fact, WorkContext};
+
 bumbledb::schema! {
     pub Ledger;
 
-    // Fixed sets such as regions and statuses are compiled into the schema.
     closed relation Region as RegionId = { Na, Eu, Apac, Latam };
     closed relation Status as StatusId = { Open, Frozen, Closed };
 
     relation Holder {
-        id: u64 as HolderId, fresh,
+        id: u64 as HolderId,
         name: str,
         region: u64 as RegionId,
     }
     relation Account {
-        id: u64 as AccountId, fresh,
+        id: u64 as AccountId,
         holder: u64 as HolderId,
         status: u64 as StatusId,
         opened_at: i64,
     }
 
-    // Every referenced holder, region, and status must exist.
+    Holder(id)   -> Holder;
+    Account(id)  -> Account;
     Account(holder) <= Holder(id);
     Holder(region)  <= Region(id);
     Account(status) <= Status(id);
 }
 
-let db = bumbledb::Db::create(path, Ledger)?.expect("accepted");
+fn open_ledger(path: &std::path::Path, work: WorkContext) -> bumbledb::Result<Db<Ledger>> {
+    Ok(Db::create(path, Ledger, work)?.expect("empty Ledger admits"))
+}
 
-// The two inserts commit together after the database checks the finished state.
-db.write(|tx| {
-    let ids = tx.reserve::<HolderId>(1)?;
-    let holder = ids.start().expect("nonempty");
-    tx.insert([&Holder { id: holder, name: "alice", region: Region::Eu.id() }])?;
-    let account = tx.reserve::<AccountId>(1)?.start().expect("nonempty");
-    tx.insert([&Account { id: account, holder, status: Status::Open.id(), opened_at: 17_000_000 }])?;
+fn insert_fact<'a, F: Fact<'a>>(
+    draft: &mut ChangeSetBuilder<'_>,
+    fact: &F,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut values = Vec::new();
+    fact.append_values(&mut values)?;
+    draft.insert(F::RELATION, &values)?;
     Ok(())
-})?.unwrap();
+}
 
-// Find the holders who have an open account.
-let q = bumbledb_query::query!(Ledger {
-    (h, name) | Holder(id: h, name), Account(holder: h, status == Status::Open);
-});
-let mut prepared = db.prepare(&q)?;
-db.read(|snap| {
-    snap.execute(&mut prepared, &params, &mut results)?;
-    Ok(())
-})?;
+fn seed(db: &Db<Ledger>, work: &WorkContext) -> Result<ApplyOutcome, Box<dyn std::error::Error>> {
+    let holder = HolderId(1);
+    let account = AccountId(42);
+    let mut draft = ChangeSet::builder(db.schema(), work.clone());
+    insert_fact(&mut draft, &Holder { id: holder, name: "alice", region: Region::Eu.id() })?;
+    insert_fact(&mut draft, &Account {
+        id: account,
+        holder,
+        status: Status::Open.id(),
+        opened_at: 17_000_000,
+    })?;
+    Ok(db.apply(&draft.finish()?, ApplyExpected::Any, work)?)
+}
+
+fn pin_and_close(db: &Db<Ledger>, work: &WorkContext) -> Result<CloseReport, Box<dyn std::error::Error>> {
+    let snapshot = db.snapshot(work)?;
+    drop(snapshot);
+    Ok(db.close())
+}
 ```
 
 `HolderId` and `AccountId` are different Rust types. Passing an account ID
@@ -72,23 +87,22 @@ schema description and query representation before calling the same engine.
 
 ## Installation
 
-The Rust crates can be used from the current release tag:
+Crate publication is not authorized. A downstream Rust consumer uses a path
+dependency the way `examples/consumers/rust` does.
 
 ```toml
 [dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.17.0" }
-bumbledb-query = { git = "https://github.com/bjornpagen/bumbledb", tag = "v0.17.0" }
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", branch = "codex/bumbledb-1-0" }
 ```
 
-The TypeScript package ships with a native binary for macOS on Apple Silicon:
+TypeScript packages require Effect `4.0.0-rc.112` exactly and Node 24+:
 
 ```sh
-pnpm add @bjornpagen/bumbledb
+pnpm add @bjornpagen/bumbledb @bjornpagen/bumbledb-log effect
 ```
 
-The Rust engine is tested on macOS ARM64 and Linux x86-64. The Apple Silicon
-build uses explicit vectorized kernels; other 64-bit targets use portable
-implementations of the same operations.
+Packed-consumer qualification uses freshly staged tarballs, not workspace
+aliases. That gate is **NotRun** until the final campaign.
 
 ## Packages and supported platforms
 
@@ -102,10 +116,10 @@ implementations of the same operations.
   (glibc 2.34 / Amazon Linux 2023 floor). Node 24 is the deployment
   baseline. Edge/browser/mobile runtimes are unsupported.
 
-See `docs/reference/packaging.md` for the staging/pin design and
-`docs/reference/deployment.md` for the deployment contract and runbooks.
-The worked application example lives in `examples/notes`; installed-
-consumer syntax fixtures in `examples/consumers`.
+See `docs/reference/packaging.md` for the staging/pin design.
+The worked application example lives in `examples/notes`; packed
+consumers live in `examples/consumers`. Next.js/Alchemy is Node-only;
+there is no Edge/browser/mobile promise.
 
 ## What the database provides
 
@@ -123,11 +137,13 @@ relations and frequent joins. It provides:
 - MVCC snapshots with concurrent readers and one serialized writer;
 - durable and non-durable stores, structured constraint failures, and explicit
   export/import for schema changes;
-- prepared queries that perform no heap allocation after their buffers have
-  warmed to the current data and parameter sizes.
+- prepared queries that reuse plans, buffers, and indexes under an explicit
+  `WorkContext`; large results, new text, and spill paths remain bounded.
 
 There is no server process and no network protocol. Bumbledb opens an LMDB
-store directly and runs all query work in the caller's thread.
+store directly. Query work runs in the caller's thread for the embedded API;
+hosted log and native bridge paths schedule bounded work through their runtime
+executors without claiming a separate database server.
 
 ## Constraints are part of the schema
 
@@ -183,252 +199,12 @@ calendars, effective-dated configuration, tax brackets, ledgers, derived data,
 recursive closure, point reads, and resource limits. Every example is compiled
 as part of the test suite.
 
-## Performance
-
-The charts below come from the 2026-08-22 shared-machine night at revision
-`01084e3e` (crate 0.17.0) on an Apple M2 Max. The run used shared-machine
-mode with boost on and the idle-machine requirement waived; the machine load
-around each timed section is recorded in the reports. The main datasets
-contain 253,264 ledger rows and 192,369 calendar rows. SQLite used prepared
-statements, appropriate indexes, `ANALYZE`, a 256 MiB cache, and matching
-durability settings.
-
-Every query result was compared with SQLite before timing. The randomized
-verification run covered 2,879 cases, and write outcomes were also compared
-with a separate straightforward implementation. The primary read tests were
-run three times for durable stores and three times with durability disabled;
-the summary charts use the best median from each group. Raw reports, machine
-load, clock readings, and timing details are retained under
-`night-2026-08-22/`.
-
-These tests favor the work Bumbledb is designed for: joins, graph traversal,
-time intervals, and aggregates over warm in-memory data. The transaction and
-constraint sections below include the cases where SQLite is faster.
-
-### Read performance
-
-The first chart shows all 32 read queries with the same inputs and verified
-results:
-
-![Bumbledb and SQLite read latency](assets/bench-vs-sqlite.svg)
-
-Across those 32 queries, Bumbledb's median latency has a **28.0× geometric
-mean speedup** over SQLite for the durable store. The individual results range
-from **3.9×** for an account-set lookup to **420×** for a calendar scan:
-
-![Read speedup over SQLite](assets/bench-speedup.svg)
-
-Median latency is only part of the picture. These two views show p50 through
-p99 for each query. The `spread` query and the three largest displaced-data
-probes exceed the project's 10 ms p99 target; the charts include those misses
-rather than reducing the dataset or dropping the queries.
-
-![Read latency through p99](assets/bench-tails.svg)
-
-![Read latency fan](assets/tails-fan.svg)
-
-The complete comparison below combines the primary reads with the additional
-workloads. Red bars are operations where SQLite is faster. Two SQLite queries
-that exceeded the one-second limit are counted but do not receive invented
-ratios.
-
-![Complete performance comparison](assets/ratio-waterfall.svg)
-
-### Additional workloads
-
-The broader suite covers joins, graph queries, analytical rollups, point
-lookups, cyclic joins, and time intervals. Across the 31 comparisons that
-finished in both engines, Bumbledb's median latency has a **22.2× geometric
-mean speedup**. Two direct SQL translations exceeded the one-second limit.
-
-![Speedup across additional workloads](assets/bench-scenarios.svg)
-
-The join tests use IMDB-shaped data and range from two-way to five-way joins:
-
-![Join query latency](assets/world-joins.svg)
-
-The graph tests cover neighborhoods, two-hop paths, mutual edges, and
-triangles:
-
-![Graph query latency](assets/world-graph.svg)
-
-The analytical tests cover grouped totals, windows, and drill-downs:
-
-![Analytical query latency](assets/world-olap.svg)
-
-Point reads are close because they play directly to SQLite's B-tree
-implementation. Bumbledb is **3.3×** faster on the closest prepared lookup and
-**1.5×** faster on its typed keyed read:
-
-![Point-read latency](assets/world-points.svg)
-
-Cyclic joins are a difficult case for a fixed sequence of binary joins.
-Bumbledb is **11.4×** faster on the first ring query and **9.3×** faster on
-the first bipartite stress test:
-
-![Cyclic-join latency](assets/world-rings.svg)
-
-The time tests cover point membership, overlaps, open-ended intervals, and
-merging adjacent ranges. Hand-written SQLite alternatives are shown beside
-the direct translations where they materially improve the comparison:
-
-![Time-query latency](assets/world-temporal.svg)
-
-### Queries that timed out in SQLite
-
-SQLite's stress-test queries were limited to one second per sample. Two direct
-translations exceeded that limit on every attempt. Bumbledb completed the
-larger bipartite join in **1.69 seconds** and the interval-overlap join in
-**50.3 milliseconds**. A hand-written SQLite version of the overlap query did
-finish; Bumbledb was **10.8×** faster than that version.
-
-![Queries that exceeded SQLite's time limit](assets/adversarial-dnf.svg)
-
-### Where SQLite is faster
-
-The transaction benchmark measures keyed reads, inserts, updates, upserts,
-read-modify-write operations, deletes, and a 90/10 read/write mix with matching
-durability settings. SQLite is faster on 19 of the 22 comparisons and has a
-**1.85×** geometric mean advantage overall. Bumbledb wins the keyed reads and
-the durable single-record insert, but SQLite's write path is substantially
-faster for large batches when durability is disabled.
-
-![Ordinary transaction performance](assets/world-crud.svg)
-
-The constraint benchmark compares Bumbledb's keys, references, conditional
-references, fixed sets, and resource limits with SQLite
-`UNIQUE`/`FOREIGN KEY`/`CHECK`/trigger implementations. SQLite is faster on
-10 of 12 comparisons. Successful durable commits are close, while SQLite
-rejects invalid writes much faster. The largest gap is a failed durable key
-check: Bumbledb spends 4.24 ms because its never-reuse ID guarantee is itself
-persisted, while SQLite returns after 7.7 µs.
-
-![Constraint-check performance](assets/world-lawful.svg)
-
-### Writes
-
-Durable single-record commits are dominated by the storage flush in both
-engines: Bumbledb measures 4.85 ms at p50 and SQLite 4.25 ms. On a large
-collection insert Bumbledb completes it in 0.65 seconds compared with
-SQLite's 0.71 seconds.
-
-![Write and first-read latency](assets/bench-writes.svg)
-
-The full throughput test covers insert and delete batches of 1, 10, 100, and
-1,000 records with and without durability:
-
-![Write throughput by operation](assets/bench-writes-rates.svg)
-
-The same results plotted against batch size show where flush latency stops
-dominating and record processing becomes visible:
-
-![Write throughput curves](assets/write-throughput.svg)
-
-### Disk usage
-
-After compaction, Bumbledb uses approximately **167 bytes per ledger row** and
-**228 bytes per calendar row**. Indexed SQLite uses 73 and 93 bytes
-respectively. Bumbledb spends the additional space on the indexes used for
-keys and constraints and on the read representation that supports its query
-performance.
-
-![Disk usage per stored row](assets/bench-storage.svg)
-
-### Scale and cold starts
-
-The scale test repeats four representative queries at the published dataset
-sizes. The calendar scan is **427×** faster than the direct SQLite query and
-**155×** faster than a hand-written alternative; the triangle query is
-**14.9×** faster, and the recursive fan-out query is **34.7×** faster.
-
-![Performance at the published dataset sizes](assets/bench-curves.svg)
-
-The first query after opening a database includes work that later executions
-reuse. SQLite is faster on the cold recursive fan-out query, at 22.7 µs versus
-Bumbledb's 786 µs. Once warm, Bumbledb completes it in 791 ns versus SQLite's
-10.0 µs.
-
-![Cold and warm query latency](assets/bench-warmth.svg)
-
-### Performance after repeated updates
-
-The long-running update test starts with 100,000 records and performs 10,000
-delete-and-insert cycles. It includes a steady workload, the same workload
-without durability, and a delete-heavy workload. One SQLite configuration
-runs periodic `VACUUM` and `ANALYZE`, with that maintenance time included in
-its throughput.
-
-On the durable steady workload, SQLite's window-probe latency rises from 299
-to 534 µs while Bumbledb remains at 21 µs. Bumbledb's store grows from 74.5
-to 83.0 MB; SQLite's unmaintained store grows from 14.8 to 17.4 MB, and
-periodic `VACUUM` reduces it to 13.2 MB. SQLite remains ahead on durable
-write throughput, while Bumbledb is ahead with durability disabled.
-
-Probe latency:
-
-![Probe latency during steady updates](assets/churn-latency-steady.svg)
-![Probe latency during non-durable updates](assets/churn-latency-nosync.svg)
-![Probe latency during delete-heavy updates](assets/churn-latency-delete-heavy.svg)
-
-Store size:
-
-![Store size during steady updates](assets/churn-size-steady.svg)
-![Store size during non-durable updates](assets/churn-size-nosync.svg)
-![Store size during delete-heavy updates](assets/churn-size-delete-heavy.svg)
-
-Write throughput:
-
-![Write throughput during steady updates](assets/churn-throughput-steady.svg)
-![Write throughput during non-durable updates](assets/churn-throughput-nosync.svg)
-![Write throughput during delete-heavy updates](assets/churn-throughput-delete-heavy.svg)
-
-### Heap instance versus the leased store
-
-The same ledger corpus, published once into a durable store and once into an
-`OwnedInstance`, is compared on point reads. Heap `get` is 167 ns against
-LMDB's 250 ns; `contains` is 292 ns against 416 ns. Admission cost on this
-night rose from 728 ns/fact at 693 facts to 923 ns/fact at 41,432 facts.
-
-### Reproducing the benchmarks
-
-The complete benchmark run is one command:
-
-```sh
-scripts/bench-night.sh bench-out/night-$(date +%F)
-```
-
-It generates and verifies the datasets, runs the durable and non-durable
-comparisons, exercises the additional workloads, measures storage and writes,
-runs the heap-versus-store ladder, performs the long-running update test, and
-records the machine state around each timed section. The full configuration
-and individual commands live with the bench crate (`crates/bumbledb-bench`).
-
-## Why reads are fast
-
-Most of the read performance comes from a few structural choices.
-
-Relations are decoded into columnar in-memory data once per database version
-and shared by prepared queries. A lazy trie index is built only to the depth a
-query actually needs, so a join does not pay to construct unused levels.
-
-The executor uses Free Join, an algorithm that can choose between traditional
-binary-join behavior and worst-case-optimal join behavior within the same
-plan. This matters for graph and cyclic queries, where committing to one fixed
-binary join order can produce very large intermediate results.
-
-Probes run in batches of roughly 128. The engine first computes their hashes,
-then issues independent memory lookups together so the processor can overlap
-cache misses. Failed probes are removed from the batch without a branch for
-each row.
-
-Finally, set semantics remove work. Relations contain no duplicate records,
-inserts and deletes are idempotent, and query unions are already distinct.
-Prepared queries reuse their plans, temporary storage, indexes, and output
-buffers, which is why an execution within previously seen sizes performs no
-heap allocation.
-
-The detailed execution model lives in the executor modules
-(`crates/bumbledb/src/exec`, `plan`, `interval`).
+## Measurement
+
+1.0 qualification measures the successor tree on Apple Silicon, real
+Graviton ARM64, and x86 Node. Historical 0.17.0 night numbers are not 1.0
+evidence and are not restated here. L20 owns the measurement inputs;
+execution is **NotRun** until that campaign.
 
 ## Schemas and queries
 
@@ -446,14 +222,13 @@ relations:
 | `interval<E, w>` | fixed-width half-open ranges | the same interval operations |
 | `closed relation` | a fixed enum-like set, optionally with columns | equality, parameter sets, filtered references, joins |
 
-Text is interned because application data often repeats it. Fixed-size byte
-values stay inline because hashes and identifiers generally do not. Intervals
-store ordered endpoints and may use the largest endpoint to represent an
-open-ended range.
+Text stays inline in durable values. Fixed-size byte values stay inline.
+Intervals store ordered endpoints and may use the largest endpoint to
+represent an open-ended range.
 
 The `as NewType` field modifier emits a Rust newtype for nominal safety.
-`fresh` asks the database to generate never-reused `u64` values and
-automatically makes that field a key.
+Entity and record IDs are application-owned values declared in the schema;
+the engine does not mint or reserve identifiers.
 
 Queries are plain data after macro or builder expansion. They can be stored,
 composed, prepared once, and executed repeatedly with different parameters.
@@ -469,79 +244,50 @@ representation rather than separate query engines.
 ## Architecture
 
 The laws live in the code at the site each governs; decision history
-lives in git. Worked
-schemas are [`docs/cookbook.md`](docs/cookbook.md). Measurement notes are
-[`docs/reference/apple-silicon-performance.md`](docs/reference/apple-silicon-performance.md).
+lives in git. Worked schemas are [`docs/cookbook.md`](docs/cookbook.md).
 
 The implementation of Free Join follows Wang, Willsey, and Suciu,
 *Free Join: Unifying Worst-Case Optimal and Traditional Joins* (SIGMOD 2023),
-with the engine's differences documented alongside the code. The paper is
-included under [`docs/free-join-paper/`](docs/free-join-paper/).
+with the engine's differences documented alongside the code.
 
-The Rust engine and TypeScript package use the shared schema and
-query definitions in this repository. [`lean/`](lean/README.md) contains an
-executable specification of values, queries, plans, and constraints. The
-checked-in examples are evaluated by the engine, a straightforward reference
-implementation, and Lean, and the test fails if the results differ.
+The Rust engine and TypeScript packages use the shared schema and query
+definitions in this repository. [`lean/`](lean/README.md) contains an
+executable specification of the admitted language. Correspondence with
+current Rust is a qualification obligation, not a claim that this tree
+already passed.
 
-## Correctness and performance testing
+## Qualification
 
-The benchmark results are backed by checks that run before timing:
+Discriminators for D01–D29 and G00–G16 are authored now and executed only
+in the final post-retirement campaign. A successful local import is not
+all-platform evidence. Missing real S3 or Graviton cells remain **NotRun**.
 
-- The query suite and randomized query generator compare result sets with
-  SQLite.
-- Randomized write sequences compare accepted commits, rejected commits,
-  reported constraints, and resulting records with an independent
-  implementation.
-- A successful verification records the exact binary, schema, dataset, and
-  configuration. The benchmark refuses to reuse that result for a different
-  binary or input.
-- A machine-wide lock prevents two benchmark processes from timing
-  simultaneously. Processor frequency is sampled around timed sections, and
-  affected readings are marked in the raw report.
-- Machine-code checks verify important properties of hot loops, including the
-  absence of calls and fallback byte comparisons.
-- A counting allocator verifies that warm prepared-query execution performs no
-  allocations.
-- CI runs `scripts/battery.sh` on Linux x86-64 and macOS ARM64.
-- The Lean build accepts no unfinished proofs, and its executable results are
-  compared with the Rust engine and the independent implementation.
-
-An optimization is kept only when its benchmark demonstrates an improvement.
-Failed experiments are removed rather than left behind as optional modes.
+Public specimens: `examples/notes` (Next.js + Alchemy, Node only) and
+`examples/consumers` (Rust / core TS / log TS / native-ledger).
 
 ## Repository layout
 
 ```text
 crates/bumbledb/               database engine
-crates/bumbledb-macros/        schema! macro
-crates/bumbledb-query/         Rust query API
-crates/bumbledb-query-macros/  query! macro
-crates/bumbledb-theory/        shared schema representation
-crates/bumbledb-bench/         verification and benchmark suite
-ts/                            TypeScript package and native bridge
+crates/bumbledb-log/           durable command / lifecycle crate
+ts/                            TypeScript core package and native bridge
+ts-log/                        TypeScript log package
+examples/notes/                Next.js + Alchemy application
+examples/consumers/            packed Rust / TS / native-ledger specimens
 lean/                          executable specification
 docs/                          architecture, cookbook, and references
-scripts/                       tests, benchmark runner, and chart generation
+scripts/                       qualification runners
 ```
 
-Green is the exit code of `scripts/battery.sh`.
+## Current target
 
-## Current release
+Branch `codex/bumbledb-1-0` targets **1.0**: application-owned entity IDs,
+Effect-only TypeScript operations, generated migrations, no public C API,
+and no public Rust log SDK. Predecessor 0.17.0 tags are not this product.
 
-Version **0.17.0** covers the Rust engine and
-`@bjornpagen/bumbledb` TypeScript package.
-Storage format is **8**.
-
-Bumbledb uses one writer and concurrent snapshot readers. The engine owns no
-threads, does not open a network port, and keeps query execution in the
-caller's thread. Stores reserve a fixed 32 GiB LMDB address range without
-preallocating a 32 GiB file. When a schema changes, data is exported and
-imported into a new store rather than migrated in place.
-
-The TypeScript binary currently ships for macOS ARM64. The Rust workspace is
-tested on macOS ARM64 and Linux x86-64; other 64-bit targets use the portable
-implementation but are not part of the published performance results.
+Bumbledb uses one writer and concurrent snapshot readers. The embedded API
+owns no server port. Schema changes within the selected format family use
+generated migrations; incompatible predecessor stores refuse before mutation.
 
 ## License
 

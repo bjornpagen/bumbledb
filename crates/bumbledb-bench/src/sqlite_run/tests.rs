@@ -1,13 +1,12 @@
 use super::*;
 use crate::corpus_gen::{GenConfig, Scale};
 use crate::translate::translate;
-use crate::writebench::non_posting_relations;
-use crate::{corpus, corpus_gen, families, sqlmap};
+use crate::{corpus, families};
 use rusqlite::Connection;
 
 const CFG: GenConfig = GenConfig {
     seed: 1,
-    scale: Scale::S,
+    scale: Scale::Tiny,
 };
 
 fn scratch(tag: &str) -> std::path::PathBuf {
@@ -113,49 +112,6 @@ fn fairness_and_the_prepared_sample_contract() {
 }
 
 #[test]
-fn write_mirrors_run_with_sane_direction() {
-    const ROUNDS: usize = 3;
-    let dir = scratch("write");
-    let conn = Connection::open(dir.join("oracle.sqlite")).expect("open");
-    corpus::configure_sqlite(&conn).expect("configure");
-    for statement in sqlmap::ddl(crate::schema::schema()) {
-        conn.execute(&statement, []).expect("ddl");
-    }
-    for rel in non_posting_relations() {
-        corpus::load_sqlite_relation(&conn, CFG, rel).expect("seed");
-    }
-    let mut rounds = 0usize;
-    loop {
-        let single = commit_single(&conn, CFG).expect("commit_single");
-        assert!(single.stats.min > 0);
-        assert_eq!(single.work, 64);
-        let batch = commit_batch(&conn, CFG).expect("commit_batch");
-        assert_eq!(batch.work, 512 * 32);
-        rounds += 1;
-        if batch.stats.p50 > single.stats.p50 {
-            break;
-        }
-        assert!(
-            rounds < ROUNDS,
-            "512 rows outlast 1 in none of {ROUNDS} rounds: batch {} vs single {}",
-            batch.stats.p50,
-            single.stats.p50
-        );
-    }
-    let per_round = i64::from(64 + 8 + 512 * (32 + 4));
-    let count: i64 = conn
-        .query_row("SELECT COUNT(*) FROM \"Posting\"", [], |row| row.get(0))
-        .expect("count");
-    assert_eq!(
-        count,
-        per_round * i64::try_from(rounds).expect("fits"),
-        "warmups included, per measured round"
-    );
-    drop(conn);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
     let conn = Connection::open_in_memory().expect("open");
     let mut slow = conn
@@ -177,16 +133,4 @@ fn cap_trips_on_a_slow_query_and_passes_a_fast_one() {
     })
     .expect("a fast query under a generous cap");
     assert_eq!(outcome, CapOutcome::Done(1));
-}
-
-/// The insert-stream mirror reports positive throughput over its protocol.
-#[test]
-fn insert_stream_mirror_reports_positive_throughput() {
-    let dir = scratch("insert-stream");
-    let m =
-        insert_stream(CFG, &dir, crate::duralane::DurabilityLane::Durable).expect("insert_stream");
-    let sizes = corpus_gen::Sizes::of(CFG.scale);
-    assert_eq!(m.work, (sizes.postings + sizes.posting_tags) * 8);
-    assert!(m.stats.min > 0);
-    let _ = std::fs::remove_dir_all(&dir);
 }

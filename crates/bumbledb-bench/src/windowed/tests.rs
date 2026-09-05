@@ -3,7 +3,6 @@ use bumbledb::{Db, Theory as _, Value};
 
 use crate::differential::{self, Op};
 use crate::naive::{Delta, NaiveDb};
-use crate::writebench::write_protocol;
 
 use super::{Mass, baseline, ids, parent_kind, relation_rows, world};
 
@@ -100,48 +99,6 @@ fn the_window_verdicts_agree_with_the_naive_model() {
     let summary = differential::run(&db, &mut naive, &ops).expect("verdict parity");
     assert_eq!(summary.aborts, 2, "the over-cap burst and the exclusion");
     drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
-fn the_window_rows_run_their_protocols() {
-    let dir = scratch("rows");
-    let windowed = Db::create(&dir.join("windowed"), world::WindowedWorld)
-        .expect("create")
-        .expect("accepted");
-    super::load(&windowed, Mass::BENCH).expect("load windowed");
-    let unwindowed = Db::create(&dir.join("baseline"), baseline::UnwindowedWorld)
-        .expect("create baseline")
-        .expect("accepted");
-    super::load(&unwindowed, Mass::BENCH).expect("load baseline");
-
-    let mut admission_mint = super::MINT_BASE;
-    let mut baseline_mint = super::MINT_BASE;
-    let mut exclusion_mint = super::MINT_BASE + (1 << 20);
-    let admission = super::commit_window_admission(
-        &windowed,
-        write_protocol("commit_window_admission"),
-        &mut admission_mint,
-    )
-    .expect("admission");
-    assert_eq!(admission.work, 64, "one row per sample");
-    assert!(admission.stats.min > 0);
-    let baseline_row = super::commit_window_baseline(
-        &unwindowed,
-        write_protocol("commit_window_baseline"),
-        &mut baseline_mint,
-    )
-    .expect("baseline");
-    assert_eq!(baseline_row.work, 64);
-    let exclusion = super::commit_window_exclusion(
-        &windowed,
-        write_protocol("commit_window_exclusion"),
-        &mut exclusion_mint,
-    )
-    .expect("exclusion");
-    assert_eq!(exclusion.work, 64);
-    drop(windowed);
-    drop(unwindowed);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

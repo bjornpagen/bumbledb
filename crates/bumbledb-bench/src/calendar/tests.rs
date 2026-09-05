@@ -153,16 +153,20 @@ fn chains_are_valid_under_the_pointwise_key() {
 
 #[test]
 fn both_stores_load_the_same_corpus() {
-    let dir = scratch("corpus-load");
+    let scratch = crate::fixture::TempDir::new("calendar-corpus-load");
+    let dir = scratch.path();
+    let cfg = GenConfig {
+        scale: Scale::Tiny,
+        ..CFG
+    };
     let db = Db::create(&dir.join("db"), Scheduling)
         .expect("create")
         .expect("accepted");
-    let ours = corpus::load_bumbledb(&db, CFG).expect("bumbledb load");
-    let (conn, theirs) = corpus::load_sqlite(&dir.join("oracle.sqlite"), CFG).expect("sqlite load");
+    let ours = corpus::load_bumbledb(&db, cfg).expect("bumbledb load");
+    let (conn, theirs) = corpus::load_sqlite(&dir.join("oracle.sqlite"), cfg).expect("sqlite load");
     assert_eq!(ours.facts, theirs.facts);
-    corpus::assert_loaded_equal(&db, &conn, CFG);
+    corpus::assert_loaded_equal(&db, &conn, cfg);
     drop((db, conn));
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

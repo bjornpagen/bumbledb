@@ -10,17 +10,22 @@
 //! ```text
 //! rows        key shape, schema knowledge, closed-relation intrusion,
 //!             canonical validity, membership backing with the exact
-//!             fingerprint, per-relation tallies and the max row id
+//!             fingerprint, EVERY schema-derived determinant entry present
+//!             under its recomputed fingerprint, per-relation tallies and
+//!             the max row id
 //! membership  resolves to a live row whose recomputed fingerprint is the
 //!             stored bucket
-//! determinant resolves to a live row of the statement's relation
+//! determinant resolves to a live row of the statement's relation whose
+//!             recomputed determinant fingerprint is the stored bucket
 //! meta        family/layout/schema identity, generation presence, stored
 //!             row counts against the tallies, the next-row-id ratchet,
 //!             host-record key bounds
 //! judgment    every sealed statement re-judged over the full final state
 //! ```
 
-use bumbledb_theory::schema::{RelationId, StatementId};
+use bumbledb_theory::schema::RelationId;
+
+use crate::schema::ProjectionId;
 
 use super::error::{StoreError, StoreResult};
 use super::fingerprint::FP_LEN;
@@ -34,7 +39,8 @@ use super::snapshot::OwnedSnapshot;
 use crate::canonical::RowError;
 use crate::schema::Schema;
 use crate::schema::judge::{
-    CandidateFacts, JudgeBudget, JudgeError, JudgedViolation, Judgment, judge_final_state,
+    CandidateFacts, JudgeBudget, JudgeError, JudgedViolation, Judgment, judge_final_state_with_scratch,
+    store_fault, JudgeScratch,
 };
 use crate::work::WorkContext;
 
@@ -63,12 +69,20 @@ pub enum VerifyCorruption {
     /// A membership entry's bucket disagrees with the row's recomputed
     /// fingerprint.
     ForeignMembership { relation: RelationId, row: RowId },
-    /// A determinant entry references no live row of its statement's
+    /// A determinant entry references no live row of its projection's
     /// relation.
-    DanglingDeterminant { statement: StatementId, row: RowId },
-    /// A determinant entry names a statement the schema does not seal as a
-    /// key statement.
-    UnknownDeterminantStatement { statement: StatementId },
+    DanglingDeterminant { projection: ProjectionId, row: RowId },
+    /// A determinant entry names a projection the compiled theory does not
+    /// intern (auxiliary leftovers included — neither belongs in a store
+    /// the production write path built).
+    UnknownDeterminantProjection { projection: ProjectionId },
+    /// A live row lacks a schema-derived determinant entry under its
+    /// recomputed routing — keyed reads and judgment enumeration would not
+    /// see this row for that projection.
+    MissingDeterminant { projection: ProjectionId, row: RowId },
+    /// A determinant entry's bucket disagrees with the row's recomputed
+    /// routing for that projection.
+    ForeignDeterminant { projection: ProjectionId, row: RowId },
     /// The stored per-relation row count disagrees with the counted rows.
     RowCountMismatch {
         relation: RelationId,
@@ -174,6 +188,28 @@ pub(crate) fn sweep(
                     row,
                 }));
             }
+            // Every schema-derived determinant entry, recomputed with the
+            // engine's own projection convention and fingerprint, must be
+            // present — index completeness is load-bearing for keyed reads
+            // and judgment enumeration.
+            inner
+                .det
+                .emit_row(relation, row_bytes, work, &mut |projection, projected, tail| {
+                    let routing = rows::routing_for_projected(inner, projection, projected)?;
+                    let entry = keys::determinant_key(projection, &routing, tail, row);
+                    let present = inner
+                        .data
+                        .get(txn, entry.as_slice())
+                        .map_err(StoreError::from_heed)?
+                        .is_some();
+                    if !present {
+                        findings.push(corrupt(VerifyCorruption::MissingDeterminant {
+                            projection,
+                            row,
+                        }));
+                    }
+                    Ok(())
+                })?;
         }
     }
 
@@ -228,29 +264,82 @@ pub(crate) fn sweep(
         for entry in range {
             work.step(1)?;
             let (key, _) = entry.map_err(StoreError::from_heed)?;
-            if key.len() != keys::DETERMINANT_KEY_LEN {
+            if key.len() < keys::DETERMINANT_KEY_MIN_LEN || key.first() != Some(&keys::TAG_DETERMINANT) {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
                     what: "determinant key width",
                 }));
                 continue;
             }
-            let statement = StatementId(u16::from_be_bytes(
-                key[1..3].try_into().expect("checked width"),
-            ));
-            let row = keys::row_id_from_suffix(key, keys::DETERMINANT_KEY_LEN)?;
-            let Some(crate::schema::StatementView::Key(_, sealed)) =
-                schema.statement_checked(statement)
-            else {
-                findings.push(corrupt(VerifyCorruption::UnknownDeterminantStatement {
-                    statement,
+            let projection = match keys::projection_of_determinant_key(key) {
+                Ok(id) => id,
+                Err(_) => {
+                    findings.push(corrupt(VerifyCorruption::MalformedKey {
+                        what: "determinant key width",
+                    }));
+                    continue;
+                }
+            };
+            let row = match keys::row_id_from_determinant_key(key) {
+                Ok(id) => id,
+                Err(_) => {
+                    findings.push(corrupt(VerifyCorruption::MalformedKey {
+                        what: "determinant key width",
+                    }));
+                    continue;
+                }
+            };
+            let stored_payload = match keys::payload_of_determinant_key(key) {
+                Ok(payload) => payload,
+                Err(_) => {
+                    findings.push(corrupt(VerifyCorruption::MalformedKey {
+                        what: "determinant routing",
+                    }));
+                    continue;
+                }
+            };
+            let Some(compiled) = inner.det.projection(projection) else {
+                findings.push(corrupt(VerifyCorruption::UnknownDeterminantProjection {
+                    projection,
                 }));
                 continue;
             };
-            if rows::fetch_row(inner, txn, sealed.relation, row)?.is_none() {
+            let Some(row_bytes) = rows::fetch_row(inner, txn, compiled.relation, row)? else {
                 findings.push(corrupt(VerifyCorruption::DanglingDeterminant {
-                    statement,
+                    projection,
                     row,
                 }));
+                continue;
+            };
+            // Exactness: the entry's bucket must be the row's recomputed
+            // determinant fingerprint under the one projection convention.
+            let Some(fields) = inner.det.fields_of(compiled.relation) else {
+                findings.push(corrupt(VerifyCorruption::UnknownRelation {
+                    relation: compiled.relation,
+                }));
+                continue;
+            };
+            match crate::canonical::decode(fields, row_bytes, work) {
+                Err(RowError::Work(work_error)) => return Err(StoreError::Work(work_error)),
+                Err(_) => {
+                    // The row pass already convicted the malformed row.
+                }
+                Ok(decoded) => {
+                    let values = compiled.scalar_values(decoded.values());
+                    let projected =
+                        super::det_index::determinant_bytes(compiled, &values, work)?;
+                    let expected = rows::routing_for_projected(inner, projection, &projected)?;
+                    let tail = compiled.interval_tail_bytes(decoded.values());
+                    let mut expected_payload = expected;
+                    if let Some(tail) = tail {
+                        expected_payload.extend_from_slice(&tail);
+                    }
+                    if stored_payload != expected_payload.as_slice() {
+                        findings.push(corrupt(VerifyCorruption::ForeignDeterminant {
+                            projection,
+                            row,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -378,6 +467,29 @@ pub(crate) fn sweep(
                 }));
             }
         }
+        // Per-relation change versions: well-formed words only. No count
+        // invariant exists (a relation emptied by deletes keeps its spent
+        // versions), and monotonicity is per-lineage, not per-snapshot.
+        let version_prefix = [format::K_RELATION_VERSION_TAG];
+        let range = inner
+            .meta
+            .prefix_iter(txn, version_prefix.as_slice())
+            .map_err(StoreError::from_heed)?;
+        for entry in range {
+            work.step(1)?;
+            let (key, value) = entry.map_err(StoreError::from_heed)?;
+            if key.len() != 5 {
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "relation version key width",
+                }));
+                continue;
+            }
+            if <[u8; 8]>::try_from(value).is_err() {
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "relation version value width",
+                }));
+            }
+        }
         let host_prefix = [K_HOST_RECORD_TAG];
         let range = inner
             .meta
@@ -402,7 +514,13 @@ pub(crate) fn sweep(
         schema,
         work,
     };
-    match judge_final_state(schema, &facts, work, JudgeBudget::default()) {
+    match judge_final_state_with_scratch(
+        schema,
+        &facts,
+        work,
+        JudgeBudget::default(),
+        JudgeScratch::channel(store_fault),
+    ) {
         Ok(Judgment::Admitted) => {}
         Ok(Judgment::Rejected(violations)) => {
             findings.extend(
@@ -447,26 +565,27 @@ struct SnapshotFacts<'a> {
 impl CandidateFacts for SnapshotFacts<'_> {
     type Error = StoreError;
 
-    fn rows(
+    fn visit_rows(
         &self,
         relation: RelationId,
-    ) -> Box<dyn Iterator<Item = Result<Box<[crate::Value]>, Self::Error>> + '_> {
+        visit: &mut dyn FnMut(&[crate::Value]) -> Result<bool, Self::Error>,
+    ) -> Result<(), Self::Error> {
         let Some(view) = self.schema.relation_checked(relation) else {
             // Unknown relations were already reported as corruption; the
             // judge only asks for sealed relations, so this is unreachable
             // in practice and refuses loudly if reached.
-            return Box::new(std::iter::once(Err(StoreError::Corruption(
+            return Err(StoreError::Corruption(
                 super::error::StoreCorruption::MalformedKey("judged relation unknown to schema"),
-            ))));
+            ));
         };
         let fields = view.fields();
-        match self.snapshot.rows(relation) {
-            Err(error) => Box::new(std::iter::once(Err(error))),
-            Ok(iterator) => Box::new(iterator.map(move |entry| {
-                let (_, bytes) = entry?;
-                let decoded = crate::canonical::decode(fields, bytes, self.work)?;
-                Ok(decoded.values.into_boxed_slice())
-            })),
+        for entry in self.snapshot.rows(relation)? {
+            let (_, bytes) = entry?;
+            let decoded = crate::canonical::decode(fields, bytes, self.work)?;
+            if !visit(decoded.values())? {
+                break;
+            }
         }
+        Ok(())
     }
 }

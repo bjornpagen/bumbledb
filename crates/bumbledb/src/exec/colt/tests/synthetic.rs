@@ -12,7 +12,7 @@ fn synthetic_view(rows: &[(u64, u64)]) -> View {
         words.len(),
         words.iter().map(|row| &row[..]),
     );
-    apply(&image, &[], &[], Vec::new())
+    apply(&image, &[], &[], Vec::new(), image.generation().text_eq(None))
 }
 
 #[test]

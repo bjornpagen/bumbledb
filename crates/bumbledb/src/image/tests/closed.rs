@@ -1,5 +1,6 @@
 use crate::encoding::{encode_bool, encode_interval_u64, encode_u64};
 use crate::image::{ColumnWidth, synthesize_closed};
+use crate::work::{CacheLedger, GenerationHandle, GenerationState};
 use crate::ir::Value;
 use bumbledb_theory::schema::{IntervalElement, Row};
 
@@ -98,10 +99,19 @@ fn word(bytes: [u8; 8]) -> u64 {
     u64::from_be_bytes(bytes)
 }
 
+fn closed_generation() -> GenerationHandle {
+    GenerationHandle::new(GenerationState::new(
+        crate::image::CacheGeneration::initial(),
+        CacheLedger::unbounded(),
+    ))
+}
+
 #[test]
 fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
     let schema = theory();
-    let image = synthesize_closed(SEASON, schema.relation(SEASON));
+    let image = synthesize_closed(SEASON, schema.relation(SEASON), closed_generation())
+        .expect("closed synthesis")
+        .expect_ready("closed stays resident");
 
     assert_eq!(image.row_count(), 3);
     let id_span = image.span(bumbledb_theory::schema::FieldId(0));
@@ -164,7 +174,9 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
 #[test]
 fn a_columnless_vocabulary_synthesizes_to_its_id_column_alone() {
     let schema = theory();
-    let image = synthesize_closed(STATUS, schema.relation(STATUS));
+    let image = synthesize_closed(STATUS, schema.relation(STATUS), closed_generation())
+        .expect("closed synthesis")
+        .expect_ready("closed stays resident");
     assert_eq!(image.row_count(), 2);
     let id_span = image.span(bumbledb_theory::schema::FieldId(0));
     assert_eq!(

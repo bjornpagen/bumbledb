@@ -19,14 +19,25 @@
 //! retained named roots and a running barrier keep protecting objects.
 //! Physical bytes remain provisional until the F3 format freeze (C12).
 
-use crate::history::authority::{HeadAuthority, Lifecycle, decode_control, encode_control};
+use crate::history::authority::{
+    AuthorityError, HeadAuthority, Lifecycle, decode_control, encode_control,
+};
 use crate::history::{
     DecisionDigest, DecisionStamp, FrameError, IncarnationId, OperationId, StateStamp,
 };
 use crate::store::{ObjectKind, ObjectRef};
 
+/// Encoded byte length of one [`ObjectRef`] on the wire. Alias of the C6
+/// constant owned by [`crate::history::locator`].
+pub const OBJECT_REF_WIRE_BYTES: usize = crate::history::locator::OBJECT_REF_WIRE_BYTES;
+pub const OBJECT_REF_OPTION_ABSENT_BYTES: usize =
+    crate::history::locator::OBJECT_REF_OPTION_ABSENT_BYTES;
+pub const OBJECT_REF_OPTION_PRESENT_BYTES: usize =
+    crate::history::locator::OBJECT_REF_OPTION_PRESENT_BYTES;
+pub const OBJECT_REF_ENCODED_LEN: usize = OBJECT_REF_WIRE_BYTES;
+
 pub const FAMILY: &[u8] = b"bumbledb.head.v1\0";
-pub const LAYOUT: u16 = 1;
+pub const LAYOUT: u16 = 2;
 const HEAD: u8 = 1;
 
 /// Metadata/resource policy bounds for the named-root list — not a
@@ -62,20 +73,92 @@ impl TailPolicy {
 
 /// "This checkpoint at `base` plus exactly the decisions `(base, tip]`" —
 /// the recovery walker and the retention walker share this stopping
-/// boundary. `checkpoint: None` is a genesis root: recovery replays the
-/// whole chain from the sequence-zero sentinel. `epoch_floor` is the oldest
-/// object epoch a tail decision of this root can live under, bounding the
-/// fetch probe window.
+/// boundary. Two semantic cases only (C6): checkpoint-only `base == tip`
+/// with no tip locator (nonzero is normal), or suffix `base != tip` with a
+/// checked tip DecisionRef. Comparison is the complete stamp. `checkpoint:
+/// None` is a genesis root. `epoch_floor` is provenance only; traversal
+/// uses authenticated locators, never epoch probing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecoveryRoot {
     pub checkpoint: Option<ObjectRef>,
     pub base: DecisionStamp,
     pub tip: DecisionStamp,
+    /// Direct authenticated locator for the tip decision object. Absent when
+    /// `tip == base` (checkpoint-only base needs no retained parent object).
+    pub tip_object: Option<ObjectRef>,
     pub tail_bytes: u64,
     pub epoch_floor: u64,
 }
 
 impl RecoveryRoot {
+    /// Checkpoint-only root: `base == tip` and no tip locator (C6).
+    /// Nonzero checkpoint-only roots are normal.
+    #[must_use]
+    pub const fn checkpoint_only(
+        checkpoint: Option<ObjectRef>,
+        stamp: DecisionStamp,
+        tail_bytes: u64,
+        epoch_floor: u64,
+    ) -> Self {
+        Self {
+            checkpoint,
+            base: stamp,
+            tip: stamp,
+            tip_object: None,
+            tail_bytes,
+            epoch_floor,
+        }
+    }
+
+    /// Suffix root: `base != tip` with a checked tip DecisionRef (C6).
+    /// Comparison is the complete stamp, not sequence alone.
+    pub fn suffix(
+        checkpoint: Option<ObjectRef>,
+        base: DecisionStamp,
+        tip: DecisionStamp,
+        tip_object: ObjectRef,
+        tail_bytes: u64,
+        epoch_floor: u64,
+    ) -> Result<Self, crate::history::FrameError> {
+        Self::checked(
+            checkpoint,
+            base,
+            tip,
+            Some(tip_object),
+            tail_bytes,
+            epoch_floor,
+        )
+    }
+
+    /// Decode/construct the one legal pairing of base, tip and tip locator.
+    ///
+    /// # Errors
+    /// Equal-sequence different-stamp, checkpoint-only with a tip object,
+    /// suffix without a DecisionRef, or a non-checkpoint object refuse.
+    pub fn checked(
+        checkpoint: Option<ObjectRef>,
+        base: DecisionStamp,
+        tip: DecisionStamp,
+        tip_object: Option<ObjectRef>,
+        tail_bytes: u64,
+        epoch_floor: u64,
+    ) -> Result<Self, crate::history::FrameError> {
+        if let Some(checkpoint) = &checkpoint
+            && checkpoint.kind != ObjectKind::Checkpoint
+        {
+            return Err(crate::history::FrameError::InvalidCount);
+        }
+        crate::history::locator::validate_recovery_locators(base, tip, tip_object)?;
+        Ok(Self {
+            checkpoint,
+            base,
+            tip,
+            tip_object,
+            tail_bytes,
+            epoch_floor,
+        })
+    }
+
     #[must_use]
     pub const fn tail_count(&self) -> u64 {
         self.tip.seq.saturating_sub(self.base.seq)
@@ -84,13 +167,7 @@ impl RecoveryRoot {
     /// Genesis recovery: no checkpoint object yet; the whole chain is the tail.
     #[must_use]
     pub const fn genesis(stamp: DecisionStamp, object_epoch: u64) -> Self {
-        Self {
-            checkpoint: None,
-            base: stamp,
-            tip: stamp,
-            tail_bytes: 0,
-            epoch_floor: object_epoch,
-        }
+        Self::checkpoint_only(None, stamp, 0, object_epoch)
     }
 }
 
@@ -135,8 +212,9 @@ pub enum GcPhase {
         barrier: Barrier,
         /// The immutable checked mark manifest (current-epoch object).
         marks: ObjectRef,
-        /// Resume-after listing key; deletion progress never advances past a
-        /// failed required deletion.
+        /// Last fully processed canonical object key. Not an opaque provider
+        /// listing token. Deletion progress never advances past a failed
+        /// required deletion.
         cursor: Option<Box<[u8]>>,
     },
 }
@@ -229,15 +307,20 @@ impl HeadRecord {
         &self,
         new_control: HeadAuthority,
         decision_bytes: u64,
+        tip_object: Option<ObjectRef>,
         policy: &TailPolicy,
     ) -> Result<Self, HeadError> {
         let live = new_control.live().map_err(|_| HeadError::Deleted)?;
         let recovery = self.recovery.ok_or(HeadError::NoRecovery)?;
-        let grown = RecoveryRoot {
-            tip: live.decision,
-            tail_bytes: recovery.tail_bytes.saturating_add(decision_bytes),
-            ..recovery
-        };
+        let tail_bytes = recovery.tail_bytes.saturating_add(decision_bytes);
+        let grown = RecoveryRoot::checked(
+            recovery.checkpoint,
+            recovery.base,
+            live.decision,
+            tip_object,
+            tail_bytes,
+            recovery.epoch_floor,
+        )?;
         if grown.tail_count() > policy.max_count || grown.tail_bytes > policy.max_bytes {
             return Err(HeadError::MaintenanceRequired {
                 count: grown.tail_count(),
@@ -321,13 +404,25 @@ impl HeadRecord {
     /// Release exactly one named root by ID. A stale release with a foreign
     /// ID refuses rather than removing a different root.
     ///
+    /// Releasing a retained root is head BOOKKEEPING, not an authority
+    /// transition: on a live head the control revision advances as
+    /// maintenance; on an erased (tombstoned) head the recorded control
+    /// rides the same head object unchanged — mirroring GC's `close_epoch`
+    /// tombstone fallback — so explicitly retained roots stay releasable
+    /// after erasure and their objects become collectible (ERASE-02/GC-03;
+    /// audit-log #7). Registering a NEW root on a tombstone still refuses.
+    ///
     /// # Errors
     /// Unknown IDs and authority refusals.
     pub fn release_root(&self, id: OperationId) -> Result<Self, HeadError> {
         let Some(index) = self.roots.iter().position(|held| held.id == id) else {
             return Err(HeadError::UnknownRoot);
         };
-        let control = self.control.maintained()?;
+        let control = match self.control.maintained() {
+            Ok(control) => control,
+            Err(AuthorityError::Deleted) => self.control,
+            Err(error) => return Err(error.into()),
+        };
         let mut roots = self.roots.clone();
         roots.remove(index);
         Ok(Self {
@@ -505,6 +600,7 @@ fn read_operation(input: &mut Reader<'_>) -> Result<OperationId, FrameError> {
 }
 
 pub(crate) fn put_object_ref(out: &mut Vec<u8>, reference: &ObjectRef) {
+    let start = out.len();
     put_u64(out, reference.epoch);
     out.push(match reference.kind {
         ObjectKind::Decision => 0,
@@ -514,6 +610,7 @@ pub(crate) fn put_object_ref(out: &mut Vec<u8>, reference: &ObjectRef) {
     });
     out.extend_from_slice(&reference.digest);
     put_u64(out, reference.length);
+    debug_assert_eq!(out.len() - start, OBJECT_REF_WIRE_BYTES);
 }
 
 pub(crate) fn read_object_ref(input: &mut Reader<'_>) -> Result<ObjectRef, FrameError> {
@@ -543,6 +640,13 @@ fn put_recovery(out: &mut Vec<u8>, recovery: &RecoveryRoot) {
     }
     put_stamp(out, recovery.base);
     put_stamp(out, recovery.tip);
+    match &recovery.tip_object {
+        None => out.push(0),
+        Some(reference) => {
+            out.push(1);
+            put_object_ref(out, reference);
+        }
+    }
     put_u64(out, recovery.tail_bytes);
     put_u64(out, recovery.epoch_floor);
 }
@@ -558,13 +662,19 @@ fn read_recovery(input: &mut Reader<'_>) -> Result<RecoveryRoot, FrameError> {
     if tip.seq < base.seq {
         return Err(FrameError::InvalidSequence);
     }
-    Ok(RecoveryRoot {
+    let tip_object = match input.tag()? {
+        (_, 0) => None,
+        (_, 1) => Some(read_object_ref(input)?),
+        (at, got) => return Err(FrameError::Tag { at, got }),
+    };
+    RecoveryRoot::checked(
         checkpoint,
         base,
         tip,
-        tail_bytes: input.u64()?,
-        epoch_floor: input.u64()?,
-    })
+        tip_object,
+        input.u64()?,
+        input.u64()?,
+    )
 }
 
 fn put_barrier(out: &mut Vec<u8>, barrier: &Barrier) -> Result<(), FrameError> {
@@ -775,11 +885,12 @@ pub fn decided_head_body(
     parent_body: &[u8],
     new_control: &HeadAuthority,
     decision_bytes: u64,
+    tip_object: Option<ObjectRef>,
     policy: &TailPolicy,
     cap: usize,
 ) -> Result<Vec<u8>, HeadError> {
     let parent = decode_head(parent_body, cap)?;
-    let next = parent.decided(*new_control, decision_bytes, policy)?;
+    let next = parent.decided(*new_control, decision_bytes, tip_object, policy)?;
     Ok(encode_head(&next, cap)?)
 }
 
@@ -836,24 +947,31 @@ mod tests {
         NamedRoot {
             id: op(id),
             kind: RootKind::RestorePoint,
-            recovery: RecoveryRoot {
-                checkpoint: Some(ObjectRef {
+            recovery: RecoveryRoot::suffix(
+                Some(ObjectRef {
                     epoch: 1,
                     kind: ObjectKind::Checkpoint,
                     digest: [id; 32],
                     length: 42,
                 }),
-                base: DecisionStamp {
+                DecisionStamp {
                     seq: 1,
                     hash: DecisionDigest::from_bytes([7; 32]),
                 },
-                tip: DecisionStamp {
+                DecisionStamp {
                     seq: 3,
                     hash: DecisionDigest::from_bytes([8; 32]),
                 },
-                tail_bytes: 100,
-                epoch_floor: 1,
-            },
+                ObjectRef {
+                    epoch: 1,
+                    kind: ObjectKind::Decision,
+                    digest: [8; 32],
+                    length: 64,
+                },
+                100,
+                1,
+            )
+            .expect("checked suffix fixture"),
             state: StateStamp {
                 incarnation: identity().incarnation_id,
                 data_revision: 2,
@@ -918,10 +1036,17 @@ mod tests {
             .control
             .decided(DecisionDigest::from_bytes([7; 32]), true)
             .unwrap();
+        let tip_object = ObjectRef {
+            epoch: 1,
+            kind: ObjectKind::Decision,
+            digest: [7; 32],
+            length: 100,
+        };
         let next = head
             .decided(
                 control,
                 100,
+                Some(tip_object),
                 &TailPolicy {
                     max_count: 10,
                     max_bytes: 10_000,
@@ -941,10 +1066,78 @@ mod tests {
         let control2 = control
             .decided(DecisionDigest::from_bytes([8; 32]), false)
             .unwrap();
+        let next_tip = ObjectRef {
+            epoch: 1,
+            kind: ObjectKind::Decision,
+            digest: [8; 32],
+            length: 10,
+        };
         assert!(matches!(
-            next.decided(control2, 10, &tight),
+            next.decided(control2, 10, Some(next_tip), &tight),
             Err(HeadError::MaintenanceRequired { .. })
         ));
+    }
+
+    #[test]
+    fn checkpoint_only_nonzero_and_equal_sequence_different_stamp_roundtrip() {
+        let stamp = DecisionStamp {
+            seq: 7,
+            hash: DecisionDigest::from_bytes([0x77; 32]),
+        };
+        let recovery = RecoveryRoot::checkpoint_only(None, stamp, 0, 3);
+        assert_eq!(recovery.base, recovery.tip);
+        assert!(recovery.tip_object.is_none());
+        assert!(RecoveryRoot::suffix(None, stamp, stamp, ObjectRef {
+            epoch: 1,
+            kind: ObjectKind::Decision,
+            digest: [0x77; 32],
+            length: 8,
+        }, 0, 3)
+        .is_err());
+        let other = DecisionStamp {
+            seq: 7,
+            hash: DecisionDigest::from_bytes([0x78; 32]),
+        };
+        assert!(RecoveryRoot::checked(
+            None,
+            stamp,
+            other,
+            Some(ObjectRef {
+                epoch: 1,
+                kind: ObjectKind::Decision,
+                digest: [0x78; 32],
+                length: 8,
+            }),
+            0,
+            3,
+        )
+        .is_err());
+        let mut control = genesis_control();
+        for seq in 1u8..=7 {
+            control = control
+                .decided(DecisionDigest::from_bytes([seq; 32]), true)
+                .unwrap();
+        }
+        let live = control.live().unwrap();
+        assert_eq!(live.decision.seq, 7);
+        let record = HeadRecord {
+            control,
+            object_epoch: 3,
+            recovery: Some(RecoveryRoot::checkpoint_only(
+                None,
+                live.decision,
+                0,
+                3,
+            )),
+            roots: Vec::new(),
+            gc: GcPhase::Idle,
+        };
+        let bytes = encode_head(&record, 65_536).unwrap();
+        let decoded = decode_head(&bytes, 65_536).unwrap();
+        let decoded_recovery = decoded.recovery.expect("checkpoint-only");
+        assert_eq!(decoded_recovery.tip.seq, live.decision.seq);
+        assert_eq!(decoded_recovery.base, decoded_recovery.tip);
+        assert!(decoded_recovery.tip_object.is_none());
     }
 
     #[test]

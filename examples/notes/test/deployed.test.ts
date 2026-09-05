@@ -27,7 +27,13 @@ function requireEnv(): { base: string; token: string } {
 		base !== undefined && token !== undefined,
 		"DEPLOYED_URL and DEPLOYED_TOKEN are required: the deployed lane is NotRun without a real deployment"
 	)
-	return { base: base as string, token: token as string }
+	return { base, token }
+}
+
+async function jsonObject(response: Response): Promise<Record<string, unknown>> {
+	const body: unknown = await response.json()
+	assert.ok(typeof body === "object" && body !== null && !Array.isArray(body))
+	return body
 }
 
 function hex(): string {
@@ -57,11 +63,11 @@ test("deployed create/read round-trip with idempotent retry", async () => {
 	assert.equal(first.status, 200)
 	const retry = await call("POST", "/api/notes", { id: noteId, text: "deployed" })
 	assert.equal(retry.status, 200)
-	const retryBody = (await retry.json()) as { outcome: string }
+	const retryBody = await jsonObject(retry)
 	assert.ok(retryBody.outcome === "committed" || retryBody.outcome === "no-change")
 	const read = await call("GET", `/api/notes/${noteId}`)
 	assert.equal(read.status, 200)
-	const row = (await read.json()) as { id: string; text: string }
+	const row = await jsonObject(read)
 	assert.equal(row.id, noteId)
 	assert.equal(row.text, "deployed")
 })
@@ -81,7 +87,7 @@ test("deployed witnessed conflict is a durable 409, never a silent overwrite", a
 	const second = await call("PATCH", `/api/notes/${noteId}`, { requestKey: hex(), pinned: false })
 	assert.ok(second.status === 200 || second.status === 409)
 	if (second.status === 409) {
-		const body = (await second.json()) as { outcome: string }
+		const body = await jsonObject(second)
 		assert.equal(body.outcome, "precondition-failed")
 	}
 })

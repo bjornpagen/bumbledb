@@ -54,16 +54,16 @@ fn ops01_status_fixtures_distinguish_every_condition_without_payloads() {
     let local = status_of_local(&mirror.authority());
     assert_eq!(local.condition, Condition::Ready);
     // Frozen: admission stops, status says so, retained stamps remain.
-    admin::freeze_hosted(
+    admin::hosted_result(admin::freeze_hosted(
         &store,
         "t",
         op(0x01),
         FreezeIntent::Erasure,
         HEAD_CAP,
         &work(),
-    )
+    ))
     .expect("freeze");
-    let frozen = status_hosted(&store, "t", Some(tip), HEAD_CAP);
+    let frozen = status_hosted(&store, "t", Some(tip), HEAD_CAP, &work());
     assert_eq!(frozen.condition, Condition::Frozen);
     assert!(
         frozen.decision.is_some(),
@@ -79,11 +79,11 @@ fn ops01_status_fixtures_distinguish_every_condition_without_payloads() {
         &work(),
     )
     .expect("tombstone");
-    let deleted = status_hosted(&store, "t", None, HEAD_CAP);
+    let deleted = status_hosted(&store, "t", None, HEAD_CAP, &work());
     assert_eq!(deleted.condition, Condition::Deleted);
     assert_eq!(deleted.decision, None);
     // Missing: definite absence at another prefix; never created by status.
-    let missing = status_hosted(&store, "elsewhere", None, HEAD_CAP);
+    let missing = status_hosted(&store, "elsewhere", None, HEAD_CAP, &work());
     assert_eq!(missing.condition, Condition::Missing);
     // Renderings are bounded counters/hex; no payload or credential text.
     for status in [&frozen, &deleted, &missing] {

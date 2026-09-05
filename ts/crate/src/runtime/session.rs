@@ -1,89 +1,72 @@
-//! Worker-affine persistent read and write sessions.
-//!
-//! The engine's `ReadInstance`, `WriteTx` and `PreparedQuery` are `!Send`
-//! (`Rc`-backed pipe tables, borrow-scoped LMDB transactions, writer
-//! thread identity). A session therefore owns ONE dedicated OS thread
-//! that enters a single `Db::read`/`Db::write` lease and keeps every
-//! `!Send` resource inside that stack frame for the session's whole
-//! lifetime. Jobs cross as `Send` closures over owned data; the resources
-//! they touch never leave the owning thread. This is real affinity —
-//! never `unsafe Send`, raw-pointer smuggling, or lifetime erasure. It
-//! replaces the deleted raw-pointer `InstanceHandle`/`TxHandle`
-//! scoped-borrow surface and the JS-callback-inside-a-native-transaction
-//! shape chapters 31/32/35 forbid: no JavaScript executes while an engine
-//! transaction frame is on this thread's stack.
-//!
-//! Every session job is a registered runtime [`Operation`]: it is
-//! charged, cancellable and drainable exactly like pool work, so close
-//! reports account for session work and shutdown joins it. The session
-//! itself holds a [`DbLease`] (a registered external operation), so the
-//! managed database cannot be reclaimed while the session's transaction
-//! is live, and a database/owner/runtime close drains the session before
-//! directory teardown.
+//! Worker-table snapshots (C7): one owned pinned read plus prepared state
+//! per entry. Jobs borrow the entry for one operation and return to the
+//! scheduler. No session-long reactor, no ready_rx, no JS-driven writer.
 
 use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread;
 
 use bumbledb::work::{ExecutionPolicy, WorkContext, WorkError};
-use bumbledb::{PreparedQuery, ReadInstance, SchemaDescriptor, Witness, WriteTx};
+use bumbledb::{OwnedRead, PreparedQuery, SchemaDescriptor, Witness};
 
+use super::lanes::{LaneId, WorkerCommand};
 use super::owners::{DbLease, ManagedDb};
-use super::{Notify, Operation, Output, Phase, Runtime, RuntimeError, WaitTarget, lock};
-use crate::marshal::ViolationWire;
+use super::registry::{Capability, CloseDrain, NativeKind};
+use super::table::{SnapshotResource, TablePayload, WorkerContext};
+use super::{Notify, Operation, Output, Runtime, RuntimeError, WaitTarget, lock};
 
 /// One typed engine refusal crossing the executor as owned data.
 pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
+    if let bumbledb::Error::Store(store) = error {
+        if let bumbledb::store::StoreError::Work(work) = store.as_ref() {
+            return RuntimeError::Work(*work);
+        }
+    }
     RuntimeError::Engine {
         kind: crate::tags::error_family::tag(&error.family()),
         message: crate::marshal::engine_message(error),
     }
 }
 
-/// The `!Send` state a READ session's owning thread holds. Borrowed by
-/// every job on that thread; nothing in here ever crosses threads.
-pub struct ReadFrame<'a, 'txn> {
-    pub instance: &'a ReadInstance<'txn, SchemaDescriptor>,
+/// Borrowed snapshot entry for one job. Prepared state stays on the worker.
+pub struct SnapshotAccess<'a> {
+    pub owned: &'a OwnedRead<SchemaDescriptor>,
     pub sealed: &'a crate::Sealed,
-    /// The running job's own operation id — the runtime's one counter,
-    /// never reused. A prepare job installs its result under this id.
     pub job: u64,
-    prepared: &'a mut BTreeMap<u64, PreparedQuery<SchemaDescriptor>>,
+    pub prepared: &'a mut BTreeMap<u64, PreparedQuery<SchemaDescriptor>>,
 }
 
-impl ReadFrame<'_, '_> {
-    /// Installs the job's prepared query under its own operation id and
-    /// returns that id. Ids are never reused, so a retained stale id can
-    /// only miss — it cannot alias a successor prepared query.
+impl SnapshotAccess<'_> {
+    #[must_use]
+    pub fn frame<'read>(
+        &'read self,
+        work: &'read WorkContext,
+    ) -> bumbledb::ReadFrame<'read, SchemaDescriptor> {
+        self.owned.frame(work)
+    }
+
     pub fn install(&mut self, prepared: PreparedQuery<SchemaDescriptor>) -> u64 {
         let id = self.job;
         self.prepared.insert(id, prepared);
         id
     }
 
-    /// Executes an installed prepared query against the pinned instance.
-    /// The split borrow lives here: the map entry and the instance are
-    /// disjoint fields of the frame.
     pub fn execute(
         &mut self,
         id: u64,
+        context: &WorkContext,
         args: &[bumbledb::ParamArg<'_>],
     ) -> Result<bumbledb::Answers, RuntimeError> {
-        let instance = self.instance;
         let prepared = self
             .prepared
             .get_mut(&id)
             .ok_or(RuntimeError::ClosedHandle)?;
-        instance
-            .execute_collect(prepared, args)
+        // L07 seam: execute against the owned frame, not a !Send ReadInstance.
+        prepared
+            .execute_collect_owned(self.owned, context, args)
             .map_err(|error| engine_error(&error))
     }
 
-    /// Removes (closes) a prepared query. A second remove of the same id
-    /// refuses as a closed handle — the double-release attack shape.
     pub fn remove_prepared(&mut self, id: u64) -> Result<(), RuntimeError> {
         self.prepared
             .remove(&id)
@@ -97,133 +80,123 @@ impl ReadFrame<'_, '_> {
     }
 }
 
-/// The `!Send` state a WRITE session's owning thread holds: the one
-/// exclusive engine write transaction plus the sealed roster datum.
-pub struct WriteFrame<'a, 'txn> {
-    pub tx: &'a mut WriteTx<'txn, SchemaDescriptor>,
-    pub sealed: &'a crate::Sealed,
-}
-
-/// One read-session job: a `Send` closure over the thread-owned frame.
-pub type ReadWork = Box<
-    dyn for<'a, 'txn> FnOnce(&WorkContext, &mut ReadFrame<'a, 'txn>) -> Result<Output, RuntimeError>
-        + Send,
+pub type SnapshotWork = Box<
+    dyn FnOnce(&WorkContext, &mut SnapshotAccess<'_>) -> Result<Output, RuntimeError> + Send,
 >;
 
-/// One write-session job: a `Send` closure over the thread-owned frame.
-pub type WriteWork = Box<
-    dyn for<'a, 'txn> FnOnce(
+/// Live-ticket publication boundary. L13 calls [`PublicationSink::accept`]
+/// with the original `DeliveryTicket` still alive: register `QueuedOutput`
+/// and `commit()` are one transition. No park, no second preview.
+pub struct PublicationSink<'a> {
+    operation: &'a Operation,
+    armed: bool,
+    accepted: bool,
+}
+
+impl<'a> PublicationSink<'a> {
+    pub(super) fn new(operation: &'a Operation, armed: bool) -> Self {
+        Self {
+            operation,
+            armed,
+            accepted: false,
+        }
+    }
+
+    pub(super) fn accepted(&self) -> bool {
+        self.accepted
+    }
+
+    pub(super) fn armed(&self) -> bool {
+        self.armed
+    }
+
+    /// Register `output` and run `commit` under the output lock so no
+    /// observer can take between them. `commit` must not allocate, read,
+    /// checkpoint, or preview. Armed cancel and accept failure publish
+    /// nothing — the caller aborts the live ticket.
+    pub fn accept(
+        &mut self,
+        output: Output,
+        commit: impl FnOnce() -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        if !output.queued_publication() {
+            return Err(RuntimeError::Internal);
+        }
+        let mut slot = lock(&self.operation.output);
+        if matches!(&*slot, Some(Ok(value)) if value.queued_publication()) {
+            return Ok(());
+        }
+        if self.armed {
+            return Err(RuntimeError::Work(WorkError::Cancelled));
+        }
+        commit()?;
+        *slot = Some(Ok(output));
+        self.accepted = true;
+        Ok(())
+    }
+}
+
+pub type PayloadWork = Box<
+    dyn FnOnce(
             &WorkContext,
-            &mut WriteFrame<'a, 'txn>,
+            &mut super::registry::Payload,
+            &mut PublicationSink<'_>,
         ) -> Result<Output, RuntimeError>
         + Send,
 >;
 
-/// A submitted session job, typed by the frame it needs. Submission
-/// refuses a job whose kind disagrees with the slot's kind, so a retained
-/// read capability can never reach a write frame and vice versa.
-pub enum SessionJob {
-    Read(ReadWork),
-    Write(WriteWork),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SessionKind {
-    Read,
-    Write,
-}
-
-pub(super) enum Message {
-    Read {
+pub enum Message {
+    Snapshot {
         operation: Arc<Operation>,
-        work: ReadWork,
+        work: SnapshotWork,
     },
-    Write {
+    Payload {
         operation: Arc<Operation>,
-        work: WriteWork,
-    },
-    /// Terminal write-session verb: end the transaction. `commit: false`
-    /// is an explicit abort. The operation's output is the owned
-    /// [`WriteConclusion`].
-    Finish {
-        operation: Arc<Operation>,
-        commit: bool,
+        work: PayloadWork,
     },
     Close,
 }
 
-/// The registry's per-session record. The sender is the only channel to
-/// the owning thread; `closing` stops new admission before the thread
-/// observes `Close`.
 pub(super) struct SessionSlot {
-    pub sender: Sender<Message>,
-    pub kind: SessionKind,
+    pub cap: Capability,
     pub closing: bool,
 }
 
 impl SessionSlot {
-    pub(super) fn begin_close(&mut self) {
-        if !self.closing {
-            self.closing = true;
-            let _ = self.sender.send(Message::Close);
+    pub(super) fn begin_close(&mut self, runtime: &Runtime) {
+        if self.closing {
+            return;
         }
+        self.closing = true;
+        let _ = runtime.request_resource_close(self.cap);
     }
 }
 
-/// The write transaction's terminal outcome, fully owned: the rejection
-/// evidence is rendered to wire rows on the owning thread, so no borrow
-/// of the descriptor or transaction survives the frame.
-pub enum WriteConclusion {
-    Accepted(u64),
-    Rejected(Vec<ViolationWire>),
-    Moved { witnessed: u64, current: u64 },
-    Aborted,
-}
-
-/// A prepare job's reply: the installed prepared-query id, or the typed
-/// IR refusal (a domain outcome, not a thrown error).
 pub enum PrepareReply {
     Ok(u64),
     IrError(String),
 }
 
-/// The opened read-session output crossing back from the opening job.
-/// Carries the sealed roster datum so the JS thread can marshal rows and
-/// keys before dispatch without touching the owning thread.
 pub struct SessionOpened {
     pub session: SnapshotSession,
     pub sealed: Arc<crate::Sealed>,
     pub witness: Witness<SchemaDescriptor>,
     pub generation: u64,
-    /// The persisted store identity (lowercase hex) — the `CoreWitness`
-    /// wire's `store` half (chapter 35: catalog/store identity plus
-    /// generation, never a log `StateStamp`).
     pub store: String,
-    /// The committed host attachment (the log's authority control), read
-    /// INSIDE the pinned frame so a published snapshot's provenance is
-    /// exactly the pinned data's — never a racing later commit's.
     pub attachment: Option<Vec<u8>>,
 }
 
-/// The opened write-session output crossing back from the opening job.
-pub struct WriterOpened {
-    pub session: WriteSession,
-    pub sealed: Arc<crate::Sealed>,
-}
-
-/// The identity core of a JS-held session capability. The runtime's
-/// registry, not this wrapper, owns the thread, the lease and the `!Send`
-/// resources. Dropping the wrapper begins close (GC is a backstop; the
-/// explicit close path is the contract).
 struct SessionCore {
     runtime: Arc<Runtime>,
     owner: u64,
     database: u64,
     id: u64,
+    cap: Capability,
 }
 
 impl SessionCore {
     fn begin_close(&self) {
+        let _ = self.runtime.request_resource_close(self.cap);
         let mut state = lock(&self.runtime.state);
         if let Some(slot) = state
             .owners
@@ -231,7 +204,7 @@ impl SessionCore {
             .and_then(|owner| owner.databases.get_mut(&self.database))
             .and_then(|database| database.sessions.get_mut(&self.id))
         {
-            slot.begin_close();
+            slot.closing = true;
         }
         for operation in state
             .operations
@@ -253,16 +226,15 @@ impl SessionCore {
 
     fn submit(
         &self,
-        kind: SessionKind,
         policy: ExecutionPolicy,
         notify: Notify,
-        prepare: impl FnOnce(&WorkContext) -> Result<SessionJob, RuntimeError>,
+        prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        self.runtime.submit_session(
+        self.runtime.submit_snapshot(
+            self.cap,
             self.owner,
             self.database,
             self.id,
-            kind,
             policy,
             notify,
             prepare,
@@ -276,7 +248,6 @@ impl Drop for SessionCore {
     }
 }
 
-/// A JS-held READ session capability: one pinned coherent generation.
 pub struct SnapshotSession {
     core: SessionCore,
 }
@@ -287,47 +258,9 @@ impl SnapshotSession {
         &self.core.runtime
     }
 
-    /// Marks the slot closing, cancels this session's queued/active jobs
-    /// and sends the terminal `Close`. Idempotent; joining the actual
-    /// drain is [`Self::drain`].
-    pub fn begin_close(&self) {
-        self.core.begin_close();
-    }
-
-    /// Begin close and report when the slot is actually gone (thread
-    /// exited, lease released) — or Incomplete/Failed per the runtime's
-    /// finite cleanup policy.
-    pub fn drain(&self, report: super::Report) {
-        self.core.drain(report);
-    }
-
-    /// Submits one bounded read job to the owning thread. Registration
-    /// reserves bytes and admission before the message is sent; a closing
-    /// slot refuses. The job observes the operation's own `WorkContext`.
-    pub fn submit(
-        &self,
-        policy: ExecutionPolicy,
-        notify: Notify,
-        prepare: impl FnOnce(&WorkContext) -> Result<ReadWork, RuntimeError>,
-    ) -> Result<Arc<Operation>, RuntimeError> {
-        self.core
-            .submit(SessionKind::Read, policy, notify, |context| {
-                prepare(context).map(SessionJob::Read)
-            })
-    }
-}
-
-/// A JS-held WRITE session capability: the one exclusive engine writer,
-/// pinned to its owning thread across the whole (possibly remote-awaited)
-/// host workflow. Finish commits or aborts; close without finish aborts.
-pub struct WriteSession {
-    core: SessionCore,
-}
-
-impl WriteSession {
     #[must_use]
-    pub fn runtime(&self) -> &Arc<Runtime> {
-        &self.core.runtime
+    pub fn capability(&self) -> Capability {
+        self.core.cap
     }
 
     pub fn begin_close(&self) {
@@ -338,45 +271,17 @@ impl WriteSession {
         self.core.drain(report);
     }
 
-    /// Submits one bounded write job to the owning thread.
     pub fn submit(
         &self,
         policy: ExecutionPolicy,
         notify: Notify,
-        prepare: impl FnOnce(&WorkContext) -> Result<WriteWork, RuntimeError>,
+        prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        self.core
-            .submit(SessionKind::Write, policy, notify, |context| {
-                prepare(context).map(SessionJob::Write)
-            })
-    }
-
-    /// Ends the transaction: commit (`true`) or explicit abort (`false`).
-    /// The returned operation's output is the owned [`WriteConclusion`];
-    /// the slot is closing from this point, so no further job can enter
-    /// the frame behind the terminal message.
-    pub fn finish(
-        &self,
-        commit: bool,
-        policy: ExecutionPolicy,
-        notify: Notify,
-    ) -> Result<Arc<Operation>, RuntimeError> {
-        self.core.runtime.finish_session(
-            self.core.owner,
-            self.core.database,
-            self.core.id,
-            commit,
-            policy,
-            notify,
-        )
+        self.core.submit(policy, notify, prepare)
     }
 }
 
 impl Runtime {
-    /// Opens a worker-affine READ session over a managed database: a pool
-    /// job takes a [`DbLease`], reserves the session slot, spawns the
-    /// owning thread and waits for its read lease to pin a coherent
-    /// generation. The output is [`Output::Session`].
     pub fn open_session(
         self: &Arc<Self>,
         db: &ManagedDb,
@@ -392,51 +297,99 @@ impl Runtime {
         self.submit_at(Some(owner), Some(database), policy, notify, move |_| {
             Ok(Box::new(move |context| {
                 context.checkpoint()?;
-                runtime.spawn_read_session(owner, database, lease)
+                runtime.pin_snapshot(owner, database, lease, context)
             }))
         })
     }
 
-    /// Opens a worker-affine WRITE session. The engine's single-writer
-    /// rule is enforced by refusal (`WriterBusy`), never by parking a
-    /// thread on the writer mutex behind a JS-driven session. With a
-    /// witness, the commit is conditional (`write_from`) and a moved
-    /// generation is a domain outcome.
-    pub fn open_writer(
+    /// Pin on the current worker. Called from an already-running pool job
+    /// (open or L14 authority pin). No ready_rx, no second hop onto this pool.
+    pub(crate) fn spawn_read_session_for(
         self: &Arc<Self>,
         db: &ManagedDb,
-        witness: Option<Witness<SchemaDescriptor>>,
-        policy: ExecutionPolicy,
-        notify: Notify,
-    ) -> Result<Arc<Operation>, RuntimeError> {
+        lease: DbLease,
+    ) -> Result<Output, RuntimeError> {
         if !Arc::ptr_eq(self, db.runtime()) {
             return Err(RuntimeError::ForeignRuntime);
         }
-        let runtime = Arc::clone(self);
         let (owner, database) = db.ids();
-        let lease = db.access()?;
-        self.submit_at(Some(owner), Some(database), policy, notify, move |_| {
-            Ok(Box::new(move |context| {
-                context.checkpoint()?;
-                if lease.writing.swap(true, Ordering::AcqRel) {
-                    return Err(RuntimeError::WriterBusy);
-                }
-                let flag = WriterFlag(lease.inner_arc());
-                runtime.spawn_write_session(owner, database, lease, witness, flag)
-            }))
-        })
+        let context = ExecutionPolicy {
+            input_bytes: 0,
+            working_bytes: 0,
+            scratch_bytes: 0,
+            result_bytes: 0,
+            rows: 0,
+            work_units: 0,
+            timeout: self.options.cleanup_timeout,
+        }
+        .start()?;
+        context.checkpoint()?;
+        self.pin_snapshot(owner, database, lease, &context)
     }
 
-    /// Reserves the slot under the registry lock. Runs on a pool worker.
-    fn reserve_session_slot(
+    fn pin_snapshot(
+        self: &Arc<Self>,
+        owner: u64,
+        database: u64,
+        lease: DbLease,
+        context: &WorkContext,
+    ) -> Result<Output, RuntimeError> {
+        context.checkpoint()?;
+        let worker = WorkerContext::worker_id()?;
+        let sealed = lease.sealed();
+        let store = lease.db().integration_store().identity().store.to_string();
+        // L07 seam: Db::snapshot → OwnedRead. Each job takes frame(&work).
+        let owned = lease.db().snapshot(context).map_err(engine_error)?;
+        let generation = owned.snapshot().generation().value();
+        let attachment = owned
+            .snapshot()
+            .attachment()
+            .map_err(|error| engine_error(&bumbledb::Error::from_store(error)))?
+            .map(<[u8]>::to_vec);
+        let witness = owned.witness().map_err(engine_error)?;
+        let cap = self.reserve_snapshot_route(owner, database, worker)?;
+        let resource = SnapshotResource {
+            owned,
+            prepared: BTreeMap::new(),
+            sealed: Arc::clone(&sealed),
+            lease,
+            owner,
+            database,
+        };
+        let installed = WorkerContext::with(|ctx| {
+            ctx.table
+                .insert(cap, TablePayload::Snapshot(resource), 0)
+        })?;
+        if let Err(error) = installed {
+            self.rollback_snapshot_route(owner, database, cap);
+            return Err(error);
+        }
+        Ok(Output::Session(SessionOpened {
+            session: SnapshotSession {
+                core: SessionCore {
+                    runtime: Arc::clone(self),
+                    owner,
+                    database,
+                    id: cap.id,
+                    cap,
+                },
+            },
+            sealed,
+            witness,
+            generation,
+            store,
+            attachment,
+        }))
+    }
+
+    fn reserve_snapshot_route(
         &self,
         owner: u64,
         database: u64,
-        kind: SessionKind,
-        sender: Sender<Message>,
-    ) -> Result<u64, RuntimeError> {
+        worker: u32,
+    ) -> Result<Capability, RuntimeError> {
         let mut state = lock(&self.state);
-        if state.phase != Phase::Open {
+        if state.phase != super::Phase::Open {
             return Err(RuntimeError::ClosedHandle);
         }
         state.require_owner(Some(owner))?;
@@ -446,16 +399,16 @@ impl Runtime {
             .flat_map(|entry| entry.databases.values())
             .map(|database| database.sessions.len())
             .sum();
-        if sessions >= self.options.native_handle_capacity {
+        if sessions >= self.options.native_handle_capacity
+            || state.natives >= self.options.native_handle_capacity
+        {
             return Err(RuntimeError::ResourceLimit {
                 dimension: "nativeHandleCapacity",
-                used: sessions as u64,
+                used: sessions.max(state.natives) as u64,
                 requested: 1,
                 limit: self.options.native_handle_capacity as u64,
             });
         }
-        let id = state.next_id;
-        state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
         let entry = state
             .owners
             .get_mut(&owner)
@@ -464,416 +417,127 @@ impl Runtime {
         if entry.closing {
             return Err(RuntimeError::ClosedHandle);
         }
+        state.natives += 1;
+        drop(state);
+        let cap = match self.registry.insert_route(worker, NativeKind::Snapshot, 0) {
+            Ok(cap) => cap,
+            Err(error) => {
+                let mut state = lock(&self.state);
+                state.natives = state.natives.saturating_sub(1);
+                return Err(error);
+            }
+        };
+        let mut state = lock(&self.state);
+        let Some(entry) = state
+            .owners
+            .get_mut(&owner)
+            .and_then(|entry| entry.databases.get_mut(&database))
+        else {
+            drop(state);
+            let _ = self.registry.rollback_route(cap);
+            let mut state = lock(&self.state);
+            state.natives = state.natives.saturating_sub(1);
+            return Err(RuntimeError::ClosedHandle);
+        };
+        if entry.closing {
+            drop(state);
+            let _ = self.registry.rollback_route(cap);
+            let mut state = lock(&self.state);
+            state.natives = state.natives.saturating_sub(1);
+            return Err(RuntimeError::ClosedHandle);
+        }
         entry.sessions.insert(
-            id,
+            cap.id,
             SessionSlot {
-                sender,
-                kind,
+                cap,
                 closing: false,
             },
         );
-        Ok(id)
+        Ok(cap)
     }
 
-    fn spawn_read_session(
-        self: &Arc<Self>,
-        owner: u64,
-        database: u64,
-        lease: DbLease,
-    ) -> Result<Output, RuntimeError> {
-        let sealed = lease.sealed();
-        let store = lease.db().integration_store().identity().store.to_string();
-        let (sender, receiver) = channel::<Message>();
-        let id = self.reserve_session_slot(owner, database, SessionKind::Read, sender)?;
-        let (ready, opened) =
-            channel::<Result<(Witness<SchemaDescriptor>, u64, Option<Vec<u8>>), RuntimeError>>();
-        let runtime = Arc::clone(self);
-        let spawned = thread::Builder::new()
-            .name(format!("bumbledb-read-{id}"))
-            .spawn(move || {
-                runtime.read_session_body(owner, database, id, &lease, &ready, &receiver);
-            });
-        if spawned.is_err() {
-            self.remove_session(owner, database, id);
-            return Err(RuntimeError::Internal);
-        }
-        match opened.recv() {
-            Ok(Ok((witness, generation, attachment))) => Ok(Output::Session(SessionOpened {
-                session: SnapshotSession {
-                    core: SessionCore {
-                        runtime: Arc::clone(self),
-                        owner,
-                        database,
-                        id,
-                    },
-                },
-                sealed,
-                witness,
-                generation,
-                store,
-                attachment,
-            })),
-            Ok(Err(error)) => Err(error),
-            Err(_) => Err(RuntimeError::Internal),
-        }
-    }
-
-    /// The db-bridge/log entry to the reactor from INSIDE a registered job:
-    /// spawn one pinned read session over an already-held lease (the caller
-    /// acquired it on the JS thread, so close cannot race the acquisition).
-    pub(crate) fn spawn_read_session_for(
-        self: &Arc<Self>,
-        db: &ManagedDb,
-        lease: DbLease,
-    ) -> Result<Output, RuntimeError> {
-        let (owner, database) = db.ids();
-        self.spawn_read_session(owner, database, lease)
-    }
-
-    fn spawn_write_session(
-        self: &Arc<Self>,
-        owner: u64,
-        database: u64,
-        lease: DbLease,
-        witness: Option<Witness<SchemaDescriptor>>,
-        flag: WriterFlag,
-    ) -> Result<Output, RuntimeError> {
-        let sealed = lease.sealed();
-        let (sender, receiver) = channel::<Message>();
-        let id = self.reserve_session_slot(owner, database, SessionKind::Write, sender)?;
-        let (ready, opened) = channel::<Result<(), RuntimeError>>();
-        let runtime = Arc::clone(self);
-        let spawned = thread::Builder::new()
-            .name(format!("bumbledb-write-{id}"))
-            .spawn(move || {
-                runtime.write_session_body(owner, database, id, &lease, witness, &ready, &receiver);
-                drop(flag);
-                drop(lease);
-            });
-        if spawned.is_err() {
-            self.remove_session(owner, database, id);
-            return Err(RuntimeError::Internal);
-        }
-        match opened.recv() {
-            Ok(Ok(())) => Ok(Output::Writer(WriterOpened {
-                session: WriteSession {
-                    core: SessionCore {
-                        runtime: Arc::clone(self),
-                        owner,
-                        database,
-                        id,
-                    },
-                },
-                sealed,
-            })),
-            Ok(Err(error)) => Err(error),
-            Err(_) => Err(RuntimeError::Internal),
-        }
-    }
-
-    /// The READ owning thread: one `Db::read` lease for the session
-    /// lifetime; jobs run against the borrowed frame; teardown removes
-    /// the slot and releases the lease LAST, so waiters observe reality.
-    #[allow(clippy::type_complexity)]
-    fn read_session_body(
-        self: Arc<Self>,
-        owner: u64,
-        database: u64,
-        id: u64,
-        lease: &DbLease,
-        ready: &Sender<Result<(Witness<SchemaDescriptor>, u64, Option<Vec<u8>>), RuntimeError>>,
-        receiver: &Receiver<Message>,
-    ) {
-        let sealed = lease.sealed();
-        let runtime = Arc::clone(&self);
-        let entered = lease.db().read(|instance| {
-            let witness = instance.witness()?;
-            let generation = instance.generation()?.value();
-            let attachment = instance.integration_host_attachment()?.map(<[u8]>::to_vec);
-            if ready.send(Ok((witness, generation, attachment))).is_err() {
-                // The opener vanished (cancelled open). Tear down.
-                return Ok(());
-            }
-            let mut prepared = BTreeMap::new();
-            loop {
-                let Ok(message) = receiver.recv() else { break };
-                match message {
-                    Message::Close => break,
-                    Message::Read { operation, work } => {
-                        let mut frame = ReadFrame {
-                            instance,
-                            sealed: sealed.as_ref(),
-                            job: operation.id,
-                            prepared: &mut prepared,
-                        };
-                        runtime.run_read_job(&operation, work, &mut frame);
-                    }
-                    Message::Write { operation, .. } | Message::Finish { operation, .. } => {
-                        runtime.complete_operation(&operation, Err(RuntimeError::InvalidArgument));
-                    }
-                }
-            }
-            Ok(())
-        });
-        if let Err(error) = &entered {
-            // The read lease itself refused; the opener still waits.
-            let _ = ready.send(Err(engine_error(error)));
-        }
-        self.teardown_session(owner, database, id, receiver);
-    }
-
-    /// The WRITE owning thread: one `Db::write`/`write_from` frame for
-    /// the session lifetime. The terminal `Finish` message ends the frame
-    /// and its operation carries the owned conclusion; close without
-    /// finish aborts. No JS runs while this frame is on the stack.
-    #[allow(
-        clippy::too_many_lines,
-        clippy::too_many_arguments,
-        clippy::needless_pass_by_value
-    )]
-    fn write_session_body(
-        self: &Arc<Self>,
-        owner: u64,
-        database: u64,
-        id: u64,
-        lease: &DbLease,
-        witness: Option<Witness<SchemaDescriptor>>,
-        ready: &Sender<Result<(), RuntimeError>>,
-        receiver: &Receiver<Message>,
-    ) {
-        let sealed = lease.sealed();
-        let runtime = Arc::clone(self);
-        let mut conclusion: Option<(Arc<Operation>, bool)> = None;
-        let conclusion_slot = &mut conclusion;
-        let body = |tx: &mut WriteTx<'_, SchemaDescriptor>| -> bumbledb::Result<()> {
-            if ready.send(Ok(())).is_err() {
-                // The opener vanished (cancelled open). Abort the frame.
-                return Err(crate::abort_sentinel());
-            }
-            loop {
-                let Ok(message) = receiver.recv() else {
-                    return Err(crate::abort_sentinel());
-                };
-                match message {
-                    Message::Close => return Err(crate::abort_sentinel()),
-                    Message::Finish { operation, commit } => {
-                        *conclusion_slot = Some((operation, commit));
-                        return if commit {
-                            Ok(())
-                        } else {
-                            Err(crate::abort_sentinel())
-                        };
-                    }
-                    Message::Write { operation, work } => {
-                        let mut frame = WriteFrame {
-                            tx,
-                            sealed: sealed.as_ref(),
-                        };
-                        runtime.run_write_job(&operation, work, &mut frame);
-                    }
-                    Message::Read { operation, .. } => {
-                        runtime.complete_operation(&operation, Err(RuntimeError::InvalidArgument));
-                    }
-                }
-            }
-        };
-        let result = match &witness {
-            None => match lease.db().write(body) {
-                Ok(bumbledb::Admission::Accepted(committed)) => {
-                    Ok(bumbledb::ConditionalWrite::Accepted(committed))
-                }
-                Ok(bumbledb::Admission::Rejected(violations)) => {
-                    Ok(bumbledb::ConditionalWrite::Rejected(violations))
-                }
-                Err(error) => Err(error),
-            },
-            Some(witness) => lease.db().write_from(witness, body),
-        };
-        match conclusion {
-            Some((operation, commit)) => {
-                let outcome = match result {
-                    Ok(bumbledb::ConditionalWrite::Accepted(committed)) => Ok(Output::Write(
-                        WriteConclusion::Accepted(committed.generation.value()),
-                    )),
-                    Ok(bumbledb::ConditionalWrite::Rejected(violations)) => {
-                        Ok(Output::Write(WriteConclusion::Rejected(
-                            crate::violations_wire(&sealed.descriptor, &violations),
-                        )))
-                    }
-                    Ok(bumbledb::ConditionalWrite::Moved { witnessed, current }) => {
-                        Ok(Output::Write(WriteConclusion::Moved {
-                            witnessed: witnessed.value(),
-                            current: current.value(),
-                        }))
-                    }
-                    Err(error) => {
-                        if commit {
-                            Err(engine_error(&error))
-                        } else {
-                            // The explicit abort's own sentinel: a domain
-                            // outcome, not a failure.
-                            Ok(Output::Write(WriteConclusion::Aborted))
-                        }
-                    }
-                };
-                self.complete_operation(&operation, outcome);
-            }
-            None => {
-                // Closed/cancelled without finish, or the write lease
-                // itself refused before the frame entered. If the opener
-                // still waits, deliver the refusal.
-                if let Err(error) = &result {
-                    let _ = ready.send(Err(engine_error(error)));
-                }
-            }
-        }
-        self.teardown_session(owner, database, id, receiver);
-    }
-
-    /// Cancel every job still queued behind the terminal message, remove
-    /// the slot, then wake waiters. The caller drops the lease AFTER this
-    /// returns (write) or when the read closure frame unwinds.
-    fn teardown_session(&self, owner: u64, database: u64, id: u64, receiver: &Receiver<Message>) {
-        while let Ok(message) = receiver.try_recv() {
-            match message {
-                Message::Read { operation, .. }
-                | Message::Write { operation, .. }
-                | Message::Finish { operation, .. } => {
-                    operation.context.cancel();
-                    self.complete_operation(
-                        &operation,
-                        Err(RuntimeError::Work(WorkError::Cancelled)),
-                    );
-                }
-                Message::Close => {}
-            }
-        }
-        self.remove_session(owner, database, id);
-    }
-
-    fn remove_session(&self, owner: u64, database: u64, id: u64) {
+    fn rollback_snapshot_route(&self, owner: u64, database: u64, cap: Capability) {
         let mut state = lock(&self.state);
         if let Some(entry) = state
             .owners
             .get_mut(&owner)
             .and_then(|entry| entry.databases.get_mut(&database))
         {
-            entry.sessions.remove(&id);
+            entry.sessions.remove(&cap.id);
+        }
+        state.natives = state.natives.saturating_sub(1);
+        drop(state);
+        let _ = self.registry.rollback_route(cap);
+        self.changed.notify_all();
+    }
+
+    pub(crate) fn release_snapshot_route(&self, owner: u64, database: u64, cap: Capability) {
+        let mut state = lock(&self.state);
+        if let Some(entry) = state
+            .owners
+            .get_mut(&owner)
+            .and_then(|entry| entry.databases.get_mut(&database))
+        {
+            entry.sessions.remove(&cap.id);
+        }
+        if self.registry.release(cap).is_some() {
+            state.natives = state.natives.saturating_sub(1);
         }
         self.changed.notify_all();
     }
 
-    fn run_read_job(
+    pub(super) fn submit_snapshot(
         &self,
-        operation: &Arc<Operation>,
-        work: ReadWork,
-        frame: &mut ReadFrame<'_, '_>,
-    ) {
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            operation.context.checkpoint()?;
-            let value = work(&operation.context, frame)?;
-            operation.context.checkpoint()?;
-            Ok(value)
-        }));
-        self.settle_session_job(operation, outcome);
-    }
-
-    fn run_write_job(
-        &self,
-        operation: &Arc<Operation>,
-        work: WriteWork,
-        frame: &mut WriteFrame<'_, '_>,
-    ) {
-        let outcome = catch_unwind(AssertUnwindSafe(|| {
-            operation.context.checkpoint()?;
-            let value = work(&operation.context, frame)?;
-            operation.context.checkpoint()?;
-            Ok(value)
-        }));
-        self.settle_session_job(operation, outcome);
-    }
-
-    fn settle_session_job(
-        &self,
-        operation: &Arc<Operation>,
-        outcome: Result<Result<Output, RuntimeError>, Box<dyn std::any::Any + Send>>,
-    ) {
-        let panicked = outcome.is_err();
-        let outcome = outcome.unwrap_or(Err(RuntimeError::Internal));
-        if panicked {
-            // A panicked session job faults the runtime, as pool panics
-            // do: the frame may hold damaged state; never keep serving it.
-            self.begin_close();
+        cap: Capability,
+        owner: u64,
+        database: u64,
+        session: u64,
+        policy: ExecutionPolicy,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
+    ) -> Result<Arc<Operation>, RuntimeError> {
+        self.registry.check(cap)?;
+        match self.registry.state(cap)? {
+            super::registry::ResourceState::Live => {}
+            super::registry::ResourceState::Busy | super::registry::ResourceState::Closing => {
+                return Err(RuntimeError::ClosedHandle);
+            }
         }
-        self.complete_operation(operation, outcome);
-    }
-
-    /// Registers and dispatches one session job. Mirrors `submit_at`, but
-    /// the work goes to the session's channel, never the pool queue, and
-    /// the slot's kind must match the job's frame.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn submit_session(
-        &self,
-        owner: u64,
-        database: u64,
-        session: u64,
-        kind: SessionKind,
-        policy: ExecutionPolicy,
-        notify: Notify,
-        prepare: impl FnOnce(&WorkContext) -> Result<SessionJob, RuntimeError>,
-    ) -> Result<Arc<Operation>, RuntimeError> {
         let operation =
-            self.register_session_operation(owner, database, session, kind, policy, notify)?;
-        // Bounded input extraction on the calling (JS) thread, after
-        // registration — exactly the pool-submit discipline.
+            self.register_session_operation(owner, database, session, policy, notify)?;
         let prepared = catch_unwind(AssertUnwindSafe(|| prepare(&operation.context)));
-        self.dispatch_session_job(owner, database, session, &operation, prepared)
-    }
-
-    /// Registers and dispatches the terminal write-session finish.
-    pub(super) fn finish_session(
-        &self,
-        owner: u64,
-        database: u64,
-        session: u64,
-        commit: bool,
-        policy: ExecutionPolicy,
-        notify: Notify,
-    ) -> Result<Arc<Operation>, RuntimeError> {
-        let operation = self.register_session_operation(
-            owner,
-            database,
-            session,
-            SessionKind::Write,
-            policy,
-            notify,
-        )?;
         let mut state = lock(&self.state);
-        let slot = state
-            .owners
-            .get_mut(&owner)
-            .and_then(|entry| entry.databases.get_mut(&database))
-            .and_then(|entry| entry.sessions.get_mut(&session))
-            .filter(|slot| !slot.closing);
-        let sent = slot.is_some_and(|slot| {
-            // The frame ends behind this message; stop admission first so
-            // no later job can race in behind the terminal verb.
-            slot.closing = true;
-            slot.sender
-                .send(Message::Finish {
+        let work = match prepared.unwrap_or_else(|_| {
+            Self::closing(&mut state);
+            Err(RuntimeError::Internal)
+        }) {
+            Ok(work) if state.phase == super::Phase::Open => work,
+            other => {
+                let discarded = state.remove(operation.id);
+                self.changed.notify_all();
+                drop(state);
+                drop(discarded);
+                return Err(other.err().unwrap_or(RuntimeError::ClosedHandle));
+            }
+        };
+        drop(state);
+        if self
+            .send_resource(
+                cap,
+                Message::Snapshot {
                     operation: Arc::clone(&operation),
-                    commit,
-                })
-                .is_ok()
-        });
-        if !sent {
+                    work,
+                },
+            )
+            .is_err()
+        {
+            let mut state = lock(&self.state);
             let discarded = state.remove(operation.id);
             self.changed.notify_all();
             drop(state);
             drop(discarded);
             return Err(RuntimeError::ClosedHandle);
         }
-        drop(state);
         Ok(operation)
     }
 
@@ -882,7 +546,6 @@ impl Runtime {
         owner: u64,
         database: u64,
         session: u64,
-        kind: SessionKind,
         policy: ExecutionPolicy,
         notify: Notify,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -895,7 +558,7 @@ impl Runtime {
             policy.result_bytes,
         ];
         let mut state = lock(&self.state);
-        if state.phase != Phase::Open {
+        if state.phase != super::Phase::Open {
             return Err(RuntimeError::ClosedHandle);
         }
         state.require_owner(Some(owner))?;
@@ -904,7 +567,7 @@ impl Runtime {
             .get(&owner)
             .and_then(|entry| entry.databases.get(&database))
             .and_then(|entry| entry.sessions.get(&session))
-            .is_some_and(|slot| !slot.closing && slot.kind == kind);
+            .is_some_and(|slot| !slot.closing);
         if !live {
             return Err(RuntimeError::ClosedHandle);
         }
@@ -934,20 +597,192 @@ impl Runtime {
         Ok(operation)
     }
 
-    fn dispatch_session_job(
+    pub(crate) fn request_resource_close(
         &self,
-        owner: u64,
-        database: u64,
-        session: u64,
-        operation: &Arc<Operation>,
-        prepared: Result<Result<SessionJob, RuntimeError>, Box<dyn std::any::Any + Send>>,
+        cap: Capability,
+    ) -> Result<CloseDrain, RuntimeError> {
+        let drain = self.registry.request_close(cap)?;
+        let _ = self.send_close(cap);
+        self.changed.notify_all();
+        Ok(drain)
+    }
+
+    pub(crate) fn reserve_native_route(
+        self: &Arc<Self>,
+        kind: NativeKind,
+        bytes: u64,
+    ) -> Result<Capability, RuntimeError> {
+        let worker = WorkerContext::worker_id().unwrap_or_else(|_| self.registry.pick_worker());
+        {
+            let mut state = lock(&self.state);
+            if state.phase != super::Phase::Open {
+                return Err(RuntimeError::ClosedHandle);
+            }
+            if state.natives >= self.options.native_handle_capacity {
+                return Err(RuntimeError::ResourceLimit {
+                    dimension: "nativeHandleCapacity",
+                    used: state.natives as u64,
+                    requested: 1,
+                    limit: self.options.native_handle_capacity as u64,
+                });
+            }
+            let used = state.reserved[3];
+            let limit = self.options.aggregate_bytes[3];
+            if used.checked_add(bytes).is_none_or(|next| next > limit) {
+                return Err(RuntimeError::ResourceLimit {
+                    dimension: "resultBytes",
+                    used,
+                    requested: bytes,
+                    limit,
+                });
+            }
+            state.reserved[3] += bytes;
+            state.natives += 1;
+        }
+        match self.registry.insert_route(worker, kind, bytes) {
+            Ok(cap) => Ok(cap),
+            Err(error) => {
+                let mut state = lock(&self.state);
+                state.reserved[3] = state.reserved[3].saturating_sub(bytes);
+                state.natives = state.natives.saturating_sub(1);
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn rollback_native_route(&self, cap: Capability) {
+        if let Some(bytes) = self.registry.rollback_route(cap) {
+            let mut state = lock(&self.state);
+            state.reserved[3] = state.reserved[3].saturating_sub(bytes);
+            state.natives = state.natives.saturating_sub(1);
+            self.changed.notify_all();
+        }
+    }
+
+    pub(crate) fn grow_native_route(&self, cap: Capability, extra: u64) -> Result<(), RuntimeError> {
+        {
+            let mut state = lock(&self.state);
+            let used = state.reserved[3];
+            let limit = self.options.aggregate_bytes[3];
+            if used.checked_add(extra).is_none_or(|next| next > limit) {
+                return Err(RuntimeError::ResourceLimit {
+                    dimension: "resultBytes",
+                    used,
+                    requested: extra,
+                    limit,
+                });
+            }
+            state.reserved[3] += extra;
+        }
+        if let Err(error) = self.registry.add_bytes(cap, extra) {
+            let mut state = lock(&self.state);
+            state.reserved[3] = state.reserved[3].saturating_sub(extra);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn release_native_route(&self, cap: Capability) {
+        if let Some(bytes) = self.registry.release(cap) {
+            let mut state = lock(&self.state);
+            state.reserved[3] = state.reserved[3].saturating_sub(bytes);
+            state.natives = state.natives.saturating_sub(1);
+            self.changed.notify_all();
+        }
+    }
+
+    /// Capability-first lock mint. `cap.kind` is always RepositoryLock.
+    /// Same-worker insert is local; JS/cross-worker is fire-and-forget.
+    pub(crate) fn mint_repository_lock(
+        self: &Arc<Self>,
+        lock: bumbledb_log::store::fence::RepositoryLock,
+    ) -> Result<super::registry::RegistryAdmission, RuntimeError> {
+        super::registry::RegistryAdmission::admit(
+            Arc::clone(self),
+            NativeKind::RepositoryLock,
+            0,
+            super::registry::Payload::RepositoryLock { lock },
+        )
+    }
+
+    pub(crate) fn install_send_payload(
+        &self,
+        cap: Capability,
+        payload: super::registry::Payload,
+    ) -> Result<(), RuntimeError> {
+        if WorkerContext::worker_id() == Ok(cap.worker) {
+            return WorkerContext::with(|ctx| {
+                ctx.table
+                    .insert(cap, TablePayload::Native(payload), 0)
+            })?;
+        }
+        // JS / other-thread take: enqueue and return. The reserved
+        // capability is the admission; the worker inserts later.
+        self.lane_send(
+            LaneId(cap.worker as usize),
+            WorkerCommand::InstallSend { cap, payload },
+        )
+    }
+
+    /// Route one Send-payload job to the owning worker. L13/L14 replace
+    /// `with_payload` with this — no global mutex around conversion.
+    pub(crate) fn submit_payload(
+        &self,
+        cap: Capability,
+        policy: ExecutionPolicy,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
+        self.registry.check(cap)?;
+        match self.registry.state(cap)? {
+            super::registry::ResourceState::Live => {}
+            super::registry::ResourceState::Busy | super::registry::ResourceState::Closing => {
+                return Err(RuntimeError::ClosedHandle);
+            }
+        }
+        let context = policy.start()?;
+        context.checkpoint()?;
+        let bytes = [
+            policy.input_bytes,
+            policy.working_bytes,
+            policy.scratch_bytes,
+            policy.result_bytes,
+        ];
+        let mut state = lock(&self.state);
+        if state.phase != super::Phase::Open {
+            return Err(RuntimeError::ClosedHandle);
+        }
+        if state.operations.len()
+            >= self
+                .options
+                .workers
+                .saturating_add(self.options.queue_capacity)
+        {
+            return Err(RuntimeError::QueueFull);
+        }
+        let id = state.next_id;
+        state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
+        state.charge(&self.options, bytes)?;
+        let operation = Arc::new(Operation {
+            id,
+            context,
+            bytes,
+            owner: None,
+            database: None,
+            session: None,
+            external: false,
+            completion: std::sync::Mutex::new(Some(notify)),
+            output: std::sync::Mutex::new(None),
+        });
+        state.operations.insert(id, Arc::clone(&operation));
+        drop(state);
+        let prepared = catch_unwind(AssertUnwindSafe(|| prepare(&operation.context)));
         let mut state = lock(&self.state);
         let work = match prepared.unwrap_or_else(|_| {
             Self::closing(&mut state);
             Err(RuntimeError::Internal)
         }) {
-            Ok(work) if state.phase == Phase::Open => work,
+            Ok(work) if state.phase == super::Phase::Open => work,
             other => {
                 let discarded = state.remove(operation.id);
                 self.changed.notify_all();
@@ -956,61 +791,72 @@ impl Runtime {
                 return Err(other.err().unwrap_or(RuntimeError::ClosedHandle));
             }
         };
-        let message = match work {
-            SessionJob::Read(work) => Message::Read {
-                operation: Arc::clone(operation),
-                work,
-            },
-            SessionJob::Write(work) => Message::Write {
-                operation: Arc::clone(operation),
-                work,
-            },
-        };
-        let sent = state
-            .owners
-            .get(&owner)
-            .and_then(|entry| entry.databases.get(&database))
-            .and_then(|entry| entry.sessions.get(&session))
-            .filter(|slot| !slot.closing)
-            .map(|slot| slot.sender.send(message).is_ok());
-        if sent != Some(true) {
+        drop(state);
+        if self
+            .send_resource(
+                cap,
+                Message::Payload {
+                    operation: Arc::clone(&operation),
+                    work,
+                },
+            )
+            .is_err()
+        {
+            let mut state = lock(&self.state);
             let discarded = state.remove(operation.id);
             self.changed.notify_all();
             drop(state);
             drop(discarded);
             return Err(RuntimeError::ClosedHandle);
         }
-        drop(state);
-        Ok(Arc::clone(operation))
+        Ok(operation)
     }
-}
 
-/// Clears the database's single-writer flag when the write session's
-/// owning thread exits, however it exits.
-struct WriterFlag(Arc<crate::DbInner>);
+    pub(crate) fn close_resource(
+        &self,
+        cap: Capability,
+        report: super::Report,
+    ) -> Result<(), RuntimeError> {
+        match self.request_resource_close(cap) {
+            Ok(_) | Err(RuntimeError::ClosedHandle) => {
+                self.wait_target(WaitTarget::Resource(cap), report);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    }
 
-impl Drop for WriterFlag {
-    fn drop(&mut self) {
-        self.0.writing.store(false, Ordering::Release);
+    pub(crate) fn run_snapshot_job(
+        &self,
+        operation: &Arc<Operation>,
+        work: SnapshotWork,
+        access: &mut SnapshotAccess<'_>,
+    ) {
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            operation.context.checkpoint()?;
+            let value = work(&operation.context, access)?;
+            operation.context.checkpoint()?;
+            Ok(value)
+        }));
+        let panicked = outcome.is_err();
+        let outcome = outcome.unwrap_or(Err(RuntimeError::Internal));
+        if panicked {
+            self.begin_close();
+        }
+        self.complete_operation(operation, outcome);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Engine-backed worker-affine session tests (C09 / RUN / FFI).
-    //!
-    //! These drive the real reactor: a directory owner in the one registry,
-    //! an actual `bumbledb::Db` attached as a `ManagedDb`, and read/write
-    //! sessions whose `!Send` `ReadInstance`/`WriteTx` never leave the
-    //! owning thread — only owned `Value`/report data crosses the channel.
-    //! Written, NEVER run in this phase (F1); F3 executes them.
+    //! D18/D24/D29 discriminators. Authored now; verification NotRun.
     use std::sync::mpsc::channel;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use bumbledb::{SchemaDescriptor, Theory as _, Value};
+    use bumbledb::{SchemaDescriptor, Theory as _};
 
     use super::super::owners::{DirectoryOwner, ManagedDb};
-    use super::super::{CloseReport, Options};
+    use super::super::{CloseReport, Options, Phase, QueuedOutput};
     use super::*;
 
     bumbledb::schema! {
@@ -1021,7 +867,7 @@ mod tests {
 
     fn options() -> Options {
         Options {
-            workers: 2,
+            workers: 1,
             queue_capacity: 4,
             cleanup_capacity: 8,
             owner_capacity: 4,
@@ -1049,7 +895,7 @@ mod tests {
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         std::env::temp_dir().join(format!(
-            "bumbledb-p06-session-{tag}-{}-{seq}",
+            "bumbledb-l12-session-{tag}-{}-{seq}",
             std::process::id()
         ))
     }
@@ -1096,39 +942,19 @@ mod tests {
                     tx.send(()).unwrap();
                 }),
             )
-            .expect("open read session submits");
+            .expect("open snapshot submits");
         rx.recv_timeout(Duration::from_secs(5))
-            .expect("session notify");
+            .expect("snapshot notify");
         match runtime.take(&operation) {
             Ok(Output::Session(opened)) => opened.session,
-            _ => panic!("expected a read session output"),
+            _ => panic!("expected a snapshot output"),
         }
     }
 
-    fn open_write(runtime: &Arc<Runtime>, db: &ManagedDb) -> Result<WriteSession, RuntimeError> {
-        let (tx, rx) = channel();
-        let operation = runtime.open_writer(
-            db,
-            None,
-            policy(),
-            Box::new(move || {
-                tx.send(()).unwrap();
-            }),
-        )?;
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("writer notify");
-        match runtime.take(&operation) {
-            Ok(Output::Writer(opened)) => Ok(opened.session),
-            Ok(_) => panic!("expected a write session output"),
-            Err(error) => Err(error),
-        }
-    }
-
-    /// Runs one session job and returns its taken output.
     fn run_read(
         runtime: &Arc<Runtime>,
         session: &SnapshotSession,
-        prepare: impl FnOnce(&WorkContext) -> Result<ReadWork, RuntimeError>,
+        prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Output, RuntimeError> {
         let (tx, rx) = channel();
         let operation = session.submit(
@@ -1143,69 +969,6 @@ mod tests {
         runtime.take(&operation)
     }
 
-    fn insert_two(
-        runtime: &Arc<Runtime>,
-        writer: &WriteSession,
-        fields: Vec<bumbledb::schema::FieldDescriptor>,
-    ) {
-        let (tx, rx) = channel();
-        let operation = writer
-            .submit(
-                policy(),
-                Box::new(move || {
-                    tx.send(()).unwrap();
-                }),
-                move |_| {
-                    let rows = [
-                        [Value::U64(1), Value::U64(10)],
-                        [Value::U64(2), Value::U64(20)],
-                    ];
-                    let collection = bumbledb::AcceptedCollection::from_value_rows(
-                        bumbledb::RelationId(0),
-                        &fields,
-                        rows,
-                    )
-                    .map_err(|_| RuntimeError::InvalidArgument)?;
-                    Ok(Box::new(move |_context, frame| {
-                        let report = frame
-                            .tx
-                            .insert_accepted(&collection)
-                            .map_err(|error| engine_error(&error))?;
-                        Ok(Output::Mutation {
-                            submitted: report.submitted(),
-                            changed: report.changed(),
-                        })
-                    }))
-                },
-            )
-            .expect("write job submits");
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("write job notify");
-        match runtime.take(&operation) {
-            Ok(Output::Mutation { submitted, changed }) => {
-                assert_eq!(submitted, 2, "two rows submitted");
-                assert!(changed <= submitted, "changed never exceeds submitted");
-            }
-            _ => panic!("expected a mutation report"),
-        }
-    }
-
-    fn finish(runtime: &Arc<Runtime>, writer: &WriteSession, commit: bool) -> Output {
-        let (tx, rx) = channel();
-        let operation = writer
-            .finish(
-                commit,
-                policy(),
-                Box::new(move || {
-                    tx.send(()).unwrap();
-                }),
-            )
-            .expect("finish submits");
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("finish notify");
-        runtime.take(&operation).expect("finish output")
-    }
-
     fn drain_session(session: &SnapshotSession) -> CloseReport {
         let (tx, rx) = channel();
         session.drain(Box::new(move |report| {
@@ -1213,15 +976,6 @@ mod tests {
         }));
         rx.recv_timeout(Duration::from_secs(5))
             .expect("session drain")
-    }
-
-    fn drain_writer(session: &WriteSession) -> CloseReport {
-        let (tx, rx) = channel();
-        session.drain(Box::new(move |report| {
-            tx.send(report).unwrap();
-        }));
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("writer drain")
     }
 
     fn drain_runtime(runtime: &Arc<Runtime>) -> CloseReport {
@@ -1237,87 +991,812 @@ mod tests {
     }
 
     #[test]
-    fn read_and_write_sessions_pin_engine_state_and_cross_only_owned_data() {
-        // RUN-01/RUN-05 held-session affinity + FFI: the write session's
-        // exclusive `WriteTx` and the read session's `ReadInstance` never
-        // leave their owning threads; only owned `Value`/report data
-        // crosses the channel. A committed write is visible to a later
-        // read session's pinned snapshot.
+    fn d24_one_worker_open_read_close_and_idle_snapshots_share_the_pool() {
+        // D24: workers=1, open/read/close; more idle snapshots than workers;
+        // sleeping worker then an opening job on that same worker. Ready
+        // after reactor-exit / missing inbox wakeup must fail this schedule.
         let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("round-trip");
+        assert_eq!(runtime.inspect().active, 0, "pool starts asleep");
+        let base = unique_dir("d24-one-worker");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();
         let db = attach(&owner, &descriptor);
 
-        let writer = open_write(&runtime, &db).expect("writer opens");
-        insert_two(&runtime, &writer, descriptor.relations[0].fields.clone());
-        match finish(&runtime, &writer, true) {
-            Output::Write(WriteConclusion::Accepted(_)) => {}
-            _ => panic!("commit must accept two distinct keyed rows"),
-        }
-        assert_eq!(drain_writer(&writer), CloseReport::Closed);
-
-        let session = open_read(&runtime, &db);
-        match run_read(&runtime, &session, |_| {
-            Ok(Box::new(|context, frame| {
+        let first = open_read(&runtime, &db);
+        match run_read(&runtime, &first, |_| {
+            Ok(Box::new(|context, access| {
                 context.checkpoint()?;
-                frame
-                    .instance
-                    .count(bumbledb::RelationId(0))
-                    .map(Output::Count)
-                    .map_err(|error| engine_error(&error))
+                let _ = access.frame(context);
+                Ok(Output::Count(access.owned.snapshot().generation().value()))
             }))
         })
-        .expect("count job")
+        .expect("read job")
         {
-            Output::Count(count) => assert_eq!(count, 2, "committed rows are visible"),
+            Output::Count(_) => {}
             _ => panic!("expected a count output"),
         }
-        match run_read(&runtime, &session, |_| {
-            Ok(Box::new(|context, frame| {
+
+        let mut idle = Vec::new();
+        for _ in 0..3 {
+            idle.push(open_read(&runtime, &db));
+        }
+        assert!(
+            idle.len() > options().workers,
+            "more idle snapshots than workers"
+        );
+        assert_eq!(
+            runtime.options.workers, 1,
+            "this schedule is the one-worker case"
+        );
+        match run_read(&runtime, &first, |_| {
+            Ok(Box::new(|context, access| {
                 context.checkpoint()?;
-                frame
-                    .instance
-                    .contains_dyn(bumbledb::RelationId(0), &[Value::U64(1), Value::U64(10)])
-                    .map(Output::Contains)
-                    .map_err(|error| engine_error(&error))
+                let _ = access.frame(context);
+                Ok(Output::Generation(access.owned.snapshot().generation().value()))
             }))
         })
-        .expect("contains job")
+        .expect("parent still readable after extra idle snapshots")
         {
-            Output::Contains(found) => assert!(found, "the exact committed row is present"),
-            _ => panic!("expected a contains output"),
+            Output::Generation(_) => {}
+            _ => panic!("expected a generation output"),
         }
-        assert_eq!(drain_session(&session), CloseReport::Closed);
 
+        assert_eq!(drain_session(&first), CloseReport::Closed);
+        for session in idle {
+            assert_eq!(drain_session(&session), CloseReport::Closed);
+        }
         drop(owner);
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
         let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
-    fn a_second_writer_refuses_while_one_write_session_is_live() {
-        // RUN-05/FFI: the engine's single-writer rule is enforced by
-        // refusal (`WriterBusy`), never by parking a thread on the writer
-        // mutex. Releasing the first writer lets the next one in.
+    fn d18_close_drains_while_js_tokens_stay_reachable_and_queue_is_full() {
+        // D18: keep wrappers reachable; fill the ordinary queue; close still
+        // drains. QueueFull must not strand teardown. Counters match release.
         let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("single-writer");
+        let base = unique_dir("d18-close");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();
         let db = attach(&owner, &descriptor);
+        let session = open_read(&runtime, &db);
+        let natives_live = runtime.inspect().natives;
+        assert!(natives_live >= 1, "snapshot occupies a handle slot");
 
-        let first = open_write(&runtime, &db).expect("first writer opens");
+        let (release, blocked) = channel();
+        let (entered, running) = channel();
+        let _blocker = runtime
+            .submit(
+                policy(),
+                Box::new(|| {}),
+                move |_| {
+                    Ok(Box::new(move |_| {
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .expect("blocker submits");
+        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        while runtime
+            .submit(
+                policy(),
+                Box::new(|| {}),
+                |_| Ok(Box::new(|_| Ok(Output::Ready))),
+            )
+            .is_ok()
+        {}
         assert!(
-            matches!(open_write(&runtime, &db), Err(RuntimeError::WriterBusy)),
-            "a live write session fences a second writer"
+            matches!(
+                runtime.submit(policy(), Box::new(|| {}), |_| Ok(Box::new(|_| Ok(
+                    Output::Ready
+                )))),
+                Err(RuntimeError::QueueFull)
+            ),
+            "ordinary queue is saturated"
         );
-        assert_eq!(drain_writer(&first), CloseReport::Closed);
+        let (tx, rx) = channel();
+        session.drain(Box::new(move |report| {
+            tx.send(report).unwrap();
+        }));
+        let _ = session.capability();
+        release.send(()).unwrap();
+        let report = rx.recv_timeout(Duration::from_secs(5)).expect("close join");
+        assert_eq!(report, CloseReport::Closed);
+        assert_eq!(
+            drain_session(&session),
+            CloseReport::Closed,
+            "repeated close joins one transition"
+        );
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(
+            runtime.inspect().natives, 0,
+            "counters match actual release; not zeroed as cleanup"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
-        let second = open_write(&runtime, &db).expect("writer after release");
-        assert_eq!(drain_writer(&second), CloseReport::Closed);
+    #[test]
+    fn d24_js_thread_admit_returns_without_waiting_on_busy_worker() {
+        // D24: JS-thread admit/install must return while the only worker
+        // is blocked. A ready_rx / thread-join on take fails this schedule.
+        let runtime = Runtime::start(options()).unwrap();
+        let (release, blocked) = channel();
+        let (entered, running) = channel();
+        let _blocker = runtime
+            .submit(
+                policy(),
+                Box::new(|| {}),
+                move |_| {
+                    Ok(Box::new(move |_| {
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .expect("blocker submits");
+        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        assert_eq!(runtime.inspect().active, 1, "the one worker is occupied");
 
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Spent,
+            },
+        )
+        .expect("js-thread admit returns without the worker");
+        assert_eq!(
+            runtime.inspect().active, 1,
+            "admit must not join the busy worker"
+        );
+        assert_eq!(runtime.registry.route_count(), 1, "capability is reserved");
+        assert_eq!(runtime.inspect().natives, 1);
+
+        admission
+            .request_close()
+            .expect("close is a coalesced drain");
+        release.send(()).unwrap();
+        let (tx, rx) = channel();
+        runtime
+            .close_resource(
+                admission.cap(),
+                Box::new(move |_| {
+                    tx.send(()).unwrap();
+                }),
+            )
+            .expect("close joins");
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("uninstalled route drains");
+        assert_eq!(runtime.inspect().natives, 0);
+        assert_eq!(runtime.registry.route_count(), 0);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d18_close_of_uninstalled_route_does_not_leave_a_row() {
+        // D18: reserve + async install, then close before the worker
+        // inserts. The route must drain; QueueFull cannot apply; no leftover
+        // row or charge.
+        let runtime = Runtime::start(options()).unwrap();
+        let baseline = runtime.inspect();
+        let (release, blocked) = channel();
+        let (entered, running) = channel();
+        let _blocker = runtime
+            .submit(
+                policy(),
+                Box::new(|| {}),
+                move |_| {
+                    Ok(Box::new(move |_| {
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .expect("blocker submits");
+        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            32,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Spent,
+            },
+        )
+        .expect("capability first, table insert later");
+        assert_eq!(runtime.registry.route_count(), 1);
+        assert_eq!(runtime.inspect().natives, baseline.natives + 1);
+        assert_eq!(runtime.inspect().reserved[3], baseline.reserved[3] + 32);
+        assert!(
+            !runtime.registry.join(admission.cap()),
+            "close has not drained yet"
+        );
+
+        admission
+            .request_close()
+            .expect("close before worker insert cannot QueueFull");
+        release.send(()).unwrap();
+        let (tx, rx) = channel();
+        runtime
+            .close_resource(
+                admission.cap(),
+                Box::new(move |_| {
+                    tx.send(()).unwrap();
+                }),
+            )
+            .expect("joined close");
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("close report");
+        assert_eq!(
+            runtime.inspect().natives,
+            baseline.natives,
+            "counters match actual release"
+        );
+        assert_eq!(runtime.inspect().reserved[3], baseline.reserved[3]);
+        assert_eq!(
+            runtime.registry.route_count(),
+            0,
+            "uninstalled close leaves no row"
+        );
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d29_repository_lock_capability_stamps_kind() {
+        // D29: minted lock handles carry NativeKind::RepositoryLock on the
+        // capability. A directory-owner twin without this stamp fails.
+        let runtime = Runtime::start(options()).unwrap();
+        let cap = runtime
+            .reserve_native_route(NativeKind::RepositoryLock, 0)
+            .expect("lock route");
+        assert_eq!(cap.kind, NativeKind::RepositoryLock);
+        runtime.rollback_native_route(cap);
+        assert_eq!(runtime.registry.route_count(), 0);
+        assert_eq!(runtime.inspect().natives, 0);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d29_draft_payload_persists_work_deadline_terminal() {
+        // D29: DraftLedger (used_work, allowance_work, deadline, terminal)
+        // lives on DraftPayload. Reconstructing the ledger at finish fails.
+        use super::super::registry::registry_draft::DraftLedger;
+        use std::time::Instant;
+        let ledger = DraftLedger {
+            used_work: 3,
+            allowance_work: 8,
+            deadline: Instant::now() + Duration::from_secs(1),
+            terminal: false,
+        };
+        assert_eq!(ledger.used_work, 3);
+        assert_eq!(ledger.allowance_work, 8);
+        assert!(!ledger.terminal);
+    }
+
+    #[test]
+    fn d18_idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
+        // D18: idle pool (active==0) then runtime drain. Re-locking
+        // runtime.state from lane_send during begin_close/drain hangs.
+        let runtime = Runtime::start(options()).unwrap();
+        assert_eq!(runtime.inspect().active, 0, "pool starts asleep");
+        assert_eq!(runtime.inspect().phase, Phase::Open);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(runtime.inspect().phase, Phase::Closed);
+        assert_eq!(runtime.inspect().natives, 0);
+        assert_eq!(runtime.registry.route_count(), 0);
+    }
+
+    #[test]
+    fn d18_close_during_busy_snapshot_drains_after_job() {
+        // D18: close while a snapshot job holds the table entry. Destruction
+        // after WorkerContext::with returns; a nested with() panics.
+        let runtime = Runtime::start(options()).unwrap();
+        let base = unique_dir("d18-busy-snapshot");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let descriptor = Mini.descriptor();
+        let db = attach(&owner, &descriptor);
+        let session = open_read(&runtime, &db);
+        let (release, blocked) = channel();
+        let (entered, running) = channel();
+        let _busy = session
+            .submit(
+                policy(),
+                Box::new(|| {}),
+                move |_| {
+                    Ok(Box::new(move |context, access| {
+                        let _ = access.frame(context);
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .expect("busy snapshot submits");
+        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        let (tx, rx) = channel();
+        session.drain(Box::new(move |report| {
+            tx.send(report).unwrap();
+        }));
+        release.send(()).unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).expect("close join"),
+            CloseReport::Closed
+        );
+        assert_eq!(
+            drain_session(&session),
+            CloseReport::Closed,
+            "repeated close joins one transition"
+        );
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, 0);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn d12_arm_publication_cancel_drops_unregistered_page() {
+        // D12/D25: arm, then work returns a page. The one-shot must fail
+        // before operation.output; retry on the same cap delivers the page.
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability first");
+        runtime.arm_publication_cancel();
+        let (fail_tx, fail_rx) = channel();
+        let refused = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    fail_tx.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        Ok(Output::Page(Some(queued)))
+                    }))
+                },
+            )
+            .expect("armed page submits");
+        fail_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("armed notify");
+        assert!(
+            matches!(
+                runtime.take(&refused),
+                Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+            ),
+            "unregistered local page must drop; cursor/result stay retryable"
+        );
+        let (ok_tx, ok_rx) = channel();
+        let delivered = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    ok_tx.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        Ok(Output::Page(Some(queued)))
+                    }))
+                },
+            )
+            .expect("retry submits");
+        ok_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("retry notify");
+        assert!(
+            matches!(runtime.take(&delivered), Ok(Output::Page(Some(_)))),
+            "retry after armed cancel must not skip"
+        );
+        admission.request_close().expect("close");
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d12_dispatch_payload_registers_page_before_post_checkpoint() {
+        // D12: publication is dispatch_payload_message, not an L13 helper.
+        // Predelivery Err leaves the cap retryable. A live (not cancelled)
+        // page stays registered for take; cancel-without-take is the
+        // abandoned-output discriminator, not this one.
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability first");
+
+        let (refused_tx, refused_rx) = channel();
+        let refused = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    refused_tx.send(()).unwrap();
+                }),
+                |_| Ok(Box::new(|_, _, _| Err(RuntimeError::InvalidArgument))),
+            )
+            .expect("predelivery submits");
+        refused_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("predelivery notify");
+        assert!(
+            matches!(runtime.take(&refused), Err(RuntimeError::InvalidArgument)),
+            "predelivery must not register a page"
+        );
+
+        let (page_tx, page_rx) = channel();
+        let delivered = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    page_tx.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        Ok(Output::Page(Some(queued)))
+                    }))
+                },
+            )
+            .expect("page submits after refusal");
+        page_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("page notify");
+        assert!(
+            matches!(runtime.take(&delivered), Ok(Output::Page(Some(_)))),
+            "a live registered page remains takeable until cancel"
+        );
+        admission
+            .request_close()
+            .expect("close after publication");
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d12_publication_boundary_cancel_does_not_skip_or_duplicate_rows() {
+        // D12: native publication-boundary cancel cannot skip or duplicate
+        // rows. The armed reject drops the local page before accept; retry
+        // delivers the same two rows, not a later page or a doubled page.
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability first");
+        let page = |context: &bumbledb::work::WorkContext| {
+            QueuedOutput::admit(
+                context,
+                vec![
+                    vec![crate::marshal::ValueOut::U64(1)],
+                    vec![crate::marshal::ValueOut::U64(2)],
+                ],
+                16,
+            )
+        };
+        runtime.arm_publication_cancel();
+        let (fail_tx, fail_rx) = channel();
+        let refused = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    fail_tx.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        Ok(Output::Page(Some(page(context)?)))
+                    }))
+                },
+            )
+            .expect("armed two-row page submits");
+        fail_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("armed notify");
+        assert!(
+            matches!(
+                runtime.take(&refused),
+                Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+            ),
+            "boundary cancel must not deliver the first page"
+        );
+        let (ok_tx, ok_rx) = channel();
+        let delivered = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    ok_tx.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        Ok(Output::Page(Some(page(context)?)))
+                    }))
+                },
+            )
+            .expect("retry submits");
+        ok_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("retry notify");
+        match runtime.take(&delivered) {
+            Ok(Output::Page(Some(queued))) => {
+                assert_eq!(queued.rows.len(), 2, "retry must not skip or duplicate");
+                assert!(matches!(
+                    &queued.rows[0][..],
+                    [crate::marshal::ValueOut::U64(1)]
+                ));
+                assert!(matches!(
+                    &queued.rows[1][..],
+                    [crate::marshal::ValueOut::U64(2)]
+                ));
+            }
+            _ => panic!("retry must deliver the same two rows"),
+        }
+        admission.request_close().expect("close");
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d12_abandoned_publication_reclaims_on_cancel_close_without_js_take() {
+        // D12: pause after native publication, before the JS callback.
+        // Interrupt, retain wrappers, cancel+close must finish and release
+        // native resources without a JavaScript take.
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability first");
+        let (entered_tx, entered_rx) = channel();
+        let (release_tx, release_rx) = channel();
+        runtime.arm_publication_hold(entered_tx, release_rx);
+        let published = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(|| {}),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        Ok(Output::Page(Some(queued)))
+                    }))
+                },
+            )
+            .expect("page submits");
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("published before JS callback");
+        let retained = std::sync::Arc::clone(&published);
+        let (cancel_tx, cancel_rx) = channel();
+        runtime.drain(
+            Some(&published),
+            Box::new(move |report| {
+                cancel_tx.send(report).unwrap();
+            }),
+        );
+        assert_eq!(
+            cancel_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("cancel joins"),
+            CloseReport::Closed,
+            "abandoned queued output must reclaim without JS take"
+        );
+        release_tx.send(()).expect("release publication hold");
+        admission.request_close().expect("close retained wrapper");
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, 0);
+        assert!(
+            matches!(
+                runtime.take(&retained),
+                Err(RuntimeError::SpentHandle)
+                    | Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+            ),
+            "reclaimed publication is not a later JS take"
+        );
+    }
+
+    #[test]
+    fn d12_cancelled_queued_page_reclaims_open_without_waiter() {
+        // Cancel/close with queued Page/Rows, no waiter, Phase::Open.
+        // Supervise must drop the delivery copy; JS take count stays 0;
+        // committed facts stay (no second accept_publication, no rewind).
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability first");
+        let takes = 0u32;
+        let (page_tx, page_rx) = channel();
+        let published = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    page_tx.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |context, _, _| {
+                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        Ok(Output::Page(Some(queued)))
+                    }))
+                },
+            )
+            .expect("page submits");
+        page_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("page notify");
+        assert_eq!(runtime.inspect().phase, Phase::Open);
+        assert!(
+            runtime.inspect().retained >= 1,
+            "queued page is retained before cancel"
+        );
+        runtime.cancel_without_waiter(&published);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while runtime.inspect().retained != 0 {
+            assert!(
+                Instant::now() < deadline,
+                "Open + no waiter must still reclaim abandoned Page/Rows"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(runtime.inspect().phase, Phase::Open);
+        assert_eq!(takes, 0, "JS take count stays 0");
+        let _ = published;
+        admission.request_close().expect("close");
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d18_close_during_busy_payload_drains_after_job() {
+        // D18: close while a payload job holds the table entry. Same
+        // nested-borrow failure as the snapshot schedule.
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            0,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability first");
+        let (release, blocked) = channel();
+        let (entered, running) = channel();
+        runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(|| {}),
+                |_| {
+                    Ok(Box::new(move |_, _, _| {
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .expect("busy payload submits");
+        running.recv_timeout(Duration::from_secs(5)).expect("entered");
+        admission
+            .request_close()
+            .expect("close while busy cannot QueueFull");
+        release.send(()).unwrap();
+        let (tx, rx) = channel();
+        runtime
+            .close_resource(
+                admission.cap(),
+                Box::new(move |_| {
+                    tx.send(()).unwrap();
+                }),
+            )
+            .expect("joined close");
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("payload close report");
+        assert_eq!(runtime.inspect().natives, 0);
+        assert_eq!(runtime.registry.route_count(), 0);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn d29_failed_admission_rolls_back_and_history_does_not_accumulate() {
+        // D29: failed admission before insertion leaves no payload/row/charge.
+        // Long create/revoke returns to the admitted baseline. No tombstones.
+        let runtime = Runtime::start(options()).unwrap();
+        let baseline = runtime.inspect();
+        assert_eq!(baseline.natives, 0);
+        assert_eq!(runtime.registry.route_count(), 0);
+
+        assert!(
+            matches!(
+                runtime.reserve_native_route(NativeKind::Result, u64::MAX),
+                Err(RuntimeError::ResourceLimit { .. })
+            ),
+            "byte admission refuses before a route exists"
+        );
+        assert_eq!(runtime.inspect().natives, 0);
+        assert_eq!(runtime.registry.route_count(), 0);
+        assert_eq!(runtime.inspect().reserved[3], 0);
+
+        let base = unique_dir("d29-history");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let descriptor = Mini.descriptor();
+        let db = attach(&owner, &descriptor);
+        let after_db = runtime.inspect().natives;
+        for _ in 0..4 {
+            let session = open_read(&runtime, &db);
+            assert_eq!(drain_session(&session), CloseReport::Closed);
+        }
+        assert_eq!(
+            runtime.inspect().natives,
+            after_db,
+            "create/revoke history returns to the admitted baseline"
+        );
+        assert_eq!(
+            runtime.registry.route_count(),
+            0,
+            "drained snapshot routes are absent, not tombstones"
+        );
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn session_close_is_idempotent_and_the_database_survives() {
+        let runtime = Runtime::start(options()).unwrap();
+        let base = unique_dir("idempotent-close");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let descriptor = Mini.descriptor();
+        let db = attach(&owner, &descriptor);
+        let session = open_read(&runtime, &db);
+        assert_eq!(drain_session(&session), CloseReport::Closed);
+        assert_eq!(drain_session(&session), CloseReport::Closed);
+        assert_eq!(runtime.inspect().databases, 1);
         drop(owner);
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
         let _ = std::fs::remove_dir_all(&base);
@@ -1325,8 +1804,6 @@ mod tests {
 
     #[test]
     fn a_foreign_runtime_refuses_to_open_a_session_over_a_managed_db() {
-        // FFI foreign-addon/kind: a `ManagedDb` belongs to exactly one
-        // runtime; a second runtime refuses it before any work registers.
         let first = Runtime::start(options()).unwrap();
         let second = Runtime::start(options()).unwrap();
         let base = unique_dir("foreign");
@@ -1334,22 +1811,10 @@ mod tests {
         let owner = acquire(&first, &base.join("tenant"));
         let descriptor = Mini.descriptor();
         let db = attach(&owner, &descriptor);
-
-        assert!(
-            matches!(
-                second.open_session(&db, policy(), Box::new(|| {})),
-                Err(RuntimeError::ForeignRuntime)
-            ),
-            "the wrong runtime cannot open a session over a foreign db"
-        );
-        assert!(
-            matches!(
-                second.open_writer(&db, None, policy(), Box::new(|| {})),
-                Err(RuntimeError::ForeignRuntime)
-            ),
-            "the wrong runtime cannot open a writer over a foreign db"
-        );
-
+        assert!(matches!(
+            second.open_session(&db, policy(), Box::new(|| {})),
+            Err(RuntimeError::ForeignRuntime)
+        ));
         drop(owner);
         assert_eq!(drain_runtime(&first), CloseReport::Closed);
         assert_eq!(drain_runtime(&second), CloseReport::Closed);
@@ -1357,89 +1822,17 @@ mod tests {
     }
 
     #[test]
-    fn session_close_is_idempotent_and_the_database_survives() {
-        // RUN close: draining a session reports the real terminal outcome;
-        // a second drain on the same inert session joins it (double
-        // release is harmless). The database entry survives an individual
-        // session close.
-        let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("idempotent-close");
-        std::fs::create_dir_all(&base).unwrap();
-        let owner = acquire(&runtime, &base.join("tenant"));
-        let descriptor = Mini.descriptor();
-        let db = attach(&owner, &descriptor);
-
-        let session = open_read(&runtime, &db);
-        assert_eq!(drain_session(&session), CloseReport::Closed);
-        assert_eq!(
-            drain_session(&session),
-            CloseReport::Closed,
-            "a second close joins the first"
-        );
-        // The database is still registered after the session closed.
-        assert_eq!(runtime.inspect().databases, 1);
-
-        drop(owner);
-        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn a_stale_prepared_id_misses_and_never_aliases() {
-        // FFI generation/stale-scope + double-release shape: prepared ids
-        // are minted from the runtime's one never-reused counter, so a
-        // retained id that names no installed query can only miss
-        // (`ClosedHandle`) — it can never alias a successor prepared query.
-        let runtime = Runtime::start(options()).unwrap();
-        let base = unique_dir("stale-prepared");
-        std::fs::create_dir_all(&base).unwrap();
-        let owner = acquire(&runtime, &base.join("tenant"));
-        let descriptor = Mini.descriptor();
-        let db = attach(&owner, &descriptor);
-
-        let session = open_read(&runtime, &db);
-        // Removing an id that was never installed is the double-release /
-        // stale-handle shape: a typed closed-handle miss, never a panic
-        // and never a touch of another job's state.
-        assert!(
-            matches!(
-                run_read(&runtime, &session, |_| {
-                    Ok(Box::new(|context, frame| {
-                        context.checkpoint()?;
-                        frame.remove_prepared(9_999)?;
-                        Ok(Output::Ready)
-                    }))
-                }),
-                Err(RuntimeError::ClosedHandle)
-            ),
-            "a stale/never-installed prepared id misses as ClosedHandle"
-        );
-        assert_eq!(drain_session(&session), CloseReport::Closed);
-
-        drop(owner);
-        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-        let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn runtime_shutdown_drains_a_live_read_session() {
-        // RUN open-vs-shutdown: a runtime close with a live session stops
-        // admission, drains the session thread and reports the terminal
-        // outcome; the session's own close then joins the completed drain.
+    fn runtime_shutdown_drains_a_live_snapshot() {
         let runtime = Runtime::start(options()).unwrap();
         let base = unique_dir("open-vs-shutdown");
         std::fs::create_dir_all(&base).unwrap();
         let owner = acquire(&runtime, &base.join("tenant"));
         let descriptor = Mini.descriptor();
         let db = attach(&owner, &descriptor);
-
         let session = open_read(&runtime, &db);
-        // Drop the JS-held handles; the registry still owns the resources.
         drop(owner);
         drop(db);
-        // Runtime shutdown must join the session thread and the owner.
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-        // The session wrapper's own close now joins the finished drain.
         assert_eq!(drain_session(&session), CloseReport::Closed);
         let _ = std::fs::remove_dir_all(&base);
     }

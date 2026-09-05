@@ -7,7 +7,7 @@
 //! Everything here is a thin, typed facade over the store's own
 //! capabilities (`storage::store::{WriteOwner, PreparedWrite, SealedWrite}`):
 //! prepare applies the sealed `ChangeSet` as a private candidate and judges
-//! the complete final state with the production judge; seal writes only
+//! it incrementally under a lawful parent; seal writes only
 //! opaque host records/attachment into the same transaction; commit is the
 //! one durability point for facts + generation + host rows + attachment.
 //! A rejected or aborted candidate retains the exclusive session, so the
@@ -16,8 +16,9 @@
 
 use std::marker::PhantomData;
 
-use super::{Db, ReadInstance};
+use super::{Db, ReadFrame};
 use crate::storage::GenerationId;
+use crate::schema::judge::LawfulParent;
 use crate::storage::store::{
     self, HostChanges, HostSealError, SchemaJudge, StoreError, UnindexedRows,
 };
@@ -143,7 +144,7 @@ impl<'db, S> WriterSession<'db, S> {
         let judge = SchemaJudge::new(schema.as_ref());
         match self
             .owner
-            .prepare(changes, &UnindexedRows, &judge)
+            .prepare_incremental(LawfulParent::established(), changes, &UnindexedRows, &judge)
             .map_err(integration_error)?
         {
             store::Prepared::Rejected(judged) => {
@@ -215,12 +216,12 @@ impl<S> SealedWrite<'_, '_, S> {
     }
 }
 
-impl<S> ReadInstance<'_, S> {
+impl<S> ReadFrame<'_, S> {
     /// # Errors
     /// The bytes and application rows borrow the same committed snapshot.
     #[doc(hidden)]
     pub fn integration_host_record(&self, key: &[u8]) -> Result<Option<&[u8]>, HostSealError> {
-        self.snapshot.host_record(key).map_err(|error| match error {
+        self.owner.snapshot.host_record(key).map_err(|error| match error {
             StoreError::HostKey(fault) => crate::storage::store::host::seal_error_of(fault),
             other => HostSealError::Storage(Error::from_store(other)),
         })
@@ -245,13 +246,13 @@ impl<S> ReadInstance<'_, S> {
         prefix: &[u8],
         visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), HostSealError>,
     ) -> Result<(), HostSealError> {
-        self.snapshot.host_scan(prefix, &self.work, visit)
+        self.owner.snapshot.host_scan(prefix, self.work, visit)
     }
 
     /// # Errors
     /// Returns opaque host attachment bytes from this exact read snapshot.
     #[doc(hidden)]
     pub fn integration_host_attachment(&self) -> crate::Result<Option<&[u8]>> {
-        self.snapshot.attachment().map_err(Error::from_store)
+        self.owner.snapshot.attachment().map_err(Error::from_store)
     }
 }

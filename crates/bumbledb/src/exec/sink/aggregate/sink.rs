@@ -14,7 +14,7 @@ impl Sink for AggregateSink {
             self.binding_scratch[slot] = bindings.get(slot);
         }
         self.fold_scratch_row();
-        Flow::Continue
+        Flow::from_sink_progress(AggregateSink::progress(self))
     }
 
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
@@ -209,14 +209,14 @@ impl Sink for AggregateSink {
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         if batch.survivors.is_empty() {
-            return Flow::Continue;
+            return Flow::from_sink_progress(AggregateSink::progress(self));
         }
 
         self.refresh_shape_cache(batch);
 
         if matches!(self.group_state, GroupState::Pack { .. }) {
             self.fold_batch_rows(batch);
-            return Flow::Continue;
+            return Flow::from_sink_progress(AggregateSink::progress(self));
         }
         match (
             !matches!(self.dedup, DedupState::Elided { .. }),
@@ -241,6 +241,14 @@ impl Sink for AggregateSink {
 
             (_, false) => self.fold_batch_rows(batch),
         }
-        Flow::Continue
+        Flow::from_sink_progress(AggregateSink::progress(self))
+    }
+
+    fn progress(&self) -> crate::exec::sink::SinkProgress {
+        AggregateSink::progress(self)
+    }
+
+    fn take_error(&mut self) -> Option<crate::error::Error> {
+        AggregateSink::take_error(self)
     }
 }

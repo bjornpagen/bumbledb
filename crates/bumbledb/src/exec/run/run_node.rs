@@ -132,14 +132,17 @@ impl Executor {
                 overlap_drained += take;
                 (take, token)
             } else {
-                colts[cover_occ].iter_batch(
+                let Some(batch) = self.colt_ok(colts[cover_occ].iter_batch(
                     cover_cursor,
                     cover_level,
                     token,
                     &mut scratch.entry_keys,
                     &mut scratch.children,
                     if gate_cover { 1 } else { self.batch },
-                )
+                )) else {
+                    break 'outer;
+                };
+                batch
             };
             counters.phase_end(node_idx, JoinPhase::Iter);
             if yielded == 0 {
@@ -147,6 +150,12 @@ impl Executor {
             }
             counters.batch(node_idx, yielded);
             token = next_token;
+            // The bounded-quantum ledger poll on binding exploration:
+            // cancellation/deadline and COLT growth charges fire here even
+            // when no row survives to the sink (chapter 12 §7).
+            if !self.note_explored(yielded, &*colts) {
+                break 'outer;
+            }
             scratch.survivors.clear();
             scratch
                 .survivors
@@ -290,7 +299,9 @@ impl Executor {
                 let occ = usize::from(subatom.occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
                 counters.phase_start(node_idx, JoinPhase::Force);
-                colts[occ].ensure_forced(s_cursor, s_level);
+                if self.colt_ok(colts[occ].ensure_forced(s_cursor, s_level)).is_none() {
+                    break 'outer;
+                }
                 counters.phase_end(node_idx, JoinPhase::Force);
 
                 let pinned = matches!(s_cursor, Cursor::Row(_));
@@ -345,12 +356,14 @@ impl Executor {
                     let colt = &mut colts[occ];
                     for k in 0..n {
                         let entry = usize::try_from(survivors[k]).expect("batch fits usize");
-                        let hit = colt.get_prehashed(
+                        let Some(hit) = self.colt_ok(colt.get_prehashed(
                             s_cursor,
                             s_level,
                             &probe_keys[k * sub_arity..(k + 1) * sub_arity],
                             hashes[k],
-                        );
+                        )) else {
+                            break 'outer;
+                        };
                         counters.probe(node_idx, sub_idx, hit.is_some());
                         sibling_children[entry] = hit.unwrap_or(Cursor::Row(0));
                         mask[k] = u8::from(hit.is_some());
@@ -425,7 +438,7 @@ impl Executor {
                 counters.phase_end(node_idx, JoinPhase::Residual);
             }
 
-            anti_probe_pass(
+            if let Err(error) = anti_probe_pass(
                 &self.precompute[node_idx].anti_probes,
                 node_idx,
                 cover_vars,
@@ -442,7 +455,10 @@ impl Executor {
                 &mut scratch.point_sources,
                 |_, slot| bindings.get(slot),
                 counters,
-            );
+            ) {
+                self.poison(super::Poison::Work(error));
+                break 'outer;
+            }
 
             if scratch.survivors.is_empty() {
                 if gate_cover {
@@ -470,6 +486,14 @@ impl Executor {
                 counters.emit();
             }
             counters.phase_end(node_idx, JoinPhase::Descend);
+            if batch_flow.is_terminal() {
+                self.poison(match batch_flow {
+                    Flow::Stop => super::Poison::SinkStop,
+                    _ => super::Poison::SinkError,
+                });
+                flow = batch_flow;
+                break 'outer;
+            }
             if batch_flow == Flow::SkipSuffix {
                 debug_assert!(
                     sink.skip_capability() == super::SkipCapability::Licensed,

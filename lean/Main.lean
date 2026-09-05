@@ -204,7 +204,7 @@ contract** (the verdict is compared WHOLE — list `BEq` — so the order
 is normative, not incidental): indices ascend in materialized-statement
 order, and each violated statement of the failing phase is cited
 exactly once — a containment violated in BOTH directions is ONE index.
-The engine side: `storage/commit/judgment.rs::judge` collects the
+The engine side: `schema/judge.rs::judge_complete` collects the
 phase's finds and the sealing constructor
 (`error.rs::Violations::seal`) stable-sorts by the citation key
 (`error.rs::Violation::citation` — statement id, then direction,

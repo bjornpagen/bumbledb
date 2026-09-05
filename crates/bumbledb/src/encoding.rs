@@ -1,8 +1,10 @@
 //! Canonical per-type encodings and the fact codec.
+//!
 //! The byte-level truth of the whole system: everything above stores, hashes,
-//! and compares exactly these bytes. Canonical means injective
-//! : one value, one byte string, so
-//! value equality is `fact_bytes` equality.
+//! and compares exactly these bytes. Row-shaped trusted input uses
+//! [`crate::canonical`] as the ONE checked decode boundary; this module
+//! supplies dense column-word layouts and scalar order keys for images and
+//! hot loops.
 mod decode;
 mod encode;
 mod layout;
@@ -29,9 +31,11 @@ pub(crate) use encode::{encode_interval_f64, encode_interval_u64};
 
 pub use bumbledb_theory::schema::ValueType;
 
-/// Dictionary intern id. Ids allocate from 0; [`InternId::SENTINEL`] is
-/// never minted — the miss token on query-word paths and the one owner of
-/// the `u64::MAX` reserved value.
+/// A query-image text token: the dense id a prepared query's process-scoped
+/// interner mints per distinct text (nothing persisted — the on-disk
+/// dictionary is deleted; stored rows own their text inline). Ids allocate
+/// from 0; [`InternId::SENTINEL`] is never minted — the miss token on
+/// query-word paths and the one owner of the `u64::MAX` reserved value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InternId(u64);
 

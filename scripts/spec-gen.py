@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""The spec generator: the independent third mind of the v:3 corpus.
+"""Historical v3 golden assembler — not current log authority.
 
-Assembles the ok-golden bytes of every byte grammar from the corpus
-metadata alone — inventory.json, the per-case .json sidecars, and
-schemas.json under crates/bumbledb-log/conformance/v3/ — spelling the
-written field rosters directly: version byte, u64le, length-delimited
-vectors, raw digests. It never calls bumbledb-log's encode paths; a
-reader agreeing with itself proves nothing, so the goldens are produced
-by construction and the reader is checked against them.
+Assembles checked-in v3 ok-golden bytes from corpus metadata
+(inventory.json, sidecars, schemas.json). It never calls
+bumbledb-log encode paths. A `braid` field in those goldens is a
+historical wire spelling; it does not certify tenant authority or
+replace the independent history model
+(`crates/bumbledb-bench/src/closure/history_model.rs`). L08/L21 own
+running `--check` against goldens. Lean braid theorems cannot spend
+this generator.
 
 Families spelled: batch (header + tagged ops over the schema roster),
 manifest / checkpoint / sidecar documents, counter (canonical decimal
@@ -85,8 +86,9 @@ def digest32(label, text):
 
 
 def braid_raw(label, text):
+    # Historical v3 golden field only — not current authority order.
     if not isinstance(text, str) or not re.fullmatch(r"c[0-9a-f]{8}", text):
-        refuse(label, f"a braid is 'c' + 8 hex, got {text!r}")
+        refuse(label, f"a historical v3 braid spelling is 'c' + 8 hex, got {text!r}")
     return int(text[1:], 16)
 
 

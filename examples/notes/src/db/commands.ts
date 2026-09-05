@@ -12,13 +12,15 @@
  */
 import { createHash } from "node:crypto"
 import { ChangeSet, type ExecutionPolicy, Id128 } from "@bjornpagen/bumbledb"
-import type { History, HistoryBorrow, SubmitOptions, SubmitOutcome } from "@bjornpagen/bumbledb-log"
+import type { CommandRef, History, HistoryBorrow, SubmitOptions, SubmitOutcome } from "@bjornpagen/bumbledb-log"
 import { Command, RequestId } from "@bjornpagen/bumbledb-log"
 import { Effect } from "effect"
 import { rememberCommandRef, rememberSubmitOutcome } from "../requests.ts"
 import { App, Attachment, Note, Outbox } from "./schema.ts"
 
-type Writer = Pick<History<typeof App>, "identity" | "receiptEpoch" | "submit"> | HistoryBorrow<typeof App>
+type Writer =
+	| Pick<History<typeof App>, "identity" | "receiptEpoch" | "submit" | "resolve">
+	| HistoryBorrow<typeof App>
 
 export const submitOptionsOf = (work: ExecutionPolicy): SubmitOptions => ({
 	...work,
@@ -160,6 +162,16 @@ export const addAttachment = Effect.fn("commands.addAttachment")(
 		return yield* sealAndSubmit(writer, tenantId, attachmentId, changes, { attachment: attachmentId, note: noteId }, work)
 	},
 	Effect.scoped
+)
+
+/**
+ * Resolve a retained command ref after interruption. Lost ack is not
+ * proved loss — the original identity is the only recovery coordinate.
+ */
+export const resolveCommand = Effect.fn("commands.resolveCommand")(
+	function* (writer: Writer, ref: CommandRef, work: ExecutionPolicy) {
+		return yield* writer.resolve(ref, work)
+	}
 )
 
 /**

@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bumbledb::canonical::result::{ResultError, decode_result, encode_result};
-use bumbledb::work::WorkContext;
+use bumbledb::work::{Resource, WorkContext};
 use bumbledb::{F64, Id128, SchemaDescriptor, SchemaFingerprint, Value};
 use bumbledb_log::history::authority::{Access, HeadAuthority, Lifecycle};
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
@@ -28,12 +28,13 @@ use bumbledb_log::history::{
 use bumbledb_log::recovery::{self, OriginBinding, RecoveryError, RecoveryRefusal};
 use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
 use bumbledb_log::tenants::{
-    Acquire, CompletedOpen, Release, TenantBinding, TenantBorrow, TenantOptions, TenantRefusal,
-    TenantRegistry,
+    Acquire, CloseBlocked, CompletedOpen, Release, TenantBinding, TenantBorrow, TenantOptions,
+    TenantRefusal, TenantRegistry,
 };
+use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
+use bumbledb_log::codec::StreamLimits;
 use bumbledb_log::writer::{
     HostedHistory, LocalHealth, LocalHistory, LogError, ResolveOutcome, SubmitOptions,
-    SubmitOutcome,
 };
 use napi::bindgen_prelude::{BigInt, Buffer, Env, External, Function, Object, Uint8Array, Unknown};
 use napi_derive::napi;
@@ -48,6 +49,7 @@ use crate::runtime_wire::{
 };
 
 mod admin;
+mod lock;
 
 pub(crate) use admin::{AdminOwned, admin_verb};
 
@@ -346,6 +348,48 @@ pub(crate) fn fail_of_log(error: LogError) -> LogFail {
              reopen the history (or re-acquire the tenant) so recovery hydration rebuilds it \
              natively",
         ),
+    }
+}
+
+/// Lifecycle stream/manifest bounds derived from this operation's work
+/// context — receiving caps intersect the deployment defaults (C6/C7).
+pub(crate) fn stream_limits(context: &WorkContext) -> StreamLimits {
+    let record = context
+        .limit(Resource::InputBytes)
+        .min(StreamLimits::DEFAULT.record_bytes as u64)
+        .max(1) as usize;
+    let manifest = context
+        .limit(Resource::WorkingBytes)
+        .min(StreamLimits::DEFAULT.manifest_bytes as u64)
+        .max(1) as usize;
+    StreamLimits {
+        record_bytes: record,
+        manifest_bytes: manifest,
+    }
+}
+
+/// Map an ancillary decode failure to the machine's operational error while
+/// preserving a terminal receipt (C5: diagnostics never undo publication).
+fn decode_fail_to_log_error(fail: LogFail) -> LogError {
+    match fail {
+        LogFail::Core(RuntimeError::Work(work)) => LogError::Work(work),
+        LogFail::Protocol {
+            code: "IncompleteRejectionEvidence",
+            ..
+        } => LogError::IncompleteRejectionEvidence,
+        LogFail::Protocol {
+            code: "Corruption", ..
+        } => LogError::Corruption,
+        LogFail::Core(_) | LogFail::Protocol { .. } | LogFail::Structured { .. } => {
+            LogError::IncompleteRejectionEvidence
+        }
+    }
+}
+
+fn local_health_after_decode_failure(health: LocalHealth, fail: LogFail) -> LocalHealth {
+    let _ = health;
+    LocalHealth::Unavailable {
+        error: decode_fail_to_log_error(fail),
     }
 }
 
@@ -713,24 +757,23 @@ impl HistoryKind {
         }
     }
 
-    /// Submit under the per-call C09 bounds. The hosted machine consumes the
-    /// options and clamps them to its OWN attempt/backoff bounds
-    /// ([`bumbledb_log::writer::HostedHistory::submit_with`]); the bridge
-    /// never re-clamps beyond the wire's type bounds. `LocalHistory` accepts
-    /// and ignores them — one LMDB transaction has no CAS loop to bound (the
-    /// recorded P04R2 contract, P04.md hub request 5).
-    fn submit_with(
+    /// Submit under the per-call C09 bounds, returning phase-carrying
+    /// [`SubmitCertainty`]. Phase is the certainty arm — never inferred
+    /// from English error text. Hosted consumes the options and clamps
+    /// them to its own attempt/backoff bounds. Local ignores them: one
+    /// LMDB transaction has no CAS loop ([`LocalHistory::submit_certain`]).
+    fn submit_certain_with(
         &self,
         command: &Command,
         options: SubmitOptions,
         work: &WorkContext,
-    ) -> SubmitOutcome {
+    ) -> SubmitCertainty {
         match self {
             Self::Local(history) => {
                 let _ = options;
-                history.submit(command, work)
+                history.submit_certain(command, work)
             }
-            Self::Hosted { history, .. } => history.submit_with(command, options, work),
+            Self::Hosted { history, .. } => history.submit_certain_with(command, options, work),
         }
     }
 
@@ -753,6 +796,12 @@ impl HistoryKind {
     }
 }
 
+/// One submitted-but-unproven command: `(receipt epoch, request id)` plus
+/// when the uncertainty was observed. In-memory bookkeeping only (chapter 22
+/// health: unknown-command count/oldest) — the durable resolution authority
+/// stays the retained receipt lookup; this table never decides anything.
+type UnknownKey = (u64, [u8; 16]);
+
 /// One opened history: registry-held directory owner + managed database +
 /// a persistent lease (teardown waits for close), plus the machine.
 pub(crate) struct HistoryResource {
@@ -761,6 +810,12 @@ pub(crate) struct HistoryResource {
     pub(crate) managed: ManagedDb,
     pub(crate) identity: DatabaseIdentity,
     state: Mutex<Option<HistoryState>>,
+    /// History verbs currently EXECUTING on a worker (the inspect wire's
+    /// `active`; `queued` stays the registry's total bound count).
+    active: std::sync::atomic::AtomicU64,
+    /// Outstanding outcome-unknown submissions, cleared by any later proven
+    /// outcome (submit decided / proven not-submitted / resolve answer).
+    unknowns: Mutex<std::collections::BTreeMap<UnknownKey, std::time::Instant>>,
 }
 
 struct HistoryState {
@@ -801,6 +856,66 @@ impl HistoryResource {
                 });
             }));
         }));
+    }
+}
+
+impl HistoryResource {
+    fn unknown_key(reference: &CommandRef) -> UnknownKey {
+        (
+            reference.id.receipt_epoch.get(),
+            *reference.id.request_id.as_core().as_bytes(),
+        )
+    }
+
+    /// Record one dispatched-but-unproven submission.
+    fn record_unknown(&self, reference: &CommandRef) {
+        let mut unknowns = self
+            .unknowns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        unknowns
+            .entry(Self::unknown_key(reference))
+            .or_insert_with(std::time::Instant::now);
+    }
+
+    /// A PROVEN outcome for this command id clears its unknown row (any
+    /// terminal receipt, a proven non-submission, or a resolve answer).
+    fn resolve_unknown(&self, reference: &CommandRef) {
+        let mut unknowns = self
+            .unknowns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        unknowns.remove(&Self::unknown_key(reference));
+    }
+
+    /// Bounded health counters: outstanding unknown count + oldest age.
+    fn unknown_health(&self) -> (u64, Option<f64>) {
+        let unknowns = self
+            .unknowns
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let oldest = unknowns
+            .values()
+            .map(std::time::Instant::elapsed)
+            .max()
+            .map(|age| age.as_secs_f64() * 1000.0);
+        (unknowns.len() as u64, oldest)
+    }
+}
+
+/// Counts one executing history verb for the resource's `active` gauge.
+struct ActiveVerbGuard<'r>(&'r HistoryResource);
+
+impl<'r> ActiveVerbGuard<'r> {
+    fn begin(resource: &'r HistoryResource) -> Self {
+        resource.active.fetch_add(1, Ordering::AcqRel);
+        Self(resource)
+    }
+}
+
+impl Drop for ActiveVerbGuard<'_> {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::AcqRel);
     }
 }
 
@@ -875,6 +990,9 @@ pub(crate) struct OpenSpec {
     pub(crate) creation: Option<(OperationId, Vec<u8>)>,
     pub(crate) descriptor: SchemaDescriptor,
     pub(crate) attrs: crate::FieldAttrsTable,
+    /// The hosted durable-tail envelope (C08/STORE-07); `UNBOUNDED` when the
+    /// wire carries none. Local histories ignore it (LMDB is complete).
+    pub(crate) tail_policy: bumbledb_log::manifest::TailPolicy,
 }
 
 /// Optional wire fields cross as ABSENT or NULL interchangeably (the TS
@@ -945,6 +1063,54 @@ pub(crate) fn optional_number(obj: &Object, key: &str, ctx: &str) -> napi::Resul
             "bumbledb-log marshal: `{key}` must be a number or null"
         ))),
     }
+}
+
+/// An optional non-negative bigint wire field (absent/null ⇒ `None`); only
+/// TYPE bounds are applied here (lossless u64) — semantic interpretation
+/// belongs to the consuming machine.
+#[expect(
+    unsafe_code,
+    reason = "napi declares `Unknown::cast` unsafe; the cast is fenced by the \
+              exact get_type check in its own arm"
+)]
+pub(crate) fn optional_u64(obj: &Object, key: &str, ctx: &str) -> napi::Result<Option<u64>> {
+    use napi::ValueType as JsType;
+    let Some(value) = obj.get::<Unknown>(key)? else {
+        return Ok(None);
+    };
+    match value.get_type()? {
+        JsType::Null | JsType::Undefined => Ok(None),
+        // SAFETY: the bigint arm is the only cast and was just type-checked.
+        JsType::BigInt => Ok(Some(marshal::u64_in(
+            &unsafe { value.cast::<BigInt>()? },
+            ctx,
+        )?)),
+        _ => Err(marshal::err(format!(
+            "bumbledb-log marshal: `{key}` must be a bigint or null"
+        ))),
+    }
+}
+
+/// The C08 durable-tail envelope of one history open (finding #6 bridge
+/// half): the OPTIONAL wire field `tailPolicy: { maxCount: bigint,
+/// maxBytes: bigint } | null` on the history open request. Absent/null is
+/// the machine default (`TailPolicy::UNBOUNDED`) — the bridge never invents
+/// an envelope the deployment did not configure. (Provisional spelling
+/// recorded in implementation/packets/P09.md pending W2-CERT's published
+/// spelling in P04.md.)
+pub(crate) fn tail_policy_in(
+    obj: &Object,
+    ctx: &str,
+) -> napi::Result<bumbledb_log::manifest::TailPolicy> {
+    let Some(policy) = optional_object(obj, "tailPolicy")? else {
+        return Ok(bumbledb_log::manifest::TailPolicy::UNBOUNDED);
+    };
+    let max_count = marshal::u64_in(&marshal::req::<BigInt>(&policy, "maxCount", ctx)?, ctx)?;
+    let max_bytes = marshal::u64_in(&marshal::req::<BigInt>(&policy, "maxBytes", ctx)?, ctx)?;
+    Ok(bumbledb_log::manifest::TailPolicy {
+        max_count,
+        max_bytes,
+    })
 }
 
 pub(crate) fn binding_spec_in(
@@ -1092,17 +1258,20 @@ pub struct HistoryOpened {
 }
 
 impl HistoryOpened {
+    /// Infallible assembly: the caller acquires `retained` FIRST (while it
+    /// can still synchronously release the owner/database on failure), so no
+    /// error path exists after the registry handles move in here.
     fn assemble(
         runtime: &Arc<Runtime>,
         owner: DirectoryOwner,
         managed: ManagedDb,
         kind: HistoryKind,
         lease: DbLease,
+        retained: RetainedNative,
         receipt_epoch: u64,
-    ) -> MachineResult<Self> {
+    ) -> Self {
         let identity = kind.identity();
-        let retained = runtime.retain_native(0)?;
-        Ok(Self {
+        Self {
             resource: Arc::new(HistoryResource {
                 runtime: Arc::clone(runtime),
                 owner,
@@ -1113,10 +1282,39 @@ impl HistoryOpened {
                     _lease: lease,
                     _retained: retained,
                 })),
+                active: std::sync::atomic::AtomicU64::new(0),
+                unknowns: Mutex::new(std::collections::BTreeMap::new()),
             }),
             receipt_epoch,
-        })
+        }
     }
+}
+
+/// Synchronously release a REFUSED open's already-installed registry
+/// resources before the refusal returns: the owner close cascades over any
+/// attached database (the kernel lock releases last), and this helper joins
+/// it. A refused open dispatched nothing durable, so the caller must observe
+/// a reusable directory — an immediate successor open never trips
+/// `DirectoryBusy` on this invocation's leftovers (F3 finding-E lane repair;
+/// the leak showed up as a deterministic wrong-lineage → `DirectoryBusy`
+/// misreport). Any held `DbLease` must drop BEFORE this joins.
+fn drain_refused_open(owner: &DirectoryOwner) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    owner.drain(Box::new(move |report| {
+        let _ = tx.send(report);
+    }));
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
+}
+
+/// Synchronously drain a fully-assembled resource a refusal must give back
+/// (the create-retry arm that found a stranger): join-idempotent like every
+/// close, but the refusal returns only after the drain reports.
+fn drain_refused_resource(resource: &Arc<HistoryResource>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    resource.drain(Box::new(move |report| {
+        let _ = tx.send(report);
+    }));
+    let _ = rx.recv_timeout(std::time::Duration::from_secs(30));
 }
 
 fn open_history_at(
@@ -1184,32 +1382,15 @@ fn open_local(
         match recovery::create_local(directory, spec.descriptor.clone(), &binding, context) {
             Ok((held, db)) => {
                 let owner = runtime.install_owner_lock(owner_id, held)?;
-                let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
-                let inner = crate::DbInner {
-                    db: Arc::clone(&db),
-                    sealed: Arc::clone(&sealed),
-                    writing: AtomicBool::new(false),
-                };
-                let managed = owner.attach_db(inner)?;
-                let lease = managed.access()?;
-                let history = LocalHistory::create(
-                    db,
-                    spec.identity.database_id,
-                    spec.identity.incarnation_id,
-                    *operation,
-                    LIMITS,
-                    context,
-                )
-                .map_err(fail_of_log)?;
-                let epoch = epoch_of_local(&history)?;
-                HistoryOpened::assemble(
-                    runtime,
-                    owner,
-                    managed,
-                    HistoryKind::Local(Arc::new(history)),
-                    lease,
-                    epoch,
-                )
+                match finish_local_create(runtime, &owner, db, spec, *operation, context) {
+                    Ok((managed, lease, kind, retained, epoch)) => Ok(HistoryOpened::assemble(
+                        runtime, owner, managed, kind, lease, retained, epoch,
+                    )),
+                    Err(fail) => {
+                        drain_refused_open(&owner);
+                        Err(fail)
+                    }
+                }
             }
             Err(RecoveryError::Corrupt("materialization already exists")) => {
                 // A retry after uncertain creation: validate the stable
@@ -1218,6 +1399,9 @@ fn open_local(
                 if opened.resource.identity == spec.identity {
                     Ok(opened)
                 } else {
+                    // Refusing the stranger gives back the fully assembled
+                    // resource synchronously before the refusal returns.
+                    drain_refused_resource(&opened.resource);
                     Err(protocol(
                         "AuthorityExists",
                         "an unrelated database already owns this directory",
@@ -1238,9 +1422,101 @@ fn open_local_existing(
     spec: &OpenSpec,
     context: &WorkContext,
 ) -> MachineResult<HistoryOpened> {
-    let (held, db) = recovery::open_local(directory, spec.descriptor.clone(), context)
+    // Reopen verifies the RECORDED origin binding (audit-log #8): a
+    // copied/moved local directory refuses instead of minting a second
+    // history under the same incarnation.
+    let expected = OriginBinding {
+        origin: "local".into(),
+        prefix: spec.directory.as_str().into(),
+        identity: spec.identity,
+    };
+    let (held, db) = recovery::open_local(directory, spec.descriptor.clone(), &expected, context)
         .map_err(fail_of_recovery)?;
     let owner = runtime.install_owner_lock(owner_id, held)?;
+    // Every refusal past this point holds an INSTALLED owner: release it
+    // synchronously so the refusal never leaves the directory busy.
+    match finish_local_existing(runtime, &owner, db, spec, directory, context) {
+        Ok((managed, lease, kind, retained, epoch)) => Ok(HistoryOpened::assemble(
+            runtime, owner, managed, kind, lease, retained, epoch,
+        )),
+        Err(fail) => {
+            drain_refused_open(&owner);
+            Err(fail)
+        }
+    }
+}
+
+/// The post-install phase of a local CREATE: fallible steps between the
+/// installed owner lock and the assembled resource, lease dropped on every
+/// error path (see [`finish_local_existing`]).
+#[allow(clippy::type_complexity)]
+fn finish_local_create(
+    runtime: &Arc<Runtime>,
+    owner: &DirectoryOwner,
+    db: Arc<crate::Engine>,
+    spec: &OpenSpec,
+    operation: OperationId,
+    context: &WorkContext,
+) -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
+    let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+    let inner = crate::DbInner {
+        db: Arc::clone(&db),
+        sealed: Arc::clone(&sealed),
+        writing: AtomicBool::new(false),
+    };
+    let managed = owner.attach_db(inner)?;
+    let lease = managed.access()?;
+    let outcome = LocalHistory::create(
+        db,
+        spec.identity.database_id,
+        spec.identity.incarnation_id,
+        operation,
+        LIMITS,
+        context,
+    );
+    let history = match outcome {
+        Ok(history) => history,
+        Err(error) => {
+            drop(lease);
+            return Err(fail_of_log(error));
+        }
+    };
+    let epoch = match epoch_of_local(&history) {
+        Ok(epoch) => epoch,
+        Err(fail) => {
+            drop(lease);
+            return Err(fail);
+        }
+    };
+    let retained = match runtime.retain_native(0) {
+        Ok(retained) => retained,
+        Err(error) => {
+            drop(lease);
+            return Err(LogFail::Core(error));
+        }
+    };
+    Ok((
+        managed,
+        lease,
+        HistoryKind::Local(Arc::new(history)),
+        retained,
+        epoch,
+    ))
+}
+
+/// The post-install phase of a local open: everything fallible between the
+/// installed owner lock and the assembled resource. The `DbLease` returns
+/// only on success; every error path has already dropped it, so the caller's
+/// synchronous release cannot deadlock on this invocation's own lease.
+#[allow(clippy::type_complexity)]
+fn finish_local_existing(
+    runtime: &Arc<Runtime>,
+    owner: &DirectoryOwner,
+    db: Arc<crate::Engine>,
+    spec: &OpenSpec,
+    directory: &Path,
+    _context: &WorkContext,
+) -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
     // Reopen-time owner-scoped root scratch collection (chapter 21 local
     // specialization).
     bumbledb_log::local_roots::clean_roots(&db, directory)
@@ -1253,29 +1529,49 @@ fn open_local_existing(
     };
     let managed = owner.attach_db(inner)?;
     let lease = managed.access()?;
-    let history = LocalHistory::open(db, LIMITS).map_err(fail_of_log)?;
+    let history = match LocalHistory::open(db, LIMITS) {
+        Ok(history) => history,
+        Err(error) => {
+            drop(lease);
+            return Err(fail_of_log(error));
+        }
+    };
     let identity = history.identity();
     if identity.database_id != spec.identity.database_id {
+        drop(lease);
         return Err(protocol(
             "ForeignIdentity",
             "the materialization belongs to a different database",
         ));
     }
     if identity.incarnation_id != spec.identity.incarnation_id {
+        drop(lease);
         return Err(protocol(
             "WrongLineage",
             "the materialization is a different incarnation of this database",
         ));
     }
-    let epoch = epoch_of_local(&history)?;
-    HistoryOpened::assemble(
-        runtime,
-        owner,
+    let epoch = match epoch_of_local(&history) {
+        Ok(epoch) => epoch,
+        Err(fail) => {
+            drop(lease);
+            return Err(fail);
+        }
+    };
+    let retained = match runtime.retain_native(0) {
+        Ok(retained) => retained,
+        Err(error) => {
+            drop(lease);
+            return Err(LogFail::Core(error));
+        }
+    };
+    Ok((
         managed,
-        HistoryKind::Local(Arc::new(history)),
         lease,
+        HistoryKind::Local(Arc::new(history)),
+        retained,
         epoch,
-    )
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1310,44 +1606,68 @@ fn open_hosted(
             recovery::create_local(directory, spec.descriptor.clone(), &binding, context)
                 .map_err(fail_of_recovery)?;
         let owner = runtime.install_owner_lock(owner_id, held)?;
-        let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
-        let inner = crate::DbInner {
-            db: Arc::clone(&db),
-            sealed: Arc::clone(&sealed),
-            writing: AtomicBool::new(false),
+        let finish = || -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
+            let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+            let inner = crate::DbInner {
+                db: Arc::clone(&db),
+                sealed: Arc::clone(&sealed),
+                writing: AtomicBool::new(false),
+            };
+            let managed = owner.attach_db(inner)?;
+            let lease = managed.access()?;
+            let outcome = HostedHistory::create(
+                Arc::clone(&db),
+                Arc::clone(&backend),
+                prefix.to_string(),
+                1,
+                spec.identity.database_id,
+                spec.identity.incarnation_id,
+                *operation,
+                LIMITS,
+                context,
+            );
+            let history = match outcome {
+                Ok(history) => history.with_tail_policy(spec.tail_policy),
+                Err(LogError::CommandIdentityConflict) => {
+                    drop(lease);
+                    return Err(protocol(
+                        "AuthorityExists",
+                        "a HEAD already exists under this prefix",
+                    ));
+                }
+                Err(other) => {
+                    drop(lease);
+                    return Err(fail_of_log(other));
+                }
+            };
+            let retained = match runtime.retain_native(0) {
+                Ok(retained) => retained,
+                Err(error) => {
+                    drop(lease);
+                    return Err(LogFail::Core(error));
+                }
+            };
+            Ok((
+                managed,
+                lease,
+                HistoryKind::Hosted {
+                    history: Arc::new(history),
+                    backend: Arc::clone(&backend),
+                    prefix: prefix.to_string(),
+                },
+                retained,
+                1,
+            ))
         };
-        let managed = owner.attach_db(inner)?;
-        let lease = managed.access()?;
-        let history = HostedHistory::create(
-            db,
-            Arc::clone(&backend),
-            prefix.to_string(),
-            1,
-            spec.identity.database_id,
-            spec.identity.incarnation_id,
-            *operation,
-            LIMITS,
-            context,
-        )
-        .map_err(|error| match error {
-            LogError::CommandIdentityConflict => {
-                protocol("AuthorityExists", "a HEAD already exists under this prefix")
+        match finish() {
+            Ok((managed, lease, kind, retained, epoch)) => Ok(HistoryOpened::assemble(
+                runtime, owner, managed, kind, lease, retained, epoch,
+            )),
+            Err(fail) => {
+                drain_refused_open(&owner);
+                Err(fail)
             }
-            other => fail_of_log(other),
-        })?;
-        let epoch = 1;
-        HistoryOpened::assemble(
-            runtime,
-            owner,
-            managed,
-            HistoryKind::Hosted {
-                history: Arc::new(history),
-                backend,
-                prefix: prefix.to_string(),
-            },
-            lease,
-            epoch,
-        )
+        }
     } else {
         let recovered = match recovery::open_hosted(
             directory,
@@ -1356,7 +1676,7 @@ fn open_hosted(
             &origin,
             prefix,
             LIMITS,
-            bumbledb_log::codec::StreamLimits::DEFAULT,
+            stream_limits(context),
             LIMITS.envelope_bytes,
             context,
         ) {
@@ -1374,7 +1694,7 @@ fn open_hosted(
                     &origin,
                     prefix,
                     LIMITS,
-                    bumbledb_log::codec::StreamLimits::DEFAULT,
+                    stream_limits(context),
                     LIMITS.envelope_bytes,
                     context,
                 )
@@ -1388,51 +1708,76 @@ fn open_hosted(
             lock: held,
         } = recovered;
         let owner = runtime.install_owner_lock(owner_id, held)?;
-        let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
-        let inner = crate::DbInner {
-            db: Arc::clone(&db),
-            sealed: Arc::clone(&sealed),
-            writing: AtomicBool::new(false),
+        let finish = || -> MachineResult<(ManagedDb, DbLease, HistoryKind, RetainedNative, u64)> {
+            let sealed = Arc::new(crate::seal(spec.descriptor.clone(), spec.attrs.clone()));
+            let inner = crate::DbInner {
+                db: Arc::clone(&db),
+                sealed: Arc::clone(&sealed),
+                writing: AtomicBool::new(false),
+            };
+            let managed = owner.attach_db(inner)?;
+            let lease = managed.access()?;
+            let outcome = HostedHistory::open(
+                Arc::clone(&db),
+                Arc::clone(&backend),
+                prefix.to_string(),
+                LIMITS,
+                context,
+            );
+            let history = match outcome {
+                Ok(history) => history.with_tail_policy(spec.tail_policy),
+                Err(error) => {
+                    drop(lease);
+                    return Err(fail_of_log(error));
+                }
+            };
+            let identity = history.identity();
+            if identity.database_id != spec.identity.database_id {
+                drop(lease);
+                return Err(protocol(
+                    "ForeignIdentity",
+                    "the HEAD belongs to a different database",
+                ));
+            }
+            if identity.incarnation_id != spec.identity.incarnation_id {
+                drop(lease);
+                return Err(protocol(
+                    "WrongLineage",
+                    "the HEAD is a different incarnation of this database",
+                ));
+            }
+            let epoch = match head.control.live() {
+                Ok(live) => live.receipts.open_epoch().get(),
+                Err(_) => 0,
+            };
+            let retained = match runtime.retain_native(0) {
+                Ok(retained) => retained,
+                Err(error) => {
+                    drop(lease);
+                    return Err(LogFail::Core(error));
+                }
+            };
+            Ok((
+                managed,
+                lease,
+                HistoryKind::Hosted {
+                    history: Arc::new(history),
+                    backend: Arc::clone(&backend),
+                    prefix: prefix.to_string(),
+                },
+                retained,
+                epoch,
+            ))
         };
-        let managed = owner.attach_db(inner)?;
-        let lease = managed.access()?;
-        let history = HostedHistory::open(
-            db,
-            Arc::clone(&backend),
-            prefix.to_string(),
-            LIMITS,
-            context,
-        )
-        .map_err(fail_of_log)?;
-        let identity = history.identity();
-        if identity.database_id != spec.identity.database_id {
-            return Err(protocol(
-                "ForeignIdentity",
-                "the HEAD belongs to a different database",
-            ));
+        match finish() {
+            Ok((managed, lease, kind, retained, epoch)) => Ok(HistoryOpened::assemble(
+                runtime, owner, managed, kind, lease, retained, epoch,
+            )),
+            Err(fail) => {
+                drain_refused_open(&owner);
+                Err(fail)
+            }
         }
-        if identity.incarnation_id != spec.identity.incarnation_id {
-            return Err(protocol(
-                "WrongLineage",
-                "the HEAD is a different incarnation of this database",
-            ));
-        }
-        let epoch = match head.control.live() {
-            Ok(live) => live.receipts.open_epoch().get(),
-            Err(_) => 0,
-        };
-        HistoryOpened::assemble(
-            runtime,
-            owner,
-            managed,
-            HistoryKind::Hosted {
-                history: Arc::new(history),
-                backend,
-                prefix: prefix.to_string(),
-            },
-            lease,
-            epoch,
-        )
     }
 }
 
@@ -1461,7 +1806,7 @@ fn quarantine_cache(directory: &Path) -> MachineResult<()> {
 pub enum MachineOutput {
     History(HistoryOpened),
     Submit(SubmitOwned),
-    Resolve(ResolveOutcome),
+    Resolve(ResolveOwned),
     Inspect(Box<InspectionOwned>),
     Snapshot(Box<SnapshotOwned>),
     Command(CommandOwned),
@@ -1471,6 +1816,7 @@ pub enum MachineOutput {
     CacheReport(CacheReportOwned),
     Evicted(crate::runtime::CloseReport),
     Admin(AdminOwned),
+    RepositoryLock(lock::RepositoryLockOwned),
 }
 
 impl MachineOutput {
@@ -1488,30 +1834,71 @@ pub enum SubmitOwned {
     Decided {
         receipt: TerminalReceipt,
         health: LocalHealth,
+        /// Present exactly when the receipt is invariant-rejected: the
+        /// canonical evidence decoded INSIDE the job (where the schema and
+        /// the work budget live) into owned public rows.
+        violations: Option<ViolationsOwned>,
+        phase: PublicationPhase,
     },
     NotSubmitted {
         reference: CommandRef,
         fail: LogFail,
+        phase: PublicationPhase,
     },
     OutcomeUnknown {
         reference: CommandRef,
         fail: LogFail,
+        phase: PublicationPhase,
     },
+}
+
+pub(crate) fn publication_phase_tag(phase: PublicationPhase) -> &'static str {
+    match phase {
+        PublicationPhase::Prepared => "prepared",
+        PublicationPhase::DispatchedUnresolved => "dispatchedUnresolved",
+        PublicationPhase::Confirmed => "confirmed",
+        PublicationPhase::ProvedNonpublication => "provedNonpublication",
+    }
+}
+
+/// A resolve outcome plus the decoded violations of a found rejected
+/// receipt (the same decode lane submit uses — resolve-after-reopen
+/// preserves the complete violation set).
+pub struct ResolveOwned {
+    pub(crate) outcome: ResolveOutcome,
+    pub(crate) violations: Option<ViolationsOwned>,
+}
+
+/// The decoded rejection evidence as OWNED job output: the public rows
+/// rendered through the ONE core renderer (`render_rejection` via
+/// `crate::violations_wire`) plus each statement's bounded-example
+/// truncation label. No second violation vocabulary exists on the bridge.
+pub struct ViolationsOwned {
+    pub(crate) rows: Vec<marshal::ViolationWire>,
+    pub(crate) truncated: Vec<bool>,
 }
 
 pub struct InspectionOwned {
     pub identity: DatabaseIdentity,
     pub access: &'static str,
+    /// L08 inspect condition — never invented as idle/zero when truth is
+    /// missing or the backend could not be consulted.
+    pub health: &'static str,
     pub head_revision: u64,
     pub decision: DecisionStamp,
     pub state: StateStamp,
     pub open_epoch: u64,
     pub retired_through: u64,
-    pub tail_count: u64,
-    pub tail_bytes: u64,
+    pub tail_count: Option<u64>,
+    pub tail_bytes: Option<u64>,
+    /// Outstanding outcome-unknown submissions on THIS opened resource
+    /// (in-memory health bookkeeping; the receipt lookup stays the
+    /// resolution authority).
+    pub unknown_count: u64,
+    pub unknown_oldest_millis: Option<f64>,
     pub root_count: u32,
     pub root_capacity: u32,
-    pub gc: &'static str,
+    pub gc: Option<&'static str>,
     pub disk_bytes: u64,
     pub working_bytes: u64,
     pub queued: u64,
@@ -1525,6 +1912,18 @@ pub struct SnapshotOwned {
     pub(crate) decision: DecisionStamp,
     pub(crate) state: StateStamp,
     pub(crate) freshness: FreshnessOwned,
+    /// Cleared when the L13 `SnapshotHandle` takes the session. Drop drains
+    /// any abandoned output so the worker-affine owner is never leaked (C7).
+    transferred: bool,
+}
+
+impl Drop for SnapshotOwned {
+    fn drop(&mut self) {
+        if !self.transferred {
+            self.session.begin_close();
+            self.session.drain(Box::new(|_| {}));
+        }
+    }
 }
 
 pub(crate) enum FreshnessOwned {
@@ -1565,11 +1964,11 @@ pub(crate) fn fail_output(fail: LogFail) -> Output {
     match fail {
         LogFail::Core(error) => Output::Machine(MachineOutput::Admin(AdminOwned::Failed {
             fail: LogFail::Core(error),
-            dispatched: false,
+            phase: PublicationPhase::Prepared,
         })),
         other => Output::Machine(MachineOutput::Admin(AdminOwned::Failed {
             fail: other,
-            dispatched: false,
+            phase: PublicationPhase::Prepared,
         })),
     }
 }
@@ -1626,6 +2025,7 @@ fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
         creation,
         descriptor,
         attrs,
+        tail_policy: tail_policy_in(request, ctx)?,
     })
 }
 
@@ -1748,7 +2148,7 @@ pub fn log_borrow_release(
 }
 
 // ---------------------------------------------------------------------------
-// logHistoryCall / logHistoryResult / logSnapshotClose.
+// logHistoryCall / logHistoryResult.
 // ---------------------------------------------------------------------------
 
 enum HistoryVerb {
@@ -1920,6 +2320,7 @@ fn run_history_verb(
     verb: HistoryVerb,
     context: &WorkContext,
 ) -> Result<Output, RuntimeError> {
+    let _active = ActiveVerbGuard::begin(resource);
     let (kind, lease) = resource.kind_and_lease()?;
     match verb {
         HistoryVerb::Submit {
@@ -1927,30 +2328,84 @@ fn run_history_verb(
             reference,
             options,
         } => {
-            let outcome = kind.submit_with(&command, options, context);
-            let owned = match outcome {
-                SubmitOutcome::Decided {
+            let certainty = kind.submit_certain_with(&command, options, context);
+            match &certainty {
+                SubmitCertainty::OutcomeUnknown { command, .. } => {
+                    resource.record_unknown(command);
+                }
+                // A terminal receipt PROVES the command's outcome; a
+                // NotSubmitted retry proves nothing about an EARLIER
+                // dispatched attempt, so it never clears an unknown row.
+                SubmitCertainty::Decided { receipt, .. } => {
+                    resource.resolve_unknown(&receipt.command);
+                }
+                SubmitCertainty::NotSubmitted { .. } => {}
+            }
+            let phase = certainty.publication_phase();
+            let owned = match certainty {
+                SubmitCertainty::Decided {
                     receipt,
                     local_health,
-                } => SubmitOwned::Decided {
-                    receipt,
-                    health: local_health,
-                },
-                SubmitOutcome::NotSubmitted { command, error } => SubmitOwned::NotSubmitted {
+                } => {
+                    // Decode rejection evidence INSIDE the job; a failure
+                    // preserves the terminal receipt and reports health
+                    // independently (C5 — never downgrade to unknown).
+                    match decode_receipt_violations(&lease, &receipt, context) {
+                        Ok(violations) => SubmitOwned::Decided {
+                            receipt,
+                            health: local_health,
+                            violations,
+                            phase,
+                        },
+                        Err(fail) => SubmitOwned::Decided {
+                            receipt,
+                            health: local_health_after_decode_failure(local_health, fail),
+                            violations: None,
+                            phase,
+                        },
+                    }
+                }
+                SubmitCertainty::NotSubmitted { command, error } => SubmitOwned::NotSubmitted {
                     reference: command,
                     fail: fail_of_log(error),
+                    phase,
                 },
-                SubmitOutcome::OutcomeUnknown { command, error } => SubmitOwned::OutcomeUnknown {
-                    reference: command,
-                    fail: fail_of_log(error),
-                },
+                SubmitCertainty::OutcomeUnknown { command, error } => {
+                    SubmitOwned::OutcomeUnknown {
+                        reference: command,
+                        fail: fail_of_log(error),
+                        phase,
+                    }
+                }
             };
             let _ = reference;
             drop(lease);
             Ok(Output::Machine(MachineOutput::Submit(owned)))
         }
         HistoryVerb::Resolve(reference) => match kind.resolve(reference, context) {
-            Ok(outcome) => Ok(Output::Machine(MachineOutput::Resolve(outcome))),
+            Ok(outcome) => {
+                // Every resolve ANSWER is the documented resolution ladder's
+                // proof for this command id; the unknown row clears.
+                resource.resolve_unknown(&reference);
+                // Resolve-after-reopen preserves the complete violation set:
+                // a found rejected receipt decodes through the SAME lane.
+                let violations = match &outcome {
+                    ResolveOutcome::Found(receipt) => {
+                        match decode_receipt_violations(&lease, receipt, context) {
+                            Ok(violations) => violations,
+                            // Preserve the found receipt; optional
+                            // diagnostics never downgrade known evidence
+                            // (C5 / LOG-029).
+                            Err(_fail) => None,
+                        }
+                    }
+                    _ => None,
+                };
+                Ok(Output::Machine(MachineOutput::Resolve(ResolveOwned {
+                    outcome,
+                    violations,
+                })))
+            }
             Err(error) => match fail_of_log(error) {
                 LogFail::Core(core) => Err(core),
                 fail => Ok(fail_output(fail)),
@@ -1981,6 +2436,28 @@ fn access_tag(authority: &HeadAuthority) -> &'static str {
     }
 }
 
+fn inspect_condition_tag(condition: bumbledb_log::inspect::Condition) -> &'static str {
+    match condition {
+        bumbledb_log::inspect::Condition::Empty => "empty",
+        bumbledb_log::inspect::Condition::NotYetHydrated => "notYetHydrated",
+        bumbledb_log::inspect::Condition::Ready => "ready",
+        bumbledb_log::inspect::Condition::StaleButValid => "staleButValid",
+        bumbledb_log::inspect::Condition::Frozen => "frozen",
+        bumbledb_log::inspect::Condition::Deleted => "deleted",
+        bumbledb_log::inspect::Condition::Corrupt => "corrupt",
+        bumbledb_log::inspect::Condition::Missing => "missing",
+        bumbledb_log::inspect::Condition::Unavailable => "unavailable",
+    }
+}
+
+fn inspect_gc_tag(gc: Option<bumbledb_log::inspect::GcStatus>) -> Option<&'static str> {
+    gc.map(|status| match status {
+        bumbledb_log::inspect::GcStatus::Idle => "idle",
+        bumbledb_log::inspect::GcStatus::Marking { .. } => "marking",
+        bumbledb_log::inspect::GcStatus::Sweeping { .. } => "sweeping",
+    })
+}
+
 fn inspect_history(
     resource: &Arc<HistoryResource>,
     kind: &HistoryKind,
@@ -1988,6 +2465,19 @@ fn inspect_history(
     context: &WorkContext,
 ) -> MachineResult<InspectionOwned> {
     let authority = local_authority_of(kind)?;
+    let local_decision = authority.live().ok().map(|live| live.decision);
+    let status = match kind {
+        HistoryKind::Local(_) => bumbledb_log::inspect::status_of_local(&authority),
+        HistoryKind::Hosted {
+            backend, prefix, ..
+        } => bumbledb_log::inspect::status_hosted(
+            backend.as_ref(),
+            prefix,
+            local_decision,
+            LIMITS.envelope_bytes,
+            context,
+        ),
+    };
     let live = authority.live().ok();
     let (decision, state, open_epoch, retired_through) = match live {
         Some(live) => (
@@ -2009,30 +2499,6 @@ fn inspect_history(
             0,
         ),
     };
-    let (tail_count, tail_bytes, root_count, gc) = match kind {
-        HistoryKind::Local(_) => (0, 0, 0, "idle"),
-        HistoryKind::Hosted {
-            backend, prefix, ..
-        } => match bumbledb_log::checkpointer::read_live_head(
-            backend.as_ref(),
-            prefix,
-            LIMITS.envelope_bytes,
-        ) {
-            Ok((head, _version)) => {
-                let (count, bytes) = head
-                    .recovery
-                    .as_ref()
-                    .map_or((0, 0), |root| (root.tail_count(), root.tail_bytes));
-                let gc = match head.gc {
-                    bumbledb_log::manifest::GcPhase::Idle => "idle",
-                    bumbledb_log::manifest::GcPhase::Marking { .. } => "marking",
-                    bumbledb_log::manifest::GcPhase::Sweeping { .. } => "sweeping",
-                };
-                (count, bytes, saturating_u32(head.roots.len()), gc)
-            }
-            Err(_) => (0, 0, 0, "idle"),
-        },
-    };
     let report = lease
         .db()
         .integration_store()
@@ -2044,23 +2510,27 @@ fn inspect_history(
         })?;
     let (owner_id, database_id) = resource.managed.ids();
     let queued = resource.runtime.database_operations(owner_id, database_id);
+    let (unknown_count, unknown_oldest_millis) = resource.unknown_health();
     Ok(InspectionOwned {
         identity: authority.identity,
         access: access_tag(&authority),
+        health: inspect_condition_tag(status.condition),
         head_revision: authority.revision.0,
         decision,
         state,
         open_epoch,
         retired_through,
-        tail_count,
-        tail_bytes,
-        root_count,
+        tail_count: status.tail_count,
+        tail_bytes: status.tail_bytes,
+        unknown_count,
+        unknown_oldest_millis,
+        root_count: saturating_u32(status.roots_held as usize),
         root_capacity: saturating_u32(bumbledb_log::manifest::RootPolicy::DEFAULT.max_roots),
-        gc,
+        gc: inspect_gc_tag(status.gc),
         disk_bytes: report.populated_file_bytes,
         working_bytes: report.non_free_page_bytes,
         queued,
-        active: 0,
+        active: resource.active.load(Ordering::Acquire),
     })
 }
 
@@ -2083,6 +2553,10 @@ struct PinnedFrame {
     identity: DatabaseIdentity,
     decision: DecisionStamp,
     state: StateStamp,
+    /// The exact captured authority projection: the pure replica judge
+    /// (`SnapshotProvenance::resolve`) runs over THIS value, so the
+    /// freshness verdict and the served frame can never disagree.
+    authority: HeadAuthority,
 }
 
 /// Pin the coherent generation on its owning thread and decode the committed
@@ -2115,6 +2589,7 @@ fn pin_authority_frame(
         identity: authority.identity,
         decision,
         state,
+        authority,
     })
 }
 
@@ -2142,6 +2617,50 @@ fn latest_reached(reached: DecisionStamp, retaken: DecisionStamp) -> Result<(), 
     Ok(())
 }
 
+/// The bounded ancestry witness over retained authoritative evidence: local
+/// histories consult retained receipt rows (plus the activation genesis
+/// evidence); hosted histories consult the composed head's root evidence and
+/// walk the protected decision chain backward from the CAPTURED tip. Both
+/// live in `bumbledb-log` — this bridge never re-derives lineage itself.
+fn witness_of(
+    kind: &HistoryKind,
+    tip: DecisionStamp,
+    requested: DecisionStamp,
+    context: &WorkContext,
+) -> Result<bumbledb_log::replica::WitnessCheck, LogError> {
+    match kind {
+        HistoryKind::Local(history) => history.witness(requested, context),
+        HistoryKind::Hosted { history, .. } => history.witness_ancestor(tip, requested, context),
+    }
+}
+
+/// The typed read-refusal mapping (chapter 30): every arm is a rostered
+/// protocol reason — never a stale read dressed as validated, and never a
+/// claimed exact witness that was not verified.
+fn fail_of_read_refusal(refusal: bumbledb_log::replica::ReadRefusal) -> LogFail {
+    use bumbledb_log::replica::ReadRefusal;
+    match refusal {
+        ReadRefusal::NotAncestor { .. } => protocol(
+            "WrongLineage",
+            "the requested stamp is not an ancestor of this incarnation's captured tip",
+        ),
+        ReadRefusal::NotYetAvailable {
+            requested,
+            captured,
+        } => LogFail::Structured(StructuredReason::NotYetAvailable {
+            requested_seq: requested.seq,
+            captured_seq: captured.seq,
+            detail: "the requested decision is not yet locally materialized".into(),
+        }),
+        ReadRefusal::WitnessUnavailable { .. } => protocol(
+            "WitnessUnavailable",
+            "the requested stamp's ancestry evidence was pruned or is not retained; \
+             it was NOT validated",
+        ),
+        ReadRefusal::DatabaseDeleted => protocol("DatabaseDeleted", "terminal tombstone"),
+    }
+}
+
 fn open_published_snapshot(
     resource: &Arc<HistoryResource>,
     kind: &HistoryKind,
@@ -2166,6 +2685,7 @@ fn open_published_snapshot(
                     backend.as_ref(),
                     prefix,
                     LIMITS.envelope_bytes,
+                    context,
                 )
                 .map_err(|error| protocol("Backend", format!("{error:?}")))?;
                 let tip = head
@@ -2194,22 +2714,49 @@ fn open_published_snapshot(
             }
         },
         ConsistencySpec::AtLeast(requested) => {
-            if frame.decision.seq < requested.seq {
+            if frame.decision.seq < requested.seq
+                && let HistoryKind::Hosted { history, .. } = kind
+            {
+                // Behind the requested coordinate: ONE read-side catch-up
+                // under THIS operation's budget (the same lane `latest`
+                // uses), then ONE retake of the pinned frame — never a
+                // hidden repair loop. The pure judge below issues the
+                // typed NotYetAvailable if the retake is still behind.
                 begin_snapshot_teardown(&frame.opened.session);
-                return Err(LogFail::Structured(StructuredReason::NotYetAvailable {
-                    requested_seq: requested.seq,
-                    captured_seq: frame.decision.seq,
-                    detail: "the requested decision is not yet locally materialized".into(),
-                }));
+                let _reached = history.catch_up(context).map_err(fail_of_log)?;
+                let lease = resource.managed.access().map_err(LogFail::Core)?;
+                frame = pin_authority_frame(resource, lease)?;
             }
-            if frame.decision.seq == requested.seq && frame.decision.hash != requested.hash {
+            // The pure replica judge (`SnapshotProvenance::resolve`) is the
+            // one AtLeast contract: exact same-lineage ancestry over
+            // retained authoritative evidence, never a sequence-floor
+            // comparison. The witness closure runs the backend's bounded
+            // evidence check; an operational failure inside it (transport,
+            // stopped work, corruption) is smuggled out and surfaced typed
+            // rather than downgraded to a verdict.
+            let mut witness_failure: Option<LogFail> = None;
+            let judged = bumbledb_log::replica::SnapshotProvenance::resolve(
+                &frame.authority,
+                bumbledb_log::replica::ReadConsistency::AtLeast { at: requested },
+                |at| match witness_of(kind, frame.decision, at, context) {
+                    Ok(check) => check,
+                    Err(error) => {
+                        witness_failure = Some(fail_of_log(error));
+                        bumbledb_log::replica::WitnessCheck::Unavailable
+                    }
+                },
+            );
+            if let Some(fail) = witness_failure {
                 begin_snapshot_teardown(&frame.opened.session);
-                return Err(protocol(
-                    "WrongLineage",
-                    "the requested stamp names a different decision at this height",
-                ));
+                return Err(fail);
             }
-            FreshnessOwned::AtLeast { requested }
+            match judged {
+                Ok(_) => FreshnessOwned::AtLeast { requested },
+                Err(refusal) => {
+                    begin_snapshot_teardown(&frame.opened.session);
+                    return Err(fail_of_read_refusal(refusal));
+                }
+            }
         }
     };
     Ok(SnapshotOwned {
@@ -2219,6 +2766,7 @@ fn open_published_snapshot(
         decision: frame.decision,
         state: frame.state,
         freshness,
+        transferred: false,
     })
 }
 
@@ -2226,14 +2774,96 @@ fn begin_snapshot_teardown(session: &crate::runtime::session::SnapshotSession) {
     session.begin_close();
 }
 
-fn violations_wire_placeholder() -> Vec<Object<'static>> {
-    // The receipt's rejection evidence is P04's canonical bytes; decoding it
-    // into typed Violation rows awaits P01R's canonical Violations codec
-    // (recorded cross-lane dependency in implementation/packets/P06.md).
-    Vec::new()
+/// Decode one rejected receipt's canonical evidence through the ONE core
+/// codec (`bumbledb::schema::evidence`, family `bumbledb.evidence.v1` —
+/// P01R's codec, adopted by P04's decide path): strict frame decode, then
+/// interpretation against THIS opened schema, then the ONE public renderer
+/// (`crate::violations_wire` over `render_rejection`). Malformed or foreign
+/// evidence surfaces as a typed `Corruption` refusal — never an
+/// apparently-valid empty rejection; stopped work stays a resource failure.
+fn decode_rejection_violations(
+    descriptor: &SchemaDescriptor,
+    schema: &bumbledb::schema::Schema,
+    evidence: &[u8],
+    work: &WorkContext,
+) -> MachineResult<ViolationsOwned> {
+    use bumbledb::schema::evidence::{EvidenceInterpretError, decode};
+    let decoded = decode(evidence, LIMITS.evidence_bytes).map_err(|error| {
+        protocol(
+            "Corruption",
+            format!("malformed rejection evidence: {error}"),
+        )
+    })?;
+    let violations = decoded
+        .to_violations(schema, work)
+        .map_err(|error| match error {
+            EvidenceInterpretError::Work(work) => LogFail::Core(RuntimeError::Work(work)),
+            other => protocol(
+                "Corruption",
+                format!("rejection evidence does not belong to this schema: {other}"),
+            ),
+        })?;
+    let rows = crate::violations_wire(descriptor, &violations);
+    let truncated = (0..rows.len())
+        .map(|index| violations.examples_truncated(index))
+        .collect();
+    Ok(ViolationsOwned { rows, truncated })
 }
 
-fn receipt_wire<'e>(env: Env, receipt: &TerminalReceipt) -> napi::Result<Object<'e>> {
+/// The receipt→decoded-violations lane shared by submit and resolve: only an
+/// invariant-rejected outcome carries evidence, and the decode runs INSIDE
+/// the registered job under its own `WorkContext`, against the opened
+/// database's exact schema.
+fn decode_receipt_violations(
+    lease: &DbLease,
+    receipt: &TerminalReceipt,
+    work: &WorkContext,
+) -> MachineResult<Option<ViolationsOwned>> {
+    let TerminalOutcome::InvariantRejected { evidence } = &receipt.outcome else {
+        return Ok(None);
+    };
+    let sealed = lease.sealed();
+    decode_rejection_violations(
+        &sealed.descriptor,
+        lease.db().schema(),
+        evidence.as_bytes(),
+        work,
+    )
+    .map(Some)
+}
+
+/// Render the decoded rows for the take: each row is the ONE core-rendered
+/// `ViolationWire` object (statementId/kind/canonical/direction?/measure?/
+/// facts) plus the per-statement `factsTruncated` label riding along as an
+/// additive property (TS consumers of the declared `Violation` union are
+/// structurally unaffected; the label is bounded diagnostic truth).
+#[expect(
+    unsafe_code,
+    reason = "napi declares the raw to/from_napi_value pair unsafe; both run \
+              against the live env of this take call over an object the ONE \
+              ViolationWire marshaller just built"
+)]
+fn violations_rows<'e>(env: &Env, owned: ViolationsOwned) -> napi::Result<Vec<Object<'e>>> {
+    use napi::bindgen_prelude::{FromNapiValue as _, ToNapiValue as _};
+    let ViolationsOwned { rows, truncated } = owned;
+    let mut out = Vec::with_capacity(rows.len());
+    for (wire, facts_truncated) in rows.into_iter().zip(truncated) {
+        // SAFETY: `env.raw()` is the live environment napi handed this very
+        // take call; the value is a plain object rendered against it.
+        let raw = unsafe { marshal::ViolationWire::to_napi_value(env.raw(), wire)? };
+        // SAFETY: the raw value was just produced against the same live env.
+        let mut row = unsafe { Object::from_napi_value(env.raw(), raw)? };
+        row.set("factsTruncated", facts_truncated)?;
+        out.push(row);
+    }
+    Ok(out)
+}
+
+fn receipt_wire<'e>(
+    env: Env,
+    receipt: &TerminalReceipt,
+    violations: Option<ViolationsOwned>,
+) -> napi::Result<Object<'e>> {
     let mut obj = Object::new(&env)?;
     obj.set("command", command_ref_wire(&env, &receipt.command)?)?;
     obj.set("decisionAt", stamp_wire(&env, receipt.decision_at)?)?;
@@ -2257,7 +2887,13 @@ fn receipt_wire<'e>(env: Env, receipt: &TerminalReceipt) -> napi::Result<Object<
         }
         TerminalOutcome::InvariantRejected { .. } => {
             outcome.set("kind", "invariant-rejected")?;
-            outcome.set("violations", violations_wire_placeholder())?;
+            // Complete decoded rows when the job succeeded; an empty array
+            // with unavailable local health means diagnostics exceeded their
+            // budget — the receipt itself remains decided evidence (C5).
+            match violations {
+                Some(owned) => outcome.set("violations", violations_rows(&env, owned)?)?,
+                None => outcome.set("violations", Vec::<Object>::new())?,
+            }
         }
     }
     obj.set("outcome", outcome)?;
@@ -2279,11 +2915,6 @@ fn health_wire<'e>(env: &'e Env, health: &LocalHealth) -> napi::Result<Object<'e
     Ok(obj)
 }
 
-pub struct LogSnapshotHandle {
-    identity: usize,
-    session: Arc<crate::runtime::session::SnapshotSession>,
-}
-
 #[napi]
 #[allow(clippy::too_many_lines)]
 pub fn log_history_result(
@@ -2296,31 +2927,51 @@ pub fn log_history_result(
             wire.set("verb", "submit")?;
             let mut outcome = Object::new(&env)?;
             match owned {
-                SubmitOwned::Decided { receipt, health } => {
+                SubmitOwned::Decided {
+                    receipt,
+                    health,
+                    violations,
+                    phase,
+                } => {
                     outcome.set("kind", "decided")?;
-                    outcome.set("receipt", receipt_wire(env, &receipt)?)?;
+                    outcome.set("publicationPhase", publication_phase_tag(phase))?;
+                    outcome.set("receipt", receipt_wire(env, &receipt, violations)?)?;
                     outcome.set("localHealth", health_wire(&env, &health)?)?;
                 }
-                SubmitOwned::NotSubmitted { reference, fail } => {
+                SubmitOwned::NotSubmitted {
+                    reference,
+                    fail,
+                    phase,
+                } => {
                     outcome.set("kind", "not-submitted")?;
+                    outcome.set("publicationPhase", publication_phase_tag(phase))?;
+                    outcome.set("ref", command_ref_wire(&env, &reference)?)?;
                     outcome.set("error", frame_object(&env, &fail)?)?;
-                    let _ = reference;
                 }
-                SubmitOwned::OutcomeUnknown { reference, fail } => {
+                SubmitOwned::OutcomeUnknown {
+                    reference,
+                    fail,
+                    phase,
+                } => {
                     outcome.set("kind", "outcome-unknown")?;
+                    outcome.set("publicationPhase", publication_phase_tag(phase))?;
+                    outcome.set("ref", command_ref_wire(&env, &reference)?)?;
                     outcome.set("error", frame_object(&env, &fail)?)?;
-                    let _ = reference;
                 }
             }
             wire.set("outcome", outcome)?;
         }
-        Output::Machine(MachineOutput::Resolve(outcome)) => {
+        Output::Machine(MachineOutput::Resolve(owned)) => {
             wire.set("verb", "resolve")?;
+            let ResolveOwned {
+                outcome,
+                violations,
+            } = owned;
             let mut resolved = Object::new(&env)?;
             match outcome {
                 ResolveOutcome::Found(receipt) => {
                     resolved.set("kind", "found")?;
-                    resolved.set("receipt", receipt_wire(env, &receipt)?)?;
+                    resolved.set("receipt", receipt_wire(env, &receipt, violations)?)?;
                 }
                 ResolveOutcome::NotRecordedAt { decision_at } => {
                     resolved.set("kind", "not-recorded-at")?;
@@ -2340,15 +2991,16 @@ pub fn log_history_result(
             let mut inspection = Object::new(&env)?;
             inspection.set("identity", identity_wire(&env, owned.identity)?)?;
             inspection.set("accessMode", owned.access)?;
+            inspection.set("health", owned.health)?;
             inspection.set("headRevision", BigInt::from(owned.head_revision))?;
             inspection.set("decision", stamp_wire(&env, owned.decision)?)?;
             inspection.set("state", state_wire(&env, owned.state)?)?;
             inspection.set("openEpoch", BigInt::from(owned.open_epoch))?;
             inspection.set("retiredThrough", BigInt::from(owned.retired_through))?;
-            inspection.set("tailCount", BigInt::from(owned.tail_count))?;
-            inspection.set("tailBytes", BigInt::from(owned.tail_bytes))?;
-            inspection.set("unknownCount", BigInt::from(0u64))?;
-            inspection.set("unknownOldestMillis", Option::<f64>::None)?;
+            inspection.set("tailCount", owned.tail_count.map(BigInt::from))?;
+            inspection.set("tailBytes", owned.tail_bytes.map(BigInt::from))?;
+            inspection.set("unknownCount", BigInt::from(owned.unknown_count))?;
+            inspection.set("unknownOldestMillis", owned.unknown_oldest_millis)?;
             inspection.set("rootCount", owned.root_count)?;
             inspection.set("rootCapacity", owned.root_capacity)?;
             inspection.set("gc", owned.gc)?;
@@ -2359,17 +3011,11 @@ pub fn log_history_result(
             inspection.set("active", BigInt::from(owned.active))?;
             wire.set("inspection", inspection)?;
         }
-        Output::Machine(MachineOutput::Snapshot(owned)) => {
+        Output::Machine(MachineOutput::Snapshot(mut owned)) => {
             wire.set("verb", "snapshot")?;
+            owned.transferred = true;
             wire.set(
                 "snapshot",
-                External::new(LogSnapshotHandle {
-                    identity: crate::runtime_wire::addon_identity(),
-                    session: Arc::clone(&owned.session),
-                }),
-            )?;
-            wire.set(
-                "core",
                 External::new(SnapshotHandle::assemble(
                     Arc::clone(&owned.session),
                     Arc::clone(&owned.sealed),
@@ -2397,19 +3043,6 @@ pub fn log_history_result(
         _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
     }
     Ok(wire)
-}
-
-#[napi]
-pub fn log_snapshot_close(
-    env: Env,
-    handle: &External<LogSnapshotHandle>,
-    callback: Function<CloseWire, ()>,
-) -> napi::Result<()> {
-    if handle.identity != crate::runtime_wire::addon_identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    handle.session.drain(reporter(callback)?);
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -3046,6 +3679,9 @@ fn acquire_borrow(
                     creation: None,
                     descriptor: shared.descriptor.clone(),
                     attrs: shared.attrs.clone(),
+                    // Cache acquires carry no per-tenant envelope on the wire
+                    // yet; the machine default applies.
+                    tail_policy: bumbledb_log::manifest::TailPolicy::UNBOUNDED,
                 };
                 match open_history(&shared.runtime, &spec, context) {
                     Ok(opened) => {
@@ -3154,9 +3790,11 @@ fn current_epoch(resource: &Arc<HistoryResource>) -> MachineResult<u64> {
     }
 }
 
-/// Begin native teardown of one cache-owned history (evicted / failed /
-/// closed): the registry handed the owner OUT; the runtime's cleanup lanes
-/// join the drains under their own accounting.
+/// Begin native teardown of one cache-owned history (a failed/abandoned
+/// acquire path): the registry handed the owner OUT; the runtime's cleanup
+/// lanes join the drains under their own accounting. No quiescence is
+/// CLAIMED here — verbs that report `Closed` must use
+/// [`drain_resource_report`] instead (finding #13).
 fn teardown_resource(resource: &Arc<HistoryResource>) {
     {
         let mut state = lock_state(&resource.state);
@@ -3164,6 +3802,30 @@ fn teardown_resource(resource: &Arc<HistoryResource>) {
     }
     resource.managed.begin_close();
     resource.owner.begin_close();
+}
+
+/// Drain one cache-owned history to COMPLETION and report honestly
+/// (finding #13): `Closed` only when the runtime's own drain machinery —
+/// the same deadline-waiter lane `log_history_close` rides — reported the
+/// managed database AND directory owner released. The runtime resolves
+/// every waiter by `cleanup_timeout` (Closed / Incomplete(inspection) /
+/// Failed); the receive budget covers the two chained waiters plus margin,
+/// and an unexpected silence is reported `Failed`, never `Closed`.
+fn drain_resource_report(
+    runtime: &Arc<Runtime>,
+    resource: &Arc<HistoryResource>,
+) -> crate::runtime::CloseReport {
+    let (tx, rx) = std::sync::mpsc::channel();
+    resource.drain(Box::new(move |report| {
+        let _ = tx.send(report);
+    }));
+    let budget = runtime
+        .options
+        .cleanup_timeout
+        .saturating_mul(2)
+        .saturating_add(std::time::Duration::from_secs(1));
+    rx.recv_timeout(budget)
+        .unwrap_or(crate::runtime::CloseReport::Failed)
 }
 
 #[napi]
@@ -3305,17 +3967,49 @@ pub fn log_cache_evict(
                             }
                             Some(_) => {
                                 registry.begin_close(&binding);
-                                registry.finish_close(&binding).ok()
+                                match registry.finish_close(&binding) {
+                                    Ok(owner) => Some(owner),
+                                    // The slot's resources are NOT reclaimed:
+                                    // surface the state honestly instead of
+                                    // fabricating `Closed` (finding #13).
+                                    Err(CloseBlocked::StillOpening) => {
+                                        return Ok(fail_output(LogFail::Structured(
+                                            StructuredReason::Contention {
+                                                attempts: 1,
+                                                detail: "the slot is still opening; the \
+                                                         in-flight opener completes the close \
+                                                         — nothing is reclaimed yet"
+                                                    .into(),
+                                            },
+                                        )));
+                                    }
+                                    Err(CloseBlocked::Operations(count)) => {
+                                        return Ok(fail_output(protocol(
+                                            "SlotBorrowed",
+                                            format!("{count} operation leases in flight"),
+                                        )));
+                                    }
+                                    // A concurrent close/evict already took the
+                                    // slot between begin and finish: nothing of
+                                    // ours to reclaim, the winner reports it.
+                                    Err(CloseBlocked::NotClosing) => None,
+                                }
                             }
                         }
                     };
-                    if let Some(owner) = owner {
-                        shared.evictions.fetch_add(1, Ordering::Relaxed);
-                        teardown_resource(&owner);
-                    }
-                    Ok(Output::Machine(MachineOutput::Evicted(
-                        crate::runtime::CloseReport::Closed,
-                    )))
+                    let report = match owner {
+                        // An unknown binding holds nothing here: vacuously
+                        // closed (idempotent evict).
+                        None => crate::runtime::CloseReport::Closed,
+                        Some(owner) => {
+                            shared.evictions.fetch_add(1, Ordering::Relaxed);
+                            // `Closed` only when native teardown COMPLETED
+                            // (environment dropped, kernel lock released) —
+                            // the log_history_close drain discipline.
+                            drain_resource_report(&shared.runtime, &owner)
+                        }
+                    };
+                    Ok(Output::Machine(MachineOutput::Evicted(report)))
                 }))
             },
         )
@@ -3337,6 +4031,22 @@ pub fn log_cache_evict_take(
     }
 }
 
+/// The worse of two close reports: `Closed` < `Incomplete` < `Failed` — an
+/// aggregate close is only as done as its least-done member.
+fn worse_report(
+    left: crate::runtime::CloseReport,
+    right: crate::runtime::CloseReport,
+) -> crate::runtime::CloseReport {
+    use crate::runtime::CloseReport;
+    match (left, right) {
+        (CloseReport::Failed, _) | (_, CloseReport::Failed) => CloseReport::Failed,
+        (CloseReport::Incomplete(inspection), _) | (_, CloseReport::Incomplete(inspection)) => {
+            CloseReport::Incomplete(inspection)
+        }
+        (CloseReport::Closed, CloseReport::Closed) => CloseReport::Closed,
+    }
+}
+
 #[napi]
 pub fn log_cache_close(
     env: Env,
@@ -3347,11 +4057,30 @@ pub fn log_cache_close(
     let report = reporter(callback)?;
     shared.closing.store(true, Ordering::Release);
     let inner = Arc::clone(shared);
-    spawn_teardown(&shared.runtime, report, move || {
+    // The teardown job computes the REAL aggregate close report; the outer
+    // spawn_teardown report is `Closed` only when the job ran, and the
+    // aggregate then substitutes what the drains actually proved
+    // (finding #13: never `Closed` while native resources remain held).
+    let aggregate: Arc<Mutex<Option<crate::runtime::CloseReport>>> = Arc::new(Mutex::new(None));
+    let store = Arc::clone(&aggregate);
+    let wrapped: crate::runtime::Report = Box::new(move |ran| {
+        let drained = aggregate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        report(match ran {
+            crate::runtime::CloseReport::Closed => {
+                drained.unwrap_or(crate::runtime::CloseReport::Failed)
+            }
+            other => other,
+        });
+    });
+    spawn_teardown(&shared.runtime, wrapped, move || {
         // Revoke every idle capability and hand the owners out; slots with
-        // in-flight operation leases drain through the runtime's own
-        // operation accounting (their jobs hold the owner Arcs).
-        let owners = {
+        // in-flight operation leases or opens cannot be reclaimed HERE and
+        // make the aggregate Incomplete — their jobs hold the owner Arcs
+        // and drain through the runtime's own operation accounting.
+        let (owners, blocked) = {
             let mut registry = inner.lock_registry();
             let bindings: Vec<_> = registry
                 .report()
@@ -3359,16 +4088,26 @@ pub fn log_cache_close(
                 .map(|slot| slot.binding)
                 .collect();
             let mut owners = Vec::new();
+            let mut blocked = 0usize;
             for binding in bindings {
                 registry.begin_close(&binding);
-                if let Ok(owner) = registry.finish_close(&binding) {
-                    owners.push(owner);
+                match registry.finish_close(&binding) {
+                    Ok(owner) => owners.push(owner),
+                    Err(CloseBlocked::StillOpening | CloseBlocked::Operations(_)) => blocked += 1,
+                    // Raced with a concurrent close that already took the
+                    // slot: not blocked, and not ours to tear down.
+                    Err(CloseBlocked::NotClosing) => {}
                 }
             }
-            owners
+            (owners, blocked)
+        };
+        let mut worst = if blocked == 0 {
+            crate::runtime::CloseReport::Closed
+        } else {
+            crate::runtime::CloseReport::Incomplete(inner.runtime.inspect())
         };
         for owner in owners {
-            teardown_resource(&owner);
+            worst = worse_report(worst, drain_resource_report(&inner.runtime, &owner));
         }
         let taken = inner
             .retained
@@ -3376,6 +4115,9 @@ pub fn log_cache_close(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         drop(taken);
+        *store
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(worst);
     });
     Ok(())
 }
@@ -3431,5 +4173,7 @@ pub(crate) fn planned_target_incarnation(operation: OperationId) -> IncarnationI
     IncarnationId::from_core(Id128::from_bytes(bytes))
 }
 
+#[cfg(test)]
+mod gate_tests;
 #[cfg(test)]
 mod tests;

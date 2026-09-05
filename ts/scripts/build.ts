@@ -79,6 +79,20 @@ function build(): void {
 	assertDeclarationsAreIsolated(distDir)
 
 	verifyPack(packageRoot, version)
+
+	const repoRoot = path.join(packageRoot, "..")
+	const stamp = spawnSync("node", ["scripts/release-results.mjs", "--write-native-provenance"], {
+		cwd: repoRoot,
+		encoding: "utf8"
+	})
+	if (stamp.error) {
+		throw new ScriptError({ message: "stamp native provenance", cause: stamp.error })
+	}
+	if (stamp.status !== 0) {
+		throw new ScriptError({
+			message: `native provenance stamp failed: ${stamp.stderr ?? stamp.stdout}`
+		})
+	}
 }
 
 const VERSION_ROSTER = "scripts/version-roster.txt"

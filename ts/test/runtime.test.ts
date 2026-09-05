@@ -246,6 +246,7 @@ test("incomplete finalization remains a structured defect alongside a known resu
 							retained: 1n,
 							owners: 0n,
 							databases: 0n,
+							natives: 0n,
 							inputBytes: 1n,
 							workingBytes: 1n,
 							scratchBytes: 0n,
@@ -262,4 +263,36 @@ test("incomplete finalization remains a structured defect alongside a known resu
 	assert.equal(exit._tag, "Failure")
 	if (exit._tag === "Failure")
 		assert.ok(exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof CloseFailure))
+})
+
+test("callback interrupt cleanup joins without replacing the interrupt Cause", async () => {
+	const outstanding = {
+		phase: "closing" as const,
+		queued: 0n,
+		active: 1n,
+		retained: 1n,
+		owners: 0n,
+		databases: 0n,
+		natives: 1n,
+		inputBytes: 0n,
+		workingBytes: 0n,
+		scratchBytes: 0n,
+		resultBytes: 0n
+	}
+	const report = { kind: "incomplete" as const, outstanding }
+	const effect = Effect.callback<never>((_resume) => Effect.sync(() => undefined)).pipe(
+		Effect.onExit((exit) => {
+			if (!Exit.hasInterrupts(exit)) {
+				return Effect.void
+			}
+			return Effect.die(new CloseFailure({ operation: "test.cancel", report }))
+		})
+	)
+	const fiber = Effect.runFork(effect)
+	const exit = await Effect.runPromise(Fiber.interrupt(fiber))
+	assert.equal(Exit.hasInterrupts(exit), true, "the original interrupt Cause remains")
+	assert.ok(
+		exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && reason.defect instanceof CloseFailure),
+		"incomplete drain is a CloseFailure defect beside the interrupt"
+	)
 })

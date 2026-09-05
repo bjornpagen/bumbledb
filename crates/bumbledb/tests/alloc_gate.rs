@@ -175,7 +175,7 @@ bumbledb::schema! {
 const LADDER: [u64; 5] = [6, 24, 72, 240, 660];
 
 fn populate(db: &Db<SchemaDescriptor>) {
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for account in 0..20u64 {
             tx.insert_dyn(ACCOUNT, [&[Value::U64(account), Value::U64(account % 5)]])?;
         }
@@ -779,7 +779,7 @@ fn marks_query() -> Query {
 /// sanctioned in warmup, then the pools must re-converge to zero).
 fn marks_write_family(db: &Db<SchemaDescriptor>) {
     for round in 0..8u64 {
-        db.write(|tx| {
+        db.write(common::work(), |tx| {
             for doc in 0..5u64 {
                 tx.insert_dyn(
                     ITEM,
@@ -798,7 +798,7 @@ fn marks_write_family(db: &Db<SchemaDescriptor>) {
         })
         .expect("marks write round commits through live capacity laws")
         .expect("accepted");
-        db.write(|tx| {
+        db.write(common::work(), |tx| {
             for doc in 0..5u64 {
                 tx.delete_dyn(
                     ITEM,
@@ -980,10 +980,10 @@ fn escalation_gate(
 
 fn borrowed_struct_gate() {
     let dir = common::TempDir::new("alloc-gate-borrowed");
-    let db = Db::create(dir.path(), GateLedger)
+    let db = Db::create(dir.path(), GateLedger, common::work())
         .expect("create")
         .expect("accepted");
-    let item = common::expect_admitted(db.write(|tx| {
+    let item = common::expect_admitted(db.write(common::work(), |tx| {
         let id: GateItemId = tx.reserve(1)?.start().expect("nonempty");
         tx.insert([&GateItem {
             id,
@@ -991,7 +991,7 @@ fn borrowed_struct_gate() {
         }])?;
         Ok(id)
     }));
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&GateItem {
             id: item,
             memo: "memo-borrowed",
@@ -1022,7 +1022,7 @@ fn borrowed_struct_gate() {
 
     // The snapshot twin (ruled 2026-07-23, R15): the committed-state
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let key = GateItemByMemo {
             memo: "memo-borrowed",
         };
@@ -1062,7 +1062,7 @@ fn borrowed_struct_gate() {
 )]
 fn zero_warm_allocation_gate() {
     let dir = common::TempDir::new("alloc-gate");
-    let db = Db::create(dir.path(), schema())
+    let db = Db::create(dir.path(), schema(), common::work())
         .expect("create")
         .expect("accepted");
     populate(&db);
@@ -1080,7 +1080,7 @@ fn zero_warm_allocation_gate() {
         vec![BindValue::U64(499)],
     ];
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         for batch in [1usize, 2, 64, 128] {
             let mut join = db.prepare(&join_query())?;
             join.set_batch_size(batch);
@@ -1228,7 +1228,7 @@ fn zero_warm_allocation_gate() {
     // to zero after the sanctioned post-commit rebuild (warmup), and the
 
     marks_write_family(&db);
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let marks_params: Vec<Vec<BindValue<'_>>> =
             (0..4u64).map(|doc| vec![BindValue::U64(doc)]).collect();
         let mut marks = db.prepare(&marks_query())?;

@@ -20,10 +20,10 @@ bumbledb::schema! {
 #[test]
 fn write_begin_survives_a_colliding_sysv_semaphore_removal() {
     let dir = common::TempDir::new("sysv-sem-rmid");
-    let db = Db::create(dir.path(), Tiny)
+    let db = Db::create(dir.path(), Tiny, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|_| Ok(()))
+    db.write(common::work(), |_| Ok(()))
         .expect("the pre-removal write")
         .unwrap();
 
@@ -41,7 +41,7 @@ fn write_begin_survives_a_colliding_sysv_semaphore_removal() {
         .output()
         .expect("ipcrm runs");
 
-    db.write(|_| Ok(()))
+    db.write(common::work(), |_| Ok(()))
         .unwrap_or_else(|err| {
             panic!(
                 "write begin after external semaphore removal \

@@ -14,17 +14,15 @@ use super::{
     RelationId, Schema, SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor,
     StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight, value_matches,
 };
+use crate::schema::compiled::{LMDB_KEY_LIMIT, select_key_encoding_width};
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
 use bumbledb_theory::Value;
 
-/// Maximum determinant width a schema may declare, in canonical encoded
-/// bytes. Historically the LMDB key-embedding bound (511-byte key minus
-/// the old `R` key's 15-byte overhead); the successor store fingerprints
-/// determinants instead of embedding them, but the 496-byte admission
-/// ceiling stays contract — `StatementErrorKind::DeterminantKeyTooWide`
-/// and the corpus generator's `ARITY_WIDTH_BOUND` both pin it.
-pub(crate) const MAX_DETERMINANT_WIDTH: usize = 496;
+/// Physical LMDB key bound for one key statement's scalar determinant (chapter
+/// 40). Schema validation rejects only when the complete physical key cannot
+/// fit the backend — not the obsolete 496-byte scalar embedding limit.
+pub(crate) const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
 
 /// The admission boundary as an extension trait: [`SchemaDescriptor`] is
 /// theory data (hosted in `bumbledb-theory`), so the engine-side sealing
@@ -229,6 +227,7 @@ impl ValidateDescriptor for SchemaDescriptor {
 
         let schema = Schema {
             identity: std::sync::OnceLock::new(),
+            compiled: std::sync::OnceLock::new(),
             relations: relations.into_boxed_slice(),
             keys: keys.into_boxed_slice(),
             containments: containments.into_boxed_slice(),
@@ -567,13 +566,15 @@ fn validate_functionality(
         }
     }
 
-    let width: usize = projection
+    let scalar_fields: Vec<_> = projection
         .ordered()
         .iter()
-        .map(|field| relation.fields[usize::from(field.0)].value_type.width())
-        .sum();
-    if width > MAX_DETERMINANT_WIDTH {
-        return Err(StatementErrorKind::DeterminantKeyTooWide { width }.at(id));
+        .filter(|field| !relation.fields[usize::from(field.0)].value_type.is_interval())
+        .map(|field| relation.fields[usize::from(field.0)].clone())
+        .collect();
+    let routing = select_key_encoding_width(&scalar_fields);
+    if DETERMINANT_KEY_OVERHEAD.saturating_add(routing) > LMDB_KEY_LIMIT {
+        return Err(StatementErrorKind::DeterminantKeyTooWide { width: routing }.at(id));
     }
 
     if let Some(rows) = relation.body.closed_rows() {

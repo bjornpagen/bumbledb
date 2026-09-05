@@ -7,9 +7,8 @@ use std::sync::Arc;
 use crate::api::prepared::source::QuerySource;
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::canon::{TextWords, row_words};
-use crate::image::intern::TextInterner;
 use crate::schema::{Relation, Schema};
-use crate::work::ByteKind;
+use crate::work::{ByteKind, ChargedImage, GenerationHandle};
 use bumbledb_theory::schema::RelationId;
 use bumbledb_theory::schema::ValueType;
 
@@ -40,6 +39,7 @@ struct Frame {
     columns: Vec<Column>,
     words: Vec<u64>,
     bytes: Vec<u8>,
+    strings: Box<[bool]>,
 }
 
 fn allocate(field_types: &[ValueType], row_count: usize) -> Result<Frame> {
@@ -98,6 +98,10 @@ fn allocate_with(
         columns,
         words,
         bytes,
+        strings: field_types
+            .iter()
+            .map(|ty| matches!(ty, ValueType::String))
+            .collect(),
     })
 }
 
@@ -105,6 +109,8 @@ fn seal(
     row_count: usize,
     frame: Frame,
     distincts: Box<[super::distinct::DistinctState]>,
+    generation: GenerationHandle,
+    charge: Option<ChargedImage>,
 ) -> Arc<RelationImage> {
     Arc::new(RelationImage {
         row_count,
@@ -113,7 +119,32 @@ fn seal(
         columns: frame.columns.into_boxed_slice(),
         words: frame.words,
         bytes: frame.bytes,
+        generation,
+        charge,
+        strings: frame.strings,
     })
+}
+
+/// Bytes the image slabs will retain after allocate. Admission uses this
+/// before growth so a cache refusal never leaves an uncharged allocation.
+pub(crate) fn estimated_slab_bytes(
+    field_types: &[ValueType],
+    row_count: usize,
+) -> Result<usize> {
+    let spans = column_spans(field_types);
+    let byte_cols = spans
+        .iter()
+        .filter(|s| s.width == ColumnWidth::Byte)
+        .count();
+    let column_count = spans
+        .last()
+        .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
+    let word_cols = column_count - byte_cols;
+    let (word_len, byte_len) = slab_lengths(row_count, word_cols, byte_cols)?;
+    Ok(word_len
+        .checked_mul(8)
+        .and_then(|words| words.checked_add(byte_len))
+        .ok_or_else(|| Error::Corruption(CorruptionError::MalformedValue("S row count")))?)
 }
 
 fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::DistinctState]> {
@@ -140,14 +171,27 @@ pub(super) fn image_with_tolerance(
     )
     .expect("falsifier row counts sit far below the checked slab ceiling");
     let distincts = count_frame(row_count, &frame);
-    seal(row_count, frame, distincts)
+    seal(
+        row_count,
+        frame,
+        distincts,
+        test_generation(),
+        None,
+    )
+}
+
+#[cfg(test)]
+fn test_generation() -> GenerationHandle {
+    GenerationHandle::new(crate::work::GenerationState::new(
+        crate::image::CacheGeneration::initial(),
+        crate::work::CacheLedger::unbounded(),
+    ))
 }
 
 /// Build one relation's full image from a committed source: one sequential
 /// canonical-row scan, decoded through the one walker ([`row_words`]) with
-/// the cache's interner minting text tokens. Slab capacity is **charged
-/// before growth** (`ByteKind::Working` reservation held across the build);
-/// the retained image's bytes are reported through the cache's stats.
+/// the generation's resolver minting text tokens. Cache admission happens
+/// **before** slab allocate; the charge lives inside the sealed image.
 /// # Errors
 /// A scan yielding a different number of rows than the source's committed
 /// count is corruption; malformed stored bytes refuse; stopped work and
@@ -159,9 +203,9 @@ pub(super) fn image_with_tolerance(
 pub(crate) fn build_from_source(
     source: &QuerySource<'_>,
     schema: &Schema,
-    interner: &std::sync::Mutex<TextInterner>,
+    generation: &GenerationHandle,
     rel: RelationId,
-) -> Result<Arc<RelationImage>> {
+) -> Result<crate::image::ResidentAdmit<Arc<RelationImage>>> {
     let relation = schema.relation(rel);
     debug_assert!(
         relation.body().closed_rows().is_none(),
@@ -172,23 +216,23 @@ pub(crate) fn build_from_source(
 
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let fields = relation.fields();
+    let estimated = estimated_slab_bytes(&field_types, row_count)?;
+    let charge = match ChargedImage::admit(generation.ledger(), estimated) {
+        Ok(charge) => charge,
+        Err(_) => {
+            return Ok(crate::image::ResidentAdmit::BeyondMemory(
+                crate::image::ResidentTextExhausted::new(generation.clone()),
+            ));
+        }
+    };
 
-    // Charge the slabs before allocating them (Q-BUDGET: growth is
-    // reserved, never discovered). The reservation is transient build
-    // accounting; the sealed image's retained size is the cache's figure.
     let spans = column_spans(&field_types);
-    let byte_cols = spans
-        .iter()
-        .filter(|s| s.width == ColumnWidth::Byte)
-        .count();
     let column_count = spans
         .last()
         .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
-    let word_cols = column_count - byte_cols;
-    let (word_len, byte_len) = slab_lengths(row_count, word_cols, byte_cols)?;
     let work = source.work();
-    let _slab_charge = work
-        .reserve(ByteKind::Working, (word_len as u64) * 8 + byte_len as u64)
+    let _work_charge = work
+        .reserve(ByteKind::Working, estimated as u64)
         .map_err(crate::api::prepared::source::work_error)?;
 
     let mut frame = allocate(&field_types, row_count)?;
@@ -196,18 +240,20 @@ pub(crate) fn build_from_source(
         crate::obs::names::DECODE_BATCH,
         crate::obs::TraceArgs::Pair(row_count as u64, column_count as u64),
     );
-    let mut interner = interner.lock().expect("interner mutex");
+    let mut interner = generation.lock_resolver();
     let mut text = TextWords::Intern {
         interner: &mut interner,
         work,
+        generation,
     };
     let mut scratch: Vec<u64> = Vec::with_capacity(column_count);
     let mut position = 0usize;
+    let mut spilled = None;
     {
         let columns = &frame.columns;
         let words = &mut frame.words;
         let bytes = &mut frame.bytes;
-        source.scan(rel, &mut |row| {
+        let scan = source.scan(rel, &mut |row| {
             if position >= row_count {
                 return Err(Error::Corruption(CorruptionError::RowCountMismatch {
                     relation: rel,
@@ -215,7 +261,15 @@ pub(crate) fn build_from_source(
                 }));
             }
             scratch.clear();
-            row_words(fields, row, &mut text, &mut scratch)?;
+            match row_words(fields, row, &mut text, &mut scratch)? {
+                crate::image::ResidentAdmit::Ready(()) => {}
+                crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
+                    spilled = Some(exhausted);
+                    return Err(Error::from_store(
+                        crate::storage::store::StoreError::Allocation,
+                    ));
+                }
+            }
             debug_assert_eq!(scratch.len(), columns.len(), "one word per column");
             for (column, &word) in columns.iter().zip(&scratch) {
                 match *column {
@@ -227,7 +281,11 @@ pub(crate) fn build_from_source(
             }
             position += 1;
             Ok(())
-        })?;
+        });
+        if let Some(exhausted) = spilled {
+            return Ok(crate::image::ResidentAdmit::BeyondMemory(exhausted));
+        }
+        scan?;
     }
     drop(interner);
     decode_span.end();
@@ -239,7 +297,13 @@ pub(crate) fn build_from_source(
     }
 
     let distincts = count_frame(row_count, &frame);
-    Ok(seal(row_count, frame, distincts))
+    Ok(crate::image::ResidentAdmit::Ready(seal(
+        row_count,
+        frame,
+        distincts,
+        generation.clone(),
+        Some(charge),
+    )))
 }
 
 /// driver's per-round delta and accumulated images, built on the
@@ -281,6 +345,7 @@ impl TransientImage {
         &mut self,
         field_types: &[ValueType],
         row_count: usize,
+        generation: &GenerationHandle,
         mut rows: impl Iterator<Item = &'r [u64]>,
     ) -> Arc<RelationImage> {
         self.fill_drained(
@@ -288,6 +353,7 @@ impl TransientImage {
             field_types,
             0,
             row_count,
+            generation,
             CapacityPolicy::Exact,
             |_, write| {
                 for row in rows.by_ref() {
@@ -314,6 +380,7 @@ impl TransientImage {
         work: Option<&crate::work::WorkContext>,
         field_types: &[ValueType],
         row_count: usize,
+        generation: &GenerationHandle,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
     ) -> crate::error::Result<Arc<RelationImage>> {
         self.fill_drained(
@@ -321,6 +388,7 @@ impl TransientImage {
             field_types,
             0,
             row_count,
+            generation,
             CapacityPolicy::Exact,
             drain,
         )
@@ -339,6 +407,7 @@ impl TransientImage {
         field_types: &[ValueType],
         filled: usize,
         row_count: usize,
+        generation: &GenerationHandle,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
     ) -> crate::error::Result<Arc<RelationImage>> {
         self.fill_drained(
@@ -346,6 +415,7 @@ impl TransientImage {
             field_types,
             filled,
             row_count,
+            generation,
             CapacityPolicy::Doubling,
             drain,
         )
@@ -357,6 +427,7 @@ impl TransientImage {
         field_types: &[ValueType],
         filled: usize,
         row_count: usize,
+        generation: &GenerationHandle,
         policy: CapacityPolicy,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
     ) -> crate::error::Result<Arc<RelationImage>> {
@@ -403,7 +474,7 @@ impl TransientImage {
 
             let distincts = super::distinct::uncounted_columns(&frame.columns);
             *self = Self::Occupied {
-                image: seal(row_count, frame, distincts),
+                image: seal(row_count, frame, distincts, generation.clone(), None),
                 capacity,
             };
         }
@@ -465,8 +536,13 @@ fn drain_encoded_rows(
 /// # Panics
 /// validated schema.
 /// Only on programmer-invariant violations: `relation` is ordinary, or a
-#[must_use]
-pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationImage> {
+/// # Errors
+/// Cache admission refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
+pub fn synthesize_closed(
+    rel: RelationId,
+    relation: &Relation,
+    generation: GenerationHandle,
+) -> Result<crate::image::ResidentAdmit<Arc<RelationImage>>> {
     let extension = relation
         .body()
         .closed_rows()
@@ -474,6 +550,15 @@ pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationIm
     let layout = relation.layout();
     let row_count = extension.len();
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
+    let estimated = estimated_slab_bytes(&field_types, row_count)?;
+    let charge = match ChargedImage::admit(generation.ledger(), estimated) {
+        Ok(charge) => charge,
+        Err(_) => {
+            return Ok(crate::image::ResidentAdmit::BeyondMemory(
+                crate::image::ResidentTextExhausted::new(generation),
+            ));
+        }
+    };
     let mut frame = allocate(&field_types, row_count)
         .expect("the extension-row cap keeps every slab size computation in range");
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
@@ -495,5 +580,11 @@ pub fn synthesize_closed(rel: RelationId, relation: &Relation) -> Arc<RelationIm
     }
     decode_span.end();
     let distincts = count_frame(row_count, &frame);
-    seal(row_count, frame, distincts)
+    Ok(crate::image::ResidentAdmit::Ready(seal(
+        row_count,
+        frame,
+        distincts,
+        generation,
+        Some(charge),
+    )))
 }

@@ -157,7 +157,10 @@ pub fn commit_window_admission(
                 flag: 0,
             }])
         })
-        .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("commit_window_admission: {e:?}"))
     })
 }
@@ -181,7 +184,10 @@ pub fn commit_window_baseline(
                 flag: 0,
             }])
         })
-        .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("commit_window_baseline: {e:?}"))
     })
 }
@@ -205,7 +211,10 @@ pub fn commit_window_exclusion(
                 flag: 1,
             }])
         })
-        .map(|_| 1)
+        .map(|admission| {
+            admission.unwrap();
+            1
+        })
         .map_err(|e| format!("commit_window_exclusion: {e:?}"))
     })
 }

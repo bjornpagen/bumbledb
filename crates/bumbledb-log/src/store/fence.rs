@@ -81,11 +81,20 @@ impl Drop for HeldLock {
     }
 }
 
+/// Persistent lock-file identity. Successor acquisition must reuse this
+/// inode; recovery never unlinks or replaces it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LockIdentity {
+    pub dev: u64,
+    pub ino: u64,
+}
+
 /// Owns a directory namespace even while its materialization is absent,
 /// renamed, or removed. Declare it after native resources so it drops last.
 #[derive(Debug)]
 pub struct DirectoryLock {
     directory: PathBuf,
+    lock_path: PathBuf,
     _lock: HeldLock,
 }
 
@@ -94,6 +103,33 @@ impl DirectoryLock {
     pub fn directory(&self) -> &Path {
         &self.directory
     }
+
+    /// The persistent lock-file path. Never unlinked as stale recovery.
+    #[must_use]
+    pub fn lock_path(&self) -> &Path {
+        &self.lock_path
+    }
+
+    /// Device/inode of the persistent lock file. Process death releases the
+    /// kernel lock; the inode remains.
+    ///
+    /// # Errors
+    /// Filesystem metadata failure.
+    #[cfg(unix)]
+    pub fn lock_inode(&self) -> io::Result<LockIdentity> {
+        lock_identity(&self.lock_path)
+    }
+}
+
+/// Selected repository-lock owner (C8): kernel-held directory exclusion
+/// over a persistent lock-file inode. Never unlink/replace as stale
+/// recovery; process death releases the OS lock. Drain is Drop.
+pub type RepositoryLock = DirectoryLock;
+
+/// Acquire the existing kernel directory exclusion (C8). Same-process
+/// duplicate generation must refuse. L11/L14 expose this to Effect.
+pub fn acquire_repository_lock(directory: &Path) -> io::Result<RepositoryLock> {
+    acquire_directory(directory)
 }
 
 fn refuse_symlink(path: &Path) -> io::Result<()> {
@@ -106,6 +142,16 @@ fn refuse_symlink(path: &Path) -> io::Result<()> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(err),
     }
+}
+
+#[cfg(unix)]
+pub(crate) fn lock_identity(path: &Path) -> io::Result<LockIdentity> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = fs::metadata(path)?;
+    Ok(LockIdentity {
+        dev: meta.dev(),
+        ino: meta.ino(),
+    })
 }
 
 fn open_lock(parent: &Path, name: &str) -> io::Result<File> {
@@ -173,9 +219,11 @@ pub fn acquire_directory(directory: &Path) -> io::Result<DirectoryLock> {
     refuse_symlink(&directory)?;
     let namespace = parent.join(LEASE_NAMESPACE);
     refuse_symlink(&namespace)?;
-    let file = open_lock(&namespace.join(name), "owner.lock")?;
+    let lock_path = namespace.join(name).join("owner.lock");
+    let file = open_lock(lock_path.parent().expect("owner.lock parent"), "owner.lock")?;
     Ok(DirectoryLock {
         directory,
+        lock_path,
         _lock: try_hold(file)?,
     })
 }
@@ -297,4 +345,65 @@ pub fn sync_ancestors(path: &Path, root: &Path) -> io::Result<()> {
         current = dir.parent();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "bdb-log-fence-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).expect("root");
+        path
+    }
+
+    #[test]
+    fn same_process_duplicate_generation_refuses_without_unlinking() {
+        let root = scratch("same-proc");
+        let tenant = root.join("tenant");
+        let first = acquire_repository_lock(&tenant).expect("first owner");
+        #[cfg(unix)]
+        let inode = first.lock_inode().expect("inode");
+        let lock_path = first.lock_path().to_path_buf();
+        assert!(lock_path.exists(), "lock inode is persistent");
+        let second = acquire_repository_lock(&tenant);
+        assert_eq!(
+            second.expect_err("same-process contention").kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(lock_path.exists(), "refusal does not delete the inode");
+        drop(first);
+        let successor = acquire_repository_lock(&tenant).expect("released");
+        assert_eq!(successor.lock_path(), lock_path.as_path());
+        #[cfg(unix)]
+        assert_eq!(
+            successor.lock_inode().expect("same inode"),
+            inode,
+            "successor reuses the persistent inode"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn garbage_lock_body_is_inert_and_never_parsed() {
+        let root = scratch("garbage");
+        let tenant = root.join("tenant");
+        fs::create_dir_all(root.join("~lease/tenant")).expect("lease");
+        fs::write(root.join("~lease/tenant/owner.lock"), b"pid=999 stale").expect("poison");
+        let lock = acquire_directory(&tenant).expect("kernel lock, not body");
+        assert!(lock.lock_path().exists());
+        drop(lock);
+        assert!(
+            root.join("~lease/tenant/owner.lock").exists(),
+            "release does not unlink the inode"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 }

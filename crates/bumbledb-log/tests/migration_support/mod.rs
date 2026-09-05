@@ -260,7 +260,7 @@ pub fn fresh_source(tag: &str) -> (Arc<Db<SchemaDescriptor>>, PathBuf) {
     let root = temp_dir(tag);
     let dir = root.join("source");
     let db = Arc::new(
-        Db::create(&dir, base_schema())
+        Db::create(&dir, base_schema(), work())
             .expect("create store")
             .expect("empty store admits"),
     );

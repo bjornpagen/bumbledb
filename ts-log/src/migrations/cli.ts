@@ -1,20 +1,19 @@
 /**
- * The generator CLI: `bumbledb-log generate|check` (chapter 33's two
- * authorship commands). Generation loads the app's ordinary schema module
- * with the normal module loader — generation-time authoring evaluation only;
- * NOTHING here is imported at application runtime, and the admin runner
- * never loads authoring code. CLI and direct API share the exact same
- * Effects, so outcomes are identical by construction (TS-MIG-10).
+ * The generator CLI surface: argument parsing and the Effect program.
+ * Framework runners (`Effect.runPromiseExit`) live only at the executable
+ * boundary (`#migrations/bin.ts`) and in authored tests. There is no public
+ * Promise/async twin of generate/check.
  */
 import * as path from "node:path"
 import { pathToFileURL } from "node:url"
-import { NativeRuntime } from "@bjornpagen/bumbledb"
-import type { AnySchema, ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
-import { Effect, Exit } from "effect"
+import type { AnySchema, ExecutionPolicy } from "@bjornpagen/bumbledb"
+import { Effect } from "effect"
+import type { LogError } from "#errors.ts"
 import type { MigrationIntent } from "#migrations/intent.ts"
+import type { CheckReport, GenerationReport } from "#migrations/types.ts"
 import { checkMigrations, generateMigrations } from "#migrations/workflow.ts"
 
-const USAGE = `bumbledb-log <generate|check> --schema <module.ts> --out <migrations-dir>
+export const CLI_USAGE = `bumbledb-log <generate|check> --schema <module.ts> --out <migrations-dir>
 	[--export <name>]    schema export (default: "default", then "schema")
 	[--intent <name>]    intent export (default: "evolution" when present)
 	[--label <label>]    stable human label for a new plan ([a-z0-9-])
@@ -23,7 +22,7 @@ const USAGE = `bumbledb-log <generate|check> --schema <module.ts> --out <migrati
 `
 
 /** Generous fixed authoring-tool budgets; native admission still re-judges. */
-const WORK: ExecutionPolicy = {
+export const CLI_WORK: ExecutionPolicy = {
 	inputBytes: 256n * 1024n * 1024n,
 	workingBytes: 256n * 1024n * 1024n,
 	scratchBytes: 256n * 1024n * 1024n,
@@ -33,21 +32,7 @@ const WORK: ExecutionPolicy = {
 	timeout: 600000
 }
 
-const RUNTIME: NativeRuntimeOptions = {
-	workers: 2,
-	queueCapacity: 64,
-	cleanupCapacity: 16,
-	ownerCapacity: 8,
-	nativeHandleCapacity: 64,
-	inputBytes: 512n * 1024n * 1024n,
-	workingBytes: 512n * 1024n * 1024n,
-	scratchBytes: 512n * 1024n * 1024n,
-	resultBytes: 128n * 1024n * 1024n,
-	chunkBytes: 1024n * 1024n,
-	cleanupTimeout: 5000
-}
-
-interface CliArguments {
+export interface CliArguments {
 	readonly command: "generate" | "check"
 	readonly schemaPath: string
 	readonly directory: string
@@ -58,10 +43,10 @@ interface CliArguments {
 	readonly timeoutMs: number | null
 }
 
-function parseArguments(argv: readonly string[]): CliArguments | string {
+export function parseCliArguments(argv: readonly string[]): CliArguments | string {
 	const command = argv[0]
 	if (command !== "generate" && command !== "check") {
-		return USAGE
+		return CLI_USAGE
 	}
 	let schemaPath: string | null = null
 	let directory: string | null = null
@@ -74,7 +59,7 @@ function parseArguments(argv: readonly string[]): CliArguments | string {
 		const flag = argv[index]
 		const value = argv[index + 1]
 		if (flag === undefined || value === undefined) {
-			return USAGE
+			return CLI_USAGE
 		}
 		switch (flag) {
 			case "--schema":
@@ -98,17 +83,17 @@ function parseArguments(argv: readonly string[]): CliArguments | string {
 			case "--timeout-ms": {
 				const parsed = Number.parseInt(value, 10)
 				if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-					return USAGE
+					return CLI_USAGE
 				}
 				timeoutMs = parsed
 				break
 			}
 			default:
-				return USAGE
+				return CLI_USAGE
 		}
 	}
 	if (schemaPath === null || directory === null) {
-		return USAGE
+		return CLI_USAGE
 	}
 	return { command, schemaPath, directory, exportName, intentName, label, contract, timeoutMs }
 }
@@ -128,84 +113,58 @@ function isIntentValue(value: unknown): value is MigrationIntent<AnySchema["rela
 	return typeof value === "object" && value !== null && "schema" in value && "entries" in value
 }
 
-interface AuthoredModule {
+export interface AuthoredModule {
 	readonly schema: AnySchema
 	readonly intent: MigrationIntent<AnySchema["relations"]> | undefined
 }
 
-async function loadAuthoring(cli: CliArguments): Promise<AuthoredModule | string> {
-	let loaded: Record<string, unknown>
-	try {
-		loaded = (await import(pathToFileURL(path.resolve(cli.schemaPath)).href)) as Record<string, unknown>
-	} catch (cause) {
-		return `schema module failed to load: ${cause instanceof Error ? cause.message : String(cause)}`
-	}
+/** Load the authoring module. Dynamic import stays inside this Effect. */
+export const loadAuthoring = Effect.fn("bumbledb-log.cli.loadAuthoring")(function* (cli: CliArguments) {
+	const loaded = yield* Effect.tryPromise({
+		try: () => import(pathToFileURL(path.resolve(cli.schemaPath)).href) as Promise<Record<string, unknown>>,
+		catch: (cause) => `schema module failed to load: ${cause instanceof Error ? cause.message : String(cause)}`
+	})
 	const exportName = cli.exportName ?? (loaded.default !== undefined ? "default" : "schema")
 	const candidate = loaded[exportName]
 	if (!isSchemaValue(candidate)) {
-		return `export ${exportName} of ${cli.schemaPath} is not a schema value (declare it with schema(...))`
+		return yield* Effect.fail(`export ${exportName} of ${cli.schemaPath} is not a schema value (declare it with schema(...))`)
 	}
 	const intentName = cli.intentName ?? "evolution"
 	const intentCandidate = loaded[intentName]
 	if (cli.intentName !== null && intentCandidate === undefined) {
-		return `export ${intentName} of ${cli.schemaPath} does not exist`
+		return yield* Effect.fail(`export ${intentName} of ${cli.schemaPath} does not exist`)
 	}
 	if (intentCandidate !== undefined && !isIntentValue(intentCandidate)) {
-		return `export ${intentName} of ${cli.schemaPath} is not a migrationIntent(...) value`
+		return yield* Effect.fail(`export ${intentName} of ${cli.schemaPath} is not a migrationIntent(...) value`)
 	}
-	return { schema: candidate, intent: intentCandidate }
-}
+	const authored: AuthoredModule = { schema: candidate, intent: intentCandidate }
+	return authored
+})
 
-/**
- * Run one CLI invocation. Returns the process exit code; stdout carries the
- * JSON report, stderr carries refusals. Never calls process.exit itself.
- */
-export async function cli(
-	argv: readonly string[],
-	stdout: (line: string) => void,
-	stderr: (line: string) => void
-): Promise<number> {
-	const parsed = parseArguments(argv)
-	if (typeof parsed === "string") {
-		stderr(parsed)
-		return 2
-	}
-	const authored = await loadAuthoring(parsed)
-	if (typeof authored === "string") {
-		stderr(authored)
-		return 2
-	}
-	const work: ExecutionPolicy = parsed.timeoutMs === null ? WORK : { ...WORK, timeout: parsed.timeoutMs }
+export const cliProgram = Effect.fn("bumbledb-log.cli.program")(function* (
+	cli: CliArguments,
+	authored: AuthoredModule
+) {
+	const work: ExecutionPolicy = cli.timeoutMs === null ? CLI_WORK : { ...CLI_WORK, timeout: cli.timeoutMs }
 	const repository = {
-		directory: parsed.directory,
-		...(parsed.contract === null ? {} : { contract: parsed.contract })
+		directory: cli.directory,
+		...(cli.contract === null ? {} : { contract: cli.contract })
 	}
-	const program =
-		parsed.command === "generate"
-			? Effect.map(
-					generateMigrations({
-						schema: authored.schema,
-						...(authored.intent === undefined ? {} : { intent: authored.intent }),
-						...(parsed.label === null ? {} : { label: parsed.label }),
-						repository,
-						work
-					}),
-					(report) => ({ report, code: 0 })
-				)
-			: Effect.map(
-					checkMigrations({
-						schema: authored.schema,
-						...(authored.intent === undefined ? {} : { intent: authored.intent }),
-						repository,
-						work
-					}),
-					(report) => ({ report, code: report.status === "clean" ? 0 : 1 })
-				)
-	const exit = await Effect.runPromiseExit(program.pipe(Effect.provide(NativeRuntime.layer(RUNTIME))))
-	if (Exit.isSuccess(exit)) {
-		stdout(JSON.stringify(exit.value.report, null, 2))
-		return exit.value.code
+	if (cli.command === "generate") {
+		const report: GenerationReport = yield* generateMigrations({
+			schema: authored.schema,
+			...(authored.intent === undefined ? {} : { intent: authored.intent }),
+			...(cli.label === null ? {} : { label: cli.label }),
+			repository,
+			work
+		})
+		return { report, code: 0 as const }
 	}
-	stderr(JSON.stringify(exit.cause, null, 2))
-	return 1
-}
+	const report: CheckReport = yield* checkMigrations({
+		schema: authored.schema,
+		...(authored.intent === undefined ? {} : { intent: authored.intent }),
+		repository,
+		work
+	})
+	return { report, code: report.status === "clean" ? (0 as const) : (1 as const) }
+})

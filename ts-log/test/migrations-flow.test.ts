@@ -20,11 +20,11 @@ import { ProtocolError } from "#errors.ts"
 import { decodeGeneratedMigrations } from "#migrations/decode.ts"
 import { makeGenerator } from "#migrations/generate.ts"
 import type { GeneratedMigrations, MigrationPlan } from "#migrations/types.ts"
-import { scriptedCodec, withStubRuntime, WORK } from "#test/migrations-double.ts"
+import { scriptedCodec, scriptedExclusion, withStubRuntime, WORK } from "#test/migrations-double.ts"
 import { App0, App1, App2, App3, evolution1, evolution2, evolution3 } from "#test/migrations-example.ts"
 import { migrationIntent, seed } from "#migrations/intent.ts"
 
-const gen = makeGenerator(scriptedCodec())
+const gen = makeGenerator(scriptedCodec(), scriptedExclusion())
 
 function run<A, E>(effect: Effect.Effect<A, E, NativeRuntime>): Promise<A> {
 	return Effect.runPromise(withStubRuntime(effect))
@@ -64,7 +64,8 @@ async function loadGenerated(directory: string): Promise<GeneratedMigrations> {
 	for (const entry of manifest.entries) {
 		plans.push(JSON.parse(await readFile(path.join(directory, `${entry.id}.plan.json`), "utf8")) as MigrationPlan)
 	}
-	return { manifest, plans }
+	const snapshots = JSON.parse(await readFile(path.join(directory, "snapshots.json"), "utf8")) as string[]
+	return { manifest, plans, snapshots }
 }
 
 function expectIntentRequired(exit: Exit.Exit<unknown, unknown>): readonly { code: string; relation: string; field: string | null }[] {
@@ -86,10 +87,12 @@ describe("generate / check flow", function suite() {
 		assert.equal(report.status, "generated")
 		assert.equal(report.planId, "0000-initialize")
 		assert.deepEqual(report.files, [
+			"meta/base.schema.json",
 			"meta/0000.schema.json",
 			"0000-initialize.plan.json",
 			"manifest.json",
 			"index.ts",
+			"snapshots.json",
 			"runtime-contract.json"
 		])
 		const files = await repoFiles(directory)

@@ -10,15 +10,33 @@
 //!
 //! Deleted mechanisms from the 0.x store: the generic five-verb `ObjectStore`
 //! framework, numeric token/etag CAS leases, fresh-id lease counters, expiring
-//! mutation leases and age-based temp sweeping. Local exclusion is a
-//! kernel-held lock ([`fence`]); object mutation and directory ownership are
-//! distinct scopes even though both use the same kernel mechanism.
+//! mutation leases, age-based temp sweeping, whole-body `receive_whole` /
+//! `receive_head_whole` production reads, the uncharged three-argument
+//! `get_verified`, and `get_verified_ctx`. Local exclusion is a kernel-held
+//! lock ([`fence`]); object mutation and directory ownership are distinct
+//! scopes even though both use the same kernel mechanism. Production
+//! HEAD/object reads are only [`ReceivingStore::receive_head`] /
+//! [`ReceivingStore::receive_object`]. Those verbs report
+//! [`TransportObservation`]; they do not emit a publication verdict.
+//! [`get_verified`] keeps the receive reservation on [`ChargedBytes`] until
+//! the caller decodes or drops it.
 
 pub mod fence;
 pub mod fs;
 pub mod mem;
+pub mod receive;
 #[cfg(feature = "store")]
 pub mod s3;
+
+pub use bumbledb::work::ChargedBytes;
+pub use fence::{
+    DirectoryLock, HeldLock, LockIdentity, RepositoryLock, acquire_directory,
+    acquire_repository_lock,
+};
+pub use receive::{
+    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
+    ReceivingStore, TransportContext, TransportObservation, RECEIVE_CHUNK_BYTES,
+};
 
 use std::fmt;
 
@@ -87,6 +105,11 @@ impl ObjectKind {
         }
     }
 }
+
+/// Wire width: 8 epoch + 1 kind + 32 digest + 8 length = 49 (C6).
+/// An option adds one tag: absent 1, present 50.
+pub const OBJECT_REF_WIRE_BYTES: usize = 49;
+pub const OBJECT_REF_OPTION_PRESENT_BYTES: usize = 50;
 
 /// Typed, verified immutable object identity: epoch, kind, full 32-byte
 /// content digest and expected length. The digest alone is not a storage key;
@@ -237,6 +260,12 @@ pub enum ObjectError {
     Frame(FrameError),
     /// A stored object could not be proven durable within the retry budget.
     Unverified { key: String },
+    /// Access was refused. Not a publication verdict.
+    Denied { key: String },
+    /// The bucket is not addressable. Not a missing object.
+    Bucket { key: String },
+    /// Region or endpoint mismatch. Not a missing object.
+    Region { key: String },
 }
 
 impl fmt::Display for ObjectError {
@@ -253,6 +282,9 @@ impl fmt::Display for ObjectError {
             }
             Self::Frame(error) => write!(f, "object frame: {error:?}"),
             Self::Unverified { key } => write!(f, "object not proven durable: {key}"),
+            Self::Denied { key } => write!(f, "object denied: {key}"),
+            Self::Bucket { key } => write!(f, "object bucket: {key}"),
+            Self::Region { key } => write!(f, "object region: {key}"),
         }
     }
 }
@@ -284,7 +316,7 @@ pub(crate) fn backend<E: BackendError>(error: E) -> ObjectError {
 /// # Errors
 /// Backend failure with no definite outcome, an immutable conflict, or an
 /// unresolved ambiguous store.
-pub fn put_verified<B: ConditionalStore>(
+pub fn put_verified<B: ReceivingStore>(
     backend_store: &B,
     prefix: &str,
     epoch: u64,
@@ -292,63 +324,144 @@ pub fn put_verified<B: ConditionalStore>(
     bytes: &[u8],
 ) -> Result<ObjectRef, ObjectError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     let reference = ObjectRef::of(epoch, kind, bytes);
     let key = reference.key(prefix);
     match backend_store.put_object(&key, bytes).map_err(backend)? {
         PutOutcome::Stored => {}
-        PutOutcome::Indeterminate => match backend_store.get_object(&key).map_err(backend)? {
-            ObjectRead::Present { body } if *body == *bytes => {}
-            ObjectRead::Present { .. } => {
-                return Err(ObjectError::ImmutableConflict { key });
+        PutOutcome::Indeterminate => {
+            match backend_store.receive_object(
+                &key,
+                TransportContext {
+                    work: None,
+                    receive: ReceiveLimits::exact(bytes.len() as u64),
+                },
+            ) {
+                Ok(body) if body.as_bytes() == bytes => {}
+                Ok(_) => return Err(ObjectError::ImmutableConflict { key }),
+                Err(error) => match error.observation() {
+                    TransportObservation::Missing => {
+                        return Err(ObjectError::Unverified { key });
+                    }
+                    TransportObservation::Capped | TransportObservation::Conflict => {
+                        return Err(ObjectError::ImmutableConflict { key });
+                    }
+                    _ => return Err(backend(error)),
+                },
             }
-            ObjectRead::Absent => return Err(ObjectError::Unverified { key }),
-        },
+        }
     }
     Ok(reference)
 }
 
 /// Fetch one referenced object and verify its length and domain-separated
-/// digest before returning the bytes. A checksum is not authorization; the
-/// caller still validates grammar and nested references before use.
+/// digest. The caller's [`TransportContext`] work and envelope bind the
+/// read; the receive reservation stays on the returned [`ChargedBytes`]
+/// until the caller decodes or drops it.
 ///
 /// # Errors
-/// Backend failure, definite absence, or verification refusal.
-pub fn get_verified<B: ConditionalStore>(
+/// Missing work context, backend failure, definite absence, cap overrun,
+/// or verification refusal.
+pub fn get_verified<B: ReceivingStore>(
     backend_store: &B,
     prefix: &str,
     reference: &ObjectRef,
-) -> Result<Vec<u8>, ObjectError>
+    ctx: TransportContext<'_>,
+) -> Result<ChargedBytes, ObjectError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
+    if ctx.work.is_none() {
+        return Err(backend(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "get_verified requires WorkContext",
+        )));
+    }
     let key = reference.key(prefix);
-    let body = match backend_store.get_object(&key).map_err(backend)? {
-        ObjectRead::Present { body } => body,
-        ObjectRead::Absent => return Err(ObjectError::Missing { key }),
-    };
-    if body.len() as u64 != reference.length {
-        return Err(ObjectError::WrongLength {
-            key,
-            expected: reference.length,
-            got: body.len() as u64,
-        });
+    let receive = ReceiveLimits::capped(ctx.receive.max_bytes.min(reference.length));
+    let body = backend_store
+        .receive_object(
+            &key,
+            TransportContext {
+                work: ctx.work,
+                receive,
+            },
+        )
+        .map_err(|error| map_receive(&key, error))?;
+    receive::verify_body(&key, reference.kind, reference, body.as_bytes())?;
+    body.into_charged().ok_or_else(|| {
+        backend(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "receive dropped its reservation before decode",
+        ))
+    })
+}
+
+fn map_receive<E: BackendError + ObservedError>(key: &str, error: E) -> ObjectError {
+    match error.observation() {
+        TransportObservation::Missing => ObjectError::Missing {
+            key: key.to_string(),
+        },
+        TransportObservation::Denied => ObjectError::Denied {
+            key: key.to_string(),
+        },
+        TransportObservation::Bucket => ObjectError::Bucket {
+            key: key.to_string(),
+        },
+        TransportObservation::Region => ObjectError::Region {
+            key: key.to_string(),
+        },
+        _ => backend(error),
     }
-    if object_digest(reference.kind, &body) != reference.digest {
-        return Err(ObjectError::WrongDigest { key });
+}
+
+/// Read one head under an explicit byte cap during receive.
+///
+/// # Errors
+/// Backend failure, cap overrun, or transport refusal.
+pub fn read_head_bounded<B: ReceivingStore>(
+    backend_store: &B,
+    head_key: &str,
+    ctx: TransportContext<'_>,
+) -> Result<ReceivedHead, ObjectError>
+where
+    B::Error: BackendError + ObservedError,
+{
+    backend_store
+        .receive_head(head_key, ctx)
+        .map_err(|error| map_receive(head_key, error))
+}
+
+/// Fetch one decision object by its authenticated locator. One GET, bounded
+/// work — no epoch probing.
+///
+/// # Errors
+/// Backend failure, definite absence, or verification refusal.
+pub fn fetch_decision_ref<B: ReceivingStore>(
+    backend_store: &B,
+    prefix: &str,
+    reference: &ObjectRef,
+    ctx: TransportContext<'_>,
+) -> Result<ChargedBytes, ObjectError>
+where
+    B::Error: BackendError + ObservedError,
+{
+    if reference.kind != ObjectKind::Decision {
+        return Err(ObjectError::Frame(FrameError::InvalidCount));
     }
-    Ok(body.into_vec())
+    get_verified(backend_store, prefix, reference, ctx)
 }
 
 /// Fetch one decision object by digest, probing the bounded epoch window
-/// `[floor, ceiling]` newest-first. Decisions are staged under the object
-/// epoch open at their publication; later epochs never re-home them, so a
-/// recovery root records the oldest epoch its tail can live under.
+/// `[floor, ceiling]` newest-first. Test-only epoch-probe helper — production
+/// paths use [`fetch_decision_ref`] with authenticated locators
+/// ([`crate::history::locator::walk_decision_chain`]).
 ///
 /// # Errors
 /// Backend failure or absence across the whole window.
-pub fn fetch_decision<B: ConditionalStore>(
+#[cfg(test)]
+pub fn fetch_decision<B: ReceivingStore>(
     backend_store: &B,
     prefix: &str,
     epoch_floor: u64,
@@ -356,26 +469,30 @@ pub fn fetch_decision<B: ConditionalStore>(
     digest: &DecisionDigest,
 ) -> Result<(u64, Vec<u8>), ObjectError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
+    if epoch_floor > epoch_ceiling {
+        return Err(ObjectError::Frame(FrameError::InvalidEpoch));
+    }
     let mut epoch = epoch_ceiling;
     loop {
         let key = decision_key(prefix, epoch, digest);
-        match backend_store.get_object(&key).map_err(backend)? {
-            ObjectRead::Present { body } => {
+        match backend_store.receive_object(&key, TransportContext::limited(1 << 20)) {
+            Ok(body) => {
                 // Decisions are content addressed under their own digest
                 // domain; verify before interpretation.
-                if object_digest(ObjectKind::Decision, &body) != *digest.as_bytes() {
+                if object_digest(ObjectKind::Decision, body.as_bytes()) != *digest.as_bytes() {
                     return Err(ObjectError::WrongDigest { key });
                 }
-                return Ok((epoch, body.into_vec()));
+                return Ok((epoch, body.as_bytes().to_vec()));
             }
-            ObjectRead::Absent => {
+            Err(error) if error.observation() == TransportObservation::Missing => {
                 if epoch == epoch_floor {
                     return Err(ObjectError::Missing { key });
                 }
                 epoch -= 1;
             }
+            Err(error) => return Err(map_receive(&key, error)),
         }
     }
 }

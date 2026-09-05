@@ -8,7 +8,7 @@ import type { CellValue } from "#rows.ts"
 import type { CloseReport } from "#runtime-errors.ts"
 import type { DbError } from "#runtime-errors.ts"
 import type { ExecutionPolicy } from "#runtime.ts"
-import { nativeOperationWith, policyWire } from "#runtime.ts"
+import { deliveryResultBytes, nativeOperationWith, policyWire } from "#runtime.ts"
 
 /**
  * `CompleteResult<A>` — the sealed owner of one COMPLETED query answer
@@ -29,8 +29,8 @@ import { nativeOperationWith, policyWire } from "#runtime.ts"
  * public cursor, `next`, AsyncIterable, clone or second streaming API.
  */
 interface CompleteResult<A> {
-	collect(options: { readonly maxBytes: bigint }): Effect.Effect<ReadonlyArray<A>, DbError>
-	pages(options: { readonly pageBytes: bigint }): Stream.Stream<ReadonlyArray<A>, DbError>
+	collect(options: { readonly maxBytes: bigint }, work: ExecutionPolicy): Effect.Effect<ReadonlyArray<A>, DbError>
+	pages(options: { readonly pageBytes: bigint }, work: ExecutionPolicy): Stream.Stream<ReadonlyArray<A>, DbError>
 	close(): Effect.Effect<CloseReport>
 }
 
@@ -53,41 +53,45 @@ function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly Ce
 
 /**
  * Internal constructor: `db.ts` publishes results through this after
- * execution completes. `basePolicy` is the executing call's policy; collect
- * and page pulls run under it with the byte cap swapped for the caller's
- * `maxBytes`/`pageBytes` (delivery backpressure bounds transport, never the
- * query work already done).
+ * execution completes. Delivery (`collect`/`pages`) starts a fresh bounded
+ * operation under the caller's delivery policy — never the completed query's
+ * expired execution deadline.
  */
 function makeCompleteResult<A>(
 	handle: ResultHandle,
-	finds: readonly FindColumn[],
-	basePolicy: ExecutionPolicy
+	finds: readonly FindColumn[]
 ): CompleteResult<A> {
-	function cappedWire(operation: string, resultBytes: bigint) {
-		return policyWire({ ...basePolicy, resultBytes }, operation)
+	function deliveryWire(operation: string, delivery: ExecutionPolicy, requested: bigint) {
+		return policyWire({ ...delivery, resultBytes: deliveryResultBytes(requested, delivery) }, operation)
 	}
 	const value: CompleteResult<A> = {
-		collect(options) {
+		collect(options, work) {
 			return Effect.suspend(() =>
 				nativeOperationWith(
 					"CompleteResult.collect",
-					(callback) => dbNative.runtimeResultCollect(handle, cappedWire("CompleteResult.collect", options.maxBytes), callback),
+					(callback) =>
+						dbNative.runtimeResultCollect(
+							handle,
+							deliveryWire("CompleteResult.collect", work, options.maxBytes),
+							callback
+						),
 					dbNative.runtimeRowsTake,
 					(rows) => decodePage<A>(finds, rows)
 				)
 			)
 		},
-		pages(options) {
+		pages(options, work) {
 			return Stream.unwrap(
 				Effect.gen(function* () {
-					// Atomic spend: the transfer refuses (SpentHandle) on a
-					// second run or a concurrent collect/transfer race
-					// before touching the backing. The cursor belongs to
-					// the STREAM's scope from this point.
 					const cursor: CursorHandle = yield* Effect.acquireRelease(
 						nativeOperationWith(
 							"CompleteResult.pages",
-							(callback) => dbNative.runtimeResultCursor(handle, cappedWire("CompleteResult.pages", options.pageBytes), callback),
+							(callback) =>
+								dbNative.runtimeResultCursor(
+									handle,
+									deliveryWire("CompleteResult.pages", work, options.pageBytes),
+									callback
+								),
 							dbNative.runtimeCursorTake,
 							(taken) => taken
 						),
@@ -97,22 +101,19 @@ function makeCompleteResult<A>(
 					return Stream.paginate(undefined, () =>
 						nativeOperationWith(
 							"CompleteResult.page",
-							(callback) => dbNative.runtimeCursorNext(cursor, cappedWire("CompleteResult.page", options.pageBytes), callback),
+							(callback) =>
+								dbNative.runtimeCursorNext(
+									cursor,
+									deliveryWire("CompleteResult.page", work, options.pageBytes),
+									callback
+								),
 							dbNative.runtimePageTake,
 							(page) => page
 						).pipe(
 							Effect.map((page) => {
 								if (page === null) {
-									// Terminal EOF: emit nothing further; the
-									// stream scope's finalizer joins the
-									// cursor close (identical cleanup to
-									// early termination).
 									return [[], Option.none<undefined>()] as const
 								}
-								// One OWNED page array per element — pages,
-								// not rows (paginate emits the elements of
-								// the returned array; the singleton array
-								// carries the page).
 								return [[decodePage<A>(finds, page)], Option.some(undefined)] as const
 							})
 						)

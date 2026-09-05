@@ -1,0 +1,13 @@
+# Orchestrator goal
+
+Implement the complete Bumbledb 1.0 convergence contract in this folder on the existing `codex/bumbledb-1-0` checkout. Preserve useful dirty work; confirm previous writers are quiescent. Use Grok Fast workers where configured. Read README, the north star/semantics, C1–C9, current findings, the 21-lane ownership graph, lane instructions, D01–D29 and the inherited obligation matrix before dispatch.
+
+Make the short coordinator-owned F0 declaration cut, then run **at least twelve substantial execution workers concurrently, excluding yourself**, with exclusive files and pipelined handoffs. Start the twelve-lane frontier in chapter 60 and continuously schedule the remaining lanes. If the host cannot support twelve, report the capacity mismatch before starting; do not silently downsize or pad with idle agents. Send each worker its full lane section/common preamble plus required contract/discriminator excerpts.
+
+No tests, builds, typechecks, format/lint checks, benchmarks, package hooks or interim commits during the swarm. Temporary noncompilation is expected. Workers author regressions, replace actual production paths and delete predecessors. You own shared hubs, contract disputes and composed source review. No mandatory consumer becomes “future tightening”; new types, mocks or confident summaries do not establish integration.
+
+Enforce the selected simple representations: complete versus incremental judgment; generation/allocation ownership; fixed-worker resource tables without parked sessions or unused JS writer ABI; atomic native delivery tickets; streamed Pack; checked checkpoint-base-aware locators; coherent publication evidence; symbolic source-field expressions fully compiled before effects; existing kernel-held repository locks. Do not add frameworks, compatibility twins, smoke tests or implementation/fixtures/exhaust folders.
+
+After every source obligation and all seven integration journeys are closed, freeze writers, transfer permanent contracts/checklists, retire final-solution and root PROMPT as chapter 90 directs, and qualify the **post-retirement** candidate. Run the full final repair/rerun cycle, including real required platforms/backends and fresh packed consumers. Missing evidence remains unqualified; no fake manifest, waiver or invented follow-up wave.
+
+When all required prepublication evidence passes, verify candidate/staged equality, make **one final integrated commit and push this branch**. Do not publish packages, deploy/migrate real tenants, delete user data or change sibling projects. If required external prerequisites or a genuine contract conflict prevent completion, finish independent work and return the precise blocker and remaining checklist without claiming a release.

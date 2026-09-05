@@ -116,6 +116,7 @@ fn scaled_magnitude_decomposition_is_exact() {
     );
 }
 
+/// C-D19-cancel
 #[test]
 fn exact_sum_matches_rational_oracle() {
     // {1e16, 1, -1e16}: exact accumulation cancels to exactly 1.0 — the
@@ -182,6 +183,7 @@ fn sum_is_permutation_and_partition_independent() {
     assert_eq!(expected, sum_bits(&values));
 }
 
+/// C-D19-merge-not-idemp (`merge_not_idempotent`)
 #[test]
 fn partial_state_replay_is_not_idempotent() {
     // Merging one finite partial state with itself doubles contribution and
@@ -204,6 +206,7 @@ fn partial_state_replay_is_not_idempotent() {
     assert_eq!(*mag, once.mul_u64(2), "the contribution doubled exactly");
 }
 
+/// C-D19-mean-once
 #[test]
 fn mean_divides_exact_rational_not_rounded_sum() {
     // {MAX, MAX}: the once-rounded SUM is +inf, but the exact mean is

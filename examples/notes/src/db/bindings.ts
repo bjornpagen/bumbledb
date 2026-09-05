@@ -21,6 +21,7 @@
  * genuinely durable owned storage — the dev flow — and are never claimed
  * durable on an ephemeral function filesystem.
  */
+import { randomUUID } from "node:crypto"
 import * as fs from "node:fs"
 import * as path from "node:path"
 import type { HistoryBinding } from "@bjornpagen/bumbledb-log"
@@ -82,11 +83,11 @@ const loadRegistry = Effect.fn("bindings.loadRegistry")(function* () {
 		return yield* new BindingRegistryInvalid({ detail: `tenant registry exceeds ${REGISTRY_LIMIT_BYTES} bytes` })
 	}
 	const raw = fs.readFileSync(file, "utf8")
-	const parsed = Result.try(() => JSON.parse(raw) as unknown)
-	if (Result.isFailure(parsed)) {
-		return yield* new BindingRegistryInvalid({ detail: `tenant registry is not JSON: ${file}` })
-	}
-	return yield* decodeRegistry(parsed.success).pipe(
+	const parsed = yield* Effect.try({
+		try: () => JSON.parse(raw),
+		catch: () => new BindingRegistryInvalid({ detail: `tenant registry is not JSON: ${file}` })
+	})
+	return yield* decodeRegistry(parsed).pipe(
 		Effect.mapError((cause) => new BindingRegistryInvalid({ detail: String(cause) }))
 	)
 })
@@ -123,6 +124,8 @@ export const bindingFor = Effect.fn("bindings.bindingFor")(function* (tenantId: 
 	} satisfies HistoryBinding
 })
 
+const decodeRegistrySync = Schema.decodeUnknownSync(Registry)
+
 /** Used by scripts/init-tenant.ts to persist a verified binding record. */
 export function saveTenantBinding(
 	tenantId: string,
@@ -134,9 +137,9 @@ export function saveTenantBinding(
 	fs.mkdirSync(path.dirname(file), { recursive: true })
 	const stat = fs.statSync(file, { throwIfNoEntry: false })
 	const current =
-		stat === undefined ? { tenants: {} } : (JSON.parse(fs.readFileSync(file, "utf8")) as { tenants: Record<string, unknown> })
+		stat === undefined ? { tenants: {} } : decodeRegistrySync(JSON.parse(fs.readFileSync(file, "utf8")))
 	current.tenants = { ...current.tenants, [tenantId]: record }
-	const staged = `${file}.tmp-${process.pid}`
+	const staged = `${file}.tmp-${randomUUID()}`
 	fs.writeFileSync(staged, `${JSON.stringify(current, null, "\t")}\n`)
 	fs.renameSync(staged, file)
 }

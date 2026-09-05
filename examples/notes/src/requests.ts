@@ -15,6 +15,7 @@
  */
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { randomUUID } from "node:crypto"
 import type { Id128 } from "@bjornpagen/bumbledb"
 import type { CommandRef, SubmitOutcome } from "@bjornpagen/bumbledb-log"
 import { renderCommandRef, renderDecisionStamp } from "@bjornpagen/bumbledb-log"
@@ -31,16 +32,27 @@ function recordPath(tenantId: string, requestKey: Id128): string {
 
 function writeAtomic(file: string, body: unknown): void {
 	fs.mkdirSync(path.dirname(file), { recursive: true })
-	const staged = `${file}.tmp-${process.pid}`
+	const staged = `${file}.tmp-${randomUUID()}`
 	fs.writeFileSync(staged, `${JSON.stringify(body, null, "\t")}\n`)
 	fs.renameSync(staged, file)
+}
+
+function readRecord(file: string): Record<string, unknown> {
+	if (!fs.existsSync(file)) {
+		return {}
+	}
+	const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		return {}
+	}
+	return parsed
 }
 
 /** Persist the ref BEFORE dispatch; the recovery coordinate survives us. */
 export const rememberCommandRef = (tenantId: string, requestKey: Id128, ref: CommandRef) =>
 	Effect.sync(() => {
 		const file = recordPath(tenantId, requestKey)
-		const existing = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>) : {}
+		const existing = readRecord(file)
 		writeAtomic(file, { ...existing, ref: renderCommandRef(ref), refAt: new Date().toISOString() })
 	})
 
@@ -48,7 +60,7 @@ export const rememberCommandRef = (tenantId: string, requestKey: Id128, ref: Com
 export const rememberSubmitOutcome = (tenantId: string, requestKey: Id128, outcome: SubmitOutcome) =>
 	Effect.sync(() => {
 		const file = recordPath(tenantId, requestKey)
-		const existing = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>) : {}
+		const existing = readRecord(file)
 		const observed =
 			outcome.kind === "decided"
 				? {
@@ -66,6 +78,7 @@ export function storedRef(tenantId: string, requestKey: Id128): string | undefin
 	if (!fs.existsSync(file)) {
 		return undefined
 	}
-	const record = JSON.parse(fs.readFileSync(file, "utf8")) as { ref?: string }
-	return record.ref
+	const record = readRecord(file)
+	const ref = record.ref
+	return typeof ref === "string" ? ref : undefined
 }

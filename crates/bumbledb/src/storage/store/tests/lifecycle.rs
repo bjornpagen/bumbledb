@@ -262,3 +262,65 @@ fn the_writer_is_exclusive_and_reentrancy_refuses() {
     drop(owner);
     drop(store.writer(&context).expect("writer after release"));
 }
+
+#[test]
+fn install_populated_leaves_no_destination_on_population_failure() {
+    let (_dir, path) = store_dir("store-install-populated");
+    let schema = schema();
+    let work = work();
+    let err = Store::install_populated(&path, &schema, MapPolicy::default(), &work, |_stage, _| {
+        Err(StoreError::Allocation)
+    })
+    .expect_err("population failure");
+    assert!(matches!(err, StoreError::Allocation));
+    assert!(
+        !path.exists(),
+        "destination must stay absent when population fails before publish"
+    );
+}
+
+#[test]
+fn install_populated_publishes_complete_store() {
+    let (_dir, path) = store_dir("store-install-complete");
+    let schema = schema();
+    let work = work();
+    let changes = change_set(&schema, &[(NOTE, note(1, "published"))], &[]);
+    let store = Store::install_populated(&path, &schema, MapPolicy::default(), &work, |stage, work| {
+        stage.apply(&changes, work)?;
+        Ok(())
+    })
+    .expect("installed");
+    assert!(path.exists());
+    assert_eq!(
+        store.snapshot(&work).expect("snap").row_count(NOTE).expect("count"),
+        1
+    );
+}
+
+#[test]
+fn unready_admit_install_publishes_without_query_surface() {
+    use super::super::staging::{InstallOutcome, UnreadyStore};
+
+    let (_dir, path) = store_dir("store-unready-install");
+    let schema = schema();
+    let work = work();
+    let changes = change_set(&schema, &[(NOTE, note(1, "staged"))], &[]);
+    let unready = UnreadyStore::begin(&path, &schema, MapPolicy::default(), &work).expect("begin");
+    unready
+        .populate(&work, |stage, work| {
+            stage.apply(&changes, work)?;
+            Ok(())
+        })
+        .expect("populate");
+    let admitted = unready.admit(&schema, &work).expect("admitted");
+    match admitted.install(&schema, MapPolicy::default(), &work) {
+        InstallOutcome::Installed(store) => {
+            assert!(path.exists());
+            assert_eq!(
+                store.snapshot(&work).expect("snap").row_count(NOTE).expect("count"),
+                1
+            );
+        }
+        other => panic!("expected Installed, got {other:?}"),
+    }
+}

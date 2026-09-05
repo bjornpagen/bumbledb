@@ -8,17 +8,63 @@ import { ScriptError } from "./errors.ts"
 import { packedMainManifest, packedPlatformManifest } from "./pin.ts"
 import { PUBLISH_PLATFORMS } from "./platform.ts"
 
+/** Repository root (three levels above ts/scripts/). */
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url))
+
+/** Pack provenance bound to the same candidate/spec digests as release qualification. */
+export type PackProvenance = {
+	candidateSourceDigest: string
+	specificationRevision: string
+	stagedAt: string
+	package: string
+	version: string
+}
+
+function readReleaseDigest(flag: "--candidate-digest" | "--specification-revision"): string {
+	const out = spawnSync("node", ["scripts/release-results.mjs", flag], {
+		cwd: repoRoot,
+		encoding: "utf8"
+	})
+	if (out.error) {
+		throw new ScriptError({ message: `spawn release-results.mjs ${flag}`, cause: out.error })
+	}
+	if (out.status !== 0) {
+		throw new ScriptError({
+			message: `release-results.mjs ${flag} exited with status ${out.status}: ${out.stderr}`
+		})
+	}
+	const digest = out.stdout.trim()
+	if (!/^[a-f0-9]{64}$/.test(digest)) {
+		throw new ScriptError({ message: `release-results.mjs ${flag} returned an invalid digest` })
+	}
+	return digest
+}
+
+export function packProvenance(packageName: string, version: string): PackProvenance {
+	return {
+		candidateSourceDigest: readReleaseDigest("--candidate-digest"),
+		specificationRevision: readReleaseDigest("--specification-revision"),
+		stagedAt: new Date().toISOString(),
+		package: packageName,
+		version
+	}
+}
+
+function writePackProvenance(stagedDir: string, provenance: PackProvenance): void {
+	fs.writeFileSync(path.join(stagedDir, "pack-provenance.json"), `${JSON.stringify(provenance, null, "\t")}\n`)
+}
+
 /**
- * Immutable pack staging (chapter 32 "Build and publish without mutating
- * the checkout"). Packing copies the already-built outputs and the
+ * Immutable pack staging (docs/reference/packaging.md). Packing copies
+ * the already-built outputs and the
  * committed sources into an isolated staging tree, writes the derived
  * packed manifest (exact platform pins injected there, never in the
  * checkout), and runs `pnpm pack` inside that tree. The committed
  * manifests carry no lifecycle pack hooks, so an interruption at any
  * phase leaves the checkout byte-identical and a retry restages from
- * scratch. Release/pre-promotion lanes (`scripts/packed-import.sh`, the
- * F3 artifact campaign) consume these tarballs; `pnpm publish` publishes
- * the staged tarball, never the live checkout.
+ * scratch. Release/pre-promotion lanes (`scripts/packed-import.sh`)
+ * consume these tarballs; `pnpm publish` publishes the staged tarball,
+ * never the live checkout. Local packing is not PKG-07B.
  *
  * CLI: `node scripts/stage.ts --out <dir> [--skip-binary]`
  *   Stages and packs the main package plus every `npm/<target>` platform
@@ -128,6 +174,7 @@ function stageMainPackage(packageRoot: string, stagingDir: string, outDir: strin
 		}
 	}
 	writeManifest(path.join(staged, "package.json"), manifest)
+	writePackProvenance(staged, packProvenance("@bjornpagen/bumbledb", version))
 
 	const tarball = path.join(outDir, `bjornpagen-bumbledb-${version}.tgz`)
 	packInto(staged, tarball)
@@ -176,6 +223,7 @@ function stagePlatformPackage(
 	const staged = path.join(stagingDir, `bumbledb-${platform}`)
 	fs.mkdirSync(staged, { recursive: true })
 	writeManifest(path.join(staged, "package.json"), manifest)
+	writePackProvenance(staged, packProvenance(`@bjornpagen/bumbledb-${platform}`, version))
 	fs.copyFileSync(path.join(sourceDir, "LICENSE"), path.join(staged, "LICENSE"))
 	fs.copyFileSync(binary, path.join(staged, "bumbledb.node"))
 
@@ -183,7 +231,7 @@ function stagePlatformPackage(
 	packInto(staged, tarball)
 
 	const files = tarballFiles(tarball).toSorted()
-	const expected = ["LICENSE", "bumbledb.node", "package.json"]
+	const expected = ["LICENSE", "bumbledb.node", "pack-provenance.json", "package.json"]
 	if (JSON.stringify(files) !== JSON.stringify(expected)) {
 		throw new ScriptError({
 			message: `the ${platform} tarball must contain exactly ${JSON.stringify(expected)}, found ${JSON.stringify(files)}`
@@ -225,4 +273,4 @@ if (invokedDirectly) {
 	main()
 }
 
-export { packInto, readJson, stageMainPackage, stagePlatformPackage, tarballFile, tarballFiles, writeManifest }
+export { packInto, packProvenance, readJson, stageMainPackage, stagePlatformPackage, tarballFile, tarballFiles, writeManifest }

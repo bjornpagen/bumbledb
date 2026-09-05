@@ -65,8 +65,10 @@ impl Executor {
             counters.phase_start(node_idx, JoinPhase::Descend);
             let n_residuals = scan_residuals.len();
             let mut filtered = std::mem::take(&mut self.scan_filter);
+            let mut explored = 0usize;
             let drove = scan.colt.for_each_suffix_run(cursor, |run| {
                 counters.batch(node_idx, run.len());
+                explored += run.len();
                 if n_residuals == 0 {
                     sink.scan_run(&scan, run);
                     return;
@@ -140,6 +142,12 @@ impl Executor {
             }
             counters.phase_end(node_idx, JoinPhase::Descend);
             self.scan_filter = filtered;
+            // One fused scan is a single bounded kernel pass; the ledger
+            // poll lands between scans (cancellation/deadline plus the
+            // scanned positions' work charge).
+            if !self.note_explored(explored, &*colts) {
+                return None;
+            }
             Some(Flow::Continue)
         }
     }

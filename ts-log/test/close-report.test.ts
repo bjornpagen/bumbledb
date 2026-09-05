@@ -4,7 +4,7 @@
  * structured `CloseFailure` defect while the receipt stays retained; an
  * incomplete close is reported, never counted as reclaimed. Maps to the
  * chapter 35 row "known receipt, then finalizer defect"; API-04/API-10,
- * OPS-TEST-02 (layer side), OPS-006.
+ * OPS-TEST-02 (layer side), OPS-006. D18 close/finalizer discriminator.
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
@@ -82,7 +82,8 @@ describe("known receipt, then finalizer defect", function suite() {
 								outcome: {
 									kind: "decided",
 									receipt: receiptWire,
-									localHealth: { kind: "ready", at: receiptWire.decisionAt }
+									localHealth: { kind: "ready", at: receiptWire.decisionAt },
+									publicationPhase: "confirmed"
 								}
 							}
 						})

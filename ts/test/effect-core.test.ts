@@ -72,7 +72,7 @@ test("create/apply/snapshot/get/execute — the whole chapter 34 core flow, one 
 				assert.ok(Option.isSome(present))
 				assert.deepEqual(present.value, { id: studentId, name: "Ada", budget: 10n })
 				const result = yield* snapshot.execute(attemptsFor, { student: studentId }, work)
-				const rows = yield* result.collect({ maxBytes: work.resultBytes })
+				const rows = yield* result.collect({ maxBytes: work.resultBytes }, work)
 				assert.equal(rows.length, 1)
 				assert.deepEqual(rows[0], {
 					id: attemptId,
@@ -282,7 +282,7 @@ test("a foreign-schema query template refuses typed at execute", async function 
 		if (exit._tag === "Failure") {
 			const reason = exit.cause.reasons.find(Cause.isFailReason)
 			assert.ok(reason?.error instanceof DbError)
-			assert.equal(reason.error.code, "Incompatible")
+			assert.equal(reason.error.code, "InvalidArgument")
 		}
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)

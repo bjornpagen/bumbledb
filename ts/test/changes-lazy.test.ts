@@ -24,10 +24,10 @@ import { test } from "node:test"
 import { Cause, Effect, ManagedRuntime, Option } from "effect"
 import { ChangeSet } from "#changes.ts"
 import { Db } from "#db.ts"
-import { bytes } from "#fields.ts"
+import { bytes, str } from "#fields.ts"
 import { Id128 } from "#id128.ts"
 import type { Fact } from "#relation.ts"
-import { cellOf } from "#rows.ts"
+import { assertHostCellFits, cellOf, hostCellCharge } from "#rows.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
@@ -279,9 +279,13 @@ test("same-command normalization: exact same-fact add wins over remove, independ
 })
 
 test("SharedArrayBuffer-backed cells refuse before any copy (pure projector wall)", function sharedBackingRefuses() {
-	// The Learning schema carries no bytes field; the shared-backing wall is
-	// exercised through the one cell projector (rows.ts) every ingestion
-	// path shares — refused before any native dispatch or copy.
 	const shared = new Uint8Array(new SharedArrayBuffer(4))
 	assert.throws(() => cellOf("test", bytes(4), shared), /SharedArrayBuffer-backed views are refused/)
+})
+
+test("host string length is judged before isWellFormed / copy (TS-004)", function hostLengthBeforeScan() {
+	const oversize = "x".repeat(40_000)
+	assert.ok(hostCellCharge(oversize) > 65536n)
+	assert.throws(() => cellOf("test", str, oversize), /exceeds the 65536-byte converter bound/)
+	assert.throws(() => assertHostCellFits("test", oversize, 65536n), /refuse before copy or scan/)
 })

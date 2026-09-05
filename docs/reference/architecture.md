@@ -1,9 +1,9 @@
 # Architecture — the shipped product shape
 
-Status: permanent-doc skeleton. Semantics remain normative in
-`final-solution/` until proposal retirement (see [README](README.md));
-this page records the STRUCTURAL facts that are already true in the
-source tree, so consumers and reviewers have one stable orientation page.
+Status: permanent orientation page. Semantics live in
+[semantics.md](semantics.md); public usage in [api.md](api.md);
+performance/storage in [performance.md](performance.md). This page
+records the structural facts that are already true in the source tree.
 
 ## Product
 

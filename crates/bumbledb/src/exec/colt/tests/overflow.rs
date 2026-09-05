@@ -20,7 +20,7 @@ fn overflowing_home_buckets_chain_to_the_next_and_round_trip() {
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
-    colt.ensure_forced(root, 0);
+    colt.ensure_forced(root, 0).expect("force");
     assert_eq!(colt.forced_capacity(root), Some(64), "8 buckets");
 
     let column: Vec<u64> = view.column_words(0).to_vec();

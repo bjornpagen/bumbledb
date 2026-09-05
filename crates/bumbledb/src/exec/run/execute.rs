@@ -271,6 +271,7 @@ impl Executor {
             } else {
                 Drive::Leaf
             },
+            ledger: None,
             cancelled: Vec::new(),
             cancel_epoch: 0,
             next_origin: 0,
@@ -316,6 +317,15 @@ impl Executor {
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.drive_state = super::DriveState::Running;
+        // Re-bind the current ledger (run_join already bound before
+        // force_root/select; harnesses that skip run_join bind here,
+        // still before start()/probe force).
+        if let Some(ledger) = &self.ledger {
+            let work = ledger.work.clone();
+            for colt in colts.iter_mut() {
+                colt.bind(Some(&work));
+            }
+        }
 
         self.overlap.reset();
         self.cursors.clear();
@@ -328,14 +338,38 @@ impl Executor {
                 self.run_pipeline(plan, colts, bindings, sink, counters);
             }
             Drive::Leaf => {
-                self.run_node(plan, 0, colts, bindings, sink, counters);
+                let flow = self.run_node(plan, 0, colts, bindings, sink, counters);
+                if flow.is_terminal() {
+                    self.poison(match flow {
+                        super::Flow::Stop => super::Poison::SinkStop,
+                        _ => super::Poison::SinkError,
+                    });
+                }
             }
         }
 
+        // The execution ended: refund this execution's COLT growth
+        // reservations before surfacing any outcome (a working-byte
+        // refusal must not leave phantom charges in front of the one
+        // bounded fallback restart).
+        self.end_work(colts);
         match std::mem::replace(&mut self.drive_state, super::DriveState::Running) {
             super::DriveState::Poisoned(super::Poison::OriginOverflow) => Err(
                 crate::error::Error::Overflow(crate::error::OverflowKind::OriginCapacity),
             ),
+            super::DriveState::Poisoned(super::Poison::Work(error)) => {
+                Err(crate::api::prepared::source::work_error(error))
+            }
+            super::DriveState::Poisoned(super::Poison::SinkStop) => {
+                sink.take_error().map_or(Ok(()), Err)
+            }
+            super::DriveState::Poisoned(super::Poison::SinkError) => Err(sink
+                .take_error()
+                .unwrap_or_else(|| {
+                    crate::error::Error::Corruption(
+                        crate::error::CorruptionError::MalformedValue("sink error without payload"),
+                    )
+                })),
             super::DriveState::Running | super::DriveState::SkipDone => Ok(()),
         }
     }

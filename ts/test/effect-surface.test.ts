@@ -111,3 +111,19 @@ test("get/execute/session/close on typed handles are declared Effect-returning (
 	assert.ok(closeIsEffect)
 	void ({} as { attempt: typeof Attempt; student: typeof Student })
 })
+
+test("internal/log ships Capability and QueryReader types; no writer ABI remains", function internalSeam() {
+	type Cap = import("#runtime-native.ts").Capability
+	type Reader = import("#db.ts").QueryReader<typeof Learning>
+	const cap: Cap = { runtime: 1n, worker: 0, kind: "snapshot", id: 1n, generation: 1n }
+	assert.equal(cap.kind, "snapshot")
+	type NativeApi = typeof import("#runtime-native.ts").runtimeNative
+	type HasWriter = "runtimeDbWriter" extends keyof NativeApi ? true : false
+	const noWriter: HasWriter = false
+	assert.ok(!noWriter)
+	type Get = Reader["get"]
+	const getIsEffect: Get extends (...args: never) => import("effect").Effect.Effect<unknown, unknown, unknown>
+		? true
+		: false = true
+	assert.ok(getIsEffect)
+})

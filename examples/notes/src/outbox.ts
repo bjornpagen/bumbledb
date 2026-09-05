@@ -12,7 +12,7 @@ import type { ExecutionPolicy, Id128 } from "@bjornpagen/bumbledb"
 import type { History, HistoryBorrow } from "@bjornpagen/bumbledb-log"
 import { Effect, Schema } from "effect"
 import { retireOutbox } from "./db/commands.ts"
-import { pendingOutbox } from "./db/queries.ts"
+import { listPendingOutbox } from "./db/reads.ts"
 import type { App } from "./db/schema.ts"
 
 export class WebhookFailed extends Schema.TaggedError<WebhookFailed>()("WebhookFailed", {
@@ -59,8 +59,7 @@ export const dispatchOutbox = Effect.fn("outbox.dispatch")(
 		const rows = yield* Effect.scoped(
 			Effect.gen(function* () {
 				const snapshot = yield* history.snapshot({ ...work, consistency: { kind: "latest" } })
-				const result = yield* snapshot.execute(pendingOutbox, {}, work)
-				return yield* result.collect({ maxBytes: work.resultBytes })
+				return yield* listPendingOutbox(snapshot, work)
 			})
 		)
 		let retired = 0

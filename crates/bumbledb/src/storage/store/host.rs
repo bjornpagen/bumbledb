@@ -96,6 +96,74 @@ pub struct HostChanges<'a> {
     pub attachment: AttachmentChange<'a>,
 }
 
+/// Exclusive resume after one charged host window. Holds only the last
+/// visited key — never the remaining set.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostResume {
+    key: [u8; MAX_HOST_KEY],
+    len: u16,
+}
+
+impl HostResume {
+    /// # Errors
+    /// Key longer than [`MAX_HOST_KEY`].
+    pub fn from_key(key: &[u8]) -> Result<Self, super::error::StoreError> {
+        if key.len() > MAX_HOST_KEY {
+            return Err(super::error::StoreError::HostKey(
+                super::error::HostKeyFault::TooLong { actual: key.len() },
+            ));
+        }
+        let mut stored = [0u8; MAX_HOST_KEY];
+        stored[..key.len()].copy_from_slice(key);
+        Ok(Self {
+            key: stored,
+            len: key.len() as u16,
+        })
+    }
+
+    #[must_use]
+    pub fn as_key(&self) -> &[u8] {
+        &self.key[..usize::from(self.len)]
+    }
+}
+
+/// One charged host window. Peak RAM is this window, not every matching key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostWindow {
+    /// More keys may exist after [`HostResume`].
+    More {
+        resume: HostResume,
+        records: u64,
+        bytes: u64,
+    },
+    /// This prefix is exhausted in the scanned range.
+    Done { records: u64, bytes: u64 },
+}
+
+impl HostWindow {
+    #[must_use]
+    pub fn resume(&self) -> Option<&HostResume> {
+        match self {
+            Self::More { resume, .. } => Some(resume),
+            Self::Done { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn records(&self) -> u64 {
+        match *self {
+            Self::More { records, .. } | Self::Done { records, .. } => records,
+        }
+    }
+
+    #[must_use]
+    pub const fn bytes(&self) -> u64 {
+        match *self {
+            Self::More { bytes, .. } | Self::Done { bytes, .. } => bytes,
+        }
+    }
+}
+
 /// The exact seal-side grammar refusal for one structured store fault:
 /// the integration facade surfaces the same [`HostSealError`] the grammar
 /// has always spoken.

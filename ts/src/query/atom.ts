@@ -14,7 +14,8 @@ import type {
 	SetParam,
 	ShapeOf
 } from "#query/scope.ts"
-import type { ComputeData, ComputeKind } from "#query/compute.ts"
+import type { QueryNode } from "#query/compute.ts"
+import type { ScalarKind } from "#scalar.ts"
 import { isTerm, term } from "#query/scope.ts"
 import type { FieldsShape } from "#relation.ts"
 
@@ -71,10 +72,11 @@ type AggData =
 	  }
 	| { readonly op: "pack"; readonly over: AnyVar }
 
+/** Compute `expr` is the shared `#scalar.ts` query-var node (one grammar). */
 type FindEntryData =
 	| { readonly kind: "var"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
-	| { readonly kind: "compute"; readonly expr: ComputeData; readonly result: ComputeKind }
+	| { readonly kind: "compute"; readonly expr: QueryNode; readonly result: ScalarKind }
 
 interface FindColumn {
 	readonly name: string

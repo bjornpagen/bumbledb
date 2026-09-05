@@ -1,6 +1,7 @@
-//! The application performance scorecard (chapter 40; gates APP-FAST,
-//! APP-MUTATE, APP-NUMERIC, APP-LARGE, APP-TENANTS, APP-TARGETS, APP-METHOD,
-//! APP-MAGIC; audit PERF-003).
+//! Compact chapter-40 scorecard (resident read, mutation→read, numeric/
+//! interval/Pack, nonresident, tenant lifecycle, hosted decision).
+//! Gates APP-FAST/MUTATE/NUMERIC/LARGE/TENANTS/TARGETS/METHOD/MAGIC;
+//! audit PERF-001–005 and REVIEW-001. Verification: NotRun.
 //!
 //! Authored during F1; every measurement executes only in F3, serialized per
 //! host. The module owns:
@@ -23,8 +24,11 @@
 //! distributions retained, no-sync reported separately and never as durable
 //! evidence, and no invented ratios from timeouts.
 
+pub mod constants;
 pub mod hosted;
+pub mod instrument;
 pub mod layers;
+pub mod plan;
 pub mod runner;
 #[cfg(test)]
 mod tests;
@@ -151,6 +155,17 @@ pub struct CostAccount {
     /// On-disk consumption after the cell (store + temporary scratch).
     pub disk_bytes: Option<u64>,
     pub scratch_bytes: Option<u64>,
+    /// Actual visitor counts (L01 consume_visits). Missing is a hole, not zero.
+    pub source_visits: Option<u64>,
+    pub group_visits: Option<u64>,
+    /// Charged-owner snapshot (L03). Logical bytes, not RSS.
+    pub work_units: Option<u64>,
+    pub working_bytes: Option<u64>,
+    /// Compiled index roster size for the cell's schema.
+    pub roster_entries: Option<u64>,
+    /// Virtual map vs allocated disk (PERF-002). Never report map as RSS.
+    pub virtual_map_bytes: Option<u64>,
+    pub allocated_disk_bytes: Option<u64>,
 }
 
 /// Preparation / execution / delivery attribution for one operation. Segments

@@ -10,16 +10,15 @@
  */
 import type {
 	AnySchema,
-	CloseReport,
 	DbError,
 	ExecutionPolicy,
 	ExecutionSession,
 	NativeRuntime,
-	QueryReader,
 	RuntimeHandle,
 	SchemaId
 } from "@bjornpagen/bumbledb"
-import { policyWire } from "@bjornpagen/bumbledb"
+import type { Capability, ChangeSet, CompleteResult, QueryReader } from "@bjornpagen/bumbledb/internal/log"
+import { policyWire } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Result } from "effect"
 import type { Scope } from "effect"
 import type { CancelVerb } from "#bridge.ts"
@@ -74,6 +73,7 @@ import type {
 	PlansWire,
 	PreconditionWire,
 	ProvenanceWire,
+	PublicationPhaseWire,
 	ReceiptWire,
 	ResultWire,
 	SealRequestWire,
@@ -116,6 +116,7 @@ import type {
 	MigrateValue,
 	MigrationRef,
 	MigrationStatus,
+	PublicationPhase,
 	ReceiptRetirementReport,
 	ReceiptRotationReport,
 	ResolveOutcome,
@@ -134,9 +135,13 @@ import type { Command, CommandInput, History, HistoryBorrow, PublishedSnapshot, 
 export interface PublishedReadCapability<S extends AnySchema> {
 	/** Self-contained (closure-captured) methods; never `this`-dependent. */
 	readonly get: QueryReader<S>["get"]
+	/** Core QueryReader.execute — yields the CompleteResult owner. */
 	readonly execute: QueryReader<S>["execute"]
 	readonly session: (work: ExecutionPolicy) => Effect.Effect<ExecutionSession<S>, DbError, Scope.Scope>
 }
+
+/** Published execute result: the core CompleteResult, not a copied page. */
+export type PublishedCompleteResult<A> = CompleteResult<A>
 
 /** The exact shape the core's landed `internalChanges` accessor returns. */
 export interface CoreChangesView {
@@ -146,15 +151,18 @@ export interface CoreChangesView {
 }
 
 export interface CoreIntegration {
-	/** Wrap a published core snapshot handle in the exact core QueryReader. */
-	reader<S extends AnySchema>(core: CoreSnapshotHandle, schema: S): PublishedReadCapability<S>
+	/**
+	 * Wrap a published core snapshot Capability in the exact core QueryReader
+	 * (`internalPublishedReader` in production).
+	 */
+	reader<S extends AnySchema>(core: CoreSnapshotHandle | Capability, schema: S): PublishedReadCapability<S>
 	/**
 	 * The core's private ChangeSet registry accessor (`internalChanges`):
 	 * `undefined` for a foreign dynamic object, `closed` mirrors the native
 	 * capability state, and `handle` is the retained native change — the
 	 * exact accepted bytes, never a reconstruction.
 	 */
-	changes(value: object): CoreChangesView | undefined
+	changes(value: ChangeSet<AnySchema> | object): CoreChangesView | undefined
 	/** The core schema lowering (`lower`) the native boundary admits. */
 	schemaSpec(schema: AnySchema): unknown
 	/** The acquired shared runtime capability (core `runtimeHandle`). */
@@ -248,6 +256,18 @@ function healthOf(operation: string, wire: HealthWire): LocalMaterializationHeal
 		return { kind: "ready", at: stampOf(wire.at) }
 	}
 	return { kind: "unavailable", error: errorOf(operation, wire.error) }
+}
+
+function phaseOf(operation: string, wire: PublicationPhaseWire): PublicationPhase {
+	switch (wire) {
+		case "prepared":
+		case "dispatchedUnresolved":
+		case "confirmed":
+		case "provedNonpublication":
+			return wire
+		default:
+			throw invalidInput(operation)
+	}
 }
 
 function inspectionOf(wire: HistoryInspectionWire): HistoryInspection {
@@ -362,7 +382,14 @@ function consistencyWire(operation: string, options: ReadOptions): ConsistencyWi
 	if (consistency.kind !== "at-least") {
 		throw invalidInput(operation)
 	}
-	return { kind: "at-least", seq: consistency.at.seq, hash: consistency.at.hash }
+	// Checked outbound: the requested stamp is caller input. The hash is the
+	// exact 64-hex decision digest the native ancestry witness validates —
+	// AtLeast is never a bare sequence floor, so a malformed stamp refuses
+	// HERE, before dispatch.
+	if (typeof consistency.at.seq !== "bigint" || consistency.at.seq < 0n) {
+		throw invalidInput(operation)
+	}
+	return { kind: "at-least", seq: consistency.at.seq, hash: checkedString(operation, consistency.at.hash, 64) }
 }
 
 function refWire(operation: string, ref: CommandRef): CommandRefWire {
@@ -445,16 +472,9 @@ function creationWire(operation: string, creation: CreationOptions) {
 	}
 }
 
-function snapshotsField(
-	operation: string,
-	plans: MigrationPlansInput
-): { readonly snapshots?: readonly string[] } {
-	if (plans.snapshots === undefined) {
-		return {}
-	}
-	// Base schema snapshot first, then each entry's target: entries + 1 rows,
-	// each a bounded canonical `schema_file::render` text (inert transport;
-	// the native codec re-parses and re-judges).
+function snapshotsField(operation: string, plans: MigrationPlansInput): { readonly snapshots: readonly string[] } {
+	// Base schema snapshot first, then each entry's target: entries + 1 rows.
+	// Empty source still supplies the empty-schema render — never optional.
 	if (!Array.isArray(plans.snapshots) || plans.snapshots.length !== plans.manifest.entries.length + 1) {
 		throw invalidInput(operation)
 	}
@@ -545,15 +565,11 @@ export interface MigrationTargetOptions extends TenantOpenOptions {
 }
 
 /**
- * The generated migrations plus the canonical schema snapshot texts the
- * generator wrote to `meta/` (native `schema_file::render` output verbatim):
- * base schema first, then each entry's target — `entries.length + 1` rows.
- * The runner verbs that compile steps require them; digests alone cannot
- * reconstruct descriptors.
+ * The generated migrations including the mandatory snapshot chain
+ * (empty-base first, then each entry's target). Digests alone cannot
+ * reconstruct descriptors; empty source is not a compile shortcut.
  */
-export type MigrationPlansInput = GeneratedMigrations & {
-	readonly snapshots?: readonly string[]
-}
+export type MigrationPlansInput = GeneratedMigrations
 
 export interface AdminIdentityOptions extends ExecutionPolicy, TenantOpenOptions {
 	readonly operationId: OperationId
@@ -695,12 +711,23 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return {
 					kind: "decided",
 					receipt: receiptOf(outcome.receipt),
-					localHealth: healthOf(operation, outcome.localHealth)
+					localHealth: healthOf(operation, outcome.localHealth),
+					phase: phaseOf(operation, outcome.publicationPhase)
 				}
 			case "not-submitted":
-				return { kind: "not-submitted", command: ref, error: errorOf(operation, outcome.error) }
+				return {
+					kind: "not-submitted",
+					command: ref,
+					error: errorOf(operation, outcome.error),
+					phase: phaseOf(operation, outcome.publicationPhase)
+				}
 			case "outcome-unknown":
-				return { kind: "outcome-unknown", command: ref, error: errorOf(operation, outcome.error) }
+				return {
+					kind: "outcome-unknown",
+					command: ref,
+					error: errorOf(operation, outcome.error),
+					phase: phaseOf(operation, outcome.publicationPhase)
+				}
 		}
 	}
 
@@ -780,11 +807,15 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 						return Effect.die(invalidInput(operation))
 					}
 					const ref = command.ref
+					// Identity is this sealed ref. Interrupt after dispatch is
+					// outcome-unknown under `ref`; retry resolve/resubmit here,
+					// never Command.seal of a newly minted id.
 					if (state.closed || entry.state.closed) {
 						return Effect.succeed<SubmitOutcome>({
 							kind: "not-submitted",
 							command: ref,
-							error: closedHandle(operation)
+							error: closedHandle(operation),
+							phase: "prepared"
 						})
 					}
 					return certaintyOperation(
@@ -805,8 +836,18 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 							),
 						wire.logHistoryResult,
 						(result) => decodeSubmit(operation, ref, result),
-						(error): SubmitOutcome => ({ kind: "not-submitted", command: ref, error }),
-						(error): SubmitOutcome => ({ kind: "outcome-unknown", command: ref, error })
+						(error): SubmitOutcome => ({
+							kind: "not-submitted",
+							command: ref,
+							error,
+							phase: "prepared"
+						}),
+						(error): SubmitOutcome => ({
+							kind: "outcome-unknown",
+							command: ref,
+							error,
+							phase: "dispatchedUnresolved"
+						})
 					)
 				})
 			},
@@ -1114,11 +1155,26 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 	): AdminOutcome<Value> {
 		switch (result.certainty) {
 			case "completed":
-				return { kind: "completed", ref, value: decode(result.value) }
+				return {
+					kind: "completed",
+					ref,
+					value: decode(result.value),
+					phase: phaseOf(operation, result.publicationPhase)
+				}
 			case "not-started":
-				return { kind: "not-started", ref, error: errorOf(operation, result.error) }
+				return {
+					kind: "not-started",
+					ref,
+					error: errorOf(operation, result.error),
+					phase: phaseOf(operation, result.publicationPhase)
+				}
 			case "outcome-unknown":
-				return { kind: "outcome-unknown", ref, error: errorOf(operation, result.error) }
+				return {
+					kind: "outcome-unknown",
+					ref,
+					error: errorOf(operation, result.error),
+					phase: phaseOf(operation, result.publicationPhase)
+				}
 			case "report":
 				// A read-only certainty from a mutating verb is a wire defect.
 				throw invalidInput(operation)
@@ -1138,17 +1194,26 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return {
 					kind: "not-started",
 					ref,
-					error: runtime.failure
+					error: runtime.failure,
+					phase: "prepared"
 				} satisfies AdminOutcome<Value>
 			}
+			// `ref` is the caller-supplied operationId, fixed before dispatch.
+			// Interrupt after the native lease is outcome-unknown under this
+			// same ref; retry status/the same operationId, never a new mint.
 			return yield* certaintyOperation(
 				operation,
 				cancel,
 				(callback) => wire.logAdmin(runtime.success, policyWire(work, operation), request(), callback),
 				wire.logAdminTake,
 				(result) => decodeAdmin(operation, ref, result, decode),
-				(error): AdminOutcome<Value> => ({ kind: "not-started", ref, error }),
-				(error): AdminOutcome<Value> => ({ kind: "outcome-unknown", ref, error })
+				(error): AdminOutcome<Value> => ({ kind: "not-started", ref, error, phase: "prepared" }),
+				(error): AdminOutcome<Value> => ({
+					kind: "outcome-unknown",
+					ref,
+					error,
+					phase: "dispatchedUnresolved"
+				})
 			)
 		})
 	}

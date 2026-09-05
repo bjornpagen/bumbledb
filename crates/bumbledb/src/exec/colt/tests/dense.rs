@@ -8,7 +8,7 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
-    colt.ensure_forced(root, 0);
+    colt.ensure_forced(root, 0).expect("force");
 
     // next_pow2(12_500 * 5 / 16) = 4_096 → 32_768 slots
 
@@ -20,7 +20,9 @@ fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     let mut calls = 0;
     let mut total = 0;
     loop {
-        let (n, next) = colt.iter_batch(root, 0, token, &mut keys, &mut children, 64);
+        let (n, next) = colt
+            .iter_batch(root, 0, token, &mut keys, &mut children, 64)
+            .expect("iter");
         if n == 0 {
             break;
         }
@@ -39,7 +41,7 @@ fn near_distinct_maps_grow_to_the_pinned_capacity() {
     let view = view_of(&schema, &rows);
     let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
     let root = Colt::root();
-    colt.ensure_forced(root, 0);
+    colt.ensure_forced(root, 0).expect("force");
 
     assert_eq!(colt.forced_capacity(root), Some(32_768));
     let entries = drain(&mut colt, root, 0);
@@ -73,7 +75,9 @@ fn dense_tokens_resume_across_interleaved_probes() {
     let mut token = BatchToken::default();
     let mut stepped = Vec::new();
     loop {
-        let (n, next) = colt.iter_batch(root, 0, token, &mut keys, &mut children, 1);
+        let (n, next) = colt
+            .iter_batch(root, 0, token, &mut keys, &mut children, 1)
+            .expect("iter");
         if n == 0 {
             break;
         }
@@ -118,12 +122,16 @@ fn a_token_that_outlives_a_force_is_refused() {
     let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
     let mut keys = vec![0u64; 8];
     let mut children = vec![Cursor::Row(0); 8];
-    let (n, token) = colt.iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8);
+    let (n, token) = colt
+        .iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8)
+        .expect("iter");
     assert_eq!(n, 8);
-    let (n, stale) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 8);
+    let (n, stale) = colt
+        .iter_batch(child, 1, token, &mut keys, &mut children, 8)
+        .expect("iter");
     assert_eq!(n, 8, "two positions batches drained");
 
-    colt.ensure_forced(child, 1);
+    colt.ensure_forced(child, 1).expect("force");
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut keys = vec![0u64; 8];
         let mut children = vec![Cursor::Row(0); 8];
@@ -157,7 +165,9 @@ fn a_token_that_outlives_a_reset_is_refused() {
     let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists");
     let mut keys = vec![0u64; 8];
     let mut children = vec![Cursor::Row(0); 8];
-    let (n, stale) = colt.iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8);
+    let (n, stale) = colt
+        .iter_batch(child, 1, BatchToken::default(), &mut keys, &mut children, 8)
+        .expect("iter");
     assert_eq!(n, 8);
 
     let _ = colt.reset(all(&view));
@@ -190,12 +200,18 @@ fn row_cursor_iteration_honors_max() {
     let child = colt.get(Colt::root(), 0, &[1]).expect("key 1 exists");
     assert!(matches!(child, Cursor::Row(_)), "singleton pins a row");
 
-    let (n, token) = colt.iter_batch(child, 1, BatchToken::default(), &mut [], &mut [], 0);
+    let (n, token) = colt
+        .iter_batch(child, 1, BatchToken::default(), &mut [], &mut [], 0)
+        .expect("iter");
     assert_eq!(n, 0, "max = 0 yields nothing");
     let mut keys = vec![0u64; 1];
     let mut children = vec![Cursor::Row(0); 1];
-    let (n, token) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 1);
+    let (n, token) = colt
+        .iter_batch(child, 1, token, &mut keys, &mut children, 1)
+        .expect("iter");
     assert_eq!((n, keys[0]), (1, 5), "max = 1 yields exactly the row");
-    let (n, _) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 1);
+    let (n, _) = colt
+        .iter_batch(child, 1, token, &mut keys, &mut children, 1)
+        .expect("iter");
     assert_eq!(n, 0, "the row yields once");
 }

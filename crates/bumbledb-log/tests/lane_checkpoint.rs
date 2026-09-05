@@ -16,6 +16,7 @@ use bumbledb_log::history::decision;
 use bumbledb_log::manifest::{RecoveryRoot, TailPolicy};
 use bumbledb_log::store::get_verified;
 use bumbledb_log::store::mem::{MemStore, Op};
+use bumbledb_log::store::{ReceiveLimits, TransportContext};
 use lane_support::{HEAD_CAP, LIMITS, Mirror, insert_user, op, work};
 
 fn policy() -> CheckpointPolicy {
@@ -24,6 +25,19 @@ fn policy() -> CheckpointPolicy {
         head_cap: HEAD_CAP,
         ..CheckpointPolicy::DEFAULT
     }
+}
+
+fn fetch_verified(
+    store: &MemStore,
+    reference: &bumbledb_log::store::ObjectRef,
+) -> bumbledb::work::ChargedBytes {
+    get_verified(
+        store,
+        "t",
+        reference,
+        TransportContext::new(&work(), ReceiveLimits::exact(reference.length)),
+    )
+    .expect("verified")
 }
 
 #[test]
@@ -67,12 +81,12 @@ fn checkpoint_captures_one_coherent_snapshot_and_publishes_exact_suffix() {
         "checkpoint at the tip has no tail"
     );
     // The manifest decodes and its chunks verify from the store.
-    let bytes = get_verified(&store, "t", &manifest).expect("manifest fetches");
-    let decoded = codec::decode_manifest(&bytes, policy().stream).expect("manifest decodes");
+    let bytes = fetch_verified(&store, &manifest);
+    let decoded = codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("manifest decodes");
     assert_eq!(decoded.rows, 3);
     assert_eq!(decoded.identity, identity);
     for chunk in &decoded.chunks {
-        get_verified(&store, "t", chunk).expect("chunk verifies");
+        let _ = fetch_verified(&store, chunk);
     }
 }
 
@@ -160,9 +174,9 @@ fn moved_head_causes_bounded_rebase_with_validated_suffix_not_reexport() {
         .count();
     let manifest_bytes = {
         let reference = recovery.checkpoint.expect("checkpoint");
-        get_verified(&store, "t", &reference).expect("manifest fetches")
+        fetch_verified(&store, &reference)
     };
-    let decoded = codec::decode_manifest(&manifest_bytes, policy().stream).expect("decodes");
+    let decoded = codec::decode_manifest(manifest_bytes.as_bytes(), policy().stream).expect("decodes");
     assert_eq!(
         puts,
         decoded.chunks.len(),
@@ -277,14 +291,14 @@ fn epoch_moved_during_export_restages_chunks_under_the_current_epoch() {
         manifest.epoch > barrier.cutoff_epoch,
         "the manifest lives in the newly opened epoch, not the closed one"
     );
-    let bytes = get_verified(&store, "t", &manifest).expect("manifest fetches");
-    let decoded = codec::decode_manifest(&bytes, policy().stream).expect("decodes");
+    let bytes = fetch_verified(&store, &manifest);
+    let decoded = codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("decodes");
     for chunk in &decoded.chunks {
         assert!(
             chunk.epoch > barrier.cutoff_epoch,
             "every chunk was restaged under the current epoch"
         );
-        get_verified(&store, "t", chunk).expect("restaged chunk verifies");
+        let _ = fetch_verified(&store, chunk);
     }
 }
 
@@ -300,6 +314,7 @@ fn tail_envelope_backpressure_is_typed_and_clears_after_checkpoint() {
         checkpoint: None,
         base: decision_stamp(0),
         tip: decision_stamp(1),
+        tip_object: None,
         tail_bytes: 100,
         epoch_floor: 0,
     };
@@ -336,6 +351,7 @@ fn tail_envelope_backpressure_is_typed_and_clears_after_checkpoint() {
     let refused = head.decided(
         control,
         100,
+        None,
         &TailPolicy {
             max_count: 0,
             max_bytes: 10,
@@ -387,13 +403,13 @@ fn receipt_retirement_advances_atomically_with_its_checkpoint() {
     let identity = mirror.identity;
     mirror.submit(&insert_user(mirror.db(), identity, 1, 10));
     // Rotate the open epoch to 2 hosted-side so epoch 1 becomes retirable.
-    bumbledb_log::admin::rotate_receipts_hosted(
+    bumbledb_log::admin::hosted_result(bumbledb_log::admin::rotate_receipts_hosted(
         &store,
         "t",
         bumbledb_log::history::ReceiptEpoch::new(2).expect("epoch"),
         HEAD_CAP,
         &work(),
-    )
+    ))
     .expect("rotation publishes");
     // Mirror the rotation locally so the next capture carries it.
     bumbledb_log::admin::rotate_receipts_local(
@@ -424,10 +440,67 @@ fn receipt_retirement_advances_atomically_with_its_checkpoint() {
         .expect("recovery")
         .checkpoint
         .expect("checkpoint");
-    let bytes = get_verified(&store, "t", &reference).expect("manifest");
-    let decoded = codec::decode_manifest(&bytes, policy().stream).expect("decodes");
+    let bytes = fetch_verified(&store, &reference);
+    let decoded = codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("decodes");
     assert_eq!(
         decoded.system_records, 0,
         "epoch-1 receipt rows are not promised by the retiring checkpoint"
+    );
+}
+
+/// D16: nonzero checkpoint-only root (seq 7) has base == tip and no tip
+/// ObjectRef. Same-tip retirement/rebase remains legal. Verification: NotRun.
+#[test]
+fn d16_checkpoint_only_at_sequence_seven_has_no_tip_locator() {
+    let store = MemStore::new();
+    let mut mirror = Mirror::create("ckpt-seq7", &store, "t");
+    let identity = mirror.identity;
+    for request in 1u8..=7 {
+        mirror.submit(&insert_user(
+            mirror.db(),
+            identity,
+            request,
+            u64::from(request) * 10,
+        ));
+    }
+    let tip_before = mirror.head().recovery.expect("recovery").tip;
+    assert_eq!(tip_before.seq, 7);
+    let outcome = publish_checkpoint(
+        mirror.db(),
+        &store,
+        "t",
+        LIMITS,
+        CheckpointKind::Ordinary,
+        &policy(),
+        &work(),
+    )
+    .expect("checkpoint at seq 7");
+    let CheckpointOutcome::Published { base, tip, .. } = outcome else {
+        panic!("expected published, got {outcome:?}");
+    };
+    assert_eq!(base, tip_before);
+    assert_eq!(tip, tip_before);
+    let recovery = mirror.head().recovery.expect("recovery");
+    assert_eq!(recovery.base, recovery.tip);
+    assert!(
+        recovery.tip_object.is_none(),
+        "checkpoint-only nonzero root has no tip locator (C6)"
+    );
+    assert_eq!(recovery.tail_count(), 0);
+    let retired = publish_checkpoint(
+        mirror.db(),
+        &store,
+        "t",
+        LIMITS,
+        CheckpointKind::RetireReceipts { through: 0 },
+        &policy(),
+        &work(),
+    );
+    assert!(
+        matches!(
+            retired,
+            Ok(CheckpointOutcome::Published { .. }) | Ok(CheckpointOutcome::Discarded { .. })
+        ),
+        "same-tip retirement/rebase is legal, got {retired:?}"
     );
 }

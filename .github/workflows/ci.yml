@@ -158,14 +158,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: ts
       - name: build the napi bridge
-        # lane_b_interop.rs spawns a Node child that loads
-        # @bjornpagen/bumbledb. nextest is battery lane 3, ahead of
-        # the ts/ trio that builds the addon.
+        # Exactly one current-addon build for this candidate/platform.
+        # Battery reuses it only after provenance matches the live digest.
         run: pnpm run build
         working-directory: ts
+      - name: stamp native provenance
+        run: node scripts/release-results.mjs --write-native-provenance
       - run: pnpm install --frozen-lockfile
         working-directory: ts-log
-      - run: scripts/battery.sh
+      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
 
   # Lane 2 — Miri, both interpretation targets (native arm64 + the
   # x86_64-linux cross-interpretation): 752 s ≈ 12.5 min measured
@@ -295,11 +296,14 @@ jobs:
       - name: build the napi bridge + SDK from source
         run: pnpm run build
         working-directory: ts
+      - name: stamp native provenance
+        run: node scripts/release-results.mjs --write-native-provenance
       - run: pnpm exec tsc --noEmit
         working-directory: ts
       - run: pnpm exec biome check .
         working-directory: ts
-      - run: pnpm test
+      - name: SDK tests without a second native rebuild
+        run: node --test 'test/**/*.test.ts'
         working-directory: ts
       - name: the FFI lint wall (cleanup-0.5.0 ruling 12)
         # ts/crate is workspace-excluded, so lane 1's clippy never reaches

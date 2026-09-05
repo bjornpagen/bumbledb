@@ -157,6 +157,7 @@ pub fn seal_candidate<'owner, 'db, S>(
     authority: &HeadAuthority,
     command: &Command,
     judged: Judged,
+    parent_object: Option<crate::store::ObjectRef>,
     limits: Limits,
 ) -> Result<Candidate<'owner, 'db, S>, LogError> {
     let facts_changed = matches!(judged, Judged::Committed { .. });
@@ -185,6 +186,7 @@ pub fn seal_candidate<'owner, 'db, S>(
                 .checked_add(1)
                 .ok_or(LogError::Corruption)?,
             parent: position.decision,
+            parent_object,
             before_state,
             after_state,
             canonical_command: &command.encode(limits)?,

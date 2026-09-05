@@ -6,7 +6,6 @@
 //! schema it speaks about and render the statement back in the `schema!`
 use std::fmt;
 
-use crate::encoding::InternId;
 use crate::schema::{Schema, render};
 use bumbledb_theory::schema::{SchemaDescriptor, StatementId};
 
@@ -228,7 +227,11 @@ impl fmt::Display for CorruptionError {
             ),
             Self::MetaMissing => write!(f, "the _meta database or a required key is absent"),
             Self::DanglingInternId(id) => {
-                write!(f, "intern id {} has no dictionary entry", id.raw())
+                write!(
+                    f,
+                    "text token {} was never minted by the query image's interner",
+                    id.raw()
+                )
             }
             Self::MissingFact { relation, row_id } => {
                 write!(f, "relation {}: row {row_id} has no fact", relation.0)
@@ -263,8 +266,6 @@ impl fmt::Display for CorruptionError {
                 relation.0, exceeded.observed, exceeded.ceiling
             ),
             Self::MalformedValue(kind) => write!(f, "malformed stored value: {kind}"),
-            Self::DictReverseIdReuse => write!(f, "dict reverse id reuse"),
-            Self::NonUtf8Intern(id) => write!(f, "intern id {id}: stored bytes are not UTF-8"),
             Self::NonzeroFixedBytesPad(tail) => write!(
                 f,
                 "bytes<N> trailing word {tail:02x?}: nonzero pad byte — the pad is encoding, not data"
@@ -350,58 +351,6 @@ impl fmt::Display for CorruptionError {
                 f,
                 "relation {}: stored high-water {stored} does not exceed row {max_row_id}",
                 relation.0
-            ),
-            Self::FreshRowDesync {
-                relation,
-                row_id,
-                fresh,
-            } => write!(
-                f,
-                "relation {}: row {row_id} disagrees with fresh field {fresh}",
-                relation.0
-            ),
-            Self::FreshNextValueLow {
-                relation,
-                field,
-                stored,
-                max_fresh,
-            } => write!(
-                f,
-                "relation {}, field {}: stored next-value {stored} at or below committed {max_fresh}",
-                relation.0, field.0
-            ),
-            Self::DictForwardDesync { intern_id, forward } => write!(
-                f,
-                "intern id {}: forward map holds {:?}",
-                intern_id.raw(),
-                forward.map(InternId::raw)
-            ),
-            Self::DictNextIdLow { stored, reverse_id } => write!(
-                f,
-                "dict next-id {} is at or below reverse id {}",
-                stored.raw(),
-                reverse_id.raw()
-            ),
-            Self::FreshRowDeterminantEntry {
-                relation,
-                statement,
-                ..
-            } => write!(
-                f,
-                "relation {}: fresh-row key {} has a U entry",
-                relation.0, statement.0
-            ),
-            Self::InternBeyondNextId {
-                relation,
-                row_id,
-                intern_id,
-                next_id,
-            } => write!(
-                f,
-                "relation {}: row {row_id} references intern {} at or beyond next-id {}",
-                relation.0,
-                intern_id.raw(),
-                next_id.raw()
             ),
             Self::ClosedRelationEntry { relation, .. } => {
                 write!(

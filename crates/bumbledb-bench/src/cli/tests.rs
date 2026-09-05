@@ -672,6 +672,11 @@ fn app_perf_parses_regimes_and_refuses_unknown_or_foreign_ones() {
     let err = parse(&argv(&["app-perf", "--tenants", "1"])).unwrap_err();
     assert!(err.contains("at least 2"), "{err}");
     assert!(Cmd::AppPerf(AppPerfArgs::default()).runs_measurements());
+    let plan = parse(&argv(&["app-perf", "--plan"])).expect("parses");
+    assert!(
+        !plan.runs_measurements(),
+        "--plan is an input dump, not a timing run"
+    );
 }
 
 #[test]

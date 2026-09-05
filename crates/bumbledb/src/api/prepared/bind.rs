@@ -24,7 +24,75 @@ impl<S> PreparedQuery<S> {
         });
     }
 
-    /// typed error before anything else runs. One compare — with the
+    /// Drop the execution-local scratch store only after forgetting every
+    /// memo that named its tokens. Next execute must not reuse `TAG`.
+    pub(super) fn release_text_store(&mut self) {
+        if self.nonresident.is_some() {
+            unlatch_scratch_literals(self);
+        }
+        for memo in &mut self.param_word_memo {
+            if memo.word.is_some_and(crate::image::is_scratch_token) {
+                memo.word = None;
+                memo.epoch = None;
+            }
+        }
+        self.resolve_memo.forget_scratch();
+        self.nonresident = None;
+    }
+
+    /// After spill, rewrite live String params into the store so filter
+    /// `Const::Param` and sink words share one namespace with row tokens.
+    pub(super) fn rehome_bound_text(
+        &mut self,
+        interner: &InternerHandle<'_>,
+        work: &WorkContext,
+    ) -> Result<()> {
+        let Some(store) = self.nonresident.as_mut() else {
+            return Ok(());
+        };
+        for idx in 0..self.params.len() {
+            let string_param = match &self.params[idx] {
+                super::ParamSpec::Scalar {
+                    ty: ValueType::String,
+                    ..
+                }
+                | super::ParamSpec::Set {
+                    elem: ValueType::String,
+                    ..
+                } => true,
+                _ => false,
+            };
+            if !string_param {
+                continue;
+            }
+            match &mut self.resolved_params[idx] {
+                Const::Word(word) if crate::image::is_resident_token(*word) => {
+                    let Some(text) = interner.with_text(*word, |text| text.to_owned()) else {
+                        continue;
+                    };
+                    *word = store.intern(&text, work)?;
+                    if let Some(memo) = self.param_word_memo.get_mut(idx) {
+                        memo.word = Some(*word);
+                        memo.epoch = Some(store.epoch());
+                    }
+                }
+                Const::WordSet(words) => {
+                    for word in words.iter_mut() {
+                        if crate::image::is_resident_token(*word) {
+                            let Some(text) = interner.with_text(*word, |text| text.to_owned()) else {
+                                continue;
+                            };
+                            *word = store.intern(&text, work)?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Foreign snapshot is a typed error before anything else runs.
     pub(super) fn check_identity(&self, source: super::source::PinnedSource) -> Result<()> {
         if self.pinned == source {
             Ok(())
@@ -123,6 +191,7 @@ impl<S> PreparedQuery<S> {
                     let memo = &self.param_word_memo[idx];
                     if let Some(word) = memo.word
                         && memo.text == text
+                        && param_memo_live(memo, self.nonresident.as_ref())
                     {
                         obs::event(
                             obs::names::PARAM_WORD_MEMO,
@@ -133,8 +202,11 @@ impl<S> PreparedQuery<S> {
                         return Ok(());
                     }
                 }
-                let interner = InternerHandle::new(self.cache.interner(), work);
-                let Some(resolved) = convert_scalar(&interner, value, ty)? else {
+                let generation = self.cache.acquire();
+                let interner = InternerHandle::new(&generation, work);
+                let Some(resolved) =
+                    convert_scalar(&interner, &mut self.nonresident, work, value, ty)?
+                else {
                     return Err(Error::ParamTypeMismatch {
                         param,
                         expected: *ty,
@@ -143,12 +215,20 @@ impl<S> PreparedQuery<S> {
                 if let (BindValue::Str(text), ValueType::String) = (value, ty)
                     && let Const::Word(word) = &resolved
                 {
-                    // A latch is final: the interner is append-only, so a
-                    // memoized (text → token) pair never invalidates.
                     let memo = &mut self.param_word_memo[idx];
                     memo.text.clear();
                     memo.text.push_str(text);
-                    memo.word = Some(*word);
+                    if crate::image::is_resident_token(*word) {
+                        memo.word = Some(*word);
+                        memo.epoch = None;
+                    } else if crate::image::is_scratch_token(*word) {
+                        // Execution-local: bound to the minting store's owner epoch.
+                        memo.word = Some(*word);
+                        memo.epoch = self.nonresident.as_ref().map(|store| store.epoch());
+                    } else {
+                        memo.word = None;
+                        memo.epoch = None;
+                    }
                 }
 
                 if *point && matches!(resolved, Const::Word(u64::MAX)) {
@@ -183,9 +263,18 @@ impl<S> PreparedQuery<S> {
             }
             _ => Vec::new(),
         };
-        let interner = InternerHandle::new(self.cache.interner(), work);
+        let generation = self.cache.acquire();
+        let interner = InternerHandle::new(&generation, work);
         for (element, value) in values.iter().enumerate() {
-            let Some(word_count) = element_words(&interner, value, expected, &mut words)? else {
+            let Some(word_count) = element_words(
+                &interner,
+                &mut self.nonresident,
+                work,
+                value,
+                expected,
+                &mut words,
+            )?
+            else {
                 // Park the pooled Vec back before erroring: the slot
 
                 words.clear();
@@ -250,6 +339,8 @@ fn sort_dedup_spans<const K: usize>(words: &mut Vec<u64>) {
 
 fn element_words(
     interner: &InternerHandle<'_>,
+    store: &mut Option<crate::image::NonresidentTextStore>,
+    work: &WorkContext,
     value: &Value,
     expected: &ValueType,
     out: &mut Vec<u64>,
@@ -265,7 +356,9 @@ fn element_words(
         out.extend_from_slice(&words[..count]);
         return Ok(Some(count));
     }
-    let Some(resolved) = convert_scalar(interner, element_view(value), expected)? else {
+    let Some(resolved) =
+        convert_scalar(interner, store, work, element_view(value), expected)?
+    else {
         return Ok(None);
     };
     Ok(Some(match resolved {
@@ -293,6 +386,8 @@ fn element_words(
 
 pub(super) fn resolve_filters(
     interner: &InternerHandle<'_>,
+    store: &mut Option<crate::image::NonresidentTextStore>,
+    work: &WorkContext,
     plan: &mut crate::plan::fj::ValidatedPlan,
     params: &[Const],
     missed: &[bool],
@@ -313,8 +408,8 @@ pub(super) fn resolve_filters(
             filters.extend(occurrence.filters.iter().cloned());
         }
         for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
-            if !crate::image::view::resolve_filter_into(
-                interner, template, params, missed, negated, slot, latched,
+            if !resolve_filter_admitted(
+                interner, store, work, template, params, missed, negated, slot, latched,
             )? {
                 return Ok(false);
             }
@@ -329,7 +424,9 @@ pub(super) fn resolve_filters(
             "negated occurrences keep Eq-constants in their filters"
         );
         for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
-            if !resolve_selection_into(interner, selection, params, missed, words, latched)? {
+            if !resolve_selection_into(
+                interner, store, work, selection, params, missed, words, latched,
+            )? {
                 return Ok(false);
             }
         }
@@ -337,8 +434,52 @@ pub(super) fn resolve_filters(
     Ok(true)
 }
 
-fn resolve_selection_into(
+pub(super) fn resolve_filter_admitted(
     interner: &InternerHandle<'_>,
+    store: &mut Option<crate::image::NonresidentTextStore>,
+    work: &WorkContext,
+    template: &mut FilterPredicate,
+    params: &[Const],
+    missed: &[bool],
+    negated: bool,
+    slot: &mut FilterPredicate,
+    latched: &mut u32,
+) -> Result<bool> {
+    loop {
+        match crate::image::view::resolve_filter_into(
+            interner, template, params, missed, negated, slot, latched,
+        )? {
+            crate::image::ResidentAdmit::Ready(keep) => return Ok(keep),
+            crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
+                let opened = super::text::install(store, &exhausted, work)?;
+                let pending = match template {
+                    FilterPredicate::Compare {
+                        value: Const::PendingIntern { bytes },
+                        ..
+                    } => Some(bytes.clone()),
+                    _ => None,
+                };
+                let Some(bytes) = pending else {
+                    return Ok(true);
+                };
+                let text = std::str::from_utf8(&bytes)
+                    .expect("IR string literals are UTF-8 by construction");
+                let word = opened.intern(text, work)?;
+                // Scratch words are execution-local: write the slot, keep
+                // PendingIntern on the template so the next execute re-interns.
+                if let FilterPredicate::Compare { value, .. } = slot {
+                    *value = Const::Word(word);
+                }
+                return Ok(true);
+            }
+        }
+    }
+}
+
+pub(super) fn resolve_selection_into(
+    interner: &InternerHandle<'_>,
+    store: &mut Option<crate::image::NonresidentTextStore>,
+    work: &WorkContext,
     selection: &mut crate::plan::fj::Selection,
     params: &[Const],
     missed: &[bool],
@@ -348,12 +489,17 @@ fn resolve_selection_into(
     out.clear();
 
     if let Const::PendingIntern { bytes } = &selection.value {
-        // A latch is final (append-only interner): the template constant
-        // becomes a plain word on its first resolution.
-        let word = interner.latch(bytes)?;
-        selection.value = Const::Word(word);
-        *latched += 1;
-        obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
+        let text = std::str::from_utf8(bytes)
+            .expect("IR string literals are UTF-8 by construction (Value::String)");
+        let word = super::text::intern_admitted(interner, store, text, work)?;
+        if crate::image::is_resident_token(word) {
+            selection.value = Const::Word(word);
+            *latched += 1;
+            obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
+        } else {
+            out.push(word);
+            return Ok(true);
+        }
     }
     let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
         Const::Word(word) => out.push(*word),
@@ -407,6 +553,8 @@ fn element_view(value: &Value) -> BindValue<'_> {
 
 fn convert_scalar(
     interner: &InternerHandle<'_>,
+    store: &mut Option<crate::image::NonresidentTextStore>,
+    work: &WorkContext,
     value: BindValue<'_>,
     expected: &ValueType,
 ) -> Result<Option<Const>> {
@@ -478,7 +626,9 @@ fn convert_scalar(
         // Interning is append-only and never misses: the bound text's
         // token is final. A text absent from every image is an ordinary
         // unequal word — no sentinel machinery, no dictionary descent.
-        (BindValue::Str(text), ValueType::String) => Const::Word(interner.intern_text(text)?),
+        (BindValue::Str(text), ValueType::String) => {
+            Const::Word(super::text::intern_admitted(interner, store, text, work)?)
+        }
 
         _ => return Ok(None),
     };
@@ -487,4 +637,79 @@ fn convert_scalar(
 
 fn i64_word(value: i64) -> u64 {
     u64::from_be_bytes(crate::encoding::encode_i64(value))
+}
+
+fn param_memo_live(
+    memo: &super::ParamWordMemo,
+    store: Option<&crate::image::NonresidentTextStore>,
+) -> bool {
+    match memo.epoch {
+        None => memo.word.is_some_and(crate::image::is_resident_token),
+        Some(epoch) => {
+            let Some(store) = store else {
+                return false;
+            };
+            let eq = store.text_eq().with_memo_stamp(epoch);
+            eq.accepts_stamp(epoch) && memo.word.is_some_and(|word| store.live(word))
+        }
+    }
+}
+
+fn unlatch_scratch_literals<S>(query: &mut PreparedQuery<S>) {
+    let mut store = match query.nonresident.take() {
+        Some(store) => store,
+        None => return,
+    };
+    query.visit_rules_mut(|rule| {
+        if let PreparedRule::FreeJoin(fj) = rule {
+            unlatch_free_join(fj, &mut store);
+        }
+    });
+    query.visit_rec_arms_mut(|arm| unlatch_free_join(&mut arm.rule, &mut store));
+    query.nonresident = Some(store);
+}
+
+fn unlatch_free_join(
+    rule: &mut super::FreeJoinRule,
+    store: &mut crate::image::NonresidentTextStore,
+) {
+    for occurrence in rule.plan.occurrences_mut() {
+        for filter in &mut occurrence.filters {
+            unlatch_filter(filter, store);
+        }
+        for selection in &mut occurrence.selections {
+            unlatch_const(&mut selection.value, store);
+        }
+    }
+    for filters in &mut rule.resolved_filters {
+        filters.clear();
+    }
+    for selections in &mut rule.resolved_selections {
+        selections.clear();
+    }
+    rule.resolution = super::ResolutionState::Pending;
+}
+
+fn unlatch_filter(
+    filter: &mut FilterPredicate,
+    store: &mut crate::image::NonresidentTextStore,
+) {
+    if let FilterPredicate::Compare { value, .. } = filter {
+        unlatch_const(value, store);
+    }
+}
+
+fn unlatch_const(value: &mut Const, store: &mut crate::image::NonresidentTextStore) {
+    let Const::Word(token) = *value else {
+        return;
+    };
+    if !crate::image::is_scratch_token(token) {
+        return;
+    }
+    let mut bytes = Vec::new();
+    if store.resolve(token, &mut bytes).ok() == Some(true) {
+        *value = Const::PendingIntern {
+            bytes: bytes.into_boxed_slice(),
+        };
+    }
 }

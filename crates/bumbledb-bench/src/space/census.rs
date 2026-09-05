@@ -96,6 +96,10 @@ pub struct StoreCensus {
     pub pages: PageStats,
     pub file_bytes: u64,
     pub allocated_bytes: u64,
+    /// Virtual map extent when the walker supplied a [`crate::space::store_source::PhysicalSplit`].
+    pub virtual_map_bytes: Option<u64>,
+    /// Live LMDB transactions (snapshots + writer) at census time.
+    pub live_transactions: Option<u64>,
 }
 
 impl StoreCensus {
@@ -129,6 +133,14 @@ impl StoreCensus {
             .used_page_bytes()
             .saturating_sub(self.live_raw_bytes())
     }
+
+    /// Attach map/RSS-adjacent quantities without mixing them into live bytes.
+    #[must_use]
+    pub fn with_map(mut self, virtual_map_bytes: u64, live_transactions: u64) -> Self {
+        self.virtual_map_bytes = Some(virtual_map_bytes);
+        self.live_transactions = Some(live_transactions);
+        self
+    }
 }
 
 /// Run the census: walk entries, take page stats, stat the file, read the
@@ -158,6 +170,8 @@ pub fn run(source: &mut dyn CensusSource, data_file: &Path) -> Result<StoreCensu
         pages,
         file_bytes,
         allocated_bytes,
+        virtual_map_bytes: None,
+        live_transactions: None,
     })
 }
 

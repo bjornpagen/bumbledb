@@ -45,9 +45,10 @@ const plan = {
 
 describe("runner-input decoding", function suite() {
 	test("well-formed generated data round-trips", function roundTrip() {
-		const decoded = decodeGeneratedMigrations({ manifest, plans: [plan] })
+		const decoded = decodeGeneratedMigrations({ manifest, plans: [plan], snapshots: ["base", "target"] })
 		assert.ok(decoded.ok)
 		assert.equal(decoded.value.plans.length, 1)
+		assert.deepEqual(decoded.value.snapshots, ["base", "target"])
 		assert.deepEqual(decoded.value.plans[0]?.operations[1], plan.operations[1])
 	})
 
@@ -78,10 +79,12 @@ describe("runner-input decoding", function suite() {
 
 	test("a plan disagreeing with its manifest entry refuses", function divergence() {
 		const renamed = { ...plan, id: "0000-other" }
-		const decoded = decodeGeneratedMigrations({ manifest, plans: [renamed] })
+		const decoded = decodeGeneratedMigrations({ manifest, plans: [renamed], snapshots: ["base", "target"] })
 		assert.equal(decoded.ok, false)
-		const miscounted = decodeGeneratedMigrations({ manifest, plans: [] })
+		const miscounted = decodeGeneratedMigrations({ manifest, plans: [], snapshots: ["base"] })
 		assert.equal(miscounted.ok, false)
+		const noSnapshots = decodeGeneratedMigrations({ manifest, plans: [plan] })
+		assert.equal(noSnapshots.ok, false)
 	})
 
 	test("destructive entries decode; malformed ones refuse", function losses() {

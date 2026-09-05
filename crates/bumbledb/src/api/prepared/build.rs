@@ -33,7 +33,40 @@ pub(crate) fn prepare_on<S>(
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let source = QuerySource::store(instance.snapshot(), instance.work());
-    prepare_source(instance.schema_arc(), &source, query)
+    prepare_source(
+        instance.schema_arc(),
+        Arc::clone(instance.cache()),
+        &source,
+        query,
+    )
+}
+
+impl<S> PreparedQuery<S> {
+    /// As [`ReadInstance::prepare`], under the CALLER's work context
+    /// instead of the lease's embedded one — the native runtime threads
+    /// each wire operation's bounded `WorkContext` (deadline, cancellation
+    /// and byte/step budgets) through here so prepare-time statistics
+    /// reads and image/interner admission observe the operation's own
+    /// policy, not the long-lived session lease's unbounded ledger.
+    /// # Errors
+    /// As [`prepare_on`].
+    ///
+    /// `doc(hidden)` bridge seam (P06/W3-SESSION); embedders use
+    /// [`ReadInstance::prepare`].
+    #[doc(hidden)]
+    pub fn prepare_with_work(
+        instance: &ReadInstance<'_, S>,
+        work: &crate::work::WorkContext,
+        query: &Query,
+    ) -> Result<Self> {
+        let source = QuerySource::store(instance.snapshot(), work);
+        prepare_source(
+            instance.schema_arc(),
+            Arc::clone(instance.cache()),
+            &source,
+            query,
+        )
+    }
 }
 
 /// Prepare against one admitted heap instance. The prepared query pins
@@ -44,17 +77,22 @@ pub(crate) fn prepare_owned<S>(
     instance: &OwnedInstance<S>,
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
-    let source = QuerySource::heap(instance, 0)?;
-    prepare_source(instance.schema_arc(), &source, query)
+    let source = QuerySource::heap(instance, 0, super::source::heap_default_work());
+    prepare_source(
+        instance.schema_arc(),
+        Arc::clone(instance.cache()),
+        &source,
+        query,
+    )
 }
 
 fn prepare_source<S>(
     schema: &Arc<Schema>,
+    cache: Arc<ImageCache>,
     source: &QuerySource<'_>,
     query: &Query,
 ) -> Result<PreparedQuery<S>> {
     let schema = Arc::clone(schema);
-    let cache = Arc::new(ImageCache::new(&schema));
     let images = SourceImages::bind(source, &cache);
     let _prepare = obs::span(obs::names::PREPARE);
     let witness = {
@@ -299,6 +337,11 @@ fn prepare_witnessed<S>(
         key_scratch: Vec::new(),
         numeric_outputs,
         rendered,
+        nonresident: None,
+        #[cfg(test)]
+        last_visits: 0,
+        #[cfg(test)]
+        used_nonresident_text: false,
         marker: std::marker::PhantomData,
     })
 }
@@ -365,7 +408,6 @@ fn prepare_interior(
         sink,
         field_types: columns.iter().map(|c| *c.ty()).collect(),
         units,
-        row_scratch: Vec::new(),
     })
 }
 

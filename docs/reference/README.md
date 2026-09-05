@@ -1,28 +1,65 @@
-# docs/reference — the permanent documentation home
+# docs/reference — permanent documentation home
 
-These pages are the permanent home the `final-solution/` proposal
-contracts move into when the proposal retires (chapter 61/64: the
-proposal is retired only after the selected work is complete and
-qualified; retirement first moves the binding contracts and the complete
-gate/audit inventory here, updates `scripts/release-results.mjs` to read
-these paths, and only then removes the folder). Until that retirement,
-**`final-solution/` remains normative** and these pages are skeletons plus
-already-stable operational content — they never fork the contract.
+These pages are the durable home for release contracts, operational
+runbooks, and the machine-readable obligation/evidence inventory.
+Executable tooling reads only this directory. The disposable
+`final-solution/` packet is not an input to checkers, batteries or
+inventory once the coordinator retires it.
 
-## Pages
+## Release contracts
 
-| Page | Content now | Receives at retirement |
-| --- | --- | --- |
-| [architecture.md](architecture.md) | The shipped product shape: crates, packages, one native runtime, log/AWS boundaries | final-solution 00–02, 10–13, 20–22, 30–31 (normative semantics) |
-| [packaging.md](packaging.md) | Artifact roster, immutable staging, exact pins, handshake | final-solution 32 + C12 (formats/artifacts) with the F3-frozen physical choices |
-| [deployment.md](deployment.md) | Supported targets, floors, envelope (PENDING F3 numbers), unsupported runtimes, cutover runbook | final-solution 33 deployment/envelope evidence + APP-04/05/06/07 records |
-| [operations-runbook.md](operations-runbook.md) | Backup/restore/admin/erase procedures over the shipped admin API | final-solution 21/22 retention/recovery contracts + OPS gate evidence |
-| [apple-silicon-performance.md](apple-silicon-performance.md) | Preexisting measured notes (historical) | chapter 40/41 measured decisions (P14's F3 reports) |
+| Artifact | Role |
+| --- | --- |
+| [semantics.md](semantics.md) | Canonical denotation, F64/intervals, wire/proof boundary (Lean/bridge scope + independent oracles) |
+| [api.md](api.md) | Public Rust/TS/log vocabulary, ownership, packed-consumer expectations |
+| [performance.md](performance.md) | Meaning home: representation, hashing, bound L20 13-cell plan (`appperf::plan`) |
+| [behavioral-obligations.md](behavioral-obligations.md) | 68 audit IDs, 78 prior-review IDs, 220 child families |
+| [release-gates.md](release-gates.md) | G00–G16, D01–D29, runner order, evidence identity |
+| [qualification-checklist.md](qualification-checklist.md) | Post-retirement candidate capture and exact commands |
+| [final-solution-retirement.md](final-solution-retirement.md) | Transfer-then-retire-then-qualify order (not checks-then-retire) |
+| [obligation-inventory.json](obligation-inventory.json) | Machine roster: 68 + 17 + 220 + 78 + 29 + required cells |
+| [release-results.schema.json](release-results.schema.json) | Format v2 index schema |
+| [release-results.json](release-results.json) | Populated only from real final qualification; absent file fails closed |
 
-The obligation inventory (chapter 50 audit rows, chapter 70's 17 parents /
-220 child families) moves here as a machine-readable inventory when the
-release checker is re-pointed; until then the checker reads
-`final-solution/50-*.md` and `final-solution/70-*.md` and this directory
-must NOT carry a competing copy.
+Actual run reports, tarball digests, and platform/backend logs stay in
+CI/release artifacts. They are referenced by hash/path from the small
+index above, not checked into the repository as an exhaust tree.
+
+Qualification identity uses three digests:
+
+1. **`candidateSourceDigest`** — SHA-256 of the deterministic
+   tracked+untracked source inventory, framing path/kind/mode/payload
+   (`node scripts/release-results.mjs --candidate-digest`).
+2. **`specificationRevision`** — SHA-256 of the canonical obligation
+   inventory content.
+3. **Artifact/report SHA-256** — exact built outputs bound in each
+   evidence row.
+
+The index excludes itself from the candidate source preimage. Optional
+`sourceRevision` records the final commit object name in handoff
+metadata only; it is not required before the single integrated commit.
+
+Checker usage:
+
+```sh
+node scripts/release-results.mjs --inventory
+node scripts/release-results.mjs --candidate-digest
+node scripts/release-results.mjs --specification-revision
+node scripts/release-results.mjs --write-native-provenance
+node scripts/release-results.mjs --verify-native-provenance
+node scripts/release-results.mjs pre-promotion [manifest.json] [candidate-digest]
+```
+
+A successful `scripts/battery.sh` exit is not all-platform qualification.
+
+## Product and operations pages
+
+| Page | Content |
+| --- | --- |
+| [architecture.md](architecture.md) | Shipped product shape: crates, packages, one native runtime, log/AWS boundaries |
+| [packaging.md](packaging.md) | Artifact roster, immutable staging, exact pins |
+| [deployment.md](deployment.md) | Supported targets, floors, deployment runbook |
+| [operations-runbook.md](operations-runbook.md) | Backup/restore/admin/erase over the shipped admin API |
+| [apple-silicon-performance.md](apple-silicon-performance.md) | Historical measured notes (pre-1.0 attribution preserved) |
 
 `audit/` is preserved permanently and is never subsumed by these pages.

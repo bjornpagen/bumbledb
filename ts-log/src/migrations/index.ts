@@ -21,14 +21,18 @@ export type {
 	MigrationRef,
 	MigrationStatus
 } from "#outcome.ts"
+export type { CompiledChainInput } from "#migrations/codec.ts"
+export type { HeldRepositoryLock, RepositoryExclusion } from "#migrations/lock.ts"
 export { checkMigrations, generateMigrations } from "#migrations/workflow.ts"
-export { cli } from "#migrations/cli.ts"
-export { decodeGeneratedMigrations, decodeManifestData, decodePlanData } from "#migrations/decode.ts"
-export { diffSchemas } from "#migrations/diff.ts"
-export type { DiffResult } from "#migrations/diff.ts"
-export { planExpressionOf, planValueOf } from "#migrations/expr.ts"
-export type { ExprResult } from "#migrations/expr.ts"
-export type { IntentRequirement } from "#migrations/fail.ts"
+export {
+	decodeActivationRef,
+	decodeGeneratedMigrations,
+	decodeManifestData,
+	decodePlanData,
+	decodeReadyToSwitchActivation,
+	decodeRuntimeContract
+} from "#migrations/decode.ts"
+export type { DecodeResult } from "#migrations/decode.ts"
 export {
 	backfill,
 	convert,

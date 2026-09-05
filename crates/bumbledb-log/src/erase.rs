@@ -28,7 +28,7 @@ use crate::gc::{self, GcError, GcPolicy, SweepReport};
 use crate::history::OperationId;
 use crate::history::authority::{DeleteOutcome, DeletedReason};
 use crate::history::command::Limits;
-use crate::store::{BackendError, ConditionalStore, backend as backend_error, objects_prefix};
+use crate::store::{BackendError, ReceivingStore, backend as backend_error, objects_prefix};
 
 #[derive(Debug)]
 pub enum EraseError {
@@ -91,7 +91,7 @@ pub struct EraseReport {
 /// # Errors
 /// Authority conflicts (activation won, foreign tombstone), unknown roots
 /// and backend/GC refusals; durable progress is retained across retries.
-pub fn erase_hosted<B: ConditionalStore>(
+pub fn erase_hosted<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     operation: OperationId,
@@ -108,19 +108,21 @@ where
     //    are idempotent under retry (`already_released_ok`).
     let mut released = Vec::with_capacity(release_roots.len());
     for root in release_roots {
-        admin::release_named_root_hosted(backend, prefix, *root, true, policy.head_cap, work)?;
+        admin::hosted_result(admin::release_named_root_hosted(
+            backend, prefix, *root, true, policy.head_cap, work,
+        ))?;
         released.push(*root);
     }
     // 2. Terminal tombstone through the Deleted authority. Explicit retained
     //    roots and a running barrier's progress survive inside the head.
-    let tombstone = admin::tombstone_hosted(
+    let tombstone = admin::hosted_result(admin::tombstone_hosted(
         backend,
         prefix,
         operation,
         DeletedReason::Erasure,
         policy.head_cap,
         work,
-    )?;
+    ))?;
     // 3. One collection pass: the tombstone contributes no live recovery
     //    root, so former live objects outside retained roots become
     //    collectible now (or in a later pass for barrier-protected ones).
@@ -140,7 +142,7 @@ where
 ///
 /// # Errors
 /// Backend and head-decode refusals.
-pub fn residual_report<B: ConditionalStore>(
+pub fn residual_report<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     policy: &GcPolicy,

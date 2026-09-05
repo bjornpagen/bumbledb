@@ -9,6 +9,8 @@ pub mod apply;
 #[doc(hidden)]
 pub mod backup;
 #[doc(hidden)]
+pub mod certainty;
+#[doc(hidden)]
 pub mod checkpointer;
 #[doc(hidden)]
 pub mod codec;

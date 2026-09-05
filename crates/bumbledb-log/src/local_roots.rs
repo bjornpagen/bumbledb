@@ -172,13 +172,12 @@ fn decode_registry(bytes: &[u8]) -> Result<Vec<LocalRoot>, FrameError> {
 pub fn registered_roots<S>(db: &Db<S>) -> Result<Vec<LocalRoot>, LocalRootError> {
     let mut owned = None;
     db.read(|read| {
-        if let Ok(record) = read.integration_host_record(REGISTRY_KEY) {
-            owned = record.map(<[u8]>::to_vec);
-        }
+        owned = Some(read.integration_host_record(REGISTRY_KEY)?.map(<[u8]>::to_vec));
         Ok(())
     })?;
     match owned {
-        Some(bytes) => Ok(decode_registry(&bytes)?),
+        Some(Some(bytes)) => Ok(decode_registry(&bytes)?),
+        Some(None) => Ok(Vec::new()),
         None => Ok(Vec::new()),
     }
 }
@@ -254,11 +253,8 @@ pub fn create_restore_point<S>(
     work: &WorkContext,
 ) -> Result<LocalRoot, LocalRootError> {
     let roots = registered_roots(db)?;
-    if roots.len() >= root_policy.max_roots {
+    if !roots.iter().any(|root| root.id == id) && roots.len() >= root_policy.max_roots {
         return Err(LocalRootError::RootCapacityExceeded);
-    }
-    if roots.iter().any(|root| root.id == id) {
-        return Err(LocalRootError::DuplicateRoot);
     }
     if label.len() > root_policy.max_label_bytes {
         return Err(LocalRootError::Frame(FrameError::LimitExceeded));
@@ -297,9 +293,8 @@ pub fn create_restore_point<S>(
     let final_dir = root_directory(directory, id);
     fs::rename(&staging, &final_dir)?;
     sync_dir(&roots_base(directory))?;
-    // Then the atomic registry commit. A crash between rename and commit
-    // leaves an unregistered complete directory — owned scratch the next
-    // owner cleans; never a restore point.
+    // Atomic registry commit under the exclusive writer: reread the committed
+    // registry after the lock is held, then seal one host-record replacement.
     let root = LocalRoot {
         id,
         decision: position.decision,
@@ -310,19 +305,33 @@ pub fn create_restore_point<S>(
             .map_err(|_| LocalRootError::Frame(FrameError::LengthOverflow))?,
         label: label.into(),
     };
-    let mut next = roots;
-    next.push(root.clone());
-    commit_registry(db, &next, work)?;
+    commit_registry_insert(db, root.clone(), root_policy, work)?;
     Ok(root)
 }
 
-fn commit_registry<S>(
+fn commit_registry_insert<S>(
     db: &Db<S>,
-    roots: &[LocalRoot],
+    root: LocalRoot,
+    root_policy: &RootPolicy,
     work: &WorkContext,
 ) -> Result<(), LocalRootError> {
-    let bytes = encode_registry(roots)?;
     let mut session = db.integration_writer(work)?;
+    let current = registered_roots(db)?;
+    if current.len() >= root_policy.max_roots {
+        return Err(LocalRootError::RootCapacityExceeded);
+    }
+    if current.iter().any(|held| held.id == root.id) {
+        // Idempotent retry: verify matching completed evidence.
+        if let Some(existing) = current.iter().find(|held| held.id == root.id)
+            && existing == &root
+        {
+            return Ok(());
+        }
+        return Err(LocalRootError::DuplicateRoot);
+    }
+    let mut next = current;
+    next.push(root);
+    let bytes = encode_registry(&next)?;
     let empty = ChangeSet::builder(db.schema(), work.clone())
         .finish()
         .map_err(|_| LocalRootError::Corrupt("empty delta refused"))?;
@@ -363,13 +372,32 @@ pub fn release_restore_point<S>(
     id: OperationId,
     work: &WorkContext,
 ) -> Result<ReleaseReport, LocalRootError> {
-    let roots = registered_roots(db)?;
-    let Some(index) = roots.iter().position(|root| root.id == id) else {
+    let mut session = db.integration_writer(work)?;
+    let current = registered_roots(db)?;
+    let Some(index) = current.iter().position(|root| root.id == id) else {
         return Err(LocalRootError::UnknownRoot);
     };
-    let mut next = roots;
+    let mut next = current;
     next.remove(index);
-    commit_registry(db, &next, work)?;
+    let bytes = encode_registry(&next)?;
+    let empty = ChangeSet::builder(db.schema(), work.clone())
+        .finish()
+        .map_err(|_| LocalRootError::Corrupt("empty delta refused"))?;
+    let prepared = match session.prepare(&empty)? {
+        bumbledb::Admission::Accepted(prepared) => prepared,
+        bumbledb::Admission::Rejected(_) => {
+            return Err(LocalRootError::Corrupt("empty delta rejected"));
+        }
+    };
+    prepared
+        .seal(HostChanges {
+            records: &[HostRecordChange::Put {
+                key: REGISTRY_KEY,
+                value: &bytes,
+            }],
+            attachment: AttachmentChange::Keep,
+        })?
+        .commit()?;
     let removed = fs::remove_dir_all(root_directory(directory, id)).is_ok();
     Ok(ReleaseReport {
         directory_removed: removed,

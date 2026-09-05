@@ -66,7 +66,7 @@ fn independent_all_scalar_golden_and_every_truncation() {
     let parsed = CanonicalRow::parse(&fields, expected, &ctx).unwrap();
     assert_eq!(parsed.as_bytes(), expected);
     let decoded = decode(&fields, expected, &ctx).unwrap();
-    assert_eq!(decoded.values, values);
+    assert_eq!(decoded.values(), values);
     drop(decoded);
     assert_eq!(
         ctx.used(Resource::WorkingBytes),
@@ -114,7 +114,7 @@ fn id128_and_dense_interval_golden_roundtrip() {
     let parsed = CanonicalRow::parse(&fields, &expected, &ctx).unwrap();
     assert_eq!(parsed.as_bytes(), &expected[..]);
     let decoded = decode(&fields, &expected, &ctx).unwrap();
-    assert_eq!(decoded.values, values);
+    assert_eq!(decoded.values(), values);
     for end in 0..expected.len() {
         assert!(
             CanonicalRow::parse(&fields, &expected[..end], &ctx).is_err(),
@@ -280,4 +280,41 @@ fn shape_and_budget_errors_leave_no_owned_bytes() {
         CanonicalRow::parse(&[], &[0, 0], &ctx).unwrap().as_bytes(),
         &[0, 0]
     );
+}
+
+#[test]
+fn image_walker_and_strict_decode_agree_on_interval_laws() {
+    use crate::image::canon::{TextWords, row_words};
+    use crate::image::intern::TextInterner;
+
+    let fields = fields(&[ValueType::FixedInterval {
+        element: FixedIntervalElement::U64,
+        width: 2,
+    }]);
+    let ctx = work();
+    let healthy = CanonicalRow::encode(
+        &fields,
+        &[Value::IntervalU64(Interval::new(3, 5).expect("width 2"))],
+        &ctx,
+    )
+    .expect("canonical");
+    let interner = TextInterner::default();
+    let mut text = TextWords::Lookup(&interner);
+    let mut words = Vec::new();
+    row_words(&fields, healthy.as_bytes(), &mut text, &mut words).expect("image walk");
+    assert_eq!(words, [3, 5]);
+
+    // Wrong fixed width: strict decode and image walk both refuse.
+    let bad = CanonicalRow::encode(
+        &fields,
+        &[Value::IntervalU64(Interval::new(3, 4).expect("width 1"))],
+        &ctx,
+    )
+    .expect("wire encodes; law is checked on read");
+    assert!(matches!(
+        decode(&fields, bad.as_bytes(), &ctx),
+        Err(RowError::Type { field: 0 })
+    ));
+    let mut words = Vec::new();
+    assert!(row_words(&fields, bad.as_bytes(), &mut text, &mut words).is_err());
 }

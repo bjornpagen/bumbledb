@@ -16,8 +16,11 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
+use bumbledb_log::store::fence::acquire_repository_lock;
 use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::store::{ConditionalOutcome, ConditionalStore as _, HeadRead};
+use bumbledb_log::store::{
+    ConditionalOutcome, ConditionalStore as _, ReceivedHead, ReceivingStore, TransportContext,
+};
 
 const CONTENDERS: usize = 4;
 const SWAPS_PER_CONTENDER: u64 = 8;
@@ -62,11 +65,14 @@ fn mixed_fleet_acknowledged_swaps_equal_the_final_counter_exactly() {
                 while acked < SWAPS_PER_CONTENDER {
                     spins += 1;
                     assert!(spins < 100_000, "contender {contender} live-locked");
-                    let (version, body) = match store.read_head("t/HEAD").expect("read") {
-                        HeadRead::Present { version, body } => (version, body),
-                        HeadRead::Absent => panic!("head exists"),
+                    let (version, body) = match store
+                        .receive_head("t/HEAD", TransportContext::limited(16))
+                        .expect("read")
+                    {
+                        ReceivedHead::Present { version, body } => (version, body),
+                        ReceivedHead::Absent => panic!("head exists"),
                     };
-                    let next = (counter_of(&body) + 1).to_be_bytes();
+                    let next = (counter_of(body.as_bytes()) + 1).to_be_bytes();
                     match store.replace_head("t/HEAD", &version, &next).expect("swap") {
                         ConditionalOutcome::Published { .. } => acked += 1,
                         ConditionalOutcome::PreconditionFailed => {}
@@ -84,13 +90,16 @@ fn mixed_fleet_acknowledged_swaps_equal_the_final_counter_exactly() {
             .sum::<u64>()
     });
     assert_eq!(total_acked, (CONTENDERS as u64) * SWAPS_PER_CONTENDER);
-    match store.read_head("t/HEAD").expect("final read") {
-        HeadRead::Present { body, .. } => assert_eq!(
-            counter_of(&body),
+    match store
+        .receive_head("t/HEAD", TransportContext::limited(16))
+        .expect("final read")
+    {
+        ReceivedHead::Present { body, .. } => assert_eq!(
+            counter_of(body.as_bytes()),
             total_acked,
             "every acknowledged swap is exactly one linearized increment"
         ),
-        HeadRead::Absent => panic!("head exists"),
+        ReceivedHead::Absent => panic!("head exists"),
     }
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -134,9 +143,12 @@ fn a_paused_holder_with_a_stale_version_loses_after_another_writer_publishes() {
         ConditionalOutcome::PreconditionFailed,
         "the resumed stale CAS is a definite loss, never a second acknowledgment"
     );
-    match store.read_head("t/HEAD").expect("read") {
-        HeadRead::Present { body, .. } => assert_eq!(&*body, b"value-2-from-b"),
-        HeadRead::Absent => panic!("head exists"),
+    match store
+        .receive_head("t/HEAD", TransportContext::limited(64))
+        .expect("read")
+    {
+        ReceivedHead::Present { body, .. } => assert_eq!(body.as_bytes(), b"value-2-from-b"),
+        ReceivedHead::Absent => panic!("head exists"),
     }
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -170,8 +182,31 @@ fn hostile_mutation_lock_shapes_refuse_or_are_inert_for_every_caller() {
     assert_eq!(std::fs::read(&sentinel).expect("sentinel"), b"sentinel");
     // Symlinked object path: refused for read and write, never followed.
     symlink(&sentinel, root.join("redirect")).expect("symlink");
-    assert!(store.get_object("redirect").is_err());
+    assert!(store
+        .receive_object("redirect", TransportContext::limited(64))
+        .is_err());
     assert!(store.put_object("redirect", b"x").is_err());
     assert_eq!(std::fs::read(&sentinel).expect("sentinel"), b"sentinel");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn same_process_repository_lock_refuses_and_keeps_the_inode() {
+    let root = fresh_root("repo-lock");
+    let tenant = root.join("tenant");
+    let first = acquire_repository_lock(&tenant).expect("owner");
+    let path = first.lock_path().to_path_buf();
+    #[cfg(unix)]
+    let inode = first.lock_inode().expect("inode");
+    assert!(
+        acquire_repository_lock(&tenant).is_err(),
+        "same-process duplicate generation refuses"
+    );
+    assert!(path.exists(), "contention does not unlink the lock inode");
+    drop(first);
+    let successor = acquire_repository_lock(&tenant).expect("successor");
+    assert_eq!(successor.lock_path(), path.as_path());
+    #[cfg(unix)]
+    assert_eq!(successor.lock_inode().expect("same inode"), inode);
     let _ = std::fs::remove_dir_all(&root);
 }

@@ -118,7 +118,12 @@ fn shift_schema() -> Schema {
                 },
             ],
         }],
-        statements: vec![],
+        // The declared id key the uniqueness probe classifies against —
+        // there are no implicit keys (the fresh auto-key era is deleted).
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::from([FieldId(0)]),
+        }],
     }
     .validate()
     .expect("valid fixture")
@@ -408,15 +413,21 @@ fn run_key_probe(
 ) -> Vec<Vec<u64>> {
     let cache = crate::image::cache::ImageCache::new(schema);
     let source = fixture.source();
-    let interner = InternerHandle::new(cache.interner(), source.work());
+    let interner = InternerHandle::new(
+        cache.interner(),
+        source.work(),
+        cache.cache_ledger(),
+    );
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = ProjectionSink::new((0..plan.slot_count()).collect());
     let mut key = Vec::new();
+    let mut store = None;
     execute_key_probe(
         plan,
         &source,
         schema,
         &interner,
+        &mut store,
         params,
         &mut key,
         &mut bindings,
@@ -574,7 +585,11 @@ fn full_fact_membership_lookup_with_an_interval_field() {
         );
         let cache = crate::image::cache::ImageCache::new(&schema);
         let source = fixture.source();
-        let interner = InternerHandle::new(cache.interner(), source.work());
+        let interner = InternerHandle::new(
+            cache.interner(),
+            source.work(),
+            cache.cache_ledger(),
+        );
         let field_types: Vec<ValueType> = schema
             .relation(REL)
             .fields()
@@ -583,7 +598,18 @@ fn full_fact_membership_lookup_with_an_interval_field() {
             .collect();
         let mut row = crate::image::canon::RowWords::new(&field_types);
         let mut key = Vec::new();
-        key_probe_row(&plan, &source, &schema, &interner, &[], &mut row, &mut key).expect("probe")
+        let mut store = None;
+        key_probe_row(
+            &plan,
+            &source,
+            &schema,
+            &interner,
+            &mut store,
+            &[],
+            &mut row,
+            &mut key,
+        )
+        .expect("probe")
     };
     assert!(probe((5, 10)), "exact membership hits");
     assert!(!probe((5, 11)), "one past the end misses");
@@ -623,15 +649,21 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let plan = classify(&normalized, &schema).expect("key probe");
     let cache = crate::image::cache::ImageCache::new(&schema);
     let source = fixture.source();
-    let interner = InternerHandle::new(cache.interner(), source.work());
+    let interner = InternerHandle::new(
+        cache.interner(),
+        source.work(),
+        cache.cache_ledger(),
+    );
     let mut bindings = Bindings::new(1);
     let mut sink = AggregateSink::new(vec![FindSpec::Agg(AggSpec::Count)], 1);
     let mut key = Vec::new();
+    let mut store = None;
     execute_key_probe(
         &plan,
         &source,
         &schema,
         &interner,
+        &mut store,
         &[],
         &mut key,
         &mut bindings,

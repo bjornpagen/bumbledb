@@ -299,8 +299,10 @@ pub trait StreamSink {
     type Error;
 
     /// # Errors
+    /// The sink's own failure; the decoder stops without partial claims.
     fn fact(&mut self, relation: u32, row: &[u8]) -> Result<(), Self::Error>;
     /// # Errors
+    /// The sink's own failure; the decoder stops without partial claims.
     fn system(&mut self, key: &[u8], value: &[u8]) -> Result<(), Self::Error>;
 }
 
@@ -321,7 +323,9 @@ impl<E, S> From<FrameError> for ReadError<E, S> {
     }
 }
 
-/// Decode a chunked stream with one bounded carry buffer. Records may split
+/// Decode a chunked stream with one bounded carry buffer. Chunk items are
+/// `B: AsRef<[u8]>` so a [`bumbledb::work::ChargedBytes`] (or `Vec<u8>`)
+/// iterator decodes without a caller-side payload copy. Records may split
 /// across chunk boundaries; the carry never exceeds one record plus one
 /// chunk. Counters in the end record must match what was decoded, and bytes
 /// after the end record refuse.
@@ -332,8 +336,8 @@ impl<E, S> From<FrameError> for ReadError<E, S> {
     clippy::too_many_lines,
     reason = "one bounded decode loop over the frozen chunk grammar"
 )]
-pub fn read_stream<E, S>(
-    chunks: impl IntoIterator<Item = Result<Vec<u8>, E>>,
+pub fn read_stream<E, S, B: AsRef<[u8]>>(
+    chunks: impl IntoIterator<Item = Result<B, E>>,
     sink: &mut dyn StreamSink<Error = S>,
     limits: StreamLimits,
 ) -> Result<StreamSummary, ReadError<E, S>> {
@@ -437,7 +441,7 @@ pub fn read_stream<E, S>(
 
     for chunk in chunks {
         let chunk = chunk.map_err(ReadError::Chunk)?;
-        carry.extend_from_slice(&chunk);
+        carry.extend_from_slice(chunk.as_ref());
         while consume(&mut carry)? {}
     }
     while consume(&mut carry)? {}
@@ -687,6 +691,49 @@ mod tests {
         assert_eq!(sink.facts[1].1, b"row-b-longer-payload");
         assert_eq!(sink.system[0].0, b"r-key-1");
         assert_eq!(sink.system[2].1, b"applied-batch-evidence");
+    }
+
+    /// Charged chunk owners decode through `as_ref` without a payload `to_vec`.
+    #[test]
+    fn charged_bytes_chunk_iterator_decodes_without_payload_copy() {
+        use bumbledb::work::{ByteKind, ChargedBytes};
+        use bumbledb::ExecutionPolicy;
+        use std::time::Duration;
+
+        let work = ExecutionPolicy {
+            input_bytes: 1 << 20,
+            working_bytes: 1 << 20,
+            scratch_bytes: 1 << 20,
+            result_bytes: 1 << 20,
+            rows: 1 << 16,
+            work_units: 1_024,
+            timeout: Duration::from_secs(30),
+        }
+        .start()
+        .expect("work");
+        let (chunks, expected) = write_sample(4_096);
+        let charged: Vec<ChargedBytes> = chunks
+            .into_iter()
+            .map(|bytes| {
+                ChargedBytes::adopt(&work, ByteKind::Working, bytes.into_boxed_slice())
+                    .expect("adopt")
+            })
+            .collect();
+        let mut sink = CollectSink::default();
+        let summary = read_stream(
+            charged
+                .iter()
+                .map(|chunk| Ok::<_, std::convert::Infallible>(chunk.as_bytes())),
+            &mut sink,
+            StreamLimits::DEFAULT,
+        )
+        .expect("charged chunks decode");
+        assert_eq!(summary.rows, expected.rows);
+        assert_eq!(summary.system_records, expected.system_records);
+        assert_eq!(summary.application_digest, expected.application_digest);
+        for owner in charged {
+            drop(owner.into_owner());
+        }
     }
 
     #[test]

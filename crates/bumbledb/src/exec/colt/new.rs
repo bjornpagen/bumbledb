@@ -32,6 +32,8 @@ impl Colt {
             stage_keys: Vec::new(),
             stage_positions: Vec::new(),
             epoch: 0,
+            work: None,
+            charges: Vec::new(),
         }
     }
 
@@ -57,6 +59,8 @@ impl Colt {
             stage_keys: Vec::new(),
             stage_positions: Vec::new(),
             epoch: 0,
+            work: self.work.clone(),
+            charges: Vec::new(),
         }
     }
 

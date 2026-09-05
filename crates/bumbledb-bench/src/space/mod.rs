@@ -1,62 +1,40 @@
-//! The physical accounting census (chapter 41; gates SPACE-01..SPACE-02).
+//! Physical accounting census (chapter 40; SPACE-01 / PERF-002).
 //!
-//! The existing [`crate::lanes::storage`] lane measures file lengths under a
-//! matched-durability protocol; keep it. This module adds what file length
-//! cannot answer:
-//!
-//! - per-namespace live key/value byte accounting (F/M/U/R/dictionary/
-//!   metadata) so the recorded 2.3–2.45× indexed-SQLite gap gets attributed
-//!   instead of labeled a Free Join tax ([`census`]),
-//! - the raw-bytes arithmetic model of the current and successor entry
-//!   layouts, cross-checked against chapter 41's tables (this file),
-//! - LMDB page statistics, OS-allocated blocks and the resident/disk split
-//!   ([`census`]),
-//! - SQLite page/freelist/index-roster accounting so "indexed" is an actual
-//!   roster, not a label ([`sqlite_stat`]),
-//! - the SPACE-02 before/after layout-variant matrix ([`variants`]).
-//!
-//! Execution happens only in F3 (SPACE lanes need the integrated successor
-//! store); the arithmetic and report shapes are complete and tested now.
-//! File length is not resident RAM, allocated blocks, live pages or a
-//! per-namespace attribution; each is reported as itself. Mixed namespaces
-//! share pages, so page-level numbers are store-wide with namespace bytes
-//! reported at the key/value level — no invented per-namespace page split.
+//! File length is not resident RAM, allocated blocks, live pages, a virtual
+//! map, or a per-namespace attribution. Each quantity is reported as itself.
+//! Mixed namespaces share pages — page numbers are store-wide; namespace
+//! bytes are key/value walks. Recalculated from the live layout in
+//! `crates/bumbledb/src/storage/store/keys.rs` and `schema/compiled.rs`.
 
 pub mod census;
 pub mod sqlite_stat;
+pub mod store_source;
 #[cfg(test)]
 mod tests;
 pub mod variants;
 
-/// The persisted entry namespaces of the audited layout (chapter 41's bill).
-/// The successor may delete some (dictionary) — the census reports zeros
-/// rather than dropping the row, so a deletion shows up as evidence.
+/// Live persisted namespaces. Dictionary and reverse-edge entries are gone
+/// from the successor store; they survive only as historical attribution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Namespace {
-    /// Fact rows: `tag 1 + relation 4 + local row 8` key, encoded fact value.
+    /// Fact rows: `tag 1 + relation 4 + local row 8` key, canonical payload.
     Fact,
-    /// Membership: fingerprint-keyed row references.
+    /// Membership: `(relation, 16-byte fingerprint, row id) → ()`.
     Membership,
-    /// Key determinant entries.
+    /// Determinant: `(projection id, routing, optional interval tail, row) → ()`.
     Determinant,
-    /// Reverse containment/capacity edges.
-    ReverseEdge,
-    /// Text dictionary, forward (digest → intern id). Selected for deletion.
-    DictionaryForward,
-    /// Text dictionary, reverse (intern id → text). Selected for deletion.
-    DictionaryReverse,
-    /// Counters/metadata — per relation/field, never multiplied by row count.
-    Metadata,
+    /// Host / meta database records (not multiplied by live fact count).
+    HostMeta,
+    /// Unexpected data-database tag — reported, never silently dropped.
+    Unknown,
 }
 
-pub const NAMESPACES: [Namespace; 7] = [
+pub const NAMESPACES: [Namespace; 5] = [
     Namespace::Fact,
     Namespace::Membership,
     Namespace::Determinant,
-    Namespace::ReverseEdge,
-    Namespace::DictionaryForward,
-    Namespace::DictionaryReverse,
-    Namespace::Metadata,
+    Namespace::HostMeta,
+    Namespace::Unknown,
 ];
 
 impl Namespace {
@@ -66,74 +44,127 @@ impl Namespace {
             Self::Fact => "fact",
             Self::Membership => "membership",
             Self::Determinant => "determinant",
-            Self::ReverseEdge => "reverse-edge",
-            Self::DictionaryForward => "dictionary-forward",
-            Self::DictionaryReverse => "dictionary-reverse",
-            Self::Metadata => "metadata",
+            Self::HostMeta => "host-meta",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// Classify one `OwnedSnapshot::entry_census` record.
+    #[must_use]
+    pub const fn from_census_tag(is_meta: bool, tag: u8) -> Self {
+        if is_meta {
+            return Self::HostMeta;
+        }
+        match tag {
+            0x01 => Self::Fact,
+            0x02 => Self::Membership,
+            0x03 => Self::Determinant,
+            _ => Self::Unknown,
         }
     }
 }
 
-/// Raw per-entry byte model of the **audited** layout (chapter 41's table).
-/// `W` = encoded fact width, `d` = projected key width, text = UTF-8 length.
-/// These are raw key+value bytes before LMDB node/slot/page overhead.
-pub mod audited_layout {
-    /// Fact entry: key 13 (tag 1 + relation 4 + local row 8) + value `W`.
+/// Live raw key/value model. Discriminator is interned [`ProjectionId`],
+/// not a declaration-order statement number. Values for membership and
+/// determinant entries are empty.
+pub mod current_layout {
+    /// Fact key: tag 1 + relation 4 + local row 8.
+    pub const ROW_KEY: u64 = 13;
+    /// Membership key: tag 1 + relation 4 + fingerprint 16 + local row 8.
+    pub const MEMBERSHIP_KEY: u64 = 29;
+    pub const MEMBERSHIP_VALUE: u64 = 0;
+    pub const MEMBERSHIP_ENTRY: u64 = MEMBERSHIP_KEY + MEMBERSHIP_VALUE;
+    /// Determinant overhead: tag 1 + projection id 2 + row surrogate 8.
+    pub const DETERMINANT_OVERHEAD: u64 = 11;
+    /// Exact u64 routing width (C1: scalar grouping ≤16 encoded bytes).
+    pub const EXACT_U64_ROUTING: u64 = 8;
+    /// Fingerprint routing width (BLAKE3 truncated, exact-checked).
+    pub const FINGERPRINT_ROUTING: u64 = 16;
+    /// Application Id128 stored width (not a physical row id).
+    pub const ID128_WIDTH: u64 = 16;
+
+    #[must_use]
+    pub const fn fact_entry(payload: u64) -> u64 {
+        ROW_KEY + payload
+    }
+
+    #[must_use]
+    pub const fn determinant_entry(routing: u64, interval_tail: u64) -> u64 {
+        DETERMINANT_OVERHEAD + routing + interval_tail
+    }
+
+    #[must_use]
+    pub const fn determinant_exact_u64() -> u64 {
+        determinant_entry(EXACT_U64_ROUTING, 0)
+    }
+
+    #[must_use]
+    pub const fn determinant_fingerprint() -> u64 {
+        determinant_entry(FINGERPRINT_ROUTING, 0)
+    }
+
+    /// Raw key bytes for one fact + membership + one fingerprint determinant
+    /// (chapter 40: 13+29+27 = 69) — payload is extra.
+    pub const KEY_BYTES_FACT_MEMBERSHIP_FP_DET: u64 = ROW_KEY + MEMBERSHIP_KEY + 27;
+
+    #[must_use]
+    pub const fn fact_plus_membership(payload: u64) -> u64 {
+        fact_entry(payload) + MEMBERSHIP_ENTRY
+    }
+
+    /// One fact, membership, and one fingerprint determinant, including payload.
+    #[must_use]
+    pub const fn fact_membership_fp_det(payload: u64) -> u64 {
+        fact_plus_membership(payload) + determinant_fingerprint()
+    }
+}
+
+/// Historical 0.x bill (README 2026-08-22 attribution only). Not the
+/// successor layout and not a prediction of current file size.
+pub mod historical_layout {
     #[must_use]
     pub const fn fact_entry(fact_width: u64) -> u64 {
         13 + fact_width
     }
 
-    /// Membership entry: key 37 (tag 1 + relation 4 + digest 32) + value 8.
+    /// 32-byte membership digest in the key + 8-byte row value.
     pub const MEMBERSHIP_ENTRY: u64 = 45;
 
-    /// Determinant entry: key `7 + d` (tag 1 + relation 4 + statement 2 + d)
-    /// + value 8.
     #[must_use]
     pub const fn determinant_entry(determinant_width: u64) -> u64 {
         15 + determinant_width
     }
 
-    /// Reverse edge: key `15 + d`, value 0 (unweighted) or 8 (weighted).
     #[must_use]
     pub const fn reverse_edge_entry(determinant_width: u64, weighted: bool) -> u64 {
         15 + determinant_width + if weighted { 8 } else { 0 }
     }
 
-    /// Dictionary forward: key 33 (tag 1 + digest 32) + value 8.
     pub const DICT_FORWARD_ENTRY: u64 = 41;
 
-    /// Dictionary reverse: key 9 (tag 1 + intern 8) + UTF-8 text value.
     #[must_use]
     pub const fn dict_reverse_entry(text_len: u64) -> u64 {
         9 + text_len
     }
 
-    /// Both dictionary sides for one distinct historical string:
-    /// `50 + text length`, plus an 8-byte intern reference per occurrence.
     #[must_use]
     pub const fn dict_total(text_len: u64) -> u64 {
         DICT_FORWARD_ENTRY + dict_reverse_entry(text_len)
     }
 
-    /// Every ordinary fact costs `W + 58` raw bytes for F+M before
-    /// determinants, edges, dictionary and page overhead.
     #[must_use]
     pub const fn fact_plus_membership(fact_width: u64) -> u64 {
         fact_entry(fact_width) + MEMBERSHIP_ENTRY
     }
 }
 
-/// Raw per-entry model of the **selected successor** membership layout:
-/// `(relation, 16-byte fingerprint, local-row-id) → empty` — the row ID moves
-/// from the value into the key and is not duplicated (chapter 41 item 2).
-pub mod successor_layout {
-    /// Membership entry: key 29 (tag 1 + relation 4 + fingerprint 16 +
-    /// local row 8) + empty value.
-    pub const MEMBERSHIP_ENTRY: u64 = 29;
+/// Compatibility names for existing SPACE tests. Prefer [`current_layout`].
+pub mod audited_layout {
+    pub use super::historical_layout::*;
+}
 
-    /// Raw bytes saved per fact against the audited 45-byte membership entry:
-    /// exactly the 16 truncated digest bytes.
+pub mod successor_layout {
+    pub const MEMBERSHIP_ENTRY: u64 = super::current_layout::MEMBERSHIP_ENTRY;
     pub const MEMBERSHIP_SAVING_PER_FACT: u64 =
-        super::audited_layout::MEMBERSHIP_ENTRY - MEMBERSHIP_ENTRY;
+        super::historical_layout::MEMBERSHIP_ENTRY - MEMBERSHIP_ENTRY;
 }

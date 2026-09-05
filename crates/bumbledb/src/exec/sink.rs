@@ -1,9 +1,9 @@
 //! The two consumers of bindings: set-projection with dedup and
-//! the D2 subtree-skip signal, and aggregate folds with binding dedup
-//! .
+//! the D2 subtree-skip signal, and aggregate folds with binding dedup.
 //! The sinks are where union lives: `union_spans` keys the multi-rule
 //! aggregate head projection. `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`.
 use crate::encoding::encode_i64;
+use crate::exec::scratch::{ScratchAppend, ScratchMapId};
 use crate::exec::wordmap::WordMap;
 
 mod aggregate;
@@ -31,8 +31,7 @@ pub enum AggSpec {
         op: FoldOp,
         slot: usize,
         width: usize,
-
-        /// biased form; Sum must decode before accumulating).
+        /// Signed (I64) argument; Sum decodes the biased word before accumulating.
         signed: bool,
     },
 }
@@ -71,11 +70,8 @@ impl AggSpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindSpec {
     Var { slot: usize, width: usize },
-
     Compute(std::sync::Arc<crate::api::prepared::computed::OutputProgram>),
-
     Agg(AggSpec),
-
     Pack { slot: usize },
 }
 
@@ -83,28 +79,61 @@ pub enum FindSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SinkSpec {
     Var { slot: usize, width: usize },
-
     Agg(AggSpec),
-
     Pack { slot: usize },
 }
 
 /// One execution's sink allowance: the operation ledger plus the RAM
 /// allowance a sink's distinct-state may occupy before it must continue in
 /// the one temporary-LMDB scratch map (chapter 12 §4). Installed per
-/// execution by the prepared query; sinks without a budget (derived stage
-/// sinks, whose growth the derived-tuples budget bounds at seal) stay in
-/// RAM.
+/// execution by the prepared query on the main sink AND interior stage
+/// sinks (the derived-tuples budget still judges stage row counts at
+/// seal); a sink without a budget (bare executor harnesses) stays in RAM.
 #[derive(Debug, Clone)]
 pub(crate) struct SinkBudget {
     pub(crate) work: crate::work::WorkContext,
     pub(crate) ram_bytes: usize,
 }
 
+/// Crate-internal sink reply L05 consumes after emit or finalize.
+/// Work/scratch refusals are Stop; cardinality and corruption are Error.
+/// Finalize is Q-ATOMIC: no group publishes after a recorded failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SinkProgress {
+    /// More input is welcome; the row was recorded or was an exact duplicate.
+    Continue,
+    /// Finalize emitted every group/answer; the execution is complete.
+    Finish,
+    /// Work, deadline, or cancellation stopped the sink. Sticky: later
+    /// emits drop and finalize refuses (Q-ATOMIC).
+    Stop,
+    /// Scratch, cardinality, or corruption failure. Sticky: later emits
+    /// drop and finalize refuses before any answer publishes.
+    Error,
+}
+
+pub(in crate::exec::sink) fn classify_progress(error: &crate::error::Error) -> SinkProgress {
+    match error {
+        crate::error::Error::Store(store)
+            if matches!(
+                store.as_ref(),
+                crate::storage::store::StoreError::Work(
+                    crate::work::WorkError::Cancelled
+                        | crate::work::WorkError::DeadlineExceeded
+                        | crate::work::WorkError::Exhausted { .. }
+                )
+            ) =>
+        {
+            SinkProgress::Stop
+        }
+        _ => SinkProgress::Error,
+    }
+}
+
 /// A distinct-tuple set that starts as the measured RAM word table and
-/// continues in the scratch map when its owner's allowance is crossed —
-/// exact full-key semantics in both tiers, insertion order preserved when
-/// `ordered` (the projection sink's drain/watermark contract). Errors are
+/// continues in the one scratch relation when its owner's allowance is
+/// crossed — exact full-key semantics in both tiers, insertion order on
+/// [`ScratchMapId::OrderLog`] of that same env when `ordered`. Errors are
 /// sticky: the executor's sink interface is infallible, so a scratch
 /// failure records itself, subsequent inserts drop, and finalize surfaces
 /// the error before any answer publishes (Q-ATOMIC).
@@ -129,10 +158,8 @@ pub(crate) const STEP_QUANTUM: u32 = 256;
 
 struct SpilledSet {
     set: crate::exec::scratch::ScratchRelation,
-    /// Insertion-ordered row log (`seq → row words`), kept only for
-    /// ordered sets; `entries` numbers RAM-era rows first, so watermarks
-    /// span the transition.
-    log: Option<crate::exec::scratch::ScratchRelation>,
+    /// Insertion-order log is [`ScratchMapId::OrderLog`] on [`Self::set`].
+    ordered: bool,
     entries: u64,
 }
 
@@ -140,7 +167,7 @@ impl std::fmt::Debug for SpilledSet {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SpilledSet")
             .field("entries", &self.entries)
-            .field("ordered", &self.log.is_some())
+            .field("ordered", &self.ordered)
             .finish_non_exhaustive()
     }
 }
@@ -188,6 +215,13 @@ impl SpillSet {
         self.error.take()
     }
 
+    pub(in crate::exec::sink) fn progress(&self) -> SinkProgress {
+        match &self.error {
+            None => SinkProgress::Continue,
+            Some(error) => classify_progress(error),
+        }
+    }
+
     /// Exact insert-if-absent. A recorded failure drops every later row
     /// (the execution is spoiled; finalize refuses).
     pub(in crate::exec::sink) fn insert(&mut self, key: &[u64]) -> bool {
@@ -226,9 +260,19 @@ impl SpillSet {
                 match spilled.set.insert_if_absent(key_bytes, &[]) {
                     Ok(false) => false,
                     Ok(true) => {
-                        if let Some(log) = &mut spilled.log {
-                            let seq = spilled.entries;
-                            if let Err(error) = log.put(&seq.to_be_bytes(), key_bytes) {
+                        if spilled.ordered {
+                            let seq = spilled.entries.to_be_bytes();
+                            let mut append = ScratchAppend::new(&mut spilled.set);
+                            if let Err(error) = append.append(
+                                ScratchMapId::OrderLog,
+                                &seq,
+                                key_bytes,
+                            ) {
+                                drop(append);
+                                self.error = Some(error);
+                                return false;
+                            }
+                            if let Err(error) = append.finish() {
                                 self.error = Some(error);
                                 return false;
                             }
@@ -256,29 +300,44 @@ impl SpillSet {
         );
         let mut set = crate::exec::scratch::ScratchRelation::new(&budget.work, 0);
         set.force_spill()?;
-        let mut log = if self.ordered {
-            let mut log = crate::exec::scratch::ScratchRelation::new(&budget.work, 0);
-            log.force_spill()?;
-            Some(log)
-        } else {
-            None
-        };
+        if self.ordered {
+            set.open_map(ScratchMapId::OrderLog)?;
+        }
         let mut entries: u64 = 0;
         let mut key_bytes = Vec::new();
-        for (key, ()) in self.ram.iter() {
-            key_bytes.clear();
-            for word in key {
-                key_bytes.extend_from_slice(&word.to_be_bytes());
+        let mut append = ScratchAppend::new(&mut set);
+        let copied = (|| {
+            for (key, ()) in self.ram.iter() {
+                key_bytes.clear();
+                for word in key {
+                    key_bytes.extend_from_slice(&word.to_be_bytes());
+                }
+                append.append(ScratchMapId::Default, &key_bytes, &[])?;
+                if self.ordered {
+                    append.append(
+                        ScratchMapId::OrderLog,
+                        &entries.to_be_bytes(),
+                        &key_bytes,
+                    )?;
+                }
+                entries += 1;
             }
-            set.insert_if_absent(&key_bytes, &[])?;
-            if let Some(log) = &mut log {
-                log.put(&entries.to_be_bytes(), &key_bytes)?;
+            Ok(())
+        })();
+        match copied {
+            Ok(()) => append.finish()?,
+            Err(error) => {
+                drop(append);
+                return Err(error);
             }
-            entries += 1;
         }
         // Ownership switches only after the copy completed.
         self.ram.clear();
-        self.spilled = Some(SpilledSet { set, log, entries });
+        self.spilled = Some(SpilledSet {
+            set,
+            ordered: self.ordered,
+            entries,
+        });
         Ok(())
     }
 
@@ -293,13 +352,13 @@ impl SpillSet {
     }
 
     /// Insertion-ordered drain from `since`, across both tiers. Ordered
-    /// sets only.
+    /// sets only. `Ok(false)` stops the walk; `Err` is immediate.
     /// # Errors
     /// Scratch read failure, stopped work, or the visitor's failure.
     pub(in crate::exec::sink) fn for_each_since(
         &mut self,
         since: usize,
-        visit: &mut dyn FnMut(&[u64]) -> crate::error::Result<()>,
+        visit: &mut dyn FnMut(&[u64]) -> crate::error::Result<bool>,
     ) -> crate::error::Result<()> {
         debug_assert!(self.ordered, "unordered sets never drain");
         if let Some(error) = self.error.take() {
@@ -308,33 +367,39 @@ impl SpillSet {
         match &mut self.spilled {
             None => {
                 for (key, ()) in self.ram.iter_since(since) {
-                    visit(key)?;
+                    if !visit(key)? {
+                        return Ok(());
+                    }
                 }
                 Ok(())
             }
             Some(spilled) => {
-                let log = spilled.log.as_mut().expect("ordered sets keep the row log");
+                debug_assert!(spilled.ordered, "ordered sets keep the row log");
                 let mut words: Vec<u64> = Vec::new();
-                let mut failure: Option<crate::error::Error> = None;
-                log.for_each_from(&(since as u64).to_be_bytes(), &mut |_, row| {
-                    words.clear();
-                    for chunk in row.as_chunks::<8>().0 {
-                        words.push(u64::from_be_bytes(*chunk));
-                    }
-                    match visit(&words) {
-                        Ok(()) => Ok(true),
-                        Err(error) => {
-                            failure = Some(error);
-                            Ok(false)
+                spilled.set.visit_map_from(
+                    ScratchMapId::OrderLog,
+                    &(since as u64).to_be_bytes(),
+                    &mut |_, row| {
+                        words.clear();
+                        for chunk in row.as_chunks::<8>().0 {
+                            words.push(u64::from_be_bytes(*chunk));
                         }
-                    }
-                })?;
-                match failure {
-                    Some(error) => Err(error),
-                    None => Ok(()),
-                }
+                        visit(&words)
+                    },
+                )
             }
         }
+    }
+}
+
+/// Fallible early-stoppable stage-row visit. `Ok(false)` stops; `Err` is
+/// immediate.
+pub(crate) type StageRowVisit<'v> = &'v mut dyn FnMut(&[u64]) -> crate::error::Result<bool>;
+
+pub(in crate::exec::sink) fn encode_stage_row(row: &[u64], out: &mut Vec<u8>) {
+    out.clear();
+    for word in row {
+        out.extend_from_slice(&word.to_be_bytes());
     }
 }
 
@@ -343,12 +408,10 @@ pub(in crate::exec::sink) enum DedupState {
     Bindings {
         seen: SpillSet,
     },
-
     Union {
         seen: SpillSet,
         spans: Vec<(usize, usize)>,
     },
-
     DnfUnion {
         seen: SpillSet,
         spans: Vec<(usize, usize)>,
@@ -382,6 +445,15 @@ impl DedupState {
         match self {
             Self::Bindings { seen } | Self::Union { seen, .. } | Self::DnfUnion { seen, .. } => {
                 Some(seen.len())
+            }
+            Self::Elided { .. } => None,
+        }
+    }
+
+    pub(in crate::exec::sink) fn seen(&self) -> Option<&SpillSet> {
+        match self {
+            Self::Bindings { seen } | Self::Union { seen, .. } | Self::DnfUnion { seen, .. } => {
+                Some(seen)
             }
             Self::Elided { .. } => None,
         }
@@ -444,27 +516,20 @@ fn extend_sources(finds: &[SinkSpec], out: &mut Vec<ProjSource>) {
 #[derive(Debug)]
 pub struct ProjectionSink {
     finds: Vec<SinkSpec>,
-
     sources: ProjectionSources,
     seen: SpillSet,
     scratch: Vec<u64>,
-
     batch_sources: Vec<crate::exec::run::LeafSource>,
-
     scan_rows: Vec<u64>,
-
     scan_count: u64,
 }
 
 #[derive(Debug)]
 enum GroupTable {
     Hashed(WordMap<usize>),
-
     Dense {
         radixes: Box<[u16]>,
-
         table: Box<[u32]>,
-
         ordinals: Vec<u32>,
     },
 }
@@ -496,7 +561,6 @@ impl GroupTable {
 enum Acc {
     SumSigned(i128),
     SumUnsigned(u128),
-
     Min(u64),
     Max(u64),
     Count(u64),
@@ -531,27 +595,20 @@ pub(in crate::exec::sink) enum GroupState {
 /// skip is illegal under aggregation (any new bound variable multiplies
 /// the binding set the fold is defined over). The illegality is also
 /// encoded structurally: aggregate plans mark every node sink-relevant
-/// (run.rs's skip-absorption arm), so even a skip
-/// signaled by mistake would be absorbed at its producing node.
+/// (run.rs's skip-absorption arm), so even a skip signaled by mistake
+/// would be absorbed at its producing node.
 #[derive(Debug)]
 pub struct AggregateSink {
     dedup: DedupState,
-
     finds: Vec<SinkSpec>,
-
     real_slots: usize,
-
     group_spans: Vec<(usize, usize)>,
-
     groups: GroupTable,
-
     group_state: GroupState,
-
     float_accs: Vec<crate::exec::kernel::numeric::ExactF64Accumulator>,
     share_float_inputs: bool,
     group_counts: Vec<u64>,
     cardinality_overflow: bool,
-
     /// This execution's allowance: installed by `begin`, consulted by the
     /// group-state pressure check (`maybe_spill_groups`). `None` = derived
     /// stage sink (RAM-only; the derived-tuples budget bounds it at seal).
@@ -562,24 +619,21 @@ pub struct AggregateSink {
     /// Sticky spill/scratch failure recorded by the infallible fold paths;
     /// finalize refuses before any group publishes (Q-ATOMIC).
     error: Option<crate::error::Error>,
+    /// Successful finalize has published every group (L05 Finish).
+    finished: bool,
+    /// Stop/Error latched across [`Self::take_error`] until reset.
+    terminal: SinkProgress,
     /// Tracked Pack-claim bytes (the claims grow per row, not per group).
     pack_bytes: usize,
-
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,
-
     acc_scratch: Vec<Acc>,
-
     dedup_survivors: Vec<u32>,
-
     scan_sources: Vec<FoldSource>,
-
     scan_count: u64,
-
     cached_outer_slots: Vec<usize>,
     cached_constant_group: bool,
-
     #[cfg(test)]
     group_probes: usize,
 }

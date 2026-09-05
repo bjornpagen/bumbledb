@@ -16,9 +16,22 @@ use bumbledb_log::gc::{GcError, GcPolicy, close_epoch, decode_marks, mark, run_c
 use bumbledb_log::manifest::{GcPhase, RootKind, RootPolicy};
 use bumbledb_log::store::mem::{Behavior, Gate, MemStore, Op};
 use bumbledb_log::store::{
-    ConditionalOutcome, ConditionalStore as _, ObjectKind, get_verified, head_key, put_verified,
+    ConditionalOutcome, ConditionalStore as _, ObjectKind, ObjectRef, ReceiveLimits,
+    TransportContext, get_verified, head_key, put_verified,
 };
 use lane_support::{HEAD_CAP, LIMITS, Mirror, insert_user, op, work};
+
+fn try_verified(
+    store: &MemStore,
+    reference: &ObjectRef,
+) -> Result<bumbledb::work::ChargedBytes, bumbledb_log::store::ObjectError> {
+    get_verified(
+        store,
+        "t",
+        reference,
+        TransportContext::new(&work(), ReceiveLimits::exact(reference.length)),
+    )
+}
 
 fn gc_policy() -> GcPolicy {
     GcPolicy {
@@ -72,7 +85,7 @@ fn gc01_unreferenced_old_epoch_object_is_collected_and_new_epoch_twin_survives()
         "exactly the unreferenced old-epoch object went"
     );
     assert!(
-        get_verified(&store, "t", &orphan).is_err(),
+        try_verified(&store, &orphan).is_err(),
         "the orphan is gone"
     );
     // Every protected object (the whole tail of decisions) survived.
@@ -90,7 +103,7 @@ fn gc01_unreferenced_old_epoch_object_is_collected_and_new_epoch_twin_survives()
     )
     .expect("restage under the open epoch");
     assert_ne!(restaged.key("t"), orphan.key("t"));
-    get_verified(&store, "t", &restaged).expect("restaged twin is untouched");
+    try_verified(&store, &restaged).expect("restaged twin is untouched");
 }
 
 #[test]
@@ -183,11 +196,12 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
     let report = run_collection(&store, "t", op(0x33), LIMITS, &gc_policy(), &work())
         .expect("collection with pin");
     assert!(report.finished);
-    let bytes = get_verified(&store, "t", &old_checkpoint).expect("pinned manifest survives");
+    let bytes = try_verified(&store, &old_checkpoint).expect("pinned manifest survives");
     let manifest =
-        bumbledb_log::codec::decode_manifest(&bytes, ckpt_policy().stream).expect("decodes");
+        bumbledb_log::codec::decode_manifest(bytes.as_bytes(), ckpt_policy().stream).expect("decodes");
+    drop(bytes.into_owner());
     for chunk in &manifest.chunks {
-        get_verified(&store, "t", chunk).expect("pinned chunk survives");
+        try_verified(&store, chunk).expect("pinned chunk survives");
     }
     // Release the pin: deletion reports the lost recovery capability, then a
     // LATER collection reclaims the old closure.
@@ -199,7 +213,7 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
     run_collection(&store, "t", op(0x34), LIMITS, &gc_policy(), &work())
         .expect("second collection");
     assert!(
-        get_verified(&store, "t", &old_checkpoint).is_err(),
+        try_verified(&store, &old_checkpoint).is_err(),
         "the released closure is collected"
     );
     // The current recovery root still fully verifies.
@@ -209,7 +223,7 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
         .expect("recovery")
         .checkpoint
         .expect("checkpoint");
-    get_verified(&store, "t", &current).expect("current checkpoint retained");
+    try_verified(&store, &current).expect("current checkpoint retained");
 }
 
 #[test]
@@ -252,7 +266,7 @@ fn gc05_roots_added_during_a_collection_survive_progress_rebase() {
     );
     // Its (current-recovery) closure was inside the barrier's protection, so
     // its checkpoint still verifies.
-    get_verified(&store, "t", &root.recovery.checkpoint.expect("checkpoint"))
+    try_verified(&store, &root.recovery.checkpoint.expect("checkpoint"))
         .expect("root closure survived the sweep");
 }
 
@@ -275,7 +289,7 @@ fn gc06_partial_or_foreign_mark_evidence_is_never_a_deletion_certificate() {
     );
     assert_eq!(store.object_keys(), before, "nothing was deleted");
     // Foreign-barrier mark evidence can never certify this sweep.
-    let honest = get_verified(&store, "t", &marks_ref);
+    let honest = try_verified(&store, &marks_ref);
     assert!(honest.is_err(), "the corrupted manifest fails verification");
     let foreign = decode_marks(b"not a mark manifest", op(0x61), HEAD_CAP);
     assert!(foreign.is_err());
@@ -303,6 +317,19 @@ fn gc07_failed_deletion_retains_progress_and_resume_converges() {
         store.object_keys().contains(&key),
         "the failed object remains"
     );
+    if let GcPhase::Sweeping { cursor, .. } = mirror.head().gc {
+        if let Some(done) = cursor {
+            let done = std::str::from_utf8(&done).expect("canonical key bytes");
+            assert!(
+                done.contains("/objects/"),
+                "durable progress is a last-completed object key, not a provider token: {done}"
+            );
+            assert!(
+                done.as_str() < key.as_str(),
+                "progress stops before the failed key"
+            );
+        }
+    }
     // Resume: the same sweep retries the failed key and finishes.
     let resumed = sweep(&store, "t", &gc_policy(), &work()).expect("resume");
     assert!(resumed.finished);
@@ -324,13 +351,13 @@ fn gc08_gc09_late_uploads_are_orphans_found_by_actual_listing_not_slot_scans() {
     // finished. It cannot publish it (GC-02); it is an orphan.
     let late = put_verified(&store, "t", old_epoch, ObjectKind::Chunk, b"late-upload")
         .expect("late upload lands");
-    get_verified(&store, "t", &late).expect("the orphan exists for now");
+    try_verified(&store, &late).expect("the orphan exists for now");
     // The next actual-object reconciliation collects it.
     let second =
         run_collection(&store, "t", op(0x82), LIMITS, &gc_policy(), &work()).expect("second pass");
     assert!(second.finished);
     assert!(
-        get_verified(&store, "t", &late).is_err(),
+        try_verified(&store, &late).is_err(),
         "the late orphan is collected"
     );
     // Pagination happened (page size 2) and cost tracked extant keys.

@@ -1,10 +1,9 @@
 # Deployment contract and runbook
 
 Status: permanent doc. Support floors and procedures below are the
-selected contract (final-solution 32/33 remain normative until proposal
-retirement). **Every measured envelope number is PENDING F3 measurement
-and is marked so — no latency, size or concurrency figure here is
-evidence until the final verification campaign records it.**
+selected contract. **Every measured envelope number stays NotRun until
+the post-retirement qualification campaign records it — no latency,
+size or concurrency figure here is evidence.**
 
 ## Supported targets and floors
 
@@ -26,7 +25,7 @@ fail usefully (no native artifact resolves; the loader refuses with the
 shipped-platform roster). The Expo/Drizzle-style generated-migration
 analogy is a workflow inspiration only — no mobile runtime exists.
 
-## The Vercel envelope — PENDING F3
+## The Vercel envelope — NotRun
 
 Facts recorded from official docs at proposal time (2026-09-04): full
 Node API surface; Node 24.x default; standard function bundle 250 MB
@@ -34,16 +33,16 @@ uncompressed; 1,024 shared file descriptors including runtime usage;
 memory/duration/payload limits are plan/runtime dependent deployment
 inputs. These are *provider documentation facts*, not Bumbledb evidence.
 
-The following are measured ONLY in F3 (APP-04/05/06) and are recorded
-here after the runs; until then every cell is PENDING:
+The following are measured ONLY in authorized G15/APP-04/05/06 cells
+and are recorded here after the runs; until then every cell is NotRun:
 
 | Measurement | Value |
 | --- | --- |
-| Cold materialization (checkpoint + tail download/import/validate) | PENDING F3 |
-| Warm request latency distribution (p50/p95/p99) | PENDING F3 |
-| Concurrent-tenant FD/memory/disk budget per instance | PENDING F3 |
-| Writable temp-disk capacity observed on the deployed runtime | PENDING F3 |
-| Emitted server-unit size with the traced x64 native package | PENDING F3 |
+| Cold materialization (checkpoint + tail download/import/validate) | NotRun |
+| Warm request latency distribution (p50/p95/p99) | NotRun |
+| Concurrent-tenant FD/memory/disk budget per instance | NotRun |
+| Writable temp-disk capacity observed on the deployed runtime | NotRun |
+| Emitted server-unit size with the traced x64 native package | NotRun |
 
 HostedHistory's local directory on such hosts is DISPOSABLE
 materialization — S3 is the authority; a cold instance re-downloads the
@@ -78,9 +77,10 @@ such; large tenants use an ordinary Node host with adequate owned disk.
   Alchemy deployment does not automatically supply it.
 - The log bucket keeps a protected, never-deleted HEAD; bucket policy,
   conditional writes, TLS/encryption and region/account/prefix
-  configuration are qualified in F3 (APP-05, S3-*).
+  configuration are qualified in G08/APP-05/`S3-*` cells. Missing IAM
+remains NotRun.
 
-## Migration cutover runbook (chapter 33 order)
+## Migration cutover runbook
 
 Executed with `examples/notes/scripts/migrate.ts` or the app's own admin
 job. Every operation carries a stable operator-minted operation ID

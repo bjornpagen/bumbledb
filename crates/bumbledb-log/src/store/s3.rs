@@ -1,10 +1,17 @@
 //! `S3Store`: the conditional-store verbs over one S3 bucket/prefix. `SigV4`
 //! and the conditional headers ride the `object_store` crate; this module
 //! maps vendor outcomes onto the three-way conditional grammar and nothing
-//! else. A 409/timeout is `Indeterminate`, never a proved publication or
-//! failure; a 412 (`Precondition`) is a proved loss. Conditional writes are
-//! never retried by the transport. Credentials are consulted per request,
-//! off the worker threads. `ETags` stay opaque version tokens.
+//! else. Certainty comes ONLY from the typed outcome of the conditional
+//! operation: a typed success is publication, a typed precondition failure is
+//! a proved loss, and EVERYTHING else after dispatch — 409 conflicts,
+//! timeouts, connection resets, 5xx, auth refusals, lost response bodies —
+//! is `Indeterminate` (potentially applied). There is no substring matching
+//! of error text; certainty-by-substring is not a qualified service
+//! contract. Pre-dispatch refusals (key grammar, foreign async context)
+//! remain `Err` because they are provably raised before any request is sent.
+//! Conditional writes are never retried by the transport. Credentials are
+//! consulted per request, off the worker threads. `ETags` stay opaque
+//! version tokens.
 //!
 //! Production qualification is for a specific AWS S3 configuration (region,
 //! bucket class, strong read-after-write, conditional replacement, IAM
@@ -17,15 +24,46 @@ use std::sync::Arc;
 use object_store::aws::{AmazonS3, AmazonS3Builder, AwsCredential};
 use object_store::path::Path;
 use object_store::{
-    CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, ObjectStoreExt as _,
-    PutMode, PutOptions, RetryConfig, UpdateVersion,
+    CredentialProvider, Error as ObjError, GetOptions, ObjectStore as _, PutMode, PutOptions,
+    RetryConfig, UpdateVersion,
 };
 use tokio::runtime::{Builder, Handle, Runtime};
+use std::sync::OnceLock;
 
 use super::key_ok;
-use crate::writer::verbs::{
-    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
+use super::receive::{
+    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
+    ReceivingStore, TransportContext, TransportObservation,
 };
+use crate::writer::verbs::{
+    ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, PutOutcome,
+};
+use object_store::list::{PaginatedListOptions, PaginatedListStore};
+
+/// One shared bounded I/O runtime for all S3 stores with the same transport
+/// configuration. Tenant authority stays separate; only the executor is shared
+/// (LOG-023).
+static SHARED_RUNTIME: OnceLock<Arc<Runtime>> = OnceLock::new();
+
+fn shared_runtime() -> Result<Arc<Runtime>, S3Error> {
+    if Handle::try_current().is_ok() {
+        return Err(S3Error::new(
+            "open",
+            String::new(),
+            io::Error::other("S3Store is constructed outside an async context"),
+        ));
+    }
+    SHARED_RUNTIME
+        .get_or_try_init(|| {
+            Builder::new_multi_thread()
+                .worker_threads(4)
+                .enable_all()
+                .build()
+                .map(Arc::new)
+                .map_err(|source| S3Error::new("open", String::new(), source))
+        })
+        .map(Arc::clone)
+}
 
 /// Static keys, or a caller-owned refresh the store invokes before each
 /// signed request (env, IMDS, SSO, secrets manager, host rotation).
@@ -58,12 +96,70 @@ pub struct S3Config {
 }
 
 /// The S3 backend's infrastructure failure: transport, auth, stream bodies.
-/// Never a protocol outcome.
+/// Observations are transport facts; they are never a publication verdict.
 #[derive(Debug)]
 pub struct S3Error {
     pub op: &'static str,
     pub key: String,
     pub source: io::Error,
+    pub observation: TransportObservation,
+}
+
+impl ObservedError for S3Error {
+    fn observation(&self) -> TransportObservation {
+        self.observation
+    }
+}
+
+impl S3Error {
+    fn new(op: &'static str, key: impl Into<String>, source: io::Error) -> Self {
+        let observation = observe_io(&source);
+        Self {
+            op,
+            key: key.into(),
+            source,
+            observation,
+        }
+    }
+
+    fn observed(
+        op: &'static str,
+        key: impl Into<String>,
+        source: io::Error,
+        observation: TransportObservation,
+    ) -> Self {
+        Self {
+            op,
+            key: key.into(),
+            source,
+            observation,
+        }
+    }
+}
+
+fn observe_io(error: &io::Error) -> TransportObservation {
+    match error.kind() {
+        io::ErrorKind::NotFound => TransportObservation::Missing,
+        io::ErrorKind::PermissionDenied => TransportObservation::Denied,
+        _ => TransportObservation::Indeterminate,
+    }
+}
+
+fn observe_obj(error: &ObjError) -> TransportObservation {
+    match error {
+        ObjError::NotFound { .. } => TransportObservation::Missing,
+        ObjError::PermissionDenied { .. } | ObjError::Unauthenticated { .. } => {
+            TransportObservation::Denied
+        }
+        ObjError::Precondition { .. } | ObjError::NotModified { .. } => {
+            TransportObservation::Precondition
+        }
+        ObjError::AlreadyExists { .. } => TransportObservation::Conflict,
+        // Generic 5xx/reset/timeout/bucket/region payloads stay Indeterminate:
+        // substring matching is not a service contract, and L08 must not
+        // treat this as a publication verdict.
+        _ => TransportObservation::Indeterminate,
+    }
 }
 
 impl std::fmt::Display for S3Error {
@@ -93,52 +189,42 @@ impl S3Store {
     /// without an endpoint, and client-build failure. No network is touched.
     pub fn new(config: &S3Config) -> Result<Self, S3Error> {
         if Handle::try_current().is_ok() {
-            return Err(S3Error {
-                op: "open",
-                key: config.bucket.clone(),
-                source: io::Error::other("S3Store is constructed outside an async context"),
-            });
+            return Err(S3Error::new(
+                "open",
+                config.bucket.clone(),
+                io::Error::other("S3Store is constructed outside an async context"),
+            ));
         }
         if config.region == "auto" && config.endpoint.is_none() {
-            return Err(S3Error {
-                op: "open",
-                key: config.region.clone(),
-                source: io::Error::new(
+            return Err(S3Error::observed(
+                "open",
+                config.region.clone(),
+                io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "region auto requires an endpoint",
                 ),
-            });
+                TransportObservation::Region,
+            ));
         }
-        let runtime = Builder::new_multi_thread()
-            .enable_all()
-            .build()
-            .map_err(|source| S3Error {
-                op: "open",
-                key: config.bucket.clone(),
-                source,
-            })?;
+        let runtime = shared_runtime()?;
         let handle = runtime.handle().clone();
         let inner = build_client(config)?;
         Ok(Self {
             inner,
             handle,
-            _runtime: Arc::new(runtime),
+            _runtime: runtime,
         })
     }
 
     fn path_of(op: &'static str, key: &str) -> Result<Path, S3Error> {
         if !key_ok(key) {
-            return Err(S3Error {
+            return Err(S3Error::new(
                 op,
-                key: key.to_string(),
-                source: io::Error::new(io::ErrorKind::InvalidInput, "invalid store key"),
-            });
+                key,
+                io::Error::new(io::ErrorKind::InvalidInput, "invalid store key"),
+            ));
         }
-        Path::parse(key).map_err(|source| S3Error {
-            op,
-            key: key.to_string(),
-            source: io::Error::other(source),
-        })
+        Path::parse(key).map_err(|source| S3Error::new(op, key, io::Error::other(source)))
     }
 
     /// The verbs are the sync surface; refuse rather than `block_on` from a
@@ -150,11 +236,11 @@ impl S3Store {
         fut: impl std::future::Future<Output = T>,
     ) -> Result<T, S3Error> {
         if Handle::try_current().is_ok() {
-            return Err(S3Error {
+            return Err(S3Error::new(
                 op,
-                key: key.to_string(),
-                source: io::Error::other("store verbs are synchronous"),
-            });
+                key,
+                io::Error::other("store verbs are synchronous"),
+            ));
         }
         Ok(self.handle.block_on(fut))
     }
@@ -183,11 +269,9 @@ fn build_client(config: &S3Config) -> Result<AmazonS3, S3Error> {
         }
     }
     builder = builder.with_credentials(Arc::new(request_credentials(&config.credentials)));
-    builder.build().map_err(|source| S3Error {
-        op: "open",
-        key: config.bucket.clone(),
-        source: io::Error::other(source),
-    })
+    builder
+        .build()
+        .map_err(|source| S3Error::new("open", config.bucket.clone(), io::Error::other(source)))
 }
 
 /// One provider for both credential arms. `get_credential` consults the arm
@@ -259,44 +343,59 @@ impl CredentialProvider for RefreshProvider {
 }
 
 fn infra(op: &'static str, key: &str, source: ObjError) -> S3Error {
-    S3Error {
-        op,
-        key: key.to_string(),
-        source: io::Error::other(source),
-    }
+    let observation = observe_obj(&source);
+    S3Error::observed(op, key, io::Error::other(source), observation)
 }
 
-/// 409 Conflict, a timed-out PUT, and any other unproved transport result.
-/// `object_store` maps 409 onto `AlreadyExists`, so the walk reads the
-/// status out of the source chain — the variant alone is not a proof.
-fn is_unproved(err: &ObjError) -> bool {
-    if unproved_text(&err.to_string()) {
-        return true;
-    }
-    let mut current = std::error::Error::source(err);
-    while let Some(e) = current {
-        if unproved_text(&e.to_string()) {
-            return true;
+/// The typed post-dispatch verdict for a conditional head CREATE. Only the
+/// typed variant of the conditional operation may claim certainty, and the
+/// crate remaps BOTH a proved 412/304 ("a head exists") AND an unproved 409
+/// (a concurrent conditional write raced this one) onto `AlreadyExists`
+/// (`object_store::client::retry` maps `CONFLICT` there, and the AWS create
+/// arm remaps `Precondition`/`NotModified` there) — so the variant cannot
+/// prove a loss. Every dispatched error is held `Indeterminate`; the
+/// publication machine resolves creation certainty by reading the head back
+/// and comparing evidence, never by status guessing.
+fn create_verdict(_error: &ObjError) -> ConditionalOutcome {
+    ConditionalOutcome::Indeterminate
+}
+
+/// The typed post-dispatch verdict for a conditional head REPLACE.
+/// `Precondition` is the typed 412 — a proved loss (the crate also remaps
+/// real S3's 404-under-`If-Match` onto it; a bare `NotFound` from another
+/// backend is the same proof: the conditioned version cannot match a missing
+/// head). Everything else after dispatch — the 409 `AlreadyExists` remap,
+/// 5xx, timeouts, resets, auth refusals — is `Indeterminate`: the CAS may
+/// have been applied.
+fn replace_verdict(error: &ObjError) -> ConditionalOutcome {
+    match error {
+        ObjError::Precondition { .. } | ObjError::NotFound { .. } => {
+            ConditionalOutcome::PreconditionFailed
         }
-        current = std::error::Error::source(e);
+        _ => ConditionalOutcome::Indeterminate,
     }
-    false
 }
 
-fn unproved_text(text: &str) -> bool {
-    text.contains("409")
-        || text.contains("Conflict")
-        || text.contains("CONFLICT")
-        || text.contains("timed out")
-        || text.contains("TimedOut")
+/// A 2xx that arrived without its transition token cannot prove the exact
+/// version chain a conditional successor must condition on; hold it as
+/// `Indeterminate` and let the machine resolve by evidence.
+fn conditional_success(raw: Option<String>) -> ConditionalOutcome {
+    match raw {
+        Some(etag) => ConditionalOutcome::Published {
+            version: HeadVersion(Box::from(etag.into_bytes())),
+        },
+        None => ConditionalOutcome::Indeterminate,
+    }
 }
 
 fn version_of(op: &'static str, key: &str, raw: Option<String>) -> Result<HeadVersion, S3Error> {
     raw.map(|etag| HeadVersion(Box::from(etag.into_bytes())))
-        .ok_or_else(|| S3Error {
-            op,
-            key: key.to_string(),
-            source: io::Error::new(io::ErrorKind::InvalidData, "vendor omitted ETag"),
+        .ok_or_else(|| {
+            S3Error::new(
+                op,
+                key,
+                io::Error::new(io::ErrorKind::InvalidData, "vendor omitted ETag"),
+            )
         })
 }
 
@@ -304,29 +403,94 @@ fn etag_text(version: &HeadVersion) -> String {
     String::from_utf8_lossy(&version.0).into_owned()
 }
 
-impl ConditionalStore for S3Store {
-    type Error = S3Error;
+async fn stream_get_capped(
+    op: &'static str,
+    key: &str,
+    ctx: TransportContext<'_>,
+    result: object_store::GetResult,
+) -> Result<ReceivedBody, S3Error> {
+    // Content-Length / meta.size is not a receiving bound (C6).
+    use futures::StreamExt as _;
+    let mut stream = result.into_stream();
+    let mut acc = ReceiveAccumulator::new(ctx);
+    while let Some(chunk) = stream.next().await {
+        acc.checkpoint().map_err(|fault| s3_fault(op, key, fault))?;
+        let chunk = chunk.map_err(|source| infra(op, key, source))?;
+        if let Err(fault) = acc.push(&chunk) {
+            return Err(s3_fault(op, key, fault));
+        }
+    }
+    acc.finish().map_err(|fault| s3_fault(op, key, fault))
+}
 
-    fn read_head(&self, head_key: &str) -> Result<HeadRead, S3Error> {
-        let path = Self::path_of("read_head", head_key)?;
-        self.block("read_head", head_key, async {
+fn s3_fault(op: &'static str, key: &str, fault: ReceiveFault) -> S3Error {
+    let observation = fault.observation();
+    S3Error::observed(op, key, fault.into_io(key), observation)
+}
+
+impl ReceivingStore for S3Store {
+    fn receive_object(
+        &self,
+        key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedBody, S3Error> {
+        let path = Self::path_of("receive_object", key)?;
+        self.block("receive_object", key, async {
+            ctx.checkpoint()
+                .map_err(|source| {
+                    S3Error::new(
+                        "receive_object",
+                        key,
+                        io::Error::new(io::ErrorKind::TimedOut, format!("{source:?}")),
+                    )
+                })?;
             match self.inner.get_opts(&path, GetOptions::new()).await {
-                Ok(result) => {
-                    let version = version_of("read_head", head_key, result.meta.e_tag.clone())?;
-                    let bytes = result
-                        .bytes()
-                        .await
-                        .map_err(|source| infra("read_head", head_key, source))?;
-                    Ok(HeadRead::Present {
-                        version,
-                        body: Box::from(bytes.as_ref()),
-                    })
-                }
-                Err(ObjError::NotFound { .. }) => Ok(HeadRead::Absent),
-                Err(source) => Err(infra("read_head", head_key, source)),
+                Ok(result) => stream_get_capped("receive_object", key, ctx, result).await,
+                Err(ObjError::NotFound { .. }) => Err(S3Error::observed(
+                    "receive_object",
+                    key,
+                    io::Error::new(io::ErrorKind::NotFound, "object missing"),
+                    TransportObservation::Missing,
+                )),
+                Err(source) => Err(infra("receive_object", key, source)),
             }
         })?
     }
+
+    fn receive_head(
+        &self,
+        head_key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedHead, S3Error> {
+        let path = Self::path_of("receive_head", head_key)?;
+        self.block("receive_head", head_key, async {
+            ctx.checkpoint()
+                .map_err(|source| {
+                    S3Error::new(
+                        "receive_head",
+                        head_key,
+                        io::Error::new(io::ErrorKind::TimedOut, format!("{source:?}")),
+                    )
+                })?;
+            match self.inner.get_opts(&path, GetOptions::new()).await {
+                Ok(result) => {
+                    let etag = result.meta.e_tag.clone();
+                    let bytes = stream_get_capped("receive_head", head_key, ctx, result).await?;
+                    let version = version_of("receive_head", head_key, etag)?;
+                    Ok(ReceivedHead::Present {
+                        version,
+                        body: bytes,
+                    })
+                }
+                Err(ObjError::NotFound { .. }) => Ok(ReceivedHead::Absent),
+                Err(source) => Err(infra("receive_head", head_key, source)),
+            }
+        })?
+    }
+}
+
+impl ConditionalStore for S3Store {
+    type Error = S3Error;
 
     fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, S3Error> {
         let path = Self::path_of("create_head", head_key)?;
@@ -337,14 +501,8 @@ impl ConditionalStore for S3Store {
                 ..PutOptions::default()
             };
             match self.inner.put_opts(&path, payload.into(), opts).await {
-                Ok(result) => Ok(ConditionalOutcome::Published {
-                    version: version_of("create_head", head_key, result.e_tag)?,
-                }),
-                Err(source) if is_unproved(&source) => Ok(ConditionalOutcome::Indeterminate),
-                Err(ObjError::AlreadyExists { .. } | ObjError::Precondition { .. }) => {
-                    Ok(ConditionalOutcome::PreconditionFailed)
-                }
-                Err(source) => Err(infra("create_head", head_key, source)),
+                Ok(result) => Ok(conditional_success(result.e_tag)),
+                Err(source) => Ok(create_verdict(&source)),
             }
         })?
     }
@@ -367,17 +525,8 @@ impl ConditionalStore for S3Store {
                 ..PutOptions::default()
             };
             match self.inner.put_opts(&path, payload.into(), opts).await {
-                Ok(result) => Ok(ConditionalOutcome::Published {
-                    version: version_of("replace_head", head_key, result.e_tag)?,
-                }),
-                Err(source) if is_unproved(&source) => Ok(ConditionalOutcome::Indeterminate),
-                Err(ObjError::Precondition { .. } | ObjError::NotFound { .. }) => {
-                    Ok(ConditionalOutcome::PreconditionFailed)
-                }
-                // The crate can remap a conditional conflict onto
-                // AlreadyExists; without a proved status that is unproved.
-                Err(ObjError::AlreadyExists { .. }) => Ok(ConditionalOutcome::Indeterminate),
-                Err(source) => Err(infra("replace_head", head_key, source)),
+                Ok(result) => Ok(conditional_success(result.e_tag)),
+                Err(source) => Ok(replace_verdict(&source)),
             }
         })?
     }
@@ -388,66 +537,45 @@ impl ConditionalStore for S3Store {
         self.block("put_object", key, async {
             match self.inner.put(&path, payload.into()).await {
                 Ok(_) => Ok(PutOutcome::Stored),
-                Err(source) if is_unproved(&source) => Ok(PutOutcome::Indeterminate),
-                Err(source) => Err(infra("put_object", key, source)),
-            }
-        })?
-    }
-
-    fn get_object(&self, key: &str) -> Result<ObjectRead, S3Error> {
-        let path = Self::path_of("get_object", key)?;
-        self.block("get_object", key, async {
-            match self.inner.get_opts(&path, GetOptions::new()).await {
-                Ok(result) => {
-                    let bytes = result
-                        .bytes()
-                        .await
-                        .map_err(|source| infra("get_object", key, source))?;
-                    Ok(ObjectRead::Present {
-                        body: Box::from(bytes.as_ref()),
-                    })
-                }
-                Err(ObjError::NotFound { .. }) => Ok(ObjectRead::Absent),
-                Err(source) => Err(infra("get_object", key, source)),
+                // Immutable objects resolve certainty by content read-back
+                // (`put_verified`): any dispatched failure is unproved, never
+                // a claimed non-store.
+                Err(_) => Ok(PutOutcome::Indeterminate),
             }
         })?
     }
 
     fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, S3Error> {
         const PAGE: usize = 1_000;
-        // Recursive delimiter listing enumerates actual extant names — no
-        // historical slot scan. The returned page is bounded; the caller
-        // resumes with the continuation token.
-        let trimmed = prefix.trim_end_matches('/');
-        let root = Path::parse(trimmed).map_err(|source| S3Error {
-            op: "list_objects",
-            key: prefix.to_string(),
-            source: io::Error::other(source),
-        })?;
-        let resume: Option<String> = after.map(|token| String::from_utf8_lossy(token).into_owned());
-        let mut keys: Vec<String> = self.block("list_objects", prefix, async {
-            let mut found = Vec::new();
-            let mut stack = vec![root];
-            while let Some(dir) = stack.pop() {
-                let listed = self
-                    .inner
-                    .list_with_delimiter(Some(&dir))
-                    .await
-                    .map_err(|source| infra("list_objects", prefix, source))?;
-                for object in listed.objects {
-                    found.push(object.location.to_string());
-                }
-                stack.extend(listed.common_prefixes);
-            }
-            Ok::<_, S3Error>(found)
+        let resume = after.map(|token| String::from_utf8_lossy(token).into_owned());
+        // Durable progress is the last fully processed canonical key, never
+        // an opaque provider page token (C6).
+        let keys: Vec<String> = self.block("list_objects", prefix, async {
+            let listed = self
+                .inner
+                .list_paginated(
+                    Some(prefix),
+                    PaginatedListOptions {
+                        offset: resume.clone(),
+                        max_keys: Some(PAGE),
+                        page_token: None,
+                        ..PaginatedListOptions::default()
+                    },
+                )
+                .await
+                .map_err(|source| infra("list_objects", prefix, source))?;
+            let mut keys: Vec<String> = listed
+                .result
+                .objects
+                .into_iter()
+                .map(|object| object.location.to_string())
+                .filter(|key| key.starts_with(prefix))
+                .filter(|key| resume.as_deref().is_none_or(|resume| key.as_str() > resume))
+                .collect();
+            keys.sort();
+            keys.truncate(PAGE);
+            Ok::<_, S3Error>(keys)
         })??;
-        keys.sort();
-        let keys: Vec<String> = keys
-            .into_iter()
-            .filter(|key| key.starts_with(prefix))
-            .filter(|key| resume.as_deref().is_none_or(|resume| key.as_str() > resume))
-            .take(PAGE)
-            .collect();
         let next = if keys.len() == PAGE {
             keys.last().map(|last| Box::from(last.as_bytes()))
         } else {
@@ -510,8 +638,12 @@ mod tests {
         let runtime = Builder::new_current_thread().build().unwrap();
         runtime.block_on(async {
             assert!(S3Store::new(&config()).is_err());
-            assert!(store.read_head("t/HEAD").is_err());
-            assert!(store.get_object("t/objects/1/chunk/aa").is_err());
+            assert!(store
+                .receive_head("t/HEAD", TransportContext::limited(64))
+                .is_err());
+            assert!(store
+                .receive_object("t/objects/1/chunk/aa", TransportContext::limited(64))
+                .is_err());
         });
     }
 
@@ -519,26 +651,161 @@ mod tests {
     fn hostile_keys_refuse_before_any_request() {
         let store = S3Store::new(&config()).expect("build");
         for key in ["~tmp/x", "a/../b", "a//b", "x.lock"] {
-            assert!(store.get_object(key).is_err(), "{key}");
+            assert!(
+                store
+                    .receive_object(key, TransportContext::limited(64))
+                    .is_err(),
+                "{key}"
+            );
         }
     }
 
     #[test]
-    fn unproved_conflicts_and_timeouts_are_indeterminate_shapes() {
-        let conflict = ObjError::AlreadyExists {
+    fn replace_certainty_is_typed_and_never_substring_matched() {
+        // The typed 412 (and the crate's 404-under-If-Match remap) is the ONE
+        // proved loss.
+        let precondition = ObjError::Precondition {
             path: "p".into(),
-            source: Box::new(io::Error::other("Client error with status 409 Conflict")),
+            source: Box::new(io::Error::other("412")),
         };
-        assert!(is_unproved(&conflict));
+        assert_eq!(
+            replace_verdict(&precondition),
+            ConditionalOutcome::PreconditionFailed
+        );
+        let missing = ObjError::NotFound {
+            path: "p".into(),
+            source: Box::new(io::Error::other("404")),
+        };
+        assert_eq!(
+            replace_verdict(&missing),
+            ConditionalOutcome::PreconditionFailed
+        );
+        // EVERYTHING else after dispatch is potentially published: a
+        // 5xx-shaped transport failure, a lost/reset connection, a timeout,
+        // an auth refusal, and the crate's 409 -> AlreadyExists remap. None
+        // of these may claim the CAS did not apply — and none of the
+        // classification consults error text.
+        let five_hundred = ObjError::Generic {
+            store: "S3",
+            source: Box::new(io::Error::other(
+                "Server returned non-2xx status code: 500 Internal Error",
+            )),
+        };
+        assert_eq!(
+            replace_verdict(&five_hundred),
+            ConditionalOutcome::Indeterminate
+        );
+        let reset = ObjError::Generic {
+            store: "S3",
+            source: Box::new(io::Error::new(
+                io::ErrorKind::ConnectionReset,
+                "error sending request",
+            )),
+        };
+        assert_eq!(replace_verdict(&reset), ConditionalOutcome::Indeterminate);
         let timeout = ObjError::Generic {
             store: "S3",
             source: Box::new(io::Error::new(io::ErrorKind::TimedOut, "timed out")),
         };
-        assert!(is_unproved(&timeout));
-        let denied = ObjError::Generic {
-            store: "S3",
+        assert_eq!(replace_verdict(&timeout), ConditionalOutcome::Indeterminate);
+        let denied = ObjError::PermissionDenied {
+            path: "p".into(),
             source: Box::new(io::Error::other("403 Forbidden")),
         };
-        assert!(!is_unproved(&denied), "a proved denial is not ambiguity");
+        assert_eq!(replace_verdict(&denied), ConditionalOutcome::Indeterminate);
+        let conflict = ObjError::AlreadyExists {
+            path: "p".into(),
+            source: Box::new(io::Error::other("Client error with status 409 Conflict")),
+        };
+        assert_eq!(replace_verdict(&conflict), ConditionalOutcome::Indeterminate);
+    }
+
+    #[test]
+    fn create_certainty_resolves_by_evidence_not_status_guessing() {
+        // The crate remaps BOTH the proved 412 and the unproved 409 onto
+        // `AlreadyExists` for a conditional create, so the variant cannot
+        // prove a loss: every dispatched create error is held Indeterminate
+        // and the machine resolves by reading the head back.
+        let exists = ObjError::AlreadyExists {
+            path: "p".into(),
+            source: Box::new(io::Error::other("412 or 409 — the variant cannot say")),
+        };
+        assert_eq!(create_verdict(&exists), ConditionalOutcome::Indeterminate);
+        let five_hundred = ObjError::Generic {
+            store: "S3",
+            source: Box::new(io::Error::other("503 Slow Down")),
+        };
+        assert_eq!(
+            create_verdict(&five_hundred),
+            ConditionalOutcome::Indeterminate
+        );
+    }
+
+    #[test]
+    fn a_conditional_success_without_its_transition_token_is_indeterminate() {
+        assert!(matches!(
+            conditional_success(Some("etag".into())),
+            ConditionalOutcome::Published { .. }
+        ));
+        assert_eq!(conditional_success(None), ConditionalOutcome::Indeterminate);
+    }
+
+    #[test]
+    fn typed_transport_errors_are_observations_never_publication() {
+        let missing = ObjError::NotFound {
+            path: "p".into(),
+            source: Box::new(io::Error::other("404")),
+        };
+        assert_eq!(observe_obj(&missing), TransportObservation::Missing);
+        let denied = ObjError::PermissionDenied {
+            path: "p".into(),
+            source: Box::new(io::Error::other("403")),
+        };
+        assert_eq!(observe_obj(&denied), TransportObservation::Denied);
+        let generic = ObjError::Generic {
+            store: "S3",
+            source: Box::new(io::Error::other("NoSuchBucket")),
+        };
+        assert_eq!(
+            observe_obj(&generic),
+            TransportObservation::Indeterminate,
+            "generic payloads are not guessed into bucket/region/publication"
+        );
+        assert_eq!(replace_verdict(&denied), ConditionalOutcome::Indeterminate);
+    }
+
+    #[test]
+    fn credential_refresh_runs_on_the_shared_runtime_before_a_signed_request() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        let calls = Arc::new(AtomicU64::new(0));
+        let refresh = {
+            let calls = Arc::clone(&calls);
+            Arc::new(move || {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(StaticKeys {
+                    access_key_id: "AKIAEXAMPLE".into(),
+                    secret_access_key: "secret".into(),
+                    session_token: None,
+                })
+            })
+        };
+        let store = S3Store::new(&S3Config {
+            endpoint: Some("http://127.0.0.1:1".into()),
+            region: "us-east-1".into(),
+            bucket: "bucket".into(),
+            credentials: S3Credentials::Refresh(refresh),
+        })
+        .expect("build");
+        let _ = store.receive_object(
+            "t/objects/1/chunk/aa",
+            TransportContext {
+                work: None,
+                receive: ReceiveLimits::capped(16),
+            },
+        );
+        assert!(
+            calls.load(Ordering::SeqCst) >= 1,
+            "refresh is consulted per signed request, not cached as a per-tenant executor"
+        );
     }
 }

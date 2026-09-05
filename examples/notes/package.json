@@ -8,12 +8,14 @@
 		"build": "next build",
 		"start": "next start",
 		"typecheck": "tsc --noEmit",
-		"test": "node --conditions react-server --experimental-strip-types --test 'test/routes.test.ts'",
+		"test": "node --conditions react-server --experimental-strip-types --test 'test/routes.test.ts' 'test/specimens.test.ts'",
 		"test:deployed": "node --experimental-strip-types --test 'test/deployed.test.ts'",
 		"generate": "node --experimental-strip-types scripts/generate-history.ts",
 		"migrate": "node --experimental-strip-types scripts/migrate.ts",
 		"init-tenant": "node --experimental-strip-types scripts/init-tenant.ts",
-		"dispatch-outbox": "node --experimental-strip-types scripts/dispatch-outbox.ts"
+		"dispatch-outbox": "node --experimental-strip-types scripts/dispatch-outbox.ts",
+		"backup-restore": "node --experimental-strip-types scripts/backup-restore.ts",
+		"resolve-command": "node --experimental-strip-types scripts/resolve-command.ts"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "3.955.0",

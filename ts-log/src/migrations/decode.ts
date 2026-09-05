@@ -5,7 +5,17 @@
  * anything crosses the bridge, and the native codec re-judges them again
  * from canonical frames. A well-shaped object is still not a checked plan.
  */
-import { Schema } from "effect"
+import { Schema, Result } from "effect"
+import {
+	DatabaseId,
+	DecisionDigest,
+	IncarnationId,
+	OperationId,
+	parseDatabaseIdentity,
+	parseSchemaId,
+	PlanSetDigest
+} from "#identity.ts"
+import type { ActivationRef } from "#migrations/types.ts"
 import { planExpressionOf, planValueOf } from "#migrations/expr.ts"
 import type {
 	GeneratedMigrations,
@@ -14,7 +24,8 @@ import type {
 	MigrationPlan,
 	PlanLoss,
 	PlanOperation,
-	PlanValue
+	PlanValue,
+	RuntimeContract
 } from "#migrations/types.ts"
 
 const MAX_OPERATIONS = 65536
@@ -184,6 +195,16 @@ export function decodeGeneratedMigrations(value: unknown): DecodeResult<Generate
 	if (value.plans.length !== manifest.value.entries.length) {
 		return bad("plan count does not match the manifest")
 	}
+	if (!Array.isArray(value.snapshots) || value.snapshots.length !== manifest.value.entries.length + 1) {
+		return bad("snapshots must be the empty-base schema plus one target per entry")
+	}
+	const snapshots: string[] = []
+	for (const [index, raw] of value.snapshots.entries()) {
+		if (typeof raw !== "string" || raw.length === 0) {
+			return bad(`snapshot ${index} must be nonempty canonical schema-file text`)
+		}
+		snapshots.push(raw)
+	}
 	const plans: MigrationPlan[] = []
 	for (const [index, raw] of value.plans.entries()) {
 		const plan = decodePlanData(raw)
@@ -202,5 +223,111 @@ export function decodeGeneratedMigrations(value: unknown): DecodeResult<Generate
 		}
 		plans.push(plan.value)
 	}
-	return { ok: true, value: { manifest: manifest.value, plans } }
+	return { ok: true, value: { manifest: manifest.value, plans, snapshots } }
+}
+
+export function decodeRuntimeContract(value: unknown): DecodeResult<RuntimeContract> {
+	if (!isRecord(value)) {
+		return bad("runtime contract shape")
+	}
+	if (value.contractVersion !== 1) {
+		return bad("unsupported contractVersion")
+	}
+	if (typeof value.schemaId !== "string" || typeof value.appliedPrefixDigest !== "string") {
+		return bad("runtime contract shape")
+	}
+	const steps = value.steps === undefined ? "0" : String(value.steps)
+	return {
+		ok: true,
+		value: {
+			contractVersion: 1,
+			schemaId: value.schemaId,
+			appliedPrefixDigest: value.appliedPrefixDigest,
+			steps
+		}
+	}
+}
+
+export function decodeActivationRef(value: unknown): DecodeResult<ActivationRef> {
+	if (!isRecord(value)) {
+		return bad("activation shape")
+	}
+	if (typeof value.operation !== "string") {
+		return bad("activation operation")
+	}
+	if (typeof value.planSetDigest !== "string") {
+		return bad("activation planSetDigest")
+	}
+	if (typeof value.targetGenesis !== "string") {
+		return bad("activation targetGenesis")
+	}
+	const operation = OperationId.fromHex(value.operation)
+	if (Result.isFailure(operation)) {
+		return bad("activation operation")
+	}
+	const planSetDigest = PlanSetDigest.fromHex(value.planSetDigest)
+	if (Result.isFailure(planSetDigest)) {
+		return bad("activation planSetDigest")
+	}
+	const targetGenesis = DecisionDigest.fromHex(value.targetGenesis)
+	if (Result.isFailure(targetGenesis)) {
+		return bad("activation targetGenesis")
+	}
+	if (typeof value.target === "string") {
+		const target = parseDatabaseIdentity(value.target)
+		if (Result.isFailure(target)) {
+			return bad("activation target")
+		}
+		return {
+			ok: true,
+			value: {
+				operation: operation.success,
+				planSetDigest: planSetDigest.success,
+				target: target.success,
+				targetGenesis: targetGenesis.success
+			}
+		}
+	}
+	if (!isRecord(value.target)) {
+		return bad("activation target")
+	}
+	if (typeof value.target.databaseId !== "string" || typeof value.target.incarnationId !== "string" || typeof value.target.schemaId !== "string") {
+		return bad("activation target")
+	}
+	const databaseId = DatabaseId.fromHex(value.target.databaseId)
+	if (Result.isFailure(databaseId)) {
+		return bad("activation target databaseId")
+	}
+	const incarnationId = IncarnationId.fromHex(value.target.incarnationId)
+	if (Result.isFailure(incarnationId)) {
+		return bad("activation target incarnationId")
+	}
+	const schemaId = parseSchemaId(value.target.schemaId)
+	if (Result.isFailure(schemaId)) {
+		return bad("activation target schemaId")
+	}
+	return {
+		ok: true,
+		value: {
+			operation: operation.success,
+			planSetDigest: planSetDigest.success,
+			target: {
+				databaseId: databaseId.success,
+				incarnationId: incarnationId.success,
+				schemaId: schemaId.success
+			},
+			targetGenesis: targetGenesis.success
+		}
+	}
+}
+
+/** Decode a persisted ready-to-switch migrate outcome's activation field. */
+export function decodeReadyToSwitchActivation(value: unknown): DecodeResult<ActivationRef> {
+	if (!isRecord(value)) {
+		return bad("migrate outcome shape")
+	}
+	if (value.kind !== "completed" || !isRecord(value.value) || value.value.kind !== "ready-to-switch") {
+		return bad("migrate outcome is not ready-to-switch")
+	}
+	return decodeActivationRef(value.value.activation)
 }

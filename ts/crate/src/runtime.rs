@@ -3,16 +3,57 @@
 //! Admission conservatively reserves an operation's complete byte allowance.
 //! Reservations survive completion until acknowledgement (or actual reclamation).
 //! A separate supervisor delivers finite drain reports even when every worker is busy.
+//!
+//! Each configured worker owns a resource table as ordinary event-loop state.
+//! Capabilities route to `runtime/worker/kind/id/generation`. Jobs borrow one
+//! entry and return to the scheduler. Workers wake for every inbox, queue,
+//! close and cleanup source. JS-driven WriterSession/HostWrite ABI is deleted.
 use std::collections::{BTreeMap, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
+
 use bumbledb::work::{ByteReservation, ExecutionPolicy, WorkContext, WorkError};
 
+pub mod lanes;
 pub mod owners;
+pub mod publication;
+pub mod registry;
 pub mod session;
+pub mod table;
+
+pub use registry::registry_draft::DraftLedger;
+pub use registry::{
+    Capability, CloseDrain, NativeKind, NativeRegistry, ResourceHeader, ResourceState,
+};
+pub use session::{
+    PayloadWork, PublicationSink, SnapshotAccess, SnapshotSession, SnapshotWork,
+};
+
+/// Queued conversion owner (D01/C8). Charge stays with the page until JS
+/// transfer (`runtime_rows_take`) or native drain. `Output::Page` / `Rows`
+/// carry this — not a bare `Vec<Vec<ValueOut>>`.
+pub struct QueuedOutput {
+    pub rows: Vec<Vec<crate::marshal::ValueOut>>,
+    pub charge: ByteReservation,
+}
+
+impl QueuedOutput {
+    pub fn admit(
+        work: &WorkContext,
+        rows: Vec<Vec<crate::marshal::ValueOut>>,
+        bytes: u64,
+    ) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            rows,
+            charge: work.reserve(bumbledb::work::ByteKind::Result, bytes)?,
+        })
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
@@ -82,6 +123,7 @@ pub struct Inspection {
     pub retained: usize,
     pub owners: usize,
     pub databases: usize,
+    pub natives: usize,
     pub reserved: [u64; 4],
 }
 
@@ -97,13 +139,11 @@ pub enum Output {
     Hash([u8; 32], ByteReservation),
     Directory(owners::DirectoryOwner),
     Db(owners::ManagedDbOutcome),
-    /// A worker-affine read session opened over a managed database.
+    /// A worker-table snapshot opened over a managed database.
     Session(session::SessionOpened),
-    /// A worker-affine write session opened over a managed database.
-    Writer(session::WriterOpened),
-    /// Owned engine rows crossing back from a session/pool job. Values are
-    /// owned wire data — never a borrow into an LMDB mapping.
-    Rows(Vec<Vec<crate::marshal::ValueOut>>),
+    /// Owned engine rows crossing back from a session/pool job. Charge
+    /// stays with the page until JS transfer or native drain.
+    Rows(QueuedOutput),
     Row(Option<Vec<crate::marshal::ValueOut>>),
     Contains(bool),
     Count(u64),
@@ -113,7 +153,6 @@ pub enum Output {
         submitted: u64,
         changed: u64,
     },
-    Write(session::WriteConclusion),
     Admitted(crate::AdmitOwned),
     /// A grammar-lane payload (log command/decision framing) computed on
     /// the executor: owned bytes plus optional owned metadata.
@@ -127,7 +166,7 @@ pub enum Output {
     /// The one consuming cursor a spent result's backing moved into.
     ResultCursor(bumbledb::ResultCursor),
     /// One owned page off a cursor; `None` is the terminal EOF.
-    Page(Option<Vec<Vec<crate::marshal::ValueOut>>>),
+    Page(Option<QueuedOutput>),
     /// A database-free change draft (schema compiled on the executor).
     Draft(crate::db_wire::DraftOpened),
     /// A sealed immutable `ChangeSet` consumed out of a draft.
@@ -151,10 +190,16 @@ impl Output {
     /// carve-out from post-work cancellation).
     fn mutation_evidence(&self) -> bool {
         match self {
-            Self::Write(_) | Self::Apply(_) => true,
+            Self::Apply(_) => true,
             Self::Machine(output) => output.mutation_evidence(),
             _ => false,
         }
+    }
+
+    /// A page/rows owner whose charge and cursor consume are already
+    /// committed. Later checkpoints must not replace this slot.
+    fn queued_publication(&self) -> bool {
+        matches!(self, Self::Page(_) | Self::Rows(_))
     }
 }
 pub type Work = Box<dyn FnOnce(&WorkContext) -> Result<Output, RuntimeError> + Send>;
@@ -191,6 +236,18 @@ struct Job {
 enum Action {
     Job(Job),
     Cleanup(owners::Cleanup),
+    /// Teardown and heavy disposal — independent of ordinary queue
+    /// saturation (C7 control drain).
+    Control(ControlJob),
+    /// Inbox or close flag arrived while waiting; return to the event loop.
+    Recheck,
+}
+
+pub(crate) type ControlWork = Box<dyn FnOnce() + Send>;
+
+struct ControlJob {
+    work: ControlWork,
+    report: Option<Report>,
 }
 struct Waiter {
     target: WaitTarget,
@@ -204,6 +261,7 @@ enum WaitTarget {
     Owner(u64),
     Database(u64, u64),
     Session(u64, u64, u64),
+    Resource(Capability),
 }
 struct State {
     phase: Phase,
@@ -211,6 +269,8 @@ struct State {
     workers: usize,
     active: usize,
     queue: VecDeque<Job>,
+    /// Control/teardown lane: bounded separately from `queue_capacity`.
+    control: VecDeque<ControlJob>,
     operations: BTreeMap<u64, Arc<Operation>>,
     owners: BTreeMap<u64, owners::OwnerEntry>,
     reserved: [u64; 4],
@@ -222,10 +282,24 @@ struct State {
     natives: usize,
 }
 
+#[cfg(test)]
+struct PublicationHold {
+    entered: std::sync::mpsc::Sender<()>,
+    release: std::sync::mpsc::Receiver<()>,
+}
+
 pub struct Runtime {
     pub options: Options,
+    pub(crate) registry: Arc<NativeRegistry>,
+    pub(crate) identity: u64,
+    pub(crate) lane_senders: Vec<std::sync::mpsc::Sender<lanes::WorkerCommand>>,
     state: Mutex<State>,
     changed: Condvar,
+    /// One-shot D12/D25 probe: next payload publication cancels after
+    /// `work()` returns a page and before `operation.output` is written.
+    publication_cancel: AtomicBool,
+    #[cfg(test)]
+    publication_hold: Mutex<Option<PublicationHold>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -270,6 +344,7 @@ impl State {
                 .values()
                 .map(|owner| owner.databases.len())
                 .sum(),
+            natives: self.natives,
             reserved: self.reserved,
         }
     }
@@ -303,14 +378,21 @@ impl Runtime {
         {
             return Err(RuntimeError::InvalidArgument);
         }
+        let endpoints = lanes::lane_channels(options.workers);
+        let lane_receivers = endpoints.receivers;
+        let identity = NEXT_RUNTIME.fetch_add(1, Ordering::Relaxed);
         let runtime = Arc::new(Self {
             options,
+            identity,
+            registry: Arc::new(NativeRegistry::new(identity, options.workers as u32)),
+            lane_senders: endpoints.senders,
             state: Mutex::new(State {
                 phase: Phase::Open,
                 next_id: 1,
                 workers: 0,
                 active: 0,
                 queue: VecDeque::new(),
+                control: VecDeque::new(),
                 operations: BTreeMap::new(),
                 owners: BTreeMap::new(),
                 reserved: [0; 4],
@@ -318,14 +400,17 @@ impl Runtime {
                 natives: 0,
             }),
             changed: Condvar::new(),
+            publication_cancel: AtomicBool::new(false),
+            #[cfg(test)]
+            publication_hold: Mutex::new(None),
         });
         let mut workers = Vec::new();
-        for index in 0..options.workers {
+        for (index, lane_rx) in lane_receivers.into_iter().enumerate() {
             let owner = Arc::clone(&runtime);
             lock(&runtime.state).workers += 1;
             if let Ok(worker) = thread::Builder::new()
                 .name(format!("bumbledb-{index}"))
-                .spawn(move || owner.worker())
+                .spawn(move || owner.worker(index as u32, lane_rx))
             {
                 workers.push(worker);
             } else {
@@ -473,20 +558,48 @@ impl Runtime {
 
     pub fn drain(&self, operation: Option<&Operation>, report: Report) {
         let mut state = lock(&self.state);
-        if let Some(operation) = operation {
+        let mut discarded = Vec::new();
+        let wake_workers = if let Some(operation) = operation {
             operation.context.cancel();
+            if lock(&operation.output).is_some() {
+                if let Some(value) = state.remove(operation.id) {
+                    discarded.push(value);
+                }
+            }
+            false
         } else {
-            Self::closing(&mut state);
-        }
+            self.closing_runtime(&mut state);
+            let abandoned: Vec<u64> = state
+                .operations
+                .iter()
+                .filter_map(|(&id, op)| lock(&op.output).is_some().then_some(id))
+                .collect();
+            for id in abandoned {
+                if let Some(value) = state.remove(id) {
+                    discarded.push(value);
+                }
+            }
+            true
+        };
         if state.phase == Phase::Closed
             || operation.is_some_and(|op| !state.operations.contains_key(&op.id))
         {
             drop(state);
+            drop(discarded);
+            if wake_workers {
+                self.wake_all_workers();
+            } else {
+                self.changed.notify_all();
+            }
             report(CloseReport::Closed);
             return;
         }
         if state.waiters.len() >= self.options.cleanup_capacity {
             drop(state);
+            drop(discarded);
+            if wake_workers {
+                self.wake_all_workers();
+            }
             report(CloseReport::Failed);
             return;
         }
@@ -495,12 +608,22 @@ impl Runtime {
             deadline: Instant::now() + self.options.cleanup_timeout,
             report,
         });
-        self.changed.notify_all();
+        if wake_workers {
+            drop(state);
+            drop(discarded);
+            self.wake_all_workers();
+        } else {
+            self.changed.notify_all();
+            drop(state);
+            drop(discarded);
+        }
     }
 
     pub fn begin_close(&self) {
-        Self::closing(&mut lock(&self.state));
-        self.changed.notify_all();
+        let mut state = lock(&self.state);
+        self.closing_runtime(&mut state);
+        drop(state);
+        self.wake_all_workers();
     }
 
     fn closing(state: &mut State) {
@@ -512,6 +635,70 @@ impl Runtime {
         }
         for owner in state.owners.values_mut() {
             owner.begin_close(false);
+        }
+    }
+
+    fn closing_runtime(&self, state: &mut State) {
+        Self::closing(state);
+        let _ = self.registry.close_all();
+    }
+
+    /// Marks every route closing. Callers that hold `state` must drop it
+    /// before [`Self::wake_all_workers`] — `lane_send` re-acquires the lock.
+    pub(crate) fn revoke_registry(&self) {
+        let _ = self.registry.close_all();
+    }
+
+    /// Arm the next payload publication gap (one-shot). L16
+    /// `runtimeArmPublicationCancel`.
+    pub(crate) fn arm_publication_cancel(&self) {
+        self.publication_cancel.store(true, Ordering::Release);
+    }
+
+    fn take_publication_cancel(&self) -> bool {
+        self.publication_cancel.swap(false, Ordering::AcqRel)
+    }
+
+    /// Test-only: cancel a live operation without installing a drain
+    /// waiter. Supervise reclaims abandoned queued output. Not a public
+    /// debug API.
+    #[cfg(test)]
+    pub(crate) fn cancel_without_waiter(&self, operation: &Operation) {
+        operation.context.cancel();
+        self.changed.notify_all();
+    }
+
+    /// Test-only pause after native publication and before the JS
+    /// completion callback. Not a public debug API.
+    #[cfg(test)]
+    pub(crate) fn arm_publication_hold(
+        &self,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        *lock(&self.publication_hold) = Some(PublicationHold { entered, release });
+    }
+
+    fn wait_publication_hold(&self) {
+        #[cfg(test)]
+        {
+            if let Some(hold) = lock(&self.publication_hold).take() {
+                let _ = hold.entered.send(());
+                let _ = hold.release.recv();
+            }
+        }
+    }
+
+    /// Notify waiters after a page/rows owner is already registered.
+    /// Does not write `Ready` over the publication.
+    fn complete_published(&self, operation: &Arc<Operation>) {
+        let notify = lock(&operation.completion).take();
+        self.wait_publication_hold();
+        self.changed.notify_all();
+        if let Some(notify) = notify
+            && catch_unwind(AssertUnwindSafe(notify)).is_err()
+        {
+            self.begin_close();
         }
     }
 
@@ -528,7 +715,12 @@ impl Runtime {
         let notify = lock(&operation.completion).take();
         {
             let _state = lock(&self.state);
-            *lock(&operation.output) = Some(outcome);
+            let mut slot = lock(&operation.output);
+            // A registered page/rows owner is the publication. Do not
+            // replace it with a later checkpoint refusal.
+            if !matches!(&*slot, Some(Ok(output)) if output.queued_publication()) {
+                *slot = Some(outcome);
+            }
         }
         self.changed.notify_all();
         if let Some(notify) = notify
@@ -538,11 +730,47 @@ impl Runtime {
         }
     }
 
-    fn worker(&self) {
+    /// Schedules heavy teardown on the control lane. Progresses even when
+    /// the ordinary work queue is saturated (C7 independent control drain).
+    pub(crate) fn submit_control(
+        &self,
+        work: ControlWork,
+        report: Option<Report>,
+    ) -> Result<(), RuntimeError> {
+        let mut state = lock(&self.state);
+        if state.phase == Phase::Closed {
+            if let Some(report) = report {
+                drop(state);
+                report(CloseReport::Closed);
+            }
+            return Err(RuntimeError::ClosedHandle);
+        }
+        if state.control.len() >= self.options.cleanup_capacity {
+            if let Some(report) = report {
+                drop(state);
+                report(CloseReport::Failed);
+            }
+            return Err(RuntimeError::QueueFull);
+        }
+        state.control.push_back(ControlJob { work, report });
+        self.changed.notify_all();
+        Ok(())
+    }
+
+    fn worker(&self, index: u32, lane_rx: std::sync::mpsc::Receiver<lanes::WorkerCommand>) {
+        table::WorkerContext::attach(index);
         loop {
+            while let Ok(command) = lane_rx.try_recv() {
+                self.run_worker_command(command);
+            }
+            self.drain_closing_on_worker(index);
             let action = {
                 let mut state = lock(&self.state);
                 loop {
+                    if let Some(job) = state.control.pop_front() {
+                        state.active += 1;
+                        break Action::Control(job);
+                    }
                     if let Some(cleanup) = state.cleanup() {
                         state.active += 1;
                         break Action::Cleanup(cleanup);
@@ -551,57 +779,340 @@ impl Runtime {
                         state.active += 1;
                         break Action::Job(job);
                     }
+                    if let Ok(command) = lane_rx.try_recv() {
+                        drop(state);
+                        self.run_worker_command(command);
+                        break Action::Recheck;
+                    }
                     if state.phase != Phase::Open && state.owners.is_empty() {
-                        state.workers -= 1;
-                        self.changed.notify_all();
-                        return;
+                        let table_empty = table::WorkerContext::with(|ctx| ctx.table.is_empty())
+                            .unwrap_or(true);
+                        if table_empty {
+                            state.workers -= 1;
+                            self.changed.notify_all();
+                            drop(state);
+                            if let Some(ctx) = table::WorkerContext::take() {
+                                drop(ctx);
+                            }
+                            return;
+                        }
                     }
                     state = self
                         .changed
                         .wait(state)
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    break Action::Recheck;
                 }
             };
-            let job = match action {
-                Action::Job(job) => job,
+            match action {
+                Action::Recheck => continue,
+                Action::Control(job) => {
+                    let done = catch_unwind(AssertUnwindSafe(job.work)).is_ok();
+                    if let Some(report) = job.report {
+                        report(if done {
+                            CloseReport::Closed
+                        } else {
+                            CloseReport::Failed
+                        });
+                    }
+                    let mut state = lock(&self.state);
+                    state.active -= 1;
+                    self.changed.notify_all();
+                }
                 Action::Cleanup(cleanup) => {
                     self.run_cleanup(cleanup);
                     let mut state = lock(&self.state);
                     state.active -= 1;
                     self.changed.notify_all();
-                    continue;
+                }
+                Action::Job(job) => self.run_pool_job(job),
+            }
+        }
+    }
+
+    fn run_pool_job(&self, job: Job) {
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            job.operation.context.checkpoint()?;
+            (job.work)(&job.operation.context)
+        }));
+        let panic = outcome.is_err();
+        let mut outcome = outcome.unwrap_or(Err(RuntimeError::Internal));
+        if !matches!(&outcome, Ok(output) if output.mutation_evidence())
+            && let Err(error) = job.operation.context.checkpoint()
+        {
+            outcome = Err(error.into());
+        }
+        let notify = lock(&job.operation.completion).take();
+        {
+            let mut state = lock(&self.state);
+            state.active -= 1;
+            if panic {
+                Self::closing(&mut state);
+            }
+            *lock(&job.operation.output) = Some(outcome);
+            self.changed.notify_all();
+        }
+        if let Some(notify) = notify
+            && catch_unwind(AssertUnwindSafe(notify)).is_err()
+        {
+            self.begin_close();
+        }
+    }
+
+    fn run_worker_command(&self, command: lanes::WorkerCommand) {
+        use lanes::WorkerCommand;
+        match command {
+            WorkerCommand::Wake => {}
+            WorkerCommand::Close(cap) => {
+                self.drop_closing_entry(cap);
+            }
+            WorkerCommand::InstallSend { cap, payload } => {
+                self.install_send_on_worker(cap, payload);
+            }
+            WorkerCommand::Resource { cap, message } => match message {
+                session::Message::Close => {
+                    self.drop_closing_entry(cap);
+                }
+                session::Message::Snapshot { operation, work } => {
+                    self.dispatch_snapshot_message(cap, operation, work);
+                }
+                session::Message::Payload { operation, work } => {
+                    self.dispatch_payload_message(cap, operation, work);
+                }
+            },
+        }
+    }
+
+    fn dispatch_snapshot_message(
+        &self,
+        cap: Capability,
+        operation: Arc<Operation>,
+        work: session::SnapshotWork,
+    ) {
+        if self.registry.begin_job(cap).is_err() {
+            operation.context.cancel();
+            self.complete_operation(&operation, Err(RuntimeError::ClosedHandle));
+            return;
+        }
+        let close_after = table::WorkerContext::with(|ctx| {
+            let (payload, _) = match ctx.table.borrow_mut(cap) {
+                Ok(borrowed) => borrowed,
+                Err(error) => {
+                    self.registry.end_job(cap);
+                    self.complete_operation(&operation, Err(error));
+                    return false;
                 }
             };
-            let outcome = catch_unwind(AssertUnwindSafe(|| {
-                job.operation.context.checkpoint()?;
-                (job.work)(&job.operation.context)
-            }));
-            let panic = outcome.is_err();
-            let mut outcome = outcome.unwrap_or(Err(RuntimeError::Internal));
-            // A late successful acquisition cannot survive cancellation. Dropping
-            // the returned owner here reclaims it before the drain is completed.
-            // A completed store mutation is evidence, not a cancellable
-            // acquisition. Interruption may discard its delivery, never
-            // rewrite a known mutation outcome into a rollback claim.
-            if !matches!(&outcome, Ok(output) if output.mutation_evidence())
-                && let Err(error) = job.operation.context.checkpoint()
-            {
-                outcome = Err(error.into());
+            let table::TablePayload::Snapshot(resource) = payload else {
+                ctx.table.mark_live(cap);
+                self.registry.end_job(cap);
+                self.complete_operation(&operation, Err(RuntimeError::InvalidArgument));
+                return false;
+            };
+            let mut access = session::SnapshotAccess {
+                owned: &resource.owned,
+                sealed: resource.sealed.as_ref(),
+                job: operation.id,
+                prepared: &mut resource.prepared,
+            };
+            self.run_snapshot_job(&operation, work, &mut access);
+            ctx.table.mark_live(cap);
+            self.registry.end_job(cap);
+            matches!(
+                self.registry.state(cap),
+                Ok(registry::ResourceState::Closing)
+            )
+        });
+        match close_after {
+            Ok(true) => self.drop_closing_entry(cap),
+            Ok(false) => {}
+            Err(error) => {
+                self.registry.end_job(cap);
+                self.complete_operation(&operation, Err(error));
             }
-            let notify = lock(&job.operation.completion).take();
-            {
-                let mut state = lock(&self.state);
-                state.active -= 1;
-                if panic {
-                    Self::closing(&mut state);
+        }
+    }
+
+    /// One publication transition. L13 either calls
+    /// [`session::PublicationSink::accept`] with the live ticket `commit`,
+    /// or returns [`crate::db_wire::PullOutcome::committed_output`] and
+    /// L12 commits via [`crate::db_wire::accept_publication`] under the
+    /// same output lock. After acceptance: no allocate, read, checkpoint,
+    /// or preview. Predelivery `Err` publishes nothing. `None` means the
+    /// page is already registered — notify only.
+    fn run_payload_publication(
+        &self,
+        operation: &Operation,
+        native: &mut registry::Payload,
+        work: session::PayloadWork,
+    ) -> Result<Option<Output>, RuntimeError> {
+        operation.context.checkpoint()?;
+        let mut sink = session::PublicationSink::new(operation, self.take_publication_cancel());
+        let value = match work(&operation.context, native, &mut sink) {
+            Ok(value) => value,
+            Err(_) if sink.accepted() => return Ok(None),
+            Err(error) => {
+                crate::db_wire::reject_publication(native);
+                return Err(error);
+            }
+        };
+        if sink.accepted() {
+            return Ok(None);
+        }
+        if !value.queued_publication() {
+            crate::db_wire::reject_publication(native);
+            operation.context.checkpoint()?;
+            return Ok(Some(value));
+        }
+        let mut slot = lock(&operation.output);
+        if matches!(&*slot, Some(Ok(output)) if output.queued_publication()) {
+            crate::db_wire::reject_publication(native);
+            drop(value);
+            return Ok(None);
+        }
+        if sink.armed() {
+            crate::db_wire::reject_publication(native);
+            drop(value);
+            return Err(RuntimeError::Work(WorkError::Cancelled));
+        }
+        crate::db_wire::accept_publication(native);
+        *slot = Some(Ok(value));
+        Ok(None)
+    }
+
+    fn dispatch_payload_message(
+        &self,
+        cap: Capability,
+        operation: Arc<Operation>,
+        work: session::PayloadWork,
+    ) {
+        if self.registry.begin_job(cap).is_err() {
+            operation.context.cancel();
+            self.complete_operation(&operation, Err(RuntimeError::ClosedHandle));
+            return;
+        }
+        let close_after = table::WorkerContext::with(|ctx| {
+            let (payload, _) = match ctx.table.borrow_mut(cap) {
+                Ok(borrowed) => borrowed,
+                Err(error) => {
+                    self.registry.end_job(cap);
+                    self.complete_operation(&operation, Err(error));
+                    return false;
                 }
-                *lock(&job.operation.output) = Some(outcome);
-                self.changed.notify_all();
+            };
+            let table::TablePayload::Native(native) = payload else {
+                ctx.table.mark_live(cap);
+                self.registry.end_job(cap);
+                self.complete_operation(&operation, Err(RuntimeError::InvalidArgument));
+                return false;
+            };
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                self.run_payload_publication(&operation, native, work)
+            }));
+            ctx.table.mark_live(cap);
+            self.registry.end_job(cap);
+            let panicked = result.is_err();
+            let result = result.unwrap_or(Err(RuntimeError::Internal));
+            let close = matches!(
+                self.registry.state(cap),
+                Ok(registry::ResourceState::Closing)
+            );
+            (panicked, close, result)
+        });
+        match close_after {
+            Ok((panicked, close, result)) => {
+                if panicked {
+                    self.begin_close();
+                }
+                match result {
+                    Ok(None) => self.complete_published(&operation),
+                    Ok(Some(value)) => self.complete_operation(&operation, Ok(value)),
+                    Err(error) => self.complete_operation(&operation, Err(error)),
+                }
+                if close {
+                    self.drop_closing_entry(cap);
+                }
             }
-            if let Some(notify) = notify
-                && catch_unwind(AssertUnwindSafe(notify)).is_err()
-            {
-                self.begin_close();
+            Err(error) => {
+                self.registry.end_job(cap);
+                self.complete_operation(&operation, Err(error));
+            }
+        }
+    }
+
+    fn install_send_on_worker(&self, cap: Capability, payload: registry::Payload) {
+        match self.registry.state(cap) {
+            Ok(registry::ResourceState::Closing) | Err(_) => {
+                drop(payload);
+                self.release_native_route(cap);
+                return;
+            }
+            Ok(_) => {}
+        }
+        let inserted = table::WorkerContext::with(|ctx| {
+            ctx.table
+                .insert(cap, table::TablePayload::Native(payload), 0)
+        });
+        match inserted {
+            Ok(Ok(())) => {
+                if matches!(
+                    self.registry.state(cap),
+                    Ok(registry::ResourceState::Closing) | Err(_)
+                ) {
+                    self.drop_closing_entry(cap);
+                }
+            }
+            Ok(Err(_)) | Err(_) => {
+                self.rollback_native_route(cap);
+            }
+        }
+    }
+
+    fn snapshot_route_owner(&self, cap: Capability) -> Option<(u64, u64)> {
+        let state = lock(&self.state);
+        state.owners.iter().find_map(|(&owner, entry)| {
+            entry.databases.iter().find_map(|(&database, db)| {
+                db.sessions.get(&cap.id).and_then(|slot| {
+                    (slot.cap == cap).then_some((owner, database))
+                })
+            })
+        })
+    }
+
+    fn drain_closing_on_worker(&self, worker: u32) {
+        for cap in self.registry.closing_for_worker(worker) {
+            self.drop_closing_entry(cap);
+        }
+    }
+
+    fn drop_closing_entry(&self, cap: Capability) {
+        if cap.id == 0 {
+            return;
+        }
+        let taken = table::WorkerContext::with(|ctx| ctx.table.take(cap));
+        match taken {
+            Ok(Some((_, table::TablePayload::Snapshot(resource)))) => {
+                let owner = resource.owner;
+                let database = resource.database;
+                drop(resource);
+                self.release_snapshot_route(owner, database, cap);
+            }
+            Ok(Some((_, table::TablePayload::Native(payload)))) => {
+                drop(payload);
+                self.release_native_route(cap);
+            }
+            Ok(None) | Err(_) => {
+                // Close won the race with async install, or the payload
+                // never arrived. Snapshot slots still need the owner map
+                // cleared; native routes just drop. Both releases are
+                // idempotent if the row is already gone.
+                if cap.kind == NativeKind::Snapshot {
+                    if let Some((owner, database)) = self.snapshot_route_owner(cap) {
+                        self.release_snapshot_route(owner, database, cap);
+                        return;
+                    }
+                }
+                self.release_native_route(cap);
             }
         }
     }
@@ -675,6 +1186,16 @@ impl Runtime {
             .count() as u64
     }
 
+    /// Cancelled work with output is abandoned: reclaim Page/Rows even
+    /// when `Phase::Open` and no waiter. Dropping the delivery copy does
+    /// not rewind committed cursor or store facts. JS take is not required.
+    fn reclaim_cancelled_operation(operation: &Operation) -> bool {
+        if lock(&operation.output).is_none() {
+            return false;
+        }
+        operation.context.checkpoint() == Err(WorkError::Cancelled)
+    }
+
     fn supervise(&self, workers: Vec<JoinHandle<()>>) {
         let mut workers = Some(workers);
         loop {
@@ -683,9 +1204,7 @@ impl Runtime {
                 .operations
                 .iter()
                 .filter_map(|(&id, operation)| {
-                    (lock(&operation.output).is_some()
-                        && operation.context.checkpoint() == Err(WorkError::Cancelled))
-                    .then_some(id)
+                    Self::reclaim_cancelled_operation(operation).then_some(id)
                 })
                 .collect();
             let discarded: Vec<_> = completed
@@ -701,6 +1220,7 @@ impl Runtime {
                 && state.workers == 0
                 && state.operations.is_empty()
                 && state.owners.is_empty()
+                && state.natives == 0
             {
                 drop(state);
                 for worker in workers.take().unwrap_or_default() {
@@ -713,7 +1233,10 @@ impl Runtime {
             let mut ready = Vec::new();
             let mut pending = Vec::new();
             for waiter in std::mem::take(&mut state.waiters) {
-                let done = state.target_done(waiter.target);
+                let done = match waiter.target {
+                    WaitTarget::Resource(cap) => self.registry.join(cap),
+                    other => state.target_done(other),
+                };
                 if done {
                     ready.push((waiter.report, CloseReport::Closed));
                 } else if state.target_failed(waiter.target) {

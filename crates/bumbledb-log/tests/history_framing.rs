@@ -6,10 +6,15 @@ use bumbledb_log::history::command::{
     UnverifiedReceiptEnvelope, decode_command, decode_receipt, encode_command,
     encode_command_with_result, encode_receipt,
 };
+use bumbledb_log::history::decision::{
+    DecisionParts, FAMILY as DECISION_FAMILY, decode_decision, encode_decision,
+};
+use bumbledb_log::history::locator::{OBJECT_REF_OPTION_PRESENT_BYTES, OBJECT_REF_WIRE_BYTES};
 use bumbledb_log::history::{
     ChangeSummary, CommandDigest, CommandId, Condition, DatabaseId, DatabaseIdentity,
     DecisionDigest, DecisionStamp, IncarnationId, ReceiptEpoch, RequestId, SchemaId, StateStamp,
 };
+use bumbledb_log::store::{ObjectKind, ObjectRef};
 
 const LIMITS: Limits = Limits {
     envelope_bytes: 1024,
@@ -387,4 +392,70 @@ fn receipt_tags_counts_state_and_evidence_limits_are_strict() {
         encode_receipt(evidence, LIMITS),
         Err(FrameError::LimitExceeded)
     );
+}
+
+/// D16: independent expected decision bytes must fail the extra-tag formula
+/// (`1 + 1 + 49 = 51`) and encode at exact capacity / one byte below.
+#[test]
+fn decision_parent_locator_uses_one_option_tag_and_exact_cap() {
+    let command = encoded_command();
+    let parent_hash = DecisionDigest::from_bytes([0x71; 32]);
+    let parent_ref = ObjectRef {
+        epoch: 2,
+        kind: ObjectKind::Decision,
+        digest: *parent_hash.as_bytes(),
+        length: 128,
+    };
+    let parts = DecisionParts {
+        identity: metadata().identity,
+        seq: 3,
+        parent: DecisionStamp {
+            seq: 2,
+            hash: parent_hash,
+        },
+        parent_object: Some(parent_ref),
+        before_state: state(1),
+        after_state: state(2),
+        canonical_command: &command,
+        outcome: UnverifiedOutcome::Committed {
+            changed: ChangeSummary::new(1, 0).unwrap(),
+            result: &[],
+        },
+    };
+    // First-principles width, not the encoder's part list.
+    let independent = DECISION_FAMILY.len()
+        + 3
+        + 64
+        + 8
+        + 40
+        + 50
+        + 24
+        + 24
+        + 8
+        + command.len()
+        + 25;
+    let extra_tag = independent - 50 + 1 + 1 + 49;
+    assert_eq!(OBJECT_REF_WIRE_BYTES, 49);
+    assert_eq!(OBJECT_REF_OPTION_PRESENT_BYTES, 50);
+    assert_ne!(
+        independent, extra_tag,
+        "independent expected frame must fail the extra-tag formula"
+    );
+    assert_eq!(independent + 1, extra_tag);
+    let exact = Limits {
+        envelope_bytes: independent,
+        ..LIMITS
+    };
+    let bytes = encode_decision(parts, exact).expect("exact capacity admits");
+    assert_eq!(bytes.len(), independent);
+    let under = Limits {
+        envelope_bytes: independent - 1,
+        ..LIMITS
+    };
+    assert_eq!(
+        encode_decision(parts, under),
+        Err(FrameError::LimitExceeded)
+    );
+    let decoded = decode_decision(&bytes, LIMITS).expect("roundtrip");
+    assert_eq!(decoded.parent_object, Some(parent_ref));
 }

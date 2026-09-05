@@ -8,6 +8,8 @@
 //! disk blocks are separately reported quantities ([`MapReport`]); none of
 //! them is a RAM admission test.
 
+use super::error::{StoreError, StoreResult};
+
 /// Growth/rounding alignment: a multiple of every supported page size
 /// (4 KiB, 16 KiB, 64 KiB), so `mdb_env_set_mapsize` always receives a
 /// page-aligned value.
@@ -43,34 +45,36 @@ impl MapPolicy {
     /// The map extent to request at open: the configured initial extent, or
     /// the existing populated file plus one geometric step of headroom,
     /// whichever is larger. Page-aligned.
-    pub(crate) fn open_map_bytes(&self, populated_file_bytes: u64) -> u64 {
+    pub(crate) fn open_map_bytes(&self, populated_file_bytes: u64) -> StoreResult<u64> {
+        let ceiling = self.checked_ceiling()?;
         let mut wanted = self.initial_map_bytes.max(MAP_ALIGN);
         if populated_file_bytes > wanted / 2 {
             wanted = wanted.max(populated_file_bytes.saturating_mul(2));
         }
         let aligned = align_up(wanted);
-        match self.max_map_bytes {
-            // Never shrink below the populated file: LMDB refuses to map a
-            // file larger than the map. A misconfigured ceiling surfaces as
-            // an open failure, not silent truncation.
-            Some(ceiling) => aligned
-                .min(align_up(ceiling))
-                .max(align_up(populated_file_bytes)),
-            None => aligned,
+        if let Some(ceiling) = ceiling {
+            if self.initial_map_bytes > ceiling || align_up(populated_file_bytes) > ceiling {
+                return Err(StoreError::MapGrowthExhausted {
+                    map_bytes: populated_file_bytes.max(self.initial_map_bytes),
+                    requested_bytes: ceiling,
+                    detail: None,
+                });
+            }
+            return Ok(aligned.min(ceiling).max(align_up(populated_file_bytes)));
         }
+        Ok(aligned.max(align_up(populated_file_bytes)))
     }
 
     /// The next geometric extent after `current`, at least covering
     /// `needed_hint` when one is known. `None` when no growth is possible
     /// within the policy/platform bounds — the typed
     /// `MapGrowthExhausted` refusal, never a wrap or silent clamp to the
-    /// current size.
+    /// current size. An explicit ceiling is never raised.
     pub(crate) fn grown_map_bytes(&self, current: u64, needed_hint: Option<u64>) -> Option<u64> {
         let doubled = current.checked_mul(2)?;
         let wanted = align_up(doubled.max(needed_hint.unwrap_or(0)));
-        match self.max_map_bytes {
+        match self.checked_ceiling().ok()? {
             Some(ceiling) => {
-                let ceiling = align_up(ceiling);
                 if current >= ceiling {
                     None
                 } else {
@@ -78,6 +82,24 @@ impl MapPolicy {
                 }
             }
             None => Some(wanted),
+        }
+    }
+
+    /// Explicit ceiling is honored as given: unaligned or sub-page values
+    /// refuse rather than silently increasing.
+    fn checked_ceiling(&self) -> StoreResult<Option<u64>> {
+        match self.max_map_bytes {
+            None => Ok(None),
+            Some(ceiling) => {
+                if ceiling < MAP_ALIGN || ceiling % MAP_ALIGN != 0 {
+                    return Err(StoreError::MapGrowthExhausted {
+                        map_bytes: 0,
+                        requested_bytes: ceiling,
+                        detail: None,
+                    });
+                }
+                Ok(Some(ceiling))
+            }
         }
     }
 }

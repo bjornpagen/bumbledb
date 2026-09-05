@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { AuthoringError, relation, str, u64 } from "@bjornpagen/bumbledb"
+import { AuthoringError, relation, Scalar, str, u64 } from "@bjornpagen/bumbledb"
 import {
 	backfill,
 	convert,
@@ -44,6 +44,17 @@ describe("intent constructors are inert typed metadata", function suite() {
 		assert.equal(fill.expression, expression, "the core AST value is retained, not cloned")
 		const conv = convert(Note1, "body", { kind: "field", name: "body" })
 		assert.ok(conv.kind === "convert")
+	})
+
+	test("convert and backfill accept unresolved field arithmetic without a cast", function unresolved() {
+		const increment = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
+		const Stock = relation("Stock", { id: u64, units: u64, next: u64 })
+		const conv = convert(Stock, "units", increment)
+		assert.ok(conv.kind === "convert")
+		assert.equal(conv.expression, increment)
+		const fill = backfill(Stock, "next", increment)
+		assert.ok(fill.kind === "backfill")
+		assert.equal(fill.expression, increment)
 	})
 
 	test("migrationIntent freezes its own entry list but retains caller-owned rows", function frozen() {

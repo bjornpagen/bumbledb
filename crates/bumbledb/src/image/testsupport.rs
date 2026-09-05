@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::api::prepared::source::{HeapRows, QuerySource, unbounded_work};
+use crate::api::prepared::source::{HeapRows, QuerySource};
 use crate::image::cache::ImageCache;
 use crate::image::{RelationImage, ViewEpoch};
 use crate::ir::Value;
@@ -28,7 +28,7 @@ impl HeapRows for TestSource {
 impl TestSource {
     pub(crate) fn new(schema: &Schema, rows: &[(RelationId, Vec<Vec<Value>>)]) -> Self {
         let schema = Arc::new(schema.clone());
-        let work = unbounded_work().expect("unbounded ledger");
+        let work = crate::api::db::test_operation().expect("test ledger");
         let mut stored: BTreeMap<RelationId, Vec<Box<[u8]>>> = BTreeMap::new();
         for (relation, facts) in rows {
             let fields = schema.relation(*relation).fields();
@@ -56,7 +56,7 @@ impl TestSource {
     /// discipline: no memo can cross instances).
     pub(crate) fn source(&self) -> QuerySource<'_> {
         self.tick.set(self.tick.get() + 1);
-        QuerySource::heap(self, self.tick.get()).expect("unbounded ledger")
+        QuerySource::heap(self, self.tick.get(), crate::api::db::test_operation().expect("test ledger"))
     }
 
     /// Build one relation's image through the production path.
@@ -64,11 +64,14 @@ impl TestSource {
         let source = self.source();
         let epoch = match cache.slot(relation) {
             crate::image::cache::RelationSlot::Closed(_) => ViewEpoch::Closed,
-            crate::image::cache::RelationSlot::Ordinary(_) => source.epoch(),
+            crate::image::cache::RelationSlot::Ordinary(_) => source
+                .relation_epoch(relation)
+                .expect("heap epochs never fail"),
         };
         cache
             .get_or_build_at(&source, &self.schema, relation, epoch)
             .expect("fixture image builds")
+            .expect_ready("fixture stays resident")
     }
 
     /// One-call convenience: a fresh cache plus the relation's image.

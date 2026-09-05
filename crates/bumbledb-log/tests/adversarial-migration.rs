@@ -87,7 +87,12 @@ fn await_marker(child: &mut Child, marker: &str) {
         line.clear();
         let read = reader.read_line(&mut line).expect("read child line");
         assert!(read > 0, "child stdout closed before {marker}");
-        if line.trim() == marker {
+        // Suffix match, not equality: libtest prints `test <name> ... `
+        // WITHOUT a trailing newline before the test body runs, so the
+        // child's FIRST marker glues onto that line. Markers are distinct
+        // uppercase tokens the children print alone, never suffixes of one
+        // another or of ordinary output.
+        if line.trim().ends_with(marker) {
             return;
         }
     }
@@ -110,7 +115,7 @@ fn park() -> ! {
 /// The fixed source: two Note rows under the recorded base schema.
 fn build_source(dir: &Path) -> (Arc<Db<SchemaDescriptor>>, LocalHistory<SchemaDescriptor>) {
     let db = Arc::new(
-        Db::create(&dir.join("source"), base_schema())
+        Db::create(&dir.join("source"), base_schema(), work())
             .expect("create store")
             .expect("empty store admits"),
     );
@@ -188,7 +193,7 @@ fn request<'a>(manifest: &'a Manifest, steps: &'a [StepInput]) -> SuffixRequest<
 fn resume_and_activate(root: &Path) {
     let start = Instant::now();
     let db = loop {
-        match Db::open(&root.join("source"), base_schema()) {
+        match Db::open(&root.join("source"), base_schema(), work()) {
             Ok(db) => break Arc::new(db),
             Err(error) => {
                 assert!(
@@ -349,7 +354,7 @@ fn a_killed_ready_to_switch_holder_resumes_to_one_activated_lineage() {
     signal(&child, "STOP");
     std::thread::sleep(Duration::from_millis(200));
     assert!(
-        Db::open(&root.join("source"), base_schema()).is_err(),
+        Db::open(&root.join("source"), base_schema(), work()).is_err(),
         "a paused ReadyToSwitch holder still owns its frozen source"
     );
     signal(&child, "CONT");

@@ -14,6 +14,7 @@ store = ["dep:object_store", "dep:tokio"]
 [dependencies]
 bumbledb = { path = "../bumbledb" }
 blake3 = "1.8.5"
+futures = "0.3"
 object_store = { version = "0.14.1", features = ["aws"], optional = true }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "net", "time"], optional = true }
 

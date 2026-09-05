@@ -25,12 +25,14 @@ use crate::codec::{
 use crate::history::authority::{HeadAuthority, decode_control};
 use crate::history::command::Limits;
 use crate::history::decision::{self};
+use crate::history::locator::ChainVisitor;
 use crate::history::receipt::RECEIPT_KEY_PREFIX;
 use crate::history::{DecisionStamp, FrameError, HeadRevision};
 use crate::manifest::{HeadError, HeadRecord, RecoveryRoot, TailPolicy, decode_head, encode_head};
 use crate::store::{
-    BackendError, ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ObjectError,
-    ObjectKind, ObjectRef, fetch_decision, get_verified, head_key, put_verified,
+    BackendError, ConditionalOutcome, HeadVersion, ObjectError, ObjectKind, ObjectRef,
+    ObservedError, ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext, get_verified,
+    head_key, put_verified, read_head_bounded,
 };
 
 /// The migration-history host-record key prefix (C08/C11 coordination:
@@ -159,8 +161,11 @@ pub fn admission_headroom(recovery: &RecoveryRoot, policy: &TailPolicy) -> Headr
     if count >= policy.max_count || recovery.tail_bytes >= policy.max_bytes {
         return Headroom::MaintenanceRequired;
     }
-    // Reserve measured headroom: start maintenance at three quarters.
-    if count.saturating_mul(4) >= policy.max_count.saturating_mul(3)
+    // Reserve measured headroom: start maintenance at three quarters, and
+    // always once a single admission remains — a tiny envelope (max_count 2)
+    // must warn before the cliff, not jump from Ok to MaintenanceRequired.
+    if count.saturating_add(1) >= policy.max_count
+        || count.saturating_mul(4) >= policy.max_count.saturating_mul(3)
         || recovery.tail_bytes.saturating_mul(4) >= policy.max_bytes.saturating_mul(3)
     {
         return Headroom::StartCheckpoint;
@@ -168,37 +173,30 @@ pub fn admission_headroom(recovery: &RecoveryRoot, policy: &TailPolicy) -> Headr
     Headroom::Ok
 }
 
-enum CaptureFailure<E> {
-    Sink(E),
-    Frame(FrameError),
-    Host(HostSealError),
-    Work(WorkError),
-    NotInitialized,
-    RecordTooLarge,
-    OutOfOrder,
-}
-
-impl<E> From<WriteError<E>> for CaptureFailure<E> {
-    fn from(error: WriteError<E>) -> Self {
-        match error {
-            WriteError::Sink(error) => Self::Sink(error),
-            WriteError::RecordTooLarge { .. } => Self::RecordTooLarge,
-            WriteError::OutOfOrder => Self::OutOfOrder,
-        }
+fn write_failure<E: Into<CheckpointError>>(error: WriteError<E>) -> CheckpointError {
+    match error {
+        WriteError::Sink(error) => error.into(),
+        WriteError::RecordTooLarge { .. } => CheckpointError::Frame(FrameError::LimitExceeded),
+        WriteError::OutOfOrder => CheckpointError::Corruption("stream section order"),
     }
 }
 
-/// Export one coherent logical stream from the transitional core store into
-/// `sink`: canonical facts (relation ascending, canonical bytes ascending
-/// within a relation), then keyed system records (`m` history, then `r`
-/// receipts, ascending — excluding rows at or below `retired_filter`).
+fn store_failure(error: bumbledb::store::StoreError) -> CheckpointError {
+    CheckpointError::HostSeal(error.into())
+}
+
+/// Export one coherent logical stream from ONE owned store snapshot into
+/// `sink`: the store's canonical logical export of the facts (relation
+/// ascending, then tuple fingerprint, then full canonical bytes within a
+/// collision bucket — a deterministic function of the logical state, in
+/// bounded memory; `OwnedSnapshot::export`), then keyed system records
+/// (`m` history, then `r` receipts, ascending — excluding rows at or below
+/// `retired_filter`). The control projection, every fact and every system
+/// record derive from the same committed transaction.
 ///
-/// System-record enumeration reads through the landed P02R core seam
-/// `ReadInstance::integration_host_scan` (requested by
-/// implementation/packets/P05.md; also used by `admin::retired_row_keys`).
-///
-/// Closed-extension relations are schema constants, re-established by the
-/// schema on import, and are not exported as stored facts.
+/// Bounded by construction: no whole-relation buffering and no in-RAM sort
+/// (audit-log #5; STORE-01/PERF-004). Closed-extension relations are schema
+/// constants, never stored, and so never exported.
 ///
 /// # Errors
 /// Sink, storage, frame and work refusals; nothing partial is returned.
@@ -212,97 +210,55 @@ pub fn capture_into<S, K: ChunkSink>(
 where
     K::Error: Into<CheckpointError>,
 {
-    let schema = db.schema();
-    let mut failure: Option<CaptureFailure<K::Error>> = None;
-    let mut captured: Option<Captured> = None;
-    let storage = db.read(|read| {
-        let mut run = || -> Result<Captured, CaptureFailure<K::Error>> {
-            let control = read
-                .integration_host_attachment()
-                .map_err(|error| CaptureFailure::Host(HostSealError::Storage(error)))?
-                .ok_or(CaptureFailure::NotInitialized)?;
-            let authority =
-                decode_control(control, policy.head_cap).map_err(CaptureFailure::Frame)?;
-            let mut writer = StreamWriter::new(sink, policy.chunk_bytes, policy.stream);
-            for (index, relation) in schema.relations().iter().enumerate() {
-                if relation.body().closed_rows().is_some() {
-                    continue;
-                }
-                let relation_id = bumbledb::schema::RelationId(
-                    u32::try_from(index).map_err(|_| CaptureFailure::RecordTooLarge)?,
-                );
-                // Canonical order requires a per-relation sort: the
-                // transitional scan yields storage order. Charged before
-                // growth; the successor store's snapshot export supplies
-                // bounded canonical order natively (recorded cost boundary).
-                let mut rows: Vec<Vec<u8>> = Vec::new();
-                for entry in read
-                    .scan(relation_id)
-                    .map_err(|error| CaptureFailure::Host(HostSealError::Storage(error)))?
-                {
-                    let values = entry
-                        .map_err(|error| CaptureFailure::Host(HostSealError::Storage(error)))?;
-                    let row =
-                        bumbledb::canonical::CanonicalRow::encode(relation.fields(), &values, work)
-                            .map_err(|_| CaptureFailure::RecordTooLarge)?;
-                    work.step(1).map_err(CaptureFailure::Work)?;
-                    rows.push(row.as_bytes().to_vec());
-                }
-                rows.sort_unstable();
-                for row in rows {
-                    writer.fact(relation_id.0, &row)?;
-                }
+    let snapshot = db.integration_store().snapshot(work).map_err(store_failure)?;
+    let control = snapshot
+        .attachment()
+        .map_err(store_failure)?
+        .ok_or(CheckpointError::NotInitialized)?;
+    let authority = decode_control(control, policy.head_cap).map_err(CheckpointError::Frame)?;
+    let mut writer = StreamWriter::new(sink, policy.chunk_bytes, policy.stream);
+    // Facts: the store's bounded canonical logical export from this exact
+    // snapshot. Writer refusals are smuggled out around the storage error
+    // channel; the poison `Cancelled` below never escapes.
+    let mut sink_error: Option<WriteError<K::Error>> = None;
+    let exported = snapshot.export(work, &mut |relation, row| {
+        match writer.fact(relation.0, row) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                sink_error = Some(error);
+                Err(bumbledb::store::StoreError::Work(WorkError::Cancelled))
             }
-            // System records in ascending key order: 'm' (0x6d) < 'r' (0x72).
-            for prefix in [HISTORY_KEY_PREFIX, RECEIPT_KEY_PREFIX] {
-                let mut sink_error: Option<WriteError<K::Error>> = None;
-                read.integration_host_scan(&[prefix], &mut |key: &[u8], value: &[u8]| {
-                    if prefix == RECEIPT_KEY_PREFIX
-                        && key.len() >= 9
-                        && u64::from_be_bytes(key[1..9].try_into().expect("width"))
-                            <= retired_filter
-                    {
-                        return Ok(());
-                    }
-                    if let Err(error) = writer.system(key, value) {
-                        sink_error = Some(error);
-                        return Err(HostSealError::Work(WorkError::Cancelled));
-                    }
-                    Ok(())
-                })
-                .or_else(|error| {
-                    if sink_error.is_some() {
-                        Ok(())
-                    } else {
-                        Err(CaptureFailure::Host(error))
-                    }
-                })?;
-                if let Some(error) = sink_error {
-                    return Err(error.into());
-                }
-            }
-            let summary = writer.finish()?;
-            Ok(Captured { authority, summary })
-        };
-        match run() {
-            Ok(value) => captured = Some(value),
-            Err(error) => failure = Some(error),
         }
-        Ok(())
     });
-    if let Some(failure) = failure {
-        return Err(match failure {
-            CaptureFailure::Sink(error) => error.into(),
-            CaptureFailure::Frame(error) => CheckpointError::Frame(error),
-            CaptureFailure::Host(error) => CheckpointError::HostSeal(error),
-            CaptureFailure::Work(error) => CheckpointError::Work(error),
-            CaptureFailure::NotInitialized => CheckpointError::NotInitialized,
-            CaptureFailure::RecordTooLarge => CheckpointError::Frame(FrameError::LimitExceeded),
-            CaptureFailure::OutOfOrder => CheckpointError::Corruption("stream section order"),
-        });
+    if let Some(error) = sink_error.take() {
+        return Err(write_failure(error));
     }
-    storage?;
-    captured.ok_or(CheckpointError::Corruption("capture returned nothing"))
+    exported.map_err(store_failure)?;
+    // System records in ascending key order: 'm' (0x6d) < 'r' (0x72).
+    for prefix in [HISTORY_KEY_PREFIX, RECEIPT_KEY_PREFIX] {
+        let scanned: Result<(), bumbledb::store::StoreError> =
+            snapshot.host_scan(&[prefix], work, &mut |key: &[u8], value: &[u8]| {
+                if prefix == RECEIPT_KEY_PREFIX
+                    && key.len() >= 9
+                    && u64::from_be_bytes(key[1..9].try_into().expect("width")) <= retired_filter
+                {
+                    return Ok(());
+                }
+                match writer.system(key, value) {
+                    Ok(()) => Ok(()),
+                    Err(error) => {
+                        sink_error = Some(error);
+                        Err(bumbledb::store::StoreError::Work(WorkError::Cancelled))
+                    }
+                }
+            });
+        if let Some(error) = sink_error.take() {
+            return Err(write_failure(error));
+        }
+        scanned.map_err(store_failure)?;
+    }
+    let summary = writer.finish().map_err(write_failure)?;
+    Ok(Captured { authority, summary })
 }
 
 struct UploadSink<'a, B> {
@@ -311,9 +267,9 @@ struct UploadSink<'a, B> {
     epoch: u64,
 }
 
-impl<B: ConditionalStore> ChunkSink for UploadSink<'_, B>
+impl<B: ReceivingStore> ChunkSink for UploadSink<'_, B>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     type Error = CheckpointError;
 
@@ -329,60 +285,157 @@ where
 }
 
 /// The suffix walk: verify the exact decisions `(base, tip]` chain back from
-/// `tip` to `base`, counting bytes and the oldest epoch touched.
+/// `tip` to `base`, counting bytes and the oldest epoch touched. The initial
+/// tip ObjectRef is preserved (C6).
 struct Suffix {
     tail_bytes: u64,
     epoch_floor: u64,
+    tip_object: Option<ObjectRef>,
+}
+
+struct SuffixVisitor {
+    tail_bytes: u64,
+    epoch_floor: u64,
+    limits: Limits,
+}
+
+impl ChainVisitor for SuffixVisitor {
+    type Error = ObjectError;
+
+    fn visit(
+        &mut self,
+        _stamp: DecisionStamp,
+        bytes: &[u8],
+        reference: ObjectRef,
+    ) -> Result<bool, ObjectError> {
+        self.tail_bytes += bytes.len() as u64;
+        self.epoch_floor = self.epoch_floor.min(reference.epoch);
+        if let Ok(envelope) = decision::decode_decision(bytes, self.limits)
+            && let Some(parent) = envelope.parent_object
+        {
+            self.epoch_floor = self.epoch_floor.min(parent.epoch);
+        }
+        Ok(true)
+    }
+}
+
+fn map_suffix_walk(error: ObjectError) -> CheckpointError {
+    match error {
+        ObjectError::Frame(_)
+        | ObjectError::Missing { .. }
+        | ObjectError::WrongDigest { .. } => CheckpointError::Corruption(
+            "suffix walk did not reach the captured base",
+        ),
+        ObjectError::Backend(error) => CheckpointError::Object(ObjectError::Backend(error)),
+    }
 }
 
 #[expect(clippy::too_many_arguments, reason = "one bounded suffix walk")]
-fn validate_suffix<B: ConditionalStore>(
+fn validate_suffix<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     base: DecisionStamp,
     tip: DecisionStamp,
-    epoch_floor: u64,
-    epoch_ceiling: u64,
+    tip_object: Option<ObjectRef>,
     limits: Limits,
     budget: u64,
     work: &WorkContext,
 ) -> Result<Suffix, CheckpointError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
-    let mut cursor = tip;
-    let mut tail_bytes = 0u64;
-    let mut floor = epoch_ceiling;
-    let mut steps = 0u64;
-    while cursor != base {
-        work.checkpoint()?;
-        steps += 1;
-        if steps > budget || cursor.seq == 0 || cursor.seq <= base.seq {
-            return Err(CheckpointError::Corruption(
-                "suffix walk did not reach the captured base",
-            ));
-        }
-        let (epoch, bytes) =
-            fetch_decision(backend, prefix, epoch_floor, epoch_ceiling, &cursor.hash)?;
-        let envelope = codec_decision(&bytes, limits)?;
-        if envelope.stamp() != cursor {
-            return Err(CheckpointError::Corruption("decision digest mismatch"));
-        }
-        tail_bytes = tail_bytes.saturating_add(bytes.len() as u64);
-        floor = floor.min(epoch);
-        cursor = envelope.parent;
+    if tip == base {
+        return Ok(Suffix {
+            tail_bytes: 0,
+            epoch_floor: u64::MAX,
+            tip_object: None,
+        });
     }
+    crate::history::locator::validate_tip_locator(tip, tip_object)
+        .map_err(|_| CheckpointError::Corruption("tip locator missing or invalid"))?;
+    let starting = tip_object.expect("tip locator validated");
+    work.checkpoint()?;
+    let mut walk_budget = budget;
+    let mut visitor = SuffixVisitor {
+        tail_bytes: 0,
+        epoch_floor: starting.epoch,
+        limits,
+    };
+    crate::history::locator::walk_decision_chain(
+        backend,
+        prefix,
+        tip,
+        base,
+        Some(starting),
+        limits,
+        &mut walk_budget,
+        work,
+        &mut visitor,
+    )
+    .map_err(map_suffix_walk)?;
     Ok(Suffix {
-        tail_bytes,
-        epoch_floor: floor,
+        tail_bytes: visitor.tail_bytes,
+        epoch_floor: visitor.epoch_floor,
+        tip_object: Some(starting),
     })
 }
 
-fn codec_decision(
-    bytes: &[u8],
-    limits: Limits,
-) -> Result<decision::UnverifiedDecisionEnvelope<'_>, CheckpointError> {
-    decision::decode_decision(bytes, limits).map_err(CheckpointError::Frame)
+/// Capture one coherent snapshot of `db` and upload it as a complete
+/// verified checkpoint — every chunk plus the streamed manifest — under
+/// `epoch` at `prefix`, WITHOUT touching any head. `publish_checkpoint`
+/// composes this into a head rebase; the hosted migration data plane (C11)
+/// publishes the returned manifest reference inside the target's genesis
+/// head recovery root instead, so a migrated incarnation's state and its
+/// authoritative migration-history records ('m' system rows) are
+/// reconstructible from the store alone.
+///
+/// # Errors
+/// Sink/backend, storage, frame and work refusals; a deleted captured
+/// authority refuses (`Deleted`). Uploaded objects from a failed attempt
+/// remain orphans for a later collection.
+pub fn upload_snapshot<S, B: ReceivingStore>(
+    db: &Db<S>,
+    backend: &B,
+    prefix: &str,
+    epoch: u64,
+    retired_filter: u64,
+    policy: &CheckpointPolicy,
+    work: &WorkContext,
+) -> Result<(CheckpointManifest, ObjectRef), CheckpointError>
+where
+    B::Error: BackendError + ObservedError,
+{
+    let mut sink = UploadSink {
+        backend,
+        prefix,
+        epoch,
+    };
+    let captured = capture_into(db, &mut sink, retired_filter, policy, work)?;
+    let capture_position = captured
+        .authority
+        .position()
+        .ok_or(CheckpointError::Deleted)?;
+    let manifest = CheckpointManifest {
+        identity: captured.authority.identity,
+        decision: capture_position.decision,
+        state: capture_position.state,
+        control_at_capture: captured.authority,
+        application_digest: captured.summary.application_digest,
+        system_digest: captured.summary.system_digest,
+        stream_digest: captured.summary.stream_digest,
+        total_bytes: captured.summary.total_bytes,
+        rows: captured.summary.rows,
+        system_records: captured.summary.system_records,
+        chunks: captured.summary.chunks.clone(),
+    };
+    let manifest_ref = put_verified(
+        backend,
+        prefix,
+        epoch,
+        ObjectKind::Checkpoint,
+        &codec::encode_manifest(&manifest, policy.stream)?,
+    )?;
+    Ok((manifest, manifest_ref))
 }
 
 /// The head-control transition a rebase installs beside the new recovery
@@ -406,7 +459,7 @@ pub enum CheckpointKind {
     clippy::too_many_lines,
     reason = "one bounded publish pipeline: capture, stage, CAS, rebase"
 )]
-pub fn publish_checkpoint<S, B: ConditionalStore>(
+pub fn publish_checkpoint<S, B: ReceivingStore>(
     db: &Db<S>,
     backend: &B,
     prefix: &str,
@@ -416,10 +469,10 @@ pub fn publish_checkpoint<S, B: ConditionalStore>(
     work: &WorkContext,
 ) -> Result<CheckpointOutcome, CheckpointError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
     // 1. The exact parent head names the staging epoch and lineage.
-    let (parent, _) = read_live_head(backend, prefix, policy.head_cap)?;
+    let (parent, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
     let mut staged_epoch = parent.object_epoch;
     let retired_filter = match kind {
         CheckpointKind::Ordinary => parent
@@ -431,49 +484,20 @@ where
         CheckpointKind::RetireReceipts { through } => through,
     };
 
-    // 2. One coherent capture, streamed straight into verified chunk uploads.
-    let mut sink = UploadSink {
-        backend,
-        prefix,
-        epoch: staged_epoch,
-    };
-    let captured = capture_into(db, &mut sink, retired_filter, policy, work)?;
-    if captured.authority.identity != parent.control.identity {
+    // 2/3. One coherent capture streamed straight into verified chunk
+    // uploads, plus its streamed manifest.
+    let (mut manifest, mut manifest_ref) =
+        upload_snapshot(db, backend, prefix, staged_epoch, retired_filter, policy, work)?;
+    if manifest.identity != parent.control.identity {
         return Err(CheckpointError::Corruption("captured foreign identity"));
     }
-    let capture_position = captured
-        .authority
-        .position()
-        .ok_or(CheckpointError::Deleted)?;
-    let base = capture_position.decision;
-
-    // 3. The streamed manifest.
-    let mut chunks = captured.summary.chunks.clone();
-    let mut manifest = CheckpointManifest {
-        identity: captured.authority.identity,
-        decision: base,
-        state: capture_position.state,
-        control_at_capture: captured.authority,
-        application_digest: captured.summary.application_digest,
-        system_digest: captured.summary.system_digest,
-        stream_digest: captured.summary.stream_digest,
-        total_bytes: captured.summary.total_bytes,
-        rows: captured.summary.rows,
-        system_records: captured.summary.system_records,
-        chunks: chunks.clone(),
-    };
-    let mut manifest_ref = put_verified(
-        backend,
-        prefix,
-        staged_epoch,
-        ObjectKind::Checkpoint,
-        &codec::encode_manifest(&manifest, policy.stream)?,
-    )?;
+    let base = manifest.decision;
+    let mut chunks = manifest.chunks.clone();
 
     // 4. Bounded rebase against the moving head.
     for _ in 0..policy.rebase_attempts {
         work.checkpoint()?;
-        let (current, version) = read_live_head(backend, prefix, policy.head_cap)?;
+        let (current, version) = read_live_head(backend, prefix, policy.head_cap, work)?;
         if current.control.identity != manifest.identity {
             return Err(CheckpointError::Corruption("head lineage changed"));
         }
@@ -484,9 +508,9 @@ where
         let current_recovery = current.recovery.ok_or(CheckpointError::Corruption(
             "live head without recovery root",
         ))?;
-        // The recovery base never moves backwards; equality causes no
-        // pointless republication.
-        if current_recovery.checkpoint.is_some() && base.seq <= current_recovery.base.seq {
+        // Distinguish ordinary base advancement from same-base receipt-policy
+        // replacement (LOG-017): retirement at the same decision is valid.
+        if base.seq < current_recovery.base.seq {
             return Ok(CheckpointOutcome::Discarded {
                 current_base_seq: current_recovery.base.seq,
             });
@@ -502,8 +526,7 @@ where
             prefix,
             base,
             live.decision,
-            current_recovery.epoch_floor,
-            current.object_epoch,
+            current_recovery.tip_object,
             command_limits,
             policy.suffix_budget,
             work,
@@ -514,14 +537,20 @@ where
             let new_epoch = current.object_epoch;
             let mut restaged = Vec::with_capacity(chunks.len());
             for old in &chunks {
-                let bytes = get_verified(backend, prefix, old)?;
+                let charged = get_verified(
+                    backend,
+                    prefix,
+                    old,
+                    TransportContext::new(work, ReceiveLimits::exact(old.length)),
+                )?;
                 restaged.push(put_verified(
                     backend,
                     prefix,
                     new_epoch,
                     ObjectKind::Chunk,
-                    &bytes,
+                    charged.as_bytes(),
                 )?);
+                drop(charged.into_owner());
             }
             chunks = restaged;
             manifest.chunks.clone_from(&chunks);
@@ -534,16 +563,26 @@ where
             )?;
             staged_epoch = new_epoch;
         }
-        let recovery = RecoveryRoot {
-            checkpoint: Some(manifest_ref),
-            base,
-            tip: live.decision,
-            tail_bytes: suffix.tail_bytes,
-            epoch_floor: if live.decision == base {
-                current.object_epoch
-            } else {
-                suffix.epoch_floor
-            },
+        let recovery = if live.decision == base {
+            RecoveryRoot::checkpoint_only(
+                Some(manifest_ref),
+                base,
+                0,
+                current.object_epoch,
+            )
+        } else {
+            let tip_object = suffix.tip_object.ok_or(CheckpointError::Corruption(
+                "suffix root missing tip ObjectRef",
+            ))?;
+            RecoveryRoot::suffix(
+                Some(manifest_ref),
+                base,
+                live.decision,
+                tip_object,
+                suffix.tail_bytes,
+                suffix.epoch_floor,
+            )
+            .map_err(|_| CheckpointError::Corruption("recovery root locators refused"))?
         };
         let control = match kind {
             CheckpointKind::Ordinary => current.control.maintained().map_err(HeadError::from)?,
@@ -578,7 +617,7 @@ where
                 // Resolve by reading the head: the successful atomic
                 // replacement is the linearization point, so our exact
                 // manifest in the current recovery root proves publication.
-                let (observed, _) = read_live_head(backend, prefix, policy.head_cap)?;
+                let (observed, _) = read_live_head(backend, prefix, policy.head_cap, work)?;
                 match observed.recovery.and_then(|root| root.checkpoint) {
                     Some(reference) if reference == manifest_ref => {
                         return Ok(CheckpointOutcome::Published {
@@ -600,27 +639,33 @@ where
 }
 
 /// Read and decode the current composed head. `NotInitialized` for a missing
-/// head — reading never initializes.
+/// head — reading never initializes. The receive is charged under `work`
+/// and decoded from the owner; the reservation is dropped after decode.
 ///
 /// # Errors
 /// Backend and frame refusals.
-pub fn read_live_head<B: ConditionalStore>(
+pub fn read_live_head<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     cap: usize,
+    work: &WorkContext,
 ) -> Result<(HeadRecord, HeadVersion), CheckpointError>
 where
-    B::Error: BackendError,
+    B::Error: BackendError + ObservedError,
 {
-    match backend
-        .read_head(&head_key(prefix))
-        .map_err(crate::store::backend)
-        .map_err(CheckpointError::Object)?
+    work.checkpoint()?;
+    match read_head_bounded(
+        backend,
+        &head_key(prefix),
+        TransportContext::new(work, ReceiveLimits::capped(cap as u64)),
+    )
+    .map_err(CheckpointError::Object)?
     {
-        HeadRead::Present { version, body } => {
-            let record = decode_head(&body, cap)?;
+        ReceivedHead::Present { version, body } => {
+            let record = decode_head(body.as_bytes(), cap)?;
+            drop(body);
             Ok((record, version))
         }
-        HeadRead::Absent => Err(CheckpointError::NotInitialized),
+        ReceivedHead::Absent => Err(CheckpointError::NotInitialized),
     }
 }

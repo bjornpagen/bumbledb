@@ -8,25 +8,26 @@ use super::hosted::{
     self, CommitCostSample, ContentionCell, HistoryMode, KeyMode, TerminalOutcome, WRITER_COUNTS,
 };
 use super::layers::{self, Layer, LayerSample};
-use super::workloads::{self, CORE_REGIMES, FAMILIES, Family};
+use super::workloads::{self, FAMILIES, Family};
 use super::{GATES, Gate, PhaseSplit, Regime};
 
 // Scorecard structure.
 
 #[test]
-fn scorecard_every_family_covers_the_core_regimes() {
+fn scorecard_is_compact_and_names_every_family_once() {
     let cells = workloads::scorecard();
+    assert_eq!(
+        cells.len(),
+        13,
+        "compact 13-cell scorecard, not a cartesian: {} cells",
+        cells.len()
+    );
     for family in FAMILIES {
-        for regime in CORE_REGIMES {
-            assert!(
-                cells
-                    .iter()
-                    .any(|cell| cell.family == family && cell.regime == regime),
-                "{} lacks the {} regime",
-                family.label(),
-                regime.label()
-            );
-        }
+        assert!(
+            cells.iter().any(|cell| cell.family == family),
+            "{} has no cell",
+            family.label()
+        );
     }
 }
 
@@ -55,6 +56,24 @@ fn scorecard_names_the_special_regimes_once_each_at_least() {
             cells.iter().any(|cell| cell.regime == regime),
             "missing {}",
             regime.label()
+        );
+    }
+}
+
+#[test]
+fn scorecard_cells_name_visits_or_requests_not_elapsed_smoke() {
+    for cell in workloads::scorecard() {
+        let extras = cell.extra_outputs.join(" ");
+        assert!(
+            extras.contains("visit")
+                || extras.contains("owner")
+                || extras.contains("request")
+                || extras.contains("bit")
+                || extras.contains("roster")
+                || extras.contains("distribution")
+                || extras.contains("class"),
+            "{} reports ritual time instead of work: {extras}",
+            cell.id
         );
     }
 }
@@ -105,30 +124,59 @@ fn scorecard_mutation_cells_charge_first_read_and_forbid_id_allocation_work() {
         .iter()
         .filter(|cell| cell.regime == Regime::PostWrite)
         .collect();
-    assert_eq!(post_write.len(), FAMILIES.len(), "every family mutates");
+    assert_eq!(post_write.len(), 1, "one mutation→read cell, not a cartesian");
     for cell in post_write {
         assert_eq!(cell.gate, Gate::AppMutate);
+        assert_eq!(cell.family, Family::MutationRead);
         assert!(
             cell.extra_outputs
                 .iter()
-                .any(|o| o.contains("ID-allocation")),
-            "{}: the absent ID-allocation work must be checked absent",
+                .any(|o| o.contains("rebuild") || o.contains("judge")),
+            "{}: first-read locality must be reported",
             cell.id
         );
     }
 }
 
 #[test]
-fn scorecard_tenant_fleet_owns_churn_and_maintenance_evidence() {
+fn scorecard_tenant_lifecycle_owns_churn_and_maintenance_evidence() {
     let cells = workloads::scorecard();
-    assert!(cells.iter().any(|cell| cell.family == Family::TenantFleet
+    assert!(cells.iter().any(|cell| cell.family == Family::TenantLifecycle
         && cell.regime == Regime::TenantChurn
         && cell.gate == Gate::AppTenants));
     assert!(
         cells
             .iter()
-            .any(|cell| cell.family == Family::TenantFleet && cell.regime == Regime::Maintenance)
+            .any(|cell| cell.family == Family::TenantLifecycle && cell.regime == Regime::Maintenance)
     );
+}
+
+#[test]
+fn l21_semantic_checks_cover_the_owned_discriminators() {
+    let checks = super::plan::l21_semantic_checks();
+    for needed in [
+        "D04",
+        "D08",
+        "D09",
+        "D11",
+        "D29",
+        "G05",
+        "G12",
+        "G15",
+        "REVIEW-001",
+        "C-D04-collision-bytes",
+        "C-D19-cancel",
+        "C-D19-mean-once",
+        "C-D19-merge-not-idemp",
+        "C-G03-mutable-support",
+        "C-G03-add-wins",
+        "C-G03-raw-commute",
+    ] {
+        assert!(
+            checks.iter().any(|(gate, _, _)| *gate == needed),
+            "missing {needed}"
+        );
+    }
 }
 
 // Layer decomposition wire format.
@@ -331,18 +379,29 @@ fn runner_post_write_alternation_restores_the_loaded_state() {
         seed: 1,
         scale: Scale::Tiny,
     };
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
-        .expect("create")
-        .expect("accepted");
+    let db = bumbledb::Db::create(
+        &dir,
+        crate::schema::Ledger,
+        crate::harness::bench_work().expect("work"),
+    )
+    .expect("create")
+    .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).expect("load");
     let before = db
-        .read(|snap| Ok(snap.scan(crate::schema::ids::POSTING_TAG)?.count()))
+        .read(crate::harness::bench_work().expect("work"), |snap| {
+            snap.count(crate::schema::ids::POSTING_TAG)
+        })
         .expect("count");
     let row = super::runner::post_write_first_read(&db, cfg, Some(8)).expect("regime runs");
     assert_eq!(row.regime, super::Regime::PostWrite);
-    assert!(row.stats.p50 > 0);
+    assert!(
+        row.work > 0 && row.account.source_visits == Some(row.work),
+        "admitted visits, not a positive-time claim"
+    );
     let after = db
-        .read(|snap| Ok(snap.scan(crate::schema::ids::POSTING_TAG)?.count()))
+        .read(crate::harness::bench_work().expect("work"), |snap| {
+            snap.count(crate::schema::ids::POSTING_TAG)
+        })
         .expect("count");
     // 4 warmups + 8 samples = 12 mutations: even count restores the corpus.
     assert_eq!(
@@ -358,9 +417,13 @@ fn runner_large_result_reports_split_segments_below_end_to_end() {
     use crate::corpus_gen::{GenConfig, Scale};
     let dir = std::env::temp_dir().join("bumbledb-bench-appperf-large");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
-        .expect("create")
-        .expect("accepted");
+    let db = bumbledb::Db::create(
+        &dir,
+        crate::schema::Ledger,
+        crate::harness::bench_work().expect("work"),
+    )
+    .expect("create")
+    .expect("accepted");
     crate::corpus::load_bumbledb(
         &db,
         GenConfig {
@@ -399,9 +462,13 @@ fn runner_cold_open_times_open_plus_first_read() {
     use crate::corpus_gen::{GenConfig, Scale};
     let dir = std::env::temp_dir().join("bumbledb-bench-appperf-cold");
     let _ = std::fs::remove_dir_all(&dir);
-    let db = bumbledb::Db::create(&dir, crate::schema::Ledger)
-        .expect("create")
-        .expect("accepted");
+    let db = bumbledb::Db::create(
+        &dir,
+        crate::schema::Ledger,
+        crate::harness::bench_work().expect("work"),
+    )
+    .expect("create")
+    .expect("accepted");
     crate::corpus::load_bumbledb(
         &db,
         GenConfig {
@@ -413,6 +480,6 @@ fn runner_cold_open_times_open_plus_first_read() {
     drop(db);
     let row = super::runner::cold_open(&dir).expect("cold regime runs");
     assert_eq!(row.regime, super::Regime::ColdOpen);
-    assert!(row.work > 0, "the first read counted rows");
+    assert!(row.work > 0, "the first read counted admitted rows");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -18,11 +18,19 @@
 //!   digest; it selects a candidate bucket only. Full canonical bytes decide
 //!   equality, also under forced collision. All colliding rows remain
 //!   enumerable and individually deletable.
-//! - Unique-key determinants are `(statement, 16-byte determinant
-//!   fingerprint, local row id) → ()` — a **multimap**, so competing
+//! - Unique-key determinants are `(projection id, routing bytes, optional interval tail, local row id) → ()`
+//!   where routing is either compact exact scalar bytes (≤16) or a 16-byte
+//!   BLAKE3 fingerprint — a **multimap**, so competing proposals coexist
 //!   proposals coexist physically while the final state is judged. Semantic
 //!   uniqueness is a law enforced by judgment (C03), not an LMDB key
-//!   constraint; installation-order accidents are unrepresentable.
+//!   constraint; installation-order accidents are unrepresentable. The
+//!   entries are schema-derived ([`det_index`]): every sealed key
+//!   statement's scalar determinant is projected, canonically encoded and
+//!   fingerprinted inside the same transaction as its row mutation —
+//!   insert, replace, delete and snapshot adoption all maintain the index
+//!   atomically, and keyed reads (point gets, key probes, judgment
+//!   enumeration) resolve through the bucket plus exact decoded-value
+//!   confirmation instead of a relation scan.
 //! - Every physical key is fixed-width and far below LMDB's key bound; no
 //!   variable-width determinant or text ever enters a key (long-key safe by
 //!   construction).
@@ -56,6 +64,8 @@
 
 pub mod candidate;
 pub mod copy;
+pub use copy::FreshDestination;
+pub(crate) mod det_index;
 pub mod error;
 pub mod fingerprint;
 pub mod format;
@@ -66,8 +76,13 @@ pub mod keys;
 pub mod map;
 pub(crate) mod rows;
 pub mod snapshot;
+pub mod staging;
 pub mod store_env;
 pub mod verify;
+
+pub use staging::{
+    AdmittedStore, InstallOutcome, StageReader, StageWriter, StagingCleanup, UnreadyStore,
+};
 
 pub use candidate::{
     AppliedChanges, CandidateJudge, CandidateState, Judgment, Prepared, PreparedWrite, RowIndexer,
@@ -75,8 +90,14 @@ pub use candidate::{
 };
 pub use error::{HostKeyFault, StoreError, StoreResult};
 pub use fingerprint::{FP_LEN, Fingerprinter};
-pub use format::{CoreStoreId, EnvironmentId, RowId, StoreIdentity};
-pub use host::{AttachmentChange, HostChanges, HostRecordChange, HostSealError};
+pub use crate::schema::{
+    CompiledProjection, CompiledTheory, KeyEncoding, LMDB_KEY_LIMIT, MAX_EXACT_SCALAR_BYTES,
+    ProjectionId, encode_scalar_group,
+};
+pub use format::{CoreStoreId, EnvironmentId, RelationVersion, RowId, StoreIdentity};
+pub use host::{
+    AttachmentChange, HostChanges, HostRecordChange, HostResume, HostSealError, HostWindow,
+};
 pub use judge_bridge::{SchemaJudge, UnindexedRows};
 pub use map::{MapPolicy, MapReport};
 pub use snapshot::{ExportReport, OwnedSnapshot, StorePageStats};

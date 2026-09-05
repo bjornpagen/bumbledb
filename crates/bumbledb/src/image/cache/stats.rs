@@ -1,12 +1,13 @@
-//! Cache observability counters. Under the `trace` feature these are
-//! per-op atomics; off, the
+//! Cache observability counters. Under the `trace` feature (and in test
+//! builds, where they are the deterministic regression hook for the
+//! per-relation invalidation contract) these are per-op atomics; off, the
 //! counters type is a ZST and every method an inline empty body, so
 //! instrumented call sites are written once, `#[cfg]`-free — the
 //! obs.rs law, applied to the cache. Reader: the benchmark report.
-#[cfg(feature = "trace")]
+#[cfg(any(test, feature = "trace"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(feature = "trace")]
+#[cfg(any(test, feature = "trace"))]
 #[derive(Debug, Default)]
 pub(super) struct CacheCounters {
     hits: AtomicU64,
@@ -15,7 +16,7 @@ pub(super) struct CacheCounters {
     evicted: AtomicU64,
 }
 
-#[cfg(feature = "trace")]
+#[cfg(any(test, feature = "trace"))]
 impl CacheCounters {
     pub(super) fn new() -> Self {
         Self::default()
@@ -48,9 +49,9 @@ impl CacheCounters {
 }
 
 /// One reading of the cache counters. A miss resolves through exactly one
-/// build (generation-keyed rebuild); the old append/carry lineage arms are
-/// deleted with the transitional storage.
-#[cfg(feature = "trace")]
+/// build; entries are keyed per (relation, relation change version), so an
+/// unrelated write produces hits, not builds.
+#[cfg(any(test, feature = "trace"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CacheStats {
     pub hits: u64,
@@ -59,11 +60,11 @@ pub struct CacheStats {
     pub evicted: u64,
 }
 
-#[cfg(not(feature = "trace"))]
+#[cfg(not(any(test, feature = "trace")))]
 #[derive(Debug)]
 pub(super) struct CacheCounters;
 
-#[cfg(not(feature = "trace"))]
+#[cfg(not(any(test, feature = "trace")))]
 #[expect(
     clippy::unused_self,
     reason = "signature twins of the trace-mode counters (the obs.rs law)"

@@ -52,7 +52,7 @@ use bumbledb_log::recovery::{self, materialization_path};
 use bumbledb_log::store::fs::{FsError, FsStore, Inject, Phase};
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectKind, ObjectRead,
-    PutOutcome, get_verified, put_verified,
+    ObjectRef, PutOutcome, ReceiveLimits, TransportContext, get_verified, put_verified,
 };
 use bumbledb_log::writer::{HostedHistory, LocalHistory, ResolveOutcome};
 
@@ -111,7 +111,12 @@ fn await_marker(child: &mut Child, marker: &str) {
         line.clear();
         let read = reader.read_line(&mut line).expect("read child line");
         assert!(read > 0, "child stdout closed before {marker}");
-        if line.trim() == marker {
+        // Suffix match, not equality: libtest prints `test <name> ... `
+        // WITHOUT a trailing newline before the test body runs, so the
+        // child's FIRST marker glues onto that line. Markers are distinct
+        // uppercase tokens the children print alone, never suffixes of one
+        // another or of ordinary output.
+        if line.trim().ends_with(marker) {
             return;
         }
     }
@@ -145,9 +150,21 @@ fn park() -> ! {
     }
 }
 
+fn try_verified(
+    store: &FsStore,
+    reference: &ObjectRef,
+) -> Result<bumbledb::work::ChargedBytes, bumbledb_log::store::ObjectError> {
+    get_verified(
+        store,
+        "t",
+        reference,
+        TransportContext::new(&work(), ReceiveLimits::exact(reference.length)),
+    )
+}
+
 fn scan_user_ids(db: &Db<bumbledb::schema::SchemaDescriptor>) -> Vec<u64> {
     let mut ids = Vec::new();
-    db.read(|read| {
+    db.read(work(), |read| {
         for row in read.scan(RelationId(0))? {
             let row = row?;
             if let Some(Value::U64(id)) = row.first() {
@@ -261,7 +278,7 @@ fn child_process_entry() {
         // park holding the store's kernel lock.
         "hold-local-history" => {
             let db = Arc::new(
-                Db::create(&dir.join("db"), theory())
+                Db::create(&dir.join("db"), theory(), work())
                     .expect("create store")
                     .expect("empty store admits"),
             );
@@ -289,7 +306,7 @@ fn child_process_entry() {
         // is observed and before the local materialization commit.
         "park-after-publish" => {
             let db = Arc::new(
-                Db::create(&dir.join("localdb"), theory())
+                Db::create(&dir.join("localdb"), theory(), work())
                     .expect("create store")
                     .expect("empty store admits"),
             );
@@ -482,13 +499,13 @@ fn a_suspended_history_owner_fences_successors_until_real_death() {
     // Refused while live, refused while merely SIGSTOPped: no lease expiry
     // mints ownership from wall-clock time.
     assert!(
-        Db::open(&root.join("db"), theory()).is_err(),
+        Db::open(&root.join("db"), theory(), work()).is_err(),
         "live owner excludes"
     );
     signal(&child, "STOP");
     std::thread::sleep(Duration::from_millis(200));
     assert!(
-        Db::open(&root.join("db"), theory()).is_err(),
+        Db::open(&root.join("db"), theory(), work()).is_err(),
         "a paused owner remains owner; time mints nothing"
     );
 
@@ -498,7 +515,7 @@ fn a_suspended_history_owner_fences_successors_until_real_death() {
     let _ = child.wait().expect("reap");
     let start = Instant::now();
     let db = loop {
-        match Db::open(&root.join("db"), theory()) {
+        match Db::open(&root.join("db"), theory(), work()) {
             Ok(db) => break Arc::new(db),
             Err(error) => {
                 assert!(start.elapsed() < WAIT, "death releases ownership: {error}");
@@ -543,7 +560,7 @@ fn a_kill_at_the_publication_boundary_leaves_a_resolvable_decision() {
     // over the SAME durable backend directory.
     let start = Instant::now();
     let db = loop {
-        match Db::open(&root.join("localdb"), theory()) {
+        match Db::open(&root.join("localdb"), theory(), work()) {
             Ok(db) => break Arc::new(db),
             Err(error) => {
                 assert!(
@@ -610,14 +627,17 @@ fn a_kill_mid_sweep_resumes_to_a_converged_collection() {
     );
     let recovery = head.recovery.expect("the recovery root survived the kill");
     let checkpoint = recovery.checkpoint.expect("checkpoint object reference");
-    get_verified(&store, "t", &checkpoint)
-        .expect("the protected checkpoint manifest survives byte-exact");
+    drop(
+        try_verified(&store, &checkpoint)
+            .expect("the protected checkpoint manifest survives byte-exact")
+            .into_owner(),
+    );
     // The orphan was staged under the closed epoch and never referenced:
     // no listing of the objects namespace may still contain its bytes.
     let orphan_ref =
         bumbledb_log::store::ObjectRef::of(recovery.epoch_floor, ObjectKind::Chunk, b"p12-orphan");
     assert!(
-        get_verified(&store, "t", &orphan_ref).is_err(),
+        try_verified(&store, &orphan_ref).is_err(),
         "the unreferenced old-epoch orphan was collected"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -800,10 +820,10 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
         .recovery
         .checkpoint
         .expect("pinned checkpoint reference");
-    let manifest_bytes =
-        get_verified(&store, "t", &pinned_manifest).expect("pinned manifest reads");
-    let pinned = bumbledb_log::codec::decode_manifest(&manifest_bytes, ckpt_policy().stream)
+    let charged = try_verified(&store, &pinned_manifest).expect("pinned manifest reads");
+    let pinned = bumbledb_log::codec::decode_manifest(charged.as_bytes(), ckpt_policy().stream)
         .expect("pinned manifest decodes");
+    drop(charged.into_owner());
     assert!(
         !pinned.chunks.is_empty(),
         "the pinned closure has chunk objects to revoke"
@@ -840,10 +860,17 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     let protected = run_collection(&store, "t", op(0x73), LIMITS, &gc_policy(), &work())
         .expect("collection with the hold registered");
     assert!(protected.finished);
-    get_verified(&store, "t", &pinned_manifest)
-        .expect("the held manifest survives a full collection");
+    drop(
+        try_verified(&store, &pinned_manifest)
+            .expect("the held manifest survives a full collection")
+            .into_owner(),
+    );
     for chunk in &pinned.chunks {
-        get_verified(&store, "t", chunk).expect("every held chunk survives a full collection");
+        drop(
+            try_verified(&store, chunk)
+                .expect("every held chunk survives a full collection")
+                .into_owner(),
+        );
     }
 
     // The revocation: release the hold (the report names the exact lost
@@ -862,12 +889,12 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
         .expect("collection after the release");
     assert!(reclaimed.finished);
     assert!(
-        get_verified(&store, "t", &pinned_manifest).is_err(),
+        try_verified(&store, &pinned_manifest).is_err(),
         "the revoked closure's manifest is collected"
     );
     for chunk in &pinned.chunks {
         assert!(
-            get_verified(&store, "t", chunk).is_err(),
+            try_verified(&store, chunk).is_err(),
             "the revoked closure's chunks are collected"
         );
     }
@@ -878,7 +905,11 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
         .expect("current recovery root")
         .checkpoint
         .expect("current checkpoint");
-    get_verified(&store, "t", &current).expect("the current checkpoint is retained");
+    drop(
+        try_verified(&store, &current)
+            .expect("the current checkpoint is retained")
+            .into_owner(),
+    );
 
     // Killed variant: real death while frozen mid-hydrate. Nothing was
     // adopted; the successor hydrates the CURRENT complete closure.

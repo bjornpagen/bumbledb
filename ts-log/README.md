@@ -1,127 +1,272 @@
 # @bjornpagen/bumbledb-log
 
-Braided object-store replication for [bumbledb](https://github.com/bjornpagen/bumbledb):
-a thin peer of `@bjornpagen/bumbledb` (peer `^0.19.0`). The package is
-three things:
+Durable named application commands over
+[Bumbledb](https://github.com/bjornpagen/bumbledb): a thin peer of
+`@bjornpagen/bumbledb` (exact peer `0.20.3`). The package adds a durable
+envelope around the exact core change/read machinery — it never duplicates
+the engine surface. Core types (`ChangeSet`, `QueryReader`,
+`ExecutionPolicy`, `DbError`, …) are the peer's own exports.
 
-1. **The mirrored pure pair**, byte-exact against the Rust driver and
-   pinned by cross-language goldens: `encodeBatch`/`decodeBatch` (the
-   BDBL v2 command codec — a batch is header + ops, nothing else) and
-   `braidsOf(descriptor)` (the schema's own shard map, as data — with
-   `serialAtStatementsOf` naming the degenerate-serial statements beside it).
-2. **The five-verb object store** — `get`, `getIfChanged`, `putCreate`,
-   `putSwap`, `delete` — taking a branded `StoreKey` parsed once by
-   `storeKey`. `fsStore` is the tier-1 local-directory implementation;
-   `memStore` is the same five verbs over one in-process map
-   (single-process only; third `Etag` producer, blake3 like `fsStore`);
-   `s3Store` is the five verbs over S3-compatible storage (the official
-   `@aws-sdk/client-s3` client signs and talks; R2 rides region `auto`).
-3. **Replica and writer** composed from the engine SDK's existing verbs:
-   `openReplica` hands out the SDK's own `Db`; `openWriter` adds the
-   right to create log objects; `openTenants` is an LRU of per-tenant
-   replicas. No engine surface is duplicated.
+The API is **Effect-native**: every operation constructs a lazy
+[`Effect`](https://effect.website) and every native resource is scoped.
+There is no Promise, synchronous, or disposal twin. The package requires
+Effect `4.0.0-rc.112` exactly, as a peer dependency, and Node >= 24.
 
-The package `engines` and the `.ts` test runner require Node >=24.
+The surface is small:
 
-The exported vocabulary reads as English at the call site: `Value`,
-`Interval`, `Batch`, `Theory`, `Descriptor`, `Op`, `Pending`,
-`ChainEntry`, plus the branded scalars `StoreKey`, `Generation`,
-`Etag`, and `Braid` (`storeKey`, `generation`, `etag`, `braid` parse
-at the boundary; the verbs take the proof).
+1. **`LocalHistory` / `HostedHistory`** — one durable history per database.
+   Local authority is one LMDB directory; hosted authority is S3-compatible
+   object storage over immutable decisions, with a disposable local
+   materialization directory beside it. `open` of a missing or unreadable
+   configured database never creates a replacement; `create` is the explicit
+   constructor: it refuses existing authority and validates a stable
+   creation identity plus a **checked initialization artifact** (the
+   canonical schema snapshot the migration tooling renders) instead of
+   fabricating genesis.
+2. **`Command`** — `Command.seal` turns `{ scope, id, changes, precondition,
+   result }` into one owned sealed command with a copyable pre-dispatch
+   `ref`; `Command.encode`/`Command.decode` are the one bounded versioned
+   command codec. The `changes` are the core's own `ChangeSet`.
+3. **`PublishedSnapshot`** — the read side. It extends the core
+   `QueryReader` exactly (same `get`/`execute`/`session`, policies, errors
+   and result owners) and adds durable provenance: `identity`,
+   `decisionStamp`, `stateStamp`, `freshness`. `ReadOptions.consistency`
+   selects `cached`, `latest`, or `at-least` a known stamp.
+4. **`TenantCache`** — one bounded native registry of histories for
+   multi-tenant hosts: `make`/`acquire` (a `HistoryBorrow` whose `release`
+   frees only the borrow)/`inspect`/`evict`/`close`. Pressure is byte and
+   count budgets; evicting a borrowed slot refuses instead of revoking.
+5. **Maintenance and migrations** — explicit admin operations
+   (`checkpoint`, `pinRestorePoint`/`releaseRestorePoint`,
+   `rotateReceiptEpoch`, `retireReceipts`, `collectGarbage`, `backup`/
+   `verifyBackup`/`restore`, `erase`) and the generated-migration workflow
+   under the `./migrations` subpath (below).
 
-Async ⟺ network: `openReplica`, `refresh`, `waitFor`, `commit`,
-`commitSplit`, and disposal await store verbs; everything on
-`replica.db`, the `batch.*` recorders, and the pure pair are synchronous.
+## Install
 
-## A Fluid host
-
-```ts
-// lib/db.ts — module scope; Fluid shares this across the instance's requests
-import { fsStore, openReplica, openWriter } from "@bjornpagen/bumbledb-log"
-
-export const replica = await openReplica({ store: s3(env), prefix: "prod/main", dir: "/tmp/store", theory: Ledger })
-export const writer = await openWriter(replica)
-
-// route handler
-const out = await writer.commit((batch) => batch.insert(Booking, [row]))
-if (out.tag === "accepted") ctx.waitUntil(replica.refresh(out.braid))
+```sh
+pnpm add @bjornpagen/bumbledb-log @bjornpagen/bumbledb effect
 ```
 
-- **The `/tmp` budget gate**: checkpoint plus working set must stay
-  ≤ 400 MB (100 MB headroom under the 500 MB instance limit); the
-  leaf-blob pattern keeps metadata stores in the tens of MB. Per-tenant
-  fleets get the same gate through `openTenants({ budgetBytes, maxOpen })`.
-- **Cross-instance read-your-writes**: a commit returns
-  `{ braid, generation }`; a session token is the pointwise max of every
-  pair a flow has seen; `replica.waitFor(vector)` refreshes until the
-  local vector dominates it. The committing instance always reads its
-  own writes without waiting. A singleton map is the single-braid form.
-- **The `ErrContention` runbook**: the error carries its cause, sourced
-  from the terminal re-judgment itself — `{ kind: "hot-key", statement,
-  determinants }` names the statement and carries the offending facts'
-  raw values from the engine's own violation; the remedies are a
-  reservation relation on the hot capacity (an ordinary weighted child
-  row — the schema idiom) or resident mode. `{ kind: "slot-race", tip }`
-  means the terminal losses were accepted but out-raced: an operational
-  signal to shard the theory into more braids or move the hot braid to
-  a resident Rust writer, whose group commit batches the queue.
+## Quick start: one durable round trip
 
-## A local fleet
+Create a local history with its checked initialization artifact, seal one
+insert command, submit it to a decided receipt, then reopen the directory
+and resolve the retained ref to the exact recorded outcome.
 
 ```ts
-// one process per scope loop; all processes share one fsStore prefix
-import { fsStore, openReplica, openWriter } from "@bjornpagen/bumbledb-log"
+import * as fs from "node:fs"
+import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
+import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
+import { Command, DatabaseId, IncarnationId, LocalHistory, OperationId, ReceiptEpoch, RequestId } from "@bjornpagen/bumbledb-log"
+import type { DatabaseIdentity, LocalBinding, ReadOptions, SubmitOptions } from "@bjornpagen/bumbledb-log"
+import { Effect, ManagedRuntime, Result } from "effect"
 
-const replica = await openReplica({
-	store: fsStore("/data/primer/log"), // the five verbs over a directory
-	prefix: "world/v1",
-	dir: `/data/primer/replicas/${scopeName}`, // per-process local dir — never shared
-	theory: Explanation
-})
-const writer = await openWriter(replica)
+const Entry = relation("Entry", { id: u64, body: str })
+const Ledger = schema("Ledger", { Entry }, [key(Entry, ["id"])])
 
-// one pass = refresh, render, emit, lower, one commit
-await replica.refresh()
-const out = await writer.commit((batch) => {
-	batch.insert(Explanation, growth.explanations) // ids from batch.reserve
-	batch.insert(Case, growth.cases)
-	return growth.summary
+const runtimeOptions: NativeRuntimeOptions = {
+	workers: 2,
+	queueCapacity: 16,
+	cleanupCapacity: 16,
+	ownerCapacity: 16,
+	nativeHandleCapacity: 64,
+	inputBytes: 8_000_000n,
+	workingBytes: 8_000_000n,
+	scratchBytes: 8_000_000n,
+	resultBytes: 1_000_000n,
+	chunkBytes: 1_000_000n,
+	cleanupTimeout: "2 seconds"
+}
+const work: ExecutionPolicy = {
+	inputBytes: 1_000_000n,
+	workingBytes: 1_000_000n,
+	scratchBytes: 1_000_000n,
+	resultBytes: 100_000n,
+	rows: 100_000n,
+	workUnits: 10_000_000n,
+	timeout: "10 seconds"
+}
+const submitOptions: SubmitOptions = { ...work, attempts: 4, backoff: { baseMillis: 5, capMillis: 100 } }
+const readOptions: ReadOptions = { ...work, consistency: { kind: "cached" } }
+
+// Genuinely fallible small parsing is Result, not Effect.
+const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
+
+const program = Effect.gen(function* () {
+	const compiled = yield* Schema.compile(Ledger, work)
+	// The checked initialization artifact: the canonical schema snapshot the
+	// migration generator wrote to your checked-in repository. Its native
+	// fingerprint IS the identity's schemaId — creation re-judges both.
+	const artifact: Uint8Array = fs.readFileSync("bumbledb/migrations/meta/0000.schema.json")
+	const identity: DatabaseIdentity = {
+		databaseId: unwrap(DatabaseId.fromHex("ab".repeat(16))),
+		incarnationId: unwrap(IncarnationId.fromHex("cd".repeat(16))),
+		schemaId: compiled.schemaId
+	}
+	const binding: LocalBinding = { kind: "local", directory: "/tmp/ledger", identity }
+
+	// Scope 1: create, seal, submit; retain the ref and receipt.
+	const retained = yield* Effect.scoped(
+		Effect.gen(function* () {
+			const history = yield* LocalHistory.create(binding, Ledger, {
+				...work,
+				creation: {
+					operationId: unwrap(OperationId.fromHex("e1".repeat(16))),
+					artifact
+				}
+			})
+			const draft = yield* ChangeSet.builder(Ledger, work)
+			yield* draft.insert(Entry, [{ id: 42n, body: "hello" }])
+			const changes = yield* draft.finish()
+			const command = yield* Command.seal(
+				{
+					scope: history.identity,
+					// Generate ids ONCE for an original intent and persist them;
+					// a retry resubmits the identical sealed command.
+					id: {
+						receiptEpoch: unwrap(ReceiptEpoch.from(1n)),
+						requestId: unwrap(RequestId.fromHex("0b".repeat(16)))
+					},
+					changes,
+					precondition: { kind: "blind" },
+					result: {}
+				},
+				work
+			)
+			// submit NEVER throws or fails: certainty is data.
+			const outcome = yield* history.submit(command, submitOptions)
+			if (outcome.kind !== "decided") {
+				return yield* Effect.die("expected a decided submit in this example")
+			}
+			return { ref: command.ref, receipt: outcome.receipt }
+		})
+	)
+
+	// Scope 2: reopen; the retained ref resolves to the recorded receipt,
+	// and the committed fact reads back through the core QueryReader.
+	yield* Effect.scoped(
+		Effect.gen(function* () {
+			const history = yield* LocalHistory.open(binding, Ledger, work)
+			const resolved = yield* history.resolve(retained.ref, work)
+			if (resolved.kind === "found" && resolved.receipt.outcome.kind === "committed") {
+				const snapshot = yield* history.snapshot(readOptions)
+				const fact = yield* snapshot.get(Entry, { id: 42n }, work)
+				yield* Effect.log(fact._tag === "Some" ? fact.value.body : "missing")
+			}
+		})
+	)
 })
-// rejected ⇒ the host re-renders against the moved world and re-lowers —
-// a K-conflict double-mint resolves to the winner's row on the next pass.
+
+const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+await runtime.runPromise(program)
+await Effect.runPromise(runtime.disposeEffect)
 ```
 
-What makes the case easy: an insert-only theory has no delete races to
-lose; content-keyed determinants keep concurrent scope loops off each
-other's obligations, so a lost slot re-judges to the same accepted
-verdict at the moved base; a one-braid theory serializes slot claims on
-a link publication, which at document-per-minutes commit rates is free.
-Each process owns its local replica directory outright.
+## Certainty, receipts, and errors
 
-**`fsStore`'s discipline, stated** — the one on-disk protocol the Rust
-`FsStore` also speaks, raced against it in the interop conformance
-lane: `putCreate` writes an exclusive synced temp and publishes it with
-`fs.link` (EEXIST is the honest `exists`); etags are the blake3 of the
-content, computed on every read and never stored; `putSwap` serializes
-under a pid-lockfile beside the key, published with the same
-temp-plus-link discipline, and a lock whose owner pid is dead is broken
-and retaken. One machine is load-bearing, not descriptive — pid
-liveness and link exclusivity are the arbitration primitives, and
-network filesystems weaken both; an `fsStore` prefix on a network mount
-is a misdeployment. `putCreate` and `putSwap` resolve only after fsync
-of the object file and its parent directory.
+`submit` returns `Effect<SubmitOutcome>` with `E = never` — the outcome is a
+three-armed certainty sum, never an exception channel:
 
-## Error identity
+- `decided` — the authority recorded a decision; the arm carries the
+  `TerminalReceipt` (`committed`, `no-change`, or `rejected` with canonical
+  violation evidence).
+- `not-submitted` — proven never registered (a typed cause rides along);
+  safe to fix and submit a NEW command.
+- `outcome-unknown` — dispatch crossed the authority boundary but the
+  decision could not be read back. Never retried blindly: `resolve(ref)`
+  later returns the recorded receipt (`found`), a proven `not-submitted`,
+  or `unknown` again.
 
-Exported Effect `Data.TaggedError` classes, checked with `instanceof` or `_tag`,
-never by message strings: `ErrRefused` (typed per cause — batch shape,
-version, fingerprint, manifest shape, checkpoint braid-set drift),
-`ErrManifestMissing` (a replica found no manifest; only the writer
-births a store), `ErrSpanningCommit`, `ErrGapDetected`, `ErrReplayDiverged`,
-`ErrChainMismatch` (cause `"prev" | "slot" |
-"timestamp"`), `ErrContention` (cause `hot-key` or `slot-race`),
-`ErrStore` (the vendor channel; its readonly `cause` retains the original
-provider failure, including non-Error values). Diagnostic payloads live on the error, not in side tables. There
-is deliberately no
-`ErrAlreadyApplied`: the state it would name is absorbed by idempotent
-replay and never surfaces.
+Receipts and refs are plain owned data: they outlive their scope, survive
+process restarts (render/parse with `renderCommandRef`/`parseCommandRef`),
+and `resolve` after reopen returns the exact recorded outcome.
+
+Failures that ARE errors use exactly two classes, checked by `_tag`, never
+message strings: the core's own `DbError`, unchanged, for core failures
+crossing the log; and `ProtocolError` for the log-specific reason roster
+(`protocolErrorCodes` spells it natively — contention, consistency
+not-yet-available, artifact/authority/identity refusals, maintenance
+backpressure, migration reasons). `LogError = DbError | ProtocolError` and
+nothing else. Interruption and finalizer defects stay in `Cause`.
+
+The same core `QueryReader` helper that lists a local `Db` snapshot lists a
+published history snapshot. There is no log-specific query wrapper. The
+packed consumer spells this as `readAttempts(snapshot, student, work)` on
+both `Db.snapshot` and `history.snapshot`.
+
+Retain the command or admin `operationId` **before** `submit` / `initialize` /
+`backup` / `restore`. `outcome-unknown` is resolved under that identity.
+A later missing receipt is not proved loss.
+
+## Backup and restore
+
+```ts
+import { NativeRuntime } from "@bjornpagen/bumbledb"
+import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
+import {
+	backup,
+	OperationId,
+	restore,
+	verifyBackup,
+	type LocalBinding
+} from "@bjornpagen/bumbledb-log"
+import { Effect, Result } from "effect"
+
+declare const runtimeOptions: NativeRuntimeOptions
+declare const work: ExecutionPolicy
+declare const binding: LocalBinding
+
+const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
+
+const cycle = Effect.gen(function* () {
+	const operationId = unwrap(OperationId.fromHex("a1".repeat(16)))
+	const destination = { kind: "filesystem" as const, directory: "/tmp/ledger-backup" }
+	const backed = yield* backup(binding, { ...work, operationId, destination })
+	if (backed.kind !== "completed") {
+		return backed
+	}
+	yield* verifyBackup(destination, work)
+	return yield* restore(destination, binding, { ...work, operationId })
+})
+void NativeRuntime.layer(runtimeOptions)
+void cycle
+```
+
+## Migrations
+
+Schema evolution is generated, checked-in, inert data — never inferred at
+runtime:
+
+- `@bjornpagen/bumbledb-log/schema` — pure intent constructors
+  (`migrationIntent`, `renameField`, `renameRelation`, `convert`,
+  `backfill`, `seed`, `dropField`, `dropRelation`). No native work at
+  import or call.
+- `@bjornpagen/bumbledb-log/migrations` — `generateMigrations` diffs the
+  declared schema against the recorded chain and appends one validated,
+  canonically rendered plan to the repository (`manifest.json`,
+  `NNNN-<label>.plan.json`, `meta/NNNN.schema.json`, `snapshots.json`,
+  `index.ts` exporting `{ manifest, plans, snapshots }`, and the
+  `runtime-contract.json` your deploy pins). The admin runner decodes that
+  triple — snapshots are the empty-base schema plus one target per entry.
+  `checkMigrations` is the same judgment without writes. Ordinary onboarding
+  is generated `initialize`,
+  then `LocalHistory.open` / `HostedHistory.open`. `LocalHistory.create`
+  remains the explicit constructor when a checked artifact is already in
+  hand — it is not the Notes/Alchemy path. The runner verbs —
+  `migrationStatus`, `initialize`, `migrate`, `activateMigration`,
+  `abortMigration` — execute generated plans through the one native
+  executor, with `AdminOutcome` certainty (`completed` / `not-started` /
+  `outcome-unknown`).
+- Field arithmetic such as `Scalar.add(Scalar.field("units"), Scalar.u64(1n))`
+  is valid intent metadata. Native chain compilation binds it before any
+  new manifest write or source freeze, including zero input rows.
+- The `bumbledb-log` bin is the same generator/checker as a CLI.
+
+## Platform and packaging
+
+The native engine arrives through the peer `@bjornpagen/bumbledb`
+(darwin-arm64, linux-arm64, linux-x64); this package ships TypeScript only
+and declares both peers exactly (`@bjornpagen/bumbledb 0.20.3`, `effect
+4.0.0-rc.112`). Version lockstep across the package family is enforced in
+CI.

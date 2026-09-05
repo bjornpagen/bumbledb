@@ -34,17 +34,35 @@ export interface EntryPayload {
 	readonly prefixDigest: string
 }
 
+/**
+ * F0 `CompiledChainInput` at the Effect boundary: every snapshot is
+ * mandatory, including the empty-base render. Symbolic source-field AST
+ * is passed through as `compiledMappings` — this layer never evaluates it.
+ * Every native verify / append / generate pass receives the full snapshot
+ * chain plus `compiledMappings` JSON over every plan in that chain.
+ */
+export interface CompiledChainInput {
+	readonly baseSnapshot: string
+	readonly intermediateSnapshots: readonly string[]
+	readonly orderedPlans: readonly string[]
+	readonly compiledMappings: string
+}
+
 export interface ChainRequest {
 	/** Parsed `manifest.json` tree when the repo has one; null roots a fresh chain. */
 	readonly manifest: JsonValue | null
 	/** Required when `manifest` is null: the declared empty-base schema. */
 	readonly baseSchemaId: string | null
+	/** Every recorded schema snapshot's parsed tree, in manifest order. */
+	readonly snapshots: readonly JsonValue[]
 	/** Every recorded plan's parsed tree, in manifest order (`bind_plans`). */
 	readonly plans: readonly JsonValue[]
 	/** A new plan to validate + append (data tree, `parse_plan` grammar). */
 	readonly append: JsonValue | null
 	/** Request a `plan_set_digest` over entries [first, first+count). */
 	readonly planSet: { readonly first: number; readonly count: number } | null
+	/** Mandatory full-chain compile input. Empty source is not a shortcut. */
+	readonly compiled: CompiledChainInput
 }
 
 export interface ChainPayload {

@@ -228,6 +228,17 @@ impl ByteReservation {
     pub const fn bytes(&self) -> u64 {
         self.bytes
     }
+
+    /// Fold `other` into this owner. Both must charge the same ledger and
+    /// resource; `other` is forgotten so Drop refunds the combined amount once.
+    pub(crate) fn join(&mut self, other: Self) {
+        debug_assert!(
+            Arc::ptr_eq(&self.ledger, &other.ledger) && self.resource == other.resource,
+            "reservations join only on one ledger dimension"
+        );
+        self.bytes = self.bytes.saturating_add(other.bytes);
+        std::mem::forget(other);
+    }
 }
 
 impl Drop for ByteReservation {
@@ -236,5 +247,24 @@ impl Drop for ByteReservation {
     }
 }
 
+pub mod cache;
+pub mod owners;
+
+pub use cache::{
+    CacheError, CacheLedger, CachePolicy, CacheReservation, GenerationHandle,
+    GenerationProtocol, GenerationState, ResolverView, WeakGenerationHandle,
+};
+pub use owners::{ChargedBuffer, ChargedBytes, ChargedImage};
+pub use crate::exec::scratch::DEFAULT_RAM_BYTES;
+pub use crate::exec::scratch::{
+    ScratchAppend, ScratchClaimKey, ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe,
+    ScratchRelation, ScratchTextLookup, ScratchVisit, ScratchVisitor, ScratchWideClaimKey,
+    ScratchWordKey, ScratchWriteBatch,
+};
+pub use crate::exec::scratch::capability::{ScratchCapability, ScratchPolicy};
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod f3c_accounting;

@@ -33,6 +33,13 @@ bumbledb::schema! {
         balance: i64,
     }
 
+    // Containment targets must be declared keys of the target relation
+    // (chapter 10: "the target key/selection requirements remain checked
+    // schema premises"); the statement order below is load-bearing —
+    // violation tests assert StatementId(1) is the Account key and
+    // StatementId(2) the containment.
+    Holder(id) -> Holder;
+    Account(id) -> Account;
     Account(holder) <= Holder(id);
 }
 
@@ -131,12 +138,12 @@ fn name_amount_answers(out: &Answers) -> Vec<(String, i64)> {
 #[test]
 fn usage_shapes_end_to_end() {
     let dir = common::TempDir::new("api-usage");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
     let accounts = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let alice = HolderId(mint());
             tx.insert([&Holder {
                 id: alice,
@@ -170,7 +177,7 @@ fn usage_shapes_end_to_end() {
     let mut point = db.prepare(&point_query()).expect("prepare point");
     let mut join = db.prepare(&join_query()).expect("prepare join");
     let mut aggregate = db.prepare(&aggregate_query()).expect("prepare agg");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut point, &[BindValue::U64(accounts[2].id.0)])?;
         assert_eq!(answers.len(), 1);
         assert_eq!(answers.get(0, 0), AnswerValue::I64(40));
@@ -195,7 +202,7 @@ fn usage_shapes_end_to_end() {
     .expect("read");
 
     let old = accounts[0];
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Account { balance: 90, ..old }])?;
         tx.delete([&old])?;
         Ok(())
@@ -203,7 +210,7 @@ fn usage_shapes_end_to_end() {
     .expect("mutate")
     .unwrap();
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut join, &[] as &[bumbledb::BindValue])?;
         assert_eq!(
             name_amount_answers(&answers),
@@ -224,10 +231,10 @@ fn usage_shapes_end_to_end() {
 #[test]
 fn aborted_writes_leave_prior_state_intact() {
     let dir = common::TempDir::new("api-abort");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let id = HolderId(mint());
         tx.insert([&Holder { id, name: "keep" }])
     })
@@ -236,7 +243,7 @@ fn aborted_writes_leave_prior_state_intact() {
 
     // A panicking closure: the delta dies in the unwind, LMDB untouched.
     let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = db.write(|tx| -> bumbledb::Result<()> {
+        let _ = db.write(common::work(), |tx| -> bumbledb::Result<()> {
             let id = HolderId(mint());
             tx.insert([&Holder {
                 id,
@@ -247,7 +254,7 @@ fn aborted_writes_leave_prior_state_intact() {
     }));
     assert!(panicked.is_err());
 
-    let failed = db.write(|tx| -> bumbledb::Result<()> {
+    let failed = db.write(common::work(), |tx| -> bumbledb::Result<()> {
         let id = HolderId(mint());
         tx.insert([&Holder {
             id,
@@ -261,7 +268,7 @@ fn aborted_writes_leave_prior_state_intact() {
     });
     assert!(failed.is_err());
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let id = HolderId(mint());
         tx.insert([&Holder { id, name: "after" }])
     })
@@ -269,7 +276,7 @@ fn aborted_writes_leave_prior_state_intact() {
     .unwrap();
 
     let names = db
-        .read(|snap| {
+        .read(common::work(), |snap| {
             let mut names = Vec::new();
             for fact in snap.scan(Holder::RELATION)? {
                 let fact = fact?;
@@ -291,11 +298,11 @@ fn concurrent_readers_while_writing() {
     assert_send_sync::<Db<Ledger>>();
 
     let dir = common::TempDir::new("api-threads");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let holder = HolderId(mint());
         tx.insert([&Holder {
             id: holder,
@@ -314,7 +321,7 @@ fn concurrent_readers_while_writing() {
     std::thread::scope(|scope| {
         let writer = scope.spawn(|| {
             for round in 0..20 {
-                db.write(|tx| {
+                db.write(common::work(), |tx| {
                     let holder = HolderId(mint());
                     tx.insert([&Holder {
                         id: holder,
@@ -334,7 +341,7 @@ fn concurrent_readers_while_writing() {
         for _ in 0..2 {
             scope.spawn(|| {
                 for _ in 0..50 {
-                    db.read(|snap| {
+                    db.read(common::work(), |snap| {
                         let holders = snap.scan(Holder::RELATION)?.count();
                         let accounts = snap.scan(Account::RELATION)?.count();
                         assert_eq!(
@@ -355,12 +362,12 @@ fn concurrent_readers_while_writing() {
 fn export_scan_inserts_into_a_fresh_database() {
     let dir_old = common::TempDir::new("api-etl-old");
     let dir_new = common::TempDir::new("api-etl-new");
-    let old = Db::create(dir_old.path(), Ledger)
+    let old = Db::create(dir_old.path(), Ledger, common::work())
         .expect("create old")
         .expect("accepted");
 
     let max_holder = old
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let mut max = 0;
             for (name, balance) in [("alice", 100i64), ("bob", -7), ("carol", 40)] {
                 let holder = HolderId(mint());
@@ -380,7 +387,7 @@ fn export_scan_inserts_into_a_fresh_database() {
         .value;
 
     let (holders, accounts) = old
-        .read(|snap| {
+        .read(common::work(), |snap| {
             let holders: Vec<Vec<Value>> =
                 snap.scan(Holder::RELATION)?.collect::<Result<_, _>>()?;
             let accounts: Vec<Vec<Value>> =
@@ -389,11 +396,11 @@ fn export_scan_inserts_into_a_fresh_database() {
         })
         .expect("export");
 
-    let new = Db::create(dir_new.path(), Ledger)
+    let new = Db::create(dir_new.path(), Ledger, common::work())
         .expect("create new")
         .expect("accepted");
     let loaded = new
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(Holder::RELATION, holders)
                 .map(bumbledb::MutationReport::changed)
         })
@@ -402,7 +409,7 @@ fn export_scan_inserts_into_a_fresh_database() {
         .value;
     assert_eq!(loaded, 3);
     let loaded = new
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(Account::RELATION, accounts)
                 .map(bumbledb::MutationReport::changed)
         })
@@ -413,18 +420,18 @@ fn export_scan_inserts_into_a_fresh_database() {
 
     let mut join_old = old.prepare(&join_query()).expect("prepare");
     let answers_old = old
-        .read(|snap| snap.execute_collect(&mut join_old, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| snap.execute_collect(&mut join_old, &[] as &[bumbledb::BindValue]))
         .expect("query old");
     let mut join_new = new.prepare(&join_query()).expect("prepare");
     let answers_new = new
-        .read(|snap| snap.execute_collect(&mut join_new, &[] as &[bumbledb::BindValue]))
+        .read(common::work(), |snap| snap.execute_collect(&mut join_new, &[] as &[bumbledb::BindValue]))
         .expect("query new");
     assert_eq!(
         name_amount_answers(&answers_old),
         name_amount_answers(&answers_new)
     );
 
-    new.write(|_tx| {
+    new.write(common::work(), |_tx| {
         let next = HolderId(mint());
         assert!(
             next.0 > max_holder,
@@ -441,11 +448,11 @@ fn export_scan_inserts_into_a_fresh_database() {
 #[expect(clippy::too_many_lines, reason = "one public-API citation walk")]
 fn statement_violations_surface_from_commit_through_the_public_api() {
     let dir = common::TempDir::new("api-violations");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let holder = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = HolderId(mint());
             tx.insert([&Holder { id, name: "alice" }])?;
             Ok(id)
@@ -454,7 +461,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         .unwrap()
         .value;
 
-    let violations = common::expect_rejected(db.write(|tx| {
+    let violations = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert([&Account {
             id: AccountId(7),
             holder,
@@ -485,11 +492,11 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     let rendered = format!("{}", violations.display_with(&ledger_schema()));
     assert!(rendered.contains("Account(id) -> Account"), "{rendered}");
     let count = db
-        .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
+        .read(common::work(), |snap| Ok(snap.scan_facts::<Account>()?.count()))
         .expect("scan");
     assert_eq!(count, 0, "the aborted transaction left nothing");
 
-    let violations = common::expect_rejected(db.write(|tx| {
+    let violations = common::expect_rejected(db.write(common::work(), |tx| {
         tx.insert([&Account {
             id: AccountId(1),
             holder: HolderId(404),
@@ -519,7 +526,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     );
     assert!(rendered.contains("source"), "{rendered}");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Account {
             id: AccountId(1),
             holder,
@@ -528,7 +535,7 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     })
     .expect("reference the holder")
     .unwrap();
-    let violations = common::expect_rejected(db.write(|tx| {
+    let violations = common::expect_rejected(db.write(common::work(), |tx| {
         tx.delete([&Holder {
             id: holder,
             name: "alice",
@@ -545,7 +552,10 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
     else {
         panic!("expected one containment citation, got {violations:?}");
     };
-    assert_eq!(*direction, Direction::TargetRequired);
+    // Final-state semantics: deleting the referenced holder leaves the
+    // account SOURCE-unsatisfied — the one direction the judge speaks
+    // (which command moved is not part of the verdict).
+    assert_eq!(*direction, Direction::SourceUnsatisfied);
     assert!(
         !fact.is_empty(),
         "the requiring source is named by its fact"
@@ -555,14 +565,14 @@ fn statement_violations_surface_from_commit_through_the_public_api() {
         rendered.contains("Account(holder) <= Holder(id)"),
         "{rendered}"
     );
-    assert!(rendered.contains("target"), "{rendered}");
+    assert!(rendered.contains("source"), "{rendered}");
 }
 
 #[test]
 fn open_mismatches_and_snapshot_usability() {
     let dir = common::TempDir::new("api-open-mismatch");
     drop(
-        Db::create(dir.path(), Ledger)
+        Db::create(dir.path(), Ledger, common::work())
             .expect("create")
             .expect("accepted"),
     );
@@ -578,25 +588,33 @@ fn open_mismatches_and_snapshot_usability() {
         }],
         statements: vec![],
     };
-    let Err(err) = Db::open(dir.path(), other).map(|_| ()) else {
+    let Err(err) = Db::open(dir.path(), other, common::work()).map(|_| ()) else {
         panic!("a different schema must refuse to open");
     };
-    assert!(matches!(err, bumbledb::Error::SchemaMismatch { .. }));
+    assert!(
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::SchemaMismatch)),
+        "{err:?}"
+    );
 
-    let Err(err) = Db::create(dir.path(), Ledger).map(|_| ()) else {
+    let Err(err) = Db::create(dir.path(), Ledger, common::work()).map(|_| ()) else {
         panic!("create over an existing environment must refuse");
     };
-    assert!(matches!(err, bumbledb::Error::DestinationExists { .. }));
+    assert!(
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
+        "{err:?}"
+    );
 
-    let db = Db::open(dir.path(), Ledger).expect("open");
-    db.write(|tx| {
+    let db = Db::open(dir.path(), Ledger, common::work()).expect("open");
+    db.write(common::work(), |tx| {
         let id = HolderId(mint());
         tx.insert([&Holder { id, name: "bo" }])
     })
     .expect("seed")
     .unwrap();
     let mut join = db.prepare(&join_query()).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let mut out = Answers::new();
 
         let err = snap
@@ -614,10 +632,10 @@ fn open_mismatches_and_snapshot_usability() {
 #[test]
 fn pinned_snapshot_reads_its_generation_across_later_commits() {
     let dir = common::TempDir::new("api-pinned");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let id = HolderId(mint());
         tx.insert([&Holder { id, name: "first" }])
     })
@@ -625,13 +643,13 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     .unwrap();
 
     let mut join = db.prepare(&join_query()).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let before = snap.scan_facts::<Holder>()?.count();
         assert_eq!(before, 1);
         // Two commits land while this snapshot stays open (LMDB readers
 
         for round in 0..2 {
-            db.write(|tx| {
+            db.write(common::work(), |tx| {
                 let id = HolderId(mint());
                 tx.insert([&Holder {
                     id,
@@ -649,7 +667,7 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
     .expect("pinned read");
 
     let after = db
-        .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .read(common::work(), |snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("fresh read");
     assert_eq!(after, 3);
 }
@@ -658,10 +676,10 @@ fn pinned_snapshot_reads_its_generation_across_later_commits() {
 fn collection_insert_equals_sequential_inserts() {
     let dir_all = common::TempDir::new("api-insert-all");
     let dir_seq = common::TempDir::new("api-insert-seq");
-    let all = Db::create(dir_all.path(), Ledger)
+    let all = Db::create(dir_all.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let seq = Db::create(dir_seq.path(), Ledger)
+    let seq = Db::create(dir_seq.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
@@ -670,7 +688,7 @@ fn collection_insert_equals_sequential_inserts() {
         .map(|i| vec![Value::U64(i), Value::String(format!("h{}", i % 97).into())])
         .collect();
     let loaded = all
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(Holder::RELATION, facts.clone())
                 .map(bumbledb::MutationReport::changed)
         })
@@ -679,7 +697,7 @@ fn collection_insert_equals_sequential_inserts() {
         .value;
     assert_eq!(loaded, n);
     for chunk in facts.chunks(512) {
-        seq.write(|tx| tx.insert_dyn(Holder::RELATION, chunk).map(|_| ()))
+        seq.write(common::work(), |tx| tx.insert_dyn(Holder::RELATION, chunk).map(|_| ()))
             .expect("sequential insert")
             .unwrap();
     }
@@ -692,31 +710,31 @@ fn collection_insert_equals_sequential_inserts() {
         rows
     };
     let a = by_id(
-        all.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+        all.read(common::work(), |snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
             .expect("scan all"),
     );
     let b = by_id(
-        seq.read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+        seq.read(common::work(), |snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
             .expect("scan seq"),
     );
     assert_eq!(a, b);
     assert_eq!(a.len(), usize::try_from(n).expect("64-bit"));
 
     let dir_fail = common::TempDir::new("api-insert-fail");
-    let fail = Db::create(dir_fail.path(), Ledger)
+    let fail = Db::create(dir_fail.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let mut bad = facts;
     bad[4_099] = vec![Value::U64(0)];
     let err = fail
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(Holder::RELATION, bad)
                 .map(bumbledb::MutationReport::changed)
         })
         .unwrap_err();
     assert!(matches!(err, bumbledb::Error::FactShape(_)), "{err:?}");
     let persisted = fail
-        .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .read(common::work(), |snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("scan");
     assert_eq!(persisted, 0);
 }
@@ -724,7 +742,7 @@ fn collection_insert_equals_sequential_inserts() {
 #[test]
 fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     let dir = common::TempDir::new("api-insert-typed");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
@@ -736,19 +754,19 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
     };
     let holders: Vec<_> = (0..n).map(holder).collect();
     let loaded = db
-        .write(|tx| Ok(tx.insert(&holders)?.changed()))
+        .write(common::work(), |tx| Ok(tx.insert(&holders)?.changed()))
         .expect("typed insert")
         .unwrap()
         .value;
     assert_eq!(loaded, n);
     let again = db
-        .write(|tx| Ok(tx.insert(&holders)?.changed()))
+        .write(common::work(), |tx| Ok(tx.insert(&holders)?.changed()))
         .expect("typed re-import")
         .unwrap()
         .value;
     assert_eq!(again, 0);
     let persisted = db
-        .read(|snap| Ok(snap.scan_facts::<Holder>()?.count()))
+        .read(common::work(), |snap| Ok(snap.scan_facts::<Holder>()?.count()))
         .expect("scan");
     assert_eq!(persisted, usize::try_from(n).expect("64-bit"));
 
@@ -758,9 +776,9 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
         balance: 1,
     };
     let accounts: Vec<_> = (0..n).map(account).collect();
-    let _ = common::expect_rejected(db.write(|tx| Ok(tx.insert(&accounts)?.changed())));
+    let _ = common::expect_rejected(db.write(common::work(), |tx| Ok(tx.insert(&accounts)?.changed())));
     let account_count = db
-        .read(|snap| Ok(snap.scan_facts::<Account>()?.count()))
+        .read(common::work(), |snap| Ok(snap.scan_facts::<Account>()?.count()))
         .expect("scan accounts");
     assert_eq!(account_count, 0);
 }
@@ -768,14 +786,14 @@ fn typed_collection_insert_is_idempotent_and_judgment_rejects_the_write() {
 #[test]
 fn disk_size_and_generation_report_store_state() {
     let dir = common::TempDir::new("api-disk-size");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let empty = db.disk_size().expect("size");
     assert!(empty > 0, "a fresh environment still has pages");
-    assert_eq!(db.generation().expect("gen").value(), 0);
+    assert_eq!(db.generation(common::work()).expect("gen").value(), 0);
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for _ in 0..10_000u64 {
             let id = HolderId(mint());
             tx.insert([&Holder {
@@ -789,7 +807,7 @@ fn disk_size_and_generation_report_store_state() {
     .unwrap();
     let grown = db.disk_size().expect("size");
     assert!(grown > empty, "10k facts grow the file: {empty} -> {grown}");
-    assert_eq!(db.generation().expect("gen").value(), 1);
+    assert_eq!(db.generation(common::work()).expect("gen").value(), 1);
 }
 
 #[test]
@@ -797,11 +815,11 @@ fn cover_choice_iterates_the_selected_side() {
     use bumbledb::ir::{Atom, FindTerm, FoldOp, ParamId, Query, Term, VarId};
 
     let dir = common::TempDir::new("api-cover-choice");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let mut holders = Vec::new();
         for i in 0..500u64 {
             let id = HolderId(mint());
@@ -856,7 +874,7 @@ fn cover_choice_iterates_the_selected_side() {
     let mut prepared = db.prepare(&query).expect("prepare");
     let params = vec![ParamArg::Scalar(BindValue::Str("target"))];
     let out = db
-        .read(|snap| snap.execute_collect(&mut prepared, &params))
+        .read(common::work(), |snap| snap.execute_collect(&mut prepared, &params))
         .expect("execute");
     assert_eq!(out.len(), 7, "one group per target holder");
 }
@@ -867,12 +885,12 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 
     let dir = common::TempDir::new("api-compact");
     let source_dir = dir.path().join("source");
-    let db = Db::create(&source_dir, Ledger)
+    let db = Db::create(&source_dir, Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
     for round in 0..40u64 {
-        db.write(|tx| {
+        db.write(common::work(), |tx| {
             for i in 0..250u64 {
                 let id = HolderId(mint());
                 tx.insert([&Holder {
@@ -886,10 +904,10 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         .unwrap();
     }
     let source_size = db.disk_size().expect("size");
-    let generation = db.generation().expect("generation");
+    let generation = db.generation(common::work()).expect("generation");
     let scan_digest = |db: &Db<Ledger>| -> Vec<Vec<Value>> {
         let mut rows: Vec<Vec<Value>> = db
-            .read(|snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
+            .read(common::work(), |snap| snap.scan(Holder::RELATION)?.collect::<Result<_, _>>())
             .expect("scan");
         rows.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
         rows
@@ -901,22 +919,23 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 
     let err = db.compact(&compact_dir).expect_err("must refuse");
     assert!(
-        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
         "{err:?}"
     );
     drop(db);
 
-    let compacted = Db::open(&compact_dir, Ledger).expect("open compacted");
+    let compacted = Db::open(&compact_dir, Ledger, common::work()).expect("open compacted");
     let compact_size = compacted.disk_size().expect("size");
     assert!(
         compact_size * 10 <= source_size * 8,
         "compaction reclaims the churn: {compact_size} vs {source_size}"
     );
-    assert_eq!(compacted.generation().expect("generation"), generation);
+    assert_eq!(compacted.generation(common::work()).expect("generation"), generation);
     assert_eq!(scan_digest(&compacted), source_rows, "byte-identical facts");
 
     compacted
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = HolderId(mint());
             tx.insert([&Holder {
                 id,
@@ -938,14 +957,14 @@ fn compaction_drops_the_freelist_and_preserves_content() {
 fn a_prepared_query_refuses_a_foreign_snapshot() {
     let dir_a = common::TempDir::new("api-foreign-prepared-a");
     let dir_b = common::TempDir::new("api-foreign-prepared-b");
-    let db_a = Db::create(dir_a.path(), Ledger)
+    let db_a = Db::create(dir_a.path(), Ledger, common::work())
         .expect("create a")
         .expect("accepted");
-    let db_b = Db::create(dir_b.path(), Ledger)
+    let db_b = Db::create(dir_b.path(), Ledger, common::work())
         .expect("create b")
         .expect("accepted");
     for (db, name, balance) in [(&db_a, "alice", 10), (&db_b, "bob", 20)] {
-        db.write(|tx| {
+        db.write(common::work(), |tx| {
             let holder = HolderId(mint());
             tx.insert([&Holder { id: holder, name }])?;
             let id = AccountId(mint());
@@ -958,22 +977,22 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
         .expect("seed one distinct fact pair")
         .unwrap();
     }
-    assert_eq!(db_a.generation().expect("gen a").value(), 1);
+    assert_eq!(db_a.generation(common::work()).expect("gen a").value(), 1);
     assert_eq!(
-        db_b.generation().expect("gen b").value(),
+        db_b.generation(common::work()).expect("gen b").value(),
         1,
         "both clocks read 1"
     );
 
     let mut prepared = db_a.prepare(&join_query()).expect("prepare on A");
-    db_a.read(|snap| {
+    db_a.read(common::work(), |snap| {
         let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
         Ok(())
     })
     .expect("execute on the preparing db");
 
-    db_b.read(|snap| {
+    db_b.read(common::work(), |snap| {
         let err = snap
             .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
             .unwrap_err();
@@ -998,7 +1017,7 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
     })
     .expect("read on b");
 
-    db_a.read(|snap| {
+    db_a.read(common::work(), |snap| {
         let out = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(name_amount_answers(&out), vec![("alice".to_owned(), 10)]);
         Ok(())
@@ -1009,18 +1028,23 @@ fn a_prepared_query_refuses_a_foreign_snapshot() {
 #[test]
 fn a_second_handle_on_a_live_path_is_locked_out() {
     let dir = common::TempDir::new("api-env-lock");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let err = Db::open(dir.path(), Ledger).map(|_| ()).unwrap_err();
-    assert!(matches!(err, bumbledb::Error::EnvironmentLocked), "{err:?}");
-    let err = Db::create(dir.path(), Ledger).map(|_| ()).unwrap_err();
+    let err = Db::open(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::StoreLocked { .. })),
+        "{err:?}"
+    );
+    let err = Db::create(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
+    assert!(
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
         "create refuses an existing destination before the lock: {err:?}"
     );
     drop(db);
-    let reopened = Db::open(dir.path(), Ledger).expect("the lock died with the handle");
+    let reopened = Db::open(dir.path(), Ledger, common::work()).expect("the lock died with the handle");
     drop(reopened);
 }
 
@@ -1047,9 +1071,10 @@ fn create_refuses_a_foreign_lmdb_environment() {
         db.put(&mut wtxn, b"k", b"v").expect("put");
         wtxn.commit().expect("commit");
     }
-    let err = Db::create(dir.path(), Ledger).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
         "{err:?}"
     );
 
@@ -1066,40 +1091,44 @@ fn create_refuses_a_foreign_lmdb_environment() {
         let wtxn = env.write_txn().expect("txn");
         wtxn.commit().expect("commit nothing");
     }
-    let err = Db::open(dir.path(), Ledger).map(|_| ()).unwrap_err();
+    // A half-created foreign environment is not a recognizable store: the
+    // successor refuses the open before adopting anything.
+    let err = Db::open(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::AlreadyInitialized),
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::UnrecognizedStore { .. })),
         "{err:?}"
     );
-    let err = Db::create(dir.path(), Ledger).map(|_| ()).unwrap_err();
+    let err = Db::create(dir.path(), Ledger, common::work()).map(|_| ()).unwrap_err();
     assert!(
-        matches!(err, bumbledb::Error::DestinationExists { .. }),
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::DestinationExists { .. })),
         "{err:?}"
     );
 }
 
 #[test]
-fn nested_write_panics_instead_of_deadlocking() {
+fn nested_write_is_a_typed_refusal_instead_of_deadlocking() {
     let dir = common::TempDir::new("api-nested-write");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let _ = db.write(|_| db.write(|_| Ok(())));
-    }));
-    let payload = result.expect_err("must panic");
-    let message = payload
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| payload.downcast_ref::<&str>().copied())
-        .expect("string panic payload");
-    assert!(message.contains("nested Db::write"), "{message}");
+    // The successor refuses reentrancy with the typed
+    // `StoreError::ReentrantWriter` — never a deadlock, never a panic.
+    let err = db
+        .write(common::work(), |_| db.write(common::work(), |_| Ok(())).map(|_| ()))
+        .expect_err("the nested write refuses");
+    assert!(
+        matches!(&err, bumbledb::Error::Store(e)
+            if matches!(**e, bumbledb::store::StoreError::ReentrantWriter)),
+        "{err:?}"
+    );
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let id = HolderId(mint());
         tx.insert([&Holder {
             id,
-            name: "after the panic",
+            name: "after the refusal",
         }])
     })
     .expect("the writer survives")
@@ -1109,11 +1138,11 @@ fn nested_write_panics_instead_of_deadlocking() {
 #[test]
 fn prepared_executions_observe_exactly_one_generation() {
     let dir = common::TempDir::new("api-gen-atomic");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let (hx, hy, ax, ay) = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let hx = HolderId(mint());
             tx.insert([&Holder { id: hx, name: "x" }])?;
             let hy = HolderId(mint());
@@ -1140,7 +1169,7 @@ fn prepared_executions_observe_exactly_one_generation() {
     std::thread::scope(|scope| {
         let writer = scope.spawn(move || {
             for round in 1..=40i64 {
-                db.write(|tx| {
+                db.write(common::work(), |tx| {
                     tx.delete([&Account {
                         id: ax,
                         holder: hx,
@@ -1171,7 +1200,7 @@ fn prepared_executions_observe_exactly_one_generation() {
                 let mut prepared = db.prepare(&join_query()).expect("prepare");
                 let mut out = Answers::new();
                 for _ in 0..80 {
-                    db.read(|snap| {
+                    db.read(common::work(), |snap| {
                         snap.execute(&mut prepared, &[] as &[bumbledb::BindValue], &mut out)?;
                         let answers = name_amount_answers(&out);
                         assert_eq!(answers.len(), 2, "both facts, always: {answers:?}");
@@ -1196,11 +1225,11 @@ fn prepared_executions_observe_exactly_one_generation() {
 #[test]
 fn a_nets_to_nothing_write_is_not_a_state_change() {
     let dir = common::TempDir::new("api-fresh-escape");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&Holder {
             id: HolderId(mint()),
             name: "first real holder",
@@ -1209,10 +1238,10 @@ fn a_nets_to_nothing_write_is_not_a_state_change() {
     })
     .expect("real write")
     .unwrap();
-    let generation_after_seed = db.generation().expect("generation");
+    let generation_after_seed = db.generation(common::work()).expect("generation");
     assert_eq!(generation_after_seed.value(), 1);
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let ghost = Holder {
             id: HolderId(mint()),
             name: "ghost",
@@ -1224,7 +1253,7 @@ fn a_nets_to_nothing_write_is_not_a_state_change() {
     .expect("nets to nothing")
     .unwrap();
     assert_eq!(
-        db.generation().expect("generation"),
+        db.generation(common::work()).expect("generation"),
         generation_after_seed,
         "a nets-to-nothing write is not a state change"
     );
@@ -1233,11 +1262,11 @@ fn a_nets_to_nothing_write_is_not_a_state_change() {
 #[test]
 fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     let dir = common::TempDir::new("api-mint-free-delete");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let holder = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             let id = HolderId(mint());
             tx.insert([&Holder { id, name: "real" }])?;
             Ok(id)
@@ -1246,8 +1275,8 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
         .unwrap()
         .value;
 
-    let generation = db.generation().expect("generation");
-    db.write(|tx| {
+    let generation = db.generation(common::work()).expect("generation");
+    db.write(common::work(), |tx| {
         let changed = tx.delete([&Holder {
             id: holder,
             name: "never interned",
@@ -1262,7 +1291,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     .expect("typed delete")
     .unwrap();
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let changed = tx.delete_dyn(
             Holder::RELATION,
             [&[
@@ -1275,9 +1304,9 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     })
     .expect("dynamic delete")
     .unwrap();
-    assert_eq!(db.generation().expect("generation"), generation);
+    assert_eq!(db.generation(common::work()).expect("generation"), generation);
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let id = HolderId(mint());
         let transient = Holder {
             id,
@@ -1290,7 +1319,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
     .expect("cancel")
     .unwrap();
     let names: Vec<String> = db
-        .read(|snap| {
+        .read(common::work(), |snap| {
             snap.scan_facts::<Holder>()?
                 .map(|h| h.map(|h| h.name.to_owned()))
                 .collect::<bumbledb::Result<Vec<_>>>()
@@ -1302,7 +1331,7 @@ fn deleting_a_never_interned_string_is_a_mint_free_noop() {
 #[test]
 fn out_of_range_relation_ids_are_typed_errors() {
     let dir = common::TempDir::new("api-unknown-relation");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
     let bogus = bumbledb::RelationId(999);
@@ -1315,7 +1344,7 @@ fn out_of_range_relation_ids_are_typed_errors() {
         )
     };
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let err = tx.insert_dyn(bogus, [&[Value::U64(1)]]).unwrap_err();
         assert!(is_unknown(&err), "{err:?}");
         let err = tx.delete_dyn(bogus, [&[Value::U64(1)]]).unwrap_err();
@@ -1326,7 +1355,7 @@ fn out_of_range_relation_ids_are_typed_errors() {
     .unwrap();
 
     let err = db
-        .write(|tx| {
+        .write(common::work(), |tx| {
             tx.insert_dyn(bogus, vec![vec![Value::U64(1)]])
                 .map(bumbledb::MutationReport::changed)
         })
@@ -1334,7 +1363,7 @@ fn out_of_range_relation_ids_are_typed_errors() {
         .unwrap_err();
     assert!(is_unknown(&err), "{err:?}");
 
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let err = snap.scan(bogus).map(|_| ()).unwrap_err();
         assert!(is_unknown(&err), "{err:?}");
         Ok(())
@@ -1345,10 +1374,10 @@ fn out_of_range_relation_ids_are_typed_errors() {
 #[test]
 fn a_plain_query_executes_as_today() {
     let dir = common::TempDir::new("api-degenerate-query");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for (name, balances) in [("alice", vec![100, -25]), ("bob", vec![40])] {
             let holder = HolderId(mint());
             tx.insert([&Holder { id: holder, name }])?;
@@ -1368,7 +1397,7 @@ fn a_plain_query_executes_as_today() {
 
     let query = join_query();
     let mut prepared = db.prepare(&query).expect("prepare query");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 3);
         let again = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
@@ -1405,10 +1434,10 @@ fn identity_main(arity: u16) -> Rule {
 #[test]
 fn prepare_executes_recursion_under_the_driver() {
     let dir = common::TempDir::new("api-reach-driver");
-    let db = Db::create(dir.path(), Ledger)
+    let db = Db::create(dir.path(), Ledger, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         let holder = HolderId(mint());
         tx.insert([&Holder {
             id: holder,
@@ -1456,7 +1485,7 @@ fn prepare_executes_recursion_under_the_driver() {
     };
     let mut recursive_prepared = db.prepare(&query).expect("recursion executes");
     let mut base_prepared = db.prepare(&Query::single(base)).expect("prepare base");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let closure =
             snap.execute_collect(&mut recursive_prepared, &[] as &[bumbledb::BindValue])?;
         let base_only = snap.execute_collect(&mut base_prepared, &[] as &[bumbledb::BindValue])?;
@@ -1565,10 +1594,10 @@ fn primer_reach_xx() -> Query {
 #[test]
 fn recursive_answers_agree_scalar_and_vectorized() {
     let dir = common::TempDir::new("api-recursive-batch");
-    let db = Db::create(dir.path(), Graph)
+    let db = Db::create(dir.path(), Graph, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
@@ -1592,7 +1621,7 @@ fn recursive_answers_agree_scalar_and_vectorized() {
     let mut vectorized = db.prepare(&closure_query()).expect("prepare");
     let mut scalar = db.prepare(&closure_query()).expect("prepare");
     scalar.set_batch_size(1);
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let vectorized =
             pairs(&snap.execute_collect(&mut vectorized, &[] as &[bumbledb::BindValue])?);
         let scalar = pairs(&snap.execute_collect(&mut scalar, &[] as &[bumbledb::BindValue])?);
@@ -1627,10 +1656,10 @@ fn recursive_answers_agree_scalar_and_vectorized() {
 #[test]
 fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     let dir = common::TempDir::new("api-primer-reach-xx");
-    let db = Db::create(dir.path(), Graph)
+    let db = Db::create(dir.path(), Graph, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
@@ -1639,20 +1668,20 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     .expect("write")
     .unwrap();
     let mut prepared = db.prepare(&primer_reach_xx()).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert!(answers.is_empty(), "a DAG has no reach(x, x)");
         Ok(())
     })
     .expect("read");
 
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         tx.insert([&GraphEdge { src: 3, dst: 0 }])?;
         Ok(())
     })
     .expect("close the cycle")
     .unwrap();
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert!(!answers.is_empty(), "a cycle produces reach(x, x)");
         Ok(())
@@ -1663,10 +1692,10 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
 #[test]
 fn reach_execute_answers_the_closure() {
     let dir = common::TempDir::new("api-reach-execute");
-    let db = Db::create(dir.path(), Graph)
+    let db = Db::create(dir.path(), Graph, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for (src, dst) in [(0, 1), (1, 2), (2, 3), (3, 4), (1, 5), (5, 6), (2, 6)] {
             tx.insert([&GraphEdge { src, dst }])?;
         }
@@ -1675,7 +1704,7 @@ fn reach_execute_answers_the_closure() {
     .expect("write")
     .unwrap();
     let mut prepared = db.prepare(&closure_query()).expect("prepare");
-    db.read(|snap| {
+    db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;
         assert_eq!(answers.len(), 16, "the closure's hand answer");
         let (_, report) = snap.introspect(&mut prepared, &[])?;
@@ -1689,10 +1718,10 @@ fn reach_execute_answers_the_closure() {
 fn a_tight_derived_budget_trips_under_reach() {
     const CHAIN: u64 = 66_000;
     let dir = common::TempDir::new("api-reach-budget");
-    let db = Db::create(dir.path(), Graph)
+    let db = Db::create(dir.path(), Graph, common::work())
         .expect("create")
         .expect("accepted");
-    db.write(|tx| {
+    db.write(common::work(), |tx| {
         for n in 0..CHAIN {
             tx.insert([&GraphEdge { src: n, dst: n + 1 }])?;
         }
@@ -1704,7 +1733,7 @@ fn a_tight_derived_budget_trips_under_reach() {
         .prepare(&single_source_chain_query())
         .expect("recursion executes");
     let error = db
-        .read(|snap| {
+        .read(common::work(), |snap| {
             snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
                 .map(|_| ())
         })

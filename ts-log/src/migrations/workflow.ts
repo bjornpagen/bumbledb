@@ -6,9 +6,10 @@
  * instance, codec or workflow.
  */
 import { makeGenerator } from "#migrations/generate.ts"
+import { productionExclusion } from "#migrations/lock.ts"
 import { productionCodec } from "#migrations/native.ts"
 
-const production = makeGenerator(productionCodec)
+const production = makeGenerator(productionCodec, productionExclusion)
 
 export const generateMigrations = production.generateMigrations
 export const checkMigrations = production.checkMigrations

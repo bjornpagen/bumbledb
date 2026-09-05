@@ -8,6 +8,12 @@
 //! before any decision, so unique-index installation order cannot hide a
 //! second conflicting row (ENG-005's physical precondition).
 //!
+//! ```compile_fail
+//! fn require_competing_rows() {
+//!     let _: bumbledb::store::CompetingRows = Vec::new();
+//! }
+//! ```
+//!
 //! `seal` writes only opaque host records and the attachment (C04): it can
 //! never amend judged application facts, so sealing cannot invalidate the
 //! admission evidence. A failed seal drops the entire transaction —
@@ -27,12 +33,15 @@ use std::sync::MutexGuard;
 use bumbledb_theory::schema::{RelationId, StatementId};
 use heed::RoTxn;
 
-use super::error::{HostKeyFault, StoreError, StoreResult};
+use crate::schema::ProjectionId;
+
+use super::error::{HostKeyFault, StoreCorruption, StoreError, StoreResult};
 use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, RowId};
 use super::host::{AttachmentChange, HostChanges, HostRecordChange};
 use super::keys::HOST_KEY_MAX;
 use super::rows;
 use super::store_env::{GatedRwTxn, Store, map_txn_error, read_generation};
+use crate::Value;
 use crate::changes::{ChangeKind, ChangeSet};
 use crate::storage::GenerationId;
 use crate::work::WorkContext;
@@ -69,11 +78,10 @@ impl CommitKind {
     }
 }
 
-/// C01/C03 seam, produced by P01's schema layer: the statements a stored
-/// row participates in, as (statement, projected canonical determinant
-/// bytes). The store fingerprints and maintains the physical entries; the
-/// projection semantics stay with the schema owner. Emitted bytes never
-/// enter an LMDB key directly, so arbitrary projection width is safe.
+/// C01/C03 seam: interned projections a stored row participates in, as
+/// (`ProjectionId`, routing bytes, optional interval tail). Shared physical
+/// indexes emit once. The store fingerprints and maintains the entries;
+/// projection semantics stay with the schema owner.
 pub trait RowIndexer {
     /// # Errors
     /// Propagates work exhaustion or the emit sink's storage failure.
@@ -82,7 +90,7 @@ pub trait RowIndexer {
         relation: RelationId,
         row: &[u8],
         work: &WorkContext,
-        emit: &mut dyn FnMut(StatementId, &[u8]) -> StoreResult<()>,
+        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
     ) -> StoreResult<()>;
 }
 
@@ -179,7 +187,9 @@ impl<'store> WriteOwner<'store> {
         read_generation(&self.store.inner, &txn)
     }
 
-    /// Prepare and judge one sealed canonical delta as a private candidate.
+    /// Prepare and judge one sealed canonical delta as a private candidate
+    /// through a custom [`CandidateJudge`]. Production admitted writes use
+    /// [`Self::prepare_incremental`] instead.
     /// # Errors
     /// `ForeignSchema`, malformed change bytes, growth refusals, storage
     /// failure or stopped work. A judge rejection is a `Prepared::Rejected`,
@@ -193,6 +203,39 @@ impl<'store> WriteOwner<'store> {
     where
         I: RowIndexer + ?Sized,
         J: CandidateJudge + ?Sized,
+    {
+        self.prepare_judged(changes, indexer, |state, work| judge.judge(state, work))
+    }
+
+    /// Ordinary write on an already-admitted store: apply the delta, then
+    /// incremental judgment under a real [`crate::schema::judge::LawfulParent`].
+    /// Never minted from [`super::staging::UnreadyStore`]. An empty
+    /// `ChangeSet` is a no-op under that parent, not complete validation.
+    /// # Errors
+    /// As [`Self::prepare`].
+    pub fn prepare_incremental<'owner, I>(
+        &'owner mut self,
+        parent: crate::schema::judge::LawfulParent,
+        changes: &ChangeSet,
+        indexer: &I,
+        judge: &super::judge_bridge::SchemaJudge<'_>,
+    ) -> StoreResult<Prepared<'owner, 'store, Box<[crate::schema::judge::JudgedViolation]>>>
+    where
+        I: RowIndexer + ?Sized,
+    {
+        self.prepare_judged(changes, indexer, |state, work| {
+            judge.judge_incremental(parent, state, work)
+        })
+    }
+
+    fn prepare_judged<'owner, I, R>(
+        &'owner mut self,
+        changes: &ChangeSet,
+        indexer: &I,
+        mut decide: impl FnMut(&CandidateState<'_, '_>, &WorkContext) -> StoreResult<Judgment<R>>,
+    ) -> StoreResult<Prepared<'owner, 'store, R>>
+    where
+        I: RowIndexer + ?Sized,
     {
         if changes.schema() != self.store.inner.schema_fp {
             return Err(StoreError::ForeignSchema);
@@ -214,7 +257,7 @@ impl<'store> WriteOwner<'store> {
                         txn: &txn,
                         changes: Some(changes),
                     };
-                    match judge.judge(&state, &self.work)? {
+                    match decide(&state, &self.work)? {
                         Judgment::Rejected(rejection) => {
                             drop(txn); // the losing candidate is never readable
                             return Ok(Prepared::Rejected(rejection));
@@ -228,6 +271,40 @@ impl<'store> WriteOwner<'store> {
                             }));
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Apply a sealed delta without judgment. Only the unready population
+    /// path may call this; readiness is [`super::staging::UnreadyStore::admit`].
+    pub(crate) fn ingest<I: RowIndexer + ?Sized>(
+        &mut self,
+        changes: &ChangeSet,
+        indexer: &I,
+    ) -> StoreResult<StoreCommit> {
+        if changes.schema() != self.store.inner.schema_fp {
+            return Err(StoreError::ForeignSchema);
+        }
+        loop {
+            self.work.checkpoint()?;
+            match self.attempt(changes, indexer) {
+                Err(StoreError::MapFull { .. }) => {
+                    self.store.grow(&self.work, None)?;
+                }
+                Err(error) => return Err(error),
+                Ok((txn, report, application)) => {
+                    return PreparedWrite {
+                        owner: self,
+                        txn,
+                        report,
+                        application,
+                    }
+                    .seal(HostChanges {
+                        records: &[],
+                        attachment: AttachmentChange::Keep,
+                    })?
+                    .commit();
                 }
             }
         }
@@ -269,6 +346,12 @@ impl<'store> WriteOwner<'store> {
         let inner = &self.store.inner;
         let mut gated = self.store.gated_write_txn(&self.work)?;
         let mut application = AppliedChanges::default();
+        // The relations this candidate actually changed (a staged add of an
+        // already-present row or a remove of an absent one changes nothing):
+        // exactly these advance their per-relation change version below, so
+        // an untouched relation's image memos stay provably reusable.
+        let mut changed_relations: std::collections::BTreeSet<RelationId> =
+            std::collections::BTreeSet::new();
         // Deletes before inserts: the one-command tie rule is already
         // normalized inside the sealed ChangeSet (add wins); physical order
         // here cannot change the final state.
@@ -287,6 +370,7 @@ impl<'store> WriteOwner<'store> {
                             &self.work,
                         )? {
                             application.removed += 1;
+                            changed_relations.insert(relation);
                         }
                     }
                     ChangeKind::Add => {
@@ -301,6 +385,7 @@ impl<'store> WriteOwner<'store> {
                         .is_some()
                         {
                             application.added += 1;
+                            changed_relations.insert(relation);
                         }
                     }
                 }
@@ -317,6 +402,22 @@ impl<'store> WriteOwner<'store> {
                     &new_generation.storage_word().to_be_bytes(),
                 )
                 .map_err(map_txn_error)?;
+            // Advance exactly the touched relations' change versions, in the
+            // same transaction as the rows they cover. Host-record-only
+            // seals never reach this arm (they change no relation's rows).
+            for relation in &changed_relations {
+                self.work.step(1)?;
+                let next = super::format::read_relation_version(&inner.meta, &gated.txn, *relation)?
+                    .next()?;
+                inner
+                    .meta
+                    .put(
+                        &mut gated.txn,
+                        super::format::relation_version_key(*relation).as_slice(),
+                        &next.storage_word().to_be_bytes(),
+                    )
+                    .map_err(map_txn_error)?;
+            }
             CommitKind::Changed { new_generation }
         } else {
             CommitKind::Noop { generation: parent }
@@ -343,6 +444,18 @@ pub struct CandidateState<'a, 'store> {
 }
 
 impl CandidateState<'_, '_> {
+    /// Committed populated state with no delta — complete judgment only.
+    pub(crate) fn of_committed<'a, 'store>(
+        store: &'store Store,
+        txn: &'a GatedRwTxn<'store>,
+    ) -> CandidateState<'a, 'store> {
+        CandidateState {
+            store,
+            txn,
+            changes: None,
+        }
+    }
+
     fn read_txn(&self) -> &RoTxn<'_, heed::AnyTls> {
         &self.txn.txn
     }
@@ -376,40 +489,87 @@ impl CandidateState<'_, '_> {
         Ok(rows::exact_lookup(&self.store.inner, self.read_txn(), relation, row, work)?.is_some())
     }
 
-    /// All candidate rows sharing one determinant bucket — the judgment
-    /// multimap. The bucket is selected by fingerprint; the judge compares
-    /// full projected bytes on the returned rows, so forced collisions can
-    /// add work but never merge or hide a competing proposal.
+    /// All candidate row ids sharing one determinant bucket (ids only).
     /// # Errors
     /// Storage failure or stopped work.
     pub fn determinant_candidates(
         &self,
-        statement: StatementId,
+        projection: ProjectionId,
         projected: &[u8],
         work: &WorkContext,
     ) -> StoreResult<Vec<RowId>> {
-        let fp = self
-            .store
-            .inner
-            .fingerprinter
-            .determinant(statement, projected);
-        let bucket = super::keys::determinant_bucket(statement, &fp);
-        let mut ids = Vec::new();
-        let range = self
-            .store
-            .inner
-            .data
-            .prefix_iter(self.read_txn(), bucket.as_slice())
-            .map_err(StoreError::from_heed)?;
-        for entry in range {
+        rows::determinant_bucket_ids(
+            &self.store.inner,
+            self.read_txn(),
+            projection,
+            projected,
+            work,
+        )
+    }
+
+    /// Bounded visitor over one determinant bucket in the proposed final
+    /// state. The visitor receives each `(row id, canonical row bytes)`;
+    /// return `false` to stop early.
+    /// # Errors
+    /// Storage failure, stopped work, or visitor failure.
+    pub fn visit_determinant_bucket(
+        &self,
+        projection: ProjectionId,
+        projected: &[u8],
+        work: &WorkContext,
+        visit: &mut dyn FnMut(RowId, &[u8]) -> StoreResult<bool>,
+    ) -> StoreResult<()> {
+        let inner = &self.store.inner;
+        let Some(key) = inner.det.projection(projection) else {
+            return Ok(());
+        };
+        let routing = rows::routing_for_projected(inner, projection, projected)?;
+        rows::visit_determinant_bucket(
+            inner,
+            self.read_txn(),
+            projection,
+            &routing,
+            work,
+            &mut |id| {
+                let bytes = rows::fetch_row(inner, self.read_txn(), key.relation, id)?
+                    .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
+                visit(id, bytes)
+            },
+        )
+    }
+
+    /// Bounded visitor over confirmed determinant-group competitors.
+    /// Charged decoded rows are borrowed for the visit; there is no owning
+    /// `CompetingRows` / `into_values` extraction. Returns `None` when the
+    /// statement is not a sealed key.
+    /// # Errors
+    /// Storage failure or stopped work.
+    pub fn visit_determinant_competitors(
+        &self,
+        statement: StatementId,
+        determinant: &[Value],
+        work: &WorkContext,
+        visit: &mut dyn FnMut(u64, &[Value]) -> StoreResult<bool>,
+    ) -> StoreResult<Option<()>> {
+        let inner = &self.store.inner;
+        let Some(key) = inner.det.projection_of(statement) else {
+            return Ok(None);
+        };
+        let projected = super::det_index::determinant_bytes(key, determinant, work)?;
+        let fields = inner
+            .det
+            .fields_of(key.relation)
+            .ok_or(StoreError::ForeignSchema)?;
+        self.visit_determinant_bucket(key.id, &projected, work, &mut |id, bytes| {
             work.step(1)?;
-            let (key, _) = entry.map_err(StoreError::from_heed)?;
-            ids.push(super::keys::row_id_from_suffix(
-                key,
-                super::keys::DETERMINANT_KEY_LEN,
-            )?);
-        }
-        Ok(ids)
+            let decoded = crate::canonical::decode(fields, bytes, work)?;
+            if key.scalar_values(decoded.values()).as_slice() == determinant {
+                visit(id.0, decoded.values())
+            } else {
+                Ok(true)
+            }
+        })?;
+        Ok(Some(()))
     }
 
     /// Fetch one proposed row's canonical bytes by local id.

@@ -199,7 +199,7 @@ fn flag_free_compare_twin_at_displaced_and_resident_probes() {
         let view = view4_of(&schema, n_rows);
         let mut colt = Colt::new(all(&view), &[], vec![vec![0, 1, 2, 3]]);
         let root = Colt::root();
-        colt.ensure_forced(root, 0);
+        colt.ensure_forced(root, 0).expect("force");
         let m = colt.maps[0];
         #[expect(
             clippy::cast_precision_loss,
@@ -331,7 +331,7 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
         let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
         let root = Colt::root();
         let start = std::time::Instant::now();
-        colt.ensure_forced(root, 0);
+        colt.ensure_forced(root, 0).expect("force");
         bucket_best = bucket_best.min(start.elapsed());
         assert!(matches!(colt.key_count(root), KeyCount::Exact(_)));
 
@@ -356,13 +356,15 @@ fn bucketized_force_stays_at_parity_with_the_linear_build() {
 
 fn force_and_iterate(colt: &mut Colt) -> u64 {
     let root = Colt::root();
-    colt.ensure_forced(root, 0);
+    colt.ensure_forced(root, 0).expect("force");
     let mut keys = [0u64; 64];
     let mut children = [Cursor::Row(0); 64];
     let mut kids: Vec<Cursor> = Vec::new();
     let mut token = BatchToken::default();
     loop {
-        let (n, next) = colt.iter_batch(root, 0, token, &mut keys, &mut children, 64);
+        let (n, next) = colt
+            .iter_batch(root, 0, token, &mut keys, &mut children, 64)
+            .expect("iter");
         if n == 0 {
             break;
         }
@@ -373,7 +375,9 @@ fn force_and_iterate(colt: &mut Colt) -> u64 {
     for &child in &kids {
         let mut token = BatchToken::default();
         loop {
-            let (n, next) = colt.iter_batch(child, 1, token, &mut keys, &mut children, 64);
+            let (n, next) = colt
+                .iter_batch(child, 1, token, &mut keys, &mut children, 64)
+                .expect("iter");
             if n == 0 {
                 break;
             }

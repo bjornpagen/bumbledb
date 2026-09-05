@@ -40,7 +40,7 @@ const loadExpectation = Effect.fn("server.loadExpectation")(function* () {
 			new Error(`missing generated runtime contract at ${file}; run bumbledb-log generate and commit the artifacts`)
 		)
 	}
-	const parsed = Result.try(() => JSON.parse(raw.success) as unknown)
+	const parsed = Result.try(() => JSON.parse(raw.success))
 	if (Result.isFailure(parsed)) {
 		return yield* Effect.die(new Error(`runtime contract is not JSON: ${file}`))
 	}

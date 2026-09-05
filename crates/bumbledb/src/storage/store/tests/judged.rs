@@ -48,7 +48,9 @@ fn user(id: u64, email: &str) -> Vec<Value> {
 }
 
 fn user_store(path: &std::path::Path) -> Store {
-    Store::create(path, &user_schema(), MapPolicy::default()).expect("user store")
+    Store::create(path, &user_schema(), MapPolicy::default())
+        .expect("user store")
+        .0
 }
 
 fn user_changes(adds: &[Vec<Value>], removes: &[Vec<Value>]) -> ChangeSet {
@@ -75,7 +77,12 @@ fn judged_commit(
     let context = work();
     let mut owner = store.writer(&context).expect("writer");
     match owner
-        .prepare(changes, &UnindexedRows, &judge)
+        .prepare_incremental(
+            crate::schema::judge::LawfulParent::established(),
+            changes,
+            &UnindexedRows,
+            &judge,
+        )
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => Ok(prepared

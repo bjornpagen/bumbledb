@@ -22,7 +22,11 @@
 //!   target → durable `ReadyToSwitch` → explicit activation; abort fences
 //!   the target durably BEFORE thawing the matching source.
 //! - [`hosted`] — the same authority transitions over the C07 conditional
-//!   store with the three-way certainty grammar (`Unknown` never thaws).
+//!   store with the three-way certainty grammar (`Unknown` never thaws),
+//!   plus the COMPLETE hosted workflow ([`hosted::HostedMigration`],
+//!   [`hosted::initialize`]): the staged target's verified checkpoint and
+//!   history metadata published under the target's open object epoch, named
+//!   by the genesis head's recovery root — S3 is the hosted authority.
 //!
 //! The TypeScript generator (P10) calls [`crate::schema_file`] and the
 //! [`plan`]/[`manifest`] codecs through the native boundary; generation and
@@ -53,4 +57,4 @@ pub use frame::{
     PLAN_DIGEST_DOMAIN, PLAN_SET_DIGEST_DOMAIN, PREFIX_DIGEST_DOMAIN, STATE_DIGEST_DOMAIN,
     SYSTEM_DIGEST_DOMAIN,
 };
-pub use hosted::{HostedCutover, HostedOutcome};
+pub use hosted::{HostedCutover, HostedMigration, HostedOutcome};

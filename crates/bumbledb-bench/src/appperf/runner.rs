@@ -39,8 +39,14 @@ use crate::corpus_gen::{GenConfig, relation_rows};
 use crate::harness::{self, Modes, Protocol, Stats};
 use crate::report;
 use crate::schema::{Ledger, ids};
+use crate::space::store_source;
 
 use super::{CostAccount, PhaseSplit, Regime};
+
+fn work() -> Result<bumbledb::WorkContext, String> {
+    harness::bench_work()
+}
+
 
 #[derive(Debug, Clone)]
 pub struct RegimeRow {
@@ -58,12 +64,13 @@ pub struct RegimeRow {
 /// # Errors
 pub fn cold_open(dir: &Path) -> Result<RegimeRow, String> {
     let m = harness::measure_batched(Protocol::COLD, Modes::default(), 1, || {
-        let db = Db::open(dir, Ledger).map_err(|e| format!("cold open: {e:?}"))?;
+        let db = Db::open(dir, Ledger, work()?).map_err(|e| format!("cold open: {e:?}"))?;
+        let read_work = work()?;
         let count = db
-            .read(|snap| Ok(snap.scan(ids::ACCOUNT)?.count()))
+            .read(read_work.clone(), |snap| snap.count(ids::ACCOUNT))
             .map_err(|e| format!("cold first read: {e:?}"))?;
         drop(db);
-        Ok(count as u64)
+        Ok(count)
     })?;
     Ok(RegimeRow {
         regime: Regime::ColdOpen,
@@ -71,7 +78,10 @@ pub fn cold_open(dir: &Path) -> Result<RegimeRow, String> {
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount::default(),
+        account: CostAccount {
+            source_visits: Some(m.work),
+            ..CostAccount::default()
+        },
     })
 }
 
@@ -84,7 +94,7 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
         samples: samples.unwrap_or(Protocol::WARM.samples),
     };
     let m = harness::measure_batched(proto, Modes::default(), 1, || {
-        db.read(|snap| Ok(snap.scan(ids::ACCOUNT)?.count() as u64))
+        db.read(work()?, |snap| snap.count(ids::ACCOUNT))
             .map_err(|e| format!("warm scan: {e:?}"))
     })?;
     Ok(RegimeRow {
@@ -93,7 +103,10 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount::default(),
+        account: CostAccount {
+            source_visits: Some(m.work),
+            ..CostAccount::default()
+        },
     })
 }
 
@@ -127,21 +140,23 @@ pub fn post_write_first_read(
             // The untimed mutation before each timed first read.
             let row = victim.clone();
             let outcome = if present {
-                db.write(|tx| {
+                db.write(work().expect("write work"), |tx| {
                     tx.delete_dyn(ids::POSTING_TAG, [row])?;
                     Ok(())
                 })
             } else {
-                db.write(|tx| {
+                db.write(work().expect("write work"), |tx| {
                     tx.insert_dyn(ids::POSTING_TAG, [row])?;
                     Ok(())
                 })
             };
-            outcome.expect("post-write mutation commits").unwrap();
+            outcome
+                .expect("post-write mutation commits")
+                .expect("accepted");
             present = !present;
         },
         || {
-            db.read(|snap| Ok(snap.scan(ids::POSTING_TAG)?.count() as u64))
+            db.read(work()?, |snap| snap.count(ids::POSTING_TAG))
                 .map_err(|e| format!("first read after mutation: {e:?}"))
         },
     )?;
@@ -151,7 +166,10 @@ pub fn post_write_first_read(
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount::default(),
+        account: CostAccount {
+            source_visits: Some(m.work),
+            ..CostAccount::default()
+        },
     })
 }
 
@@ -171,7 +189,10 @@ pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, 
         let whole = Instant::now();
         let start = Instant::now();
         let owned: Vec<Vec<bumbledb::Value>> = db
-            .read(|snap| snap.scan(ids::POSTING)?.collect::<Result<Vec<_>, _>>())
+            .read(work()?, |snap| {
+                snap.scan(ids::POSTING)?
+                    .collect::<Result<Vec<_>, _>>()
+            })
             .map_err(|e| format!("large-result execute: {e:?}"))?;
         execute_ns.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
         let start = Instant::now();
@@ -196,7 +217,10 @@ pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, 
             deliver_ns: Some(deliver.p50),
             end_to_end_ns: stats.p50,
         }),
-        account: CostAccount::default(),
+        account: CostAccount {
+            source_visits: Some(rows_delivered),
+            ..CostAccount::default()
+        },
     })
 }
 
@@ -234,7 +258,7 @@ pub fn tenant_churn(
     let mut dirs = Vec::with_capacity(tenants as usize);
     for tenant in 0..tenants {
         let dir = base.join(format!("tenant-{tenant}"));
-        let db = Db::create(&dir, Ledger)
+        let db = Db::create(&dir, Ledger, work()?)
             .map_err(|e| format!("tenant {tenant} create: {e:?}"))?
             .expect("accepted");
         crate::corpus::load_bumbledb(&db, cfg)
@@ -262,10 +286,10 @@ pub fn tenant_churn(
             usize::try_from(next() % u64::from(tenants)).expect("bounded")
         };
         let start = Instant::now();
-        let db =
-            Db::open(&dirs[tenant], Ledger).map_err(|e| format!("tenant {tenant} open: {e:?}"))?;
+        let db = Db::open(&dirs[tenant], Ledger, work()?)
+            .map_err(|e| format!("tenant {tenant} open: {e:?}"))?;
         rows_read += db
-            .read(|snap| Ok(snap.scan(ids::ACCOUNT)?.count() as u64))
+            .read(work()?, |snap| snap.count(ids::ACCOUNT))
             .map_err(|e| format!("tenant {tenant} read: {e:?}"))?;
         drop(db);
         latencies.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
@@ -318,16 +342,34 @@ fn push_row(out: &mut String, row: &RegimeRow) {
     if let Some(leaked) = row.account.live_resources {
         let _ = write!(out, ",\"fd_growth\":{leaked}");
     }
+    if let Some(visits) = row.account.source_visits {
+        let _ = write!(out, ",\"source_visits\":{visits}");
+    }
+    if let Some(map) = row.account.virtual_map_bytes {
+        let _ = write!(out, ",\"virtual_map_bytes\":{map}");
+    }
+    if let Some(disk) = row.account.disk_bytes {
+        let _ = write!(out, ",\"populated_file_bytes\":{disk}");
+    }
+    if let Some(alloc) = row.account.allocated_disk_bytes {
+        let _ = write!(out, ",\"allocated_disk_bytes\":{alloc}");
+    }
+    if let Some(roster) = row.account.roster_entries {
+        let _ = write!(out, ",\"roster_entries\":{roster}");
+    }
     out.push('}');
 }
 
 /// The `app-perf` CLI lane: build the corpus once, run the requested regimes,
-/// write artifacts. Report-class; regimes that need the hosted log or the
-/// Node runtime are listed as `not-run-here` with the lane that owns them —
-/// never silently missing.
+/// write artifacts. `--plan` prints the L21 input table and exits without
+/// timing. Hosted/maintenance stay `not-run-here` with their owner.
 ///
 /// # Errors
 pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
+    if args.plan {
+        print!("{}", super::plan::render());
+        return Ok(0);
+    }
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-app-perf",
@@ -342,10 +384,26 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
         scale: args.scale,
     };
     let corpus_dir = scratch.join("corpus");
-    let db = Db::create(&corpus_dir, Ledger)
+    let db = Db::create(&corpus_dir, Ledger, work()?)
         .map_err(|e| format!("corpus create: {e:?}"))?
         .expect("accepted");
     crate::corpus::load_bumbledb(&db, cfg).map_err(|e| format!("corpus load: {e:?}"))?;
+    let map_work = work()?;
+    let map = db
+        .integration_store()
+        .map_report(&map_work)
+        .map_err(|e| format!("map report: {e:?}"))?;
+    let data = store_source::data_mdb(&corpus_dir);
+    let allocated = crate::space::census::allocated_bytes(&data).ok();
+    let roster_entries = db.schema().compiled_theory().ok().map(|theory| {
+        (0..ids::RELATIONS)
+            .map(|rel| {
+                theory
+                    .projections_of_relation(bumbledb::RelationId(rel))
+                    .len()
+            })
+            .sum::<usize>() as u64
+    });
 
     let wanted = |regime: &str| {
         args.regimes
@@ -373,6 +431,12 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
             args.tenants * 8,
             args.seed,
         )?);
+    }
+    if let Some(row) = rows.first_mut() {
+        row.account.virtual_map_bytes = Some(map.virtual_map_bytes);
+        row.account.disk_bytes = Some(map.populated_file_bytes);
+        row.account.allocated_disk_bytes = allocated;
+        row.account.roster_entries = roster_entries;
     }
 
     let mut out = String::new();

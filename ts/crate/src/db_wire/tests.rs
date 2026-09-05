@@ -1,12 +1,28 @@
-//! Engine-backed db-bridge tests (C09/C05 db verbs / RUN / FFI / API).
-//! Authored in F1, NEVER run here; F3 executes them. They drive the real
-//! machinery below the N-API layer: real runtime registry, real engine,
-//! real sealed results — kind/generation/foreign refusals, cancellation
-//! joins, bounded chunks.
+//! D01/D07/D12/D18/D25 discriminators for the real addon delivery, draft
+//! and snapshot chain. Authored now; verification NotRun.
+//!
+//! Sensitivity (D25): a post-register checkpoint that drops `QueuedOutput`
+//! loses the consumed page. Resource abort must retry the same row;
+//! adopt-and-abort must leave nothing a fresh ticket can commit;
+//! oversized first row refuses unchanged; terminal store failure is never
+//! lawful EOF.
 
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use bumbledb::work::{ExecutionPolicy, WorkContext, WorkError};
+use bumbledb::{Answers, DeliveryTicket, RelationId, Theory as _, Value};
+
+use super::delivery::{
+    PagePlan, PullOutcome, is_terminal_backing, page_row_cap, plan_page, preview_error_outcome,
+    preview_none_outcome, publish_from_payload, pull_from_payload,
+};
 use super::*;
+use crate::marshal::ValueOut;
 use crate::runtime::owners::{DirectoryOwner, ManagedDb};
-use crate::runtime::{CloseReport, Options};
+use crate::runtime::registry::registry_draft::DraftPayload;
+use crate::runtime::registry::{Capability, NativeKind, Payload, RegistryAdmission, ResultState};
+use crate::runtime::{CloseReport, DraftLedger, Options, Output, Runtime, RuntimeError};
 
 bumbledb::schema! {
     pub Mini;
@@ -44,7 +60,7 @@ fn unique_dir(tag: &str) -> std::path::PathBuf {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "bumbledb-p06-db-{tag}-{}-{seq}",
+        "bumbledb-l13-db-{tag}-{}-{seq}",
         std::process::id()
     ))
 }
@@ -99,9 +115,606 @@ fn insert_rows(db: &ManagedDb, rows: &[[u64; 2]]) {
     assert!(matches!(admitted, bumbledb::Admission::Accepted(_)));
 }
 
-/// Executes a whole-relation scan query into a sealed [`CompleteResult`]
-/// inside the pinned read session, exactly as `runtimeSnapshotExecute` does.
-fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Arc<ResultShared>, u64) {
+fn drain_runtime(runtime: &Arc<Runtime>) -> CloseReport {
+    let (tx, rx) = std::sync::mpsc::channel();
+    runtime.drain(
+        None,
+        Box::new(move |report| {
+            tx.send(report).unwrap();
+        }),
+    );
+    rx.recv_timeout(Duration::from_secs(10))
+        .expect("runtime drain")
+}
+
+fn work() -> WorkContext {
+    policy().start().unwrap()
+}
+
+// ---- D25 / D12 consumer counterexamples on the native pull -----------------
+
+fn cursor_payload(runtime: &Arc<Runtime>, db: &ManagedDb) -> Payload {
+    let (mut payload, _) = sealed_result(runtime, db);
+    let ctx = work();
+    let Output::ResultCursor(cursor) = transfer_from_payload(&mut payload, &ctx).expect("transfer")
+    else {
+        panic!("expected a cursor")
+    };
+    Payload::Cursor {
+        cursor,
+        drained: false,
+    }
+}
+
+fn first_key(queued: &crate::runtime::QueuedOutput) -> u64 {
+    match queued.rows.first().and_then(|row| row.first()) {
+        Some(ValueOut::U64(key)) => *key,
+        _ => panic!("expected a u64 key cell"),
+    }
+}
+
+fn submit_publish(runtime: &Arc<Runtime>, cap: Capability) -> Result<Output, RuntimeError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let operation = runtime
+        .submit_payload(
+            cap,
+            policy(),
+            Box::new(move || {
+                tx.send(()).unwrap();
+            }),
+            |_| {
+                Ok(Box::new(move |context, payload, publication| {
+                    publish_from_payload(payload, context, 1 << 20, publication)
+                }))
+            },
+        )
+        .expect("publish submits");
+    rx.recv_timeout(Duration::from_secs(10)).expect("notify");
+    runtime.take(&operation)
+}
+
+#[test]
+fn d25_two_rows_fit_alone_not_together() {
+    // Planner still names the joint-overflow split the pull must honor.
+    assert_eq!(plan_page(&[40, 40, 40], 50), PagePlan::Take(1));
+    assert_eq!(plan_page(&[40], 50), PagePlan::Take(1));
+    assert_eq!(plan_page(&[40, 10], 50), PagePlan::Take(2));
+    assert_eq!(plan_page(&[60, 10], 50), PagePlan::OversizedFirst { bytes: 60 });
+    assert_eq!(plan_page(&[], 50), PagePlan::Eof);
+}
+
+#[test]
+fn d12_oversized_first_row_refuses_and_retry_delivers_same_row() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("oversized-retry");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
+    let mut payload = cursor_payload(&runtime, &db);
+    let ctx = work();
+
+    match pull_from_payload(&mut payload, &ctx, 0) {
+        Err(RuntimeError::ResourceLimit { dimension, .. }) => {
+            assert_eq!(dimension, "resultBytes");
+        }
+        Ok(PullOutcome::Eof) => panic!("oversized first row must not be EOF"),
+        Ok(PullOutcome::Page { .. }) => panic!("oversized first row must not deliver"),
+        Ok(PullOutcome::Terminal(_)) => panic!("oversized first row is not backing failure"),
+        Err(other) => panic!("expected resultBytes refusal, got {other:?}"),
+    }
+
+    // Abort left next_row unmoved: retry under allowance delivers a
+    // multirow page starting at the same first row.
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry") {
+        outcome @ PullOutcome::Page { .. } => {
+            let PullOutcome::Page { queued, terminal } = &outcome else {
+                unreachable!()
+            };
+            assert_eq!(queued.rows.len(), 3);
+            assert_eq!(first_key(queued), 1);
+            assert!(*terminal);
+            let Output::Page(Some(handoff)) = outcome.committed_output().expect("handoff") else {
+                panic!("L12 must receive the committed QueuedOutput")
+            };
+            let _owner = handoff.charge;
+        }
+        PullOutcome::Eof => panic!("retry after abort must not skip to EOF"),
+        PullOutcome::Terminal(_) => panic!("retry after abort is not backing failure"),
+    }
+
+    drop(db);
+    drop(owner);
+    drop(payload);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d25_abort_retry_same_row_then_commit_keeps_queued_owner() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("abort-retry");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[7, 70], [8, 80]]);
+    let mut payload = cursor_payload(&runtime, &db);
+    let ctx = work();
+
+    assert!(matches!(
+        pull_from_payload(&mut payload, &ctx, 0),
+        Err(RuntimeError::ResourceLimit {
+            dimension: "resultBytes",
+            ..
+        })
+    ));
+
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("same rows") {
+        PullOutcome::Page { queued, terminal } => {
+            assert_eq!(queued.rows.len(), 2);
+            assert_eq!(first_key(&queued), 7);
+            assert!(terminal);
+            let _owner = queued.charge;
+        }
+        PullOutcome::Eof => panic!("aborted pull must retry row 7, not EOF"),
+        PullOutcome::Terminal(_) => panic!("resource abort is not a closed cursor"),
+    }
+
+    drop(db);
+    drop(owner);
+    drop(payload);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d25_multirow_page_under_allowance() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("multirow");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
+    let ctx = work();
+    assert_eq!(page_row_cap(&ctx, 3), 3);
+    let mut payload = cursor_payload(&runtime, &db);
+
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("batch") {
+        PullOutcome::Page { queued, terminal } => {
+            assert_eq!(
+                queued.rows.len(),
+                3,
+                "into_cursor must use the work/remaining row cap, not 1"
+            );
+            assert_eq!(first_key(&queued), 1);
+            assert!(terminal);
+        }
+        PullOutcome::Eof => panic!("allowance must yield a multirow page, not EOF"),
+        PullOutcome::Terminal(_) => panic!("healthy backing is not terminal"),
+    }
+
+    drop(db);
+    drop(owner);
+    drop(payload);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d12_arm_cancel_after_page_retries_same_first_row() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("arm-cancel");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
+    let payload = cursor_payload(&runtime, &db);
+    let admission = RegistryAdmission::admit(
+        Arc::clone(&runtime),
+        NativeKind::Cursor,
+        64,
+        payload,
+    )
+    .expect("admit cursor");
+
+    runtime.arm_publication_cancel();
+    assert!(
+        matches!(
+            submit_publish(&runtime, admission.cap()),
+            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+        ),
+        "armed cancel drops the local page; next_row must not advance"
+    );
+
+    match submit_publish(&runtime, admission.cap()) {
+        Ok(Output::Page(Some(queued))) => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 3);
+        }
+        Ok(Output::Page(None)) => panic!("retry after arm-cancel skipped to EOF"),
+        other => panic!("retry must deliver the same first row, got {other:?}"),
+    }
+
+    let _ = admission.request_close();
+    drop(db);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d12_reject_keeps_row_accept_advances() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("accept-reject");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20]]);
+    let mut payload = cursor_payload(&runtime, &db);
+    let ctx = work();
+
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("first") {
+        PullOutcome::Page { queued, .. } => assert_eq!(first_key(&queued), 1),
+        PullOutcome::Eof => panic!("expected a page"),
+        PullOutcome::Terminal(_) => panic!("expected a page"),
+    }
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("after abort") {
+        PullOutcome::Page { queued, .. } => assert_eq!(first_key(&queued), 1),
+        PullOutcome::Eof => panic!("abort must not skip to EOF"),
+        PullOutcome::Terminal(_) => panic!("abort is not backing failure"),
+    }
+
+    let admission = RegistryAdmission::admit(
+        Arc::clone(&runtime),
+        NativeKind::Cursor,
+        64,
+        payload,
+    )
+    .expect("admit");
+    match submit_publish(&runtime, admission.cap()) {
+        Ok(Output::Page(Some(queued))) => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 2);
+        }
+        other => panic!("live accept must advance after abort-retry, got {other:?}"),
+    }
+    match submit_publish(&runtime, admission.cap()) {
+        Ok(Output::Page(None)) => {}
+        Ok(Output::Page(Some(_))) => panic!("accept must not republish the same page"),
+        other => panic!("second pull after accept must be EOF, got {other:?}"),
+    }
+    let _ = admission.request_close();
+
+    drop(db);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d12_publication_boundary_cannot_skip_or_duplicate() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("pub-boundary");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
+    let mut payload = cursor_payload(&runtime, &db);
+    let ctx = work();
+
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("page") {
+        PullOutcome::Page { queued, .. } => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 3);
+        }
+        PullOutcome::Eof => panic!("expected a page"),
+        PullOutcome::Terminal(_) => panic!("expected a page"),
+    }
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry abort") {
+        PullOutcome::Page { queued, .. } => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 3);
+        }
+        PullOutcome::Eof => panic!("aborted pull must not skip rows"),
+        PullOutcome::Terminal(_) => panic!("abort is not backing failure"),
+    }
+
+    let payload = cursor_payload(&runtime, &db);
+    let admission = RegistryAdmission::admit(
+        Arc::clone(&runtime),
+        NativeKind::Cursor,
+        64,
+        payload,
+    )
+    .expect("admit");
+    match submit_publish(&runtime, admission.cap()) {
+        Ok(Output::Page(Some(queued))) => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 3);
+        }
+        other => panic!("live accept must publish one page, got {other:?}"),
+    }
+    match submit_publish(&runtime, admission.cap()) {
+        Ok(Output::Page(None)) => {}
+        Ok(Output::Page(Some(_))) => panic!("success must advance once; no duplicate page"),
+        other => panic!("second pull after accept must be EOF, got {other:?}"),
+    }
+    let _ = admission.request_close();
+
+    drop(db);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d12_overlap_reserve_refusal_retries_same_first_row() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("overlap-reserve");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20]]);
+    let mut payload = cursor_payload(&runtime, &db);
+    let ctx = work();
+
+    {
+        let Payload::Cursor { cursor, drained } = &mut payload else {
+            panic!("expected a cursor")
+        };
+        assert!(!*drained);
+        cursor.rebind_work(&ctx);
+        let mut ticket = DeliveryTicket::open(cursor);
+        assert!(ticket
+            .preview_page(&ctx, 1 << 20)
+            .expect("preview")
+            .is_some());
+        let answers = ticket.adopt().expect("adopt");
+        let starved = ExecutionPolicy {
+            input_bytes: 16 << 20,
+            working_bytes: 16 << 20,
+            scratch_bytes: 16 << 20,
+            result_bytes: 0,
+            rows: 1 << 20,
+            work_units: 1 << 30,
+            timeout: Duration::from_secs(10),
+        }
+        .start()
+        .unwrap();
+        match register_page(&starved, &answers) {
+            Err(RuntimeError::Work(WorkError::Exhausted {
+                resource: bumbledb::work::Resource::ResultBytes,
+                ..
+            }))
+            | Err(RuntimeError::ResourceLimit {
+                dimension: "resultBytes",
+                ..
+            }) => {}
+            other => panic!("overlap reserve must refuse, got {other:?}"),
+        }
+        ticket.abort();
+    }
+
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry same cursor") {
+        PullOutcome::Page { queued, .. } => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 2);
+        }
+        PullOutcome::Eof => panic!("budget refusal must not commit or skip to EOF"),
+        PullOutcome::Terminal(_) => panic!("budget refusal must not poison the cursor"),
+    }
+
+    drop(db);
+    drop(owner);
+    drop(payload);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("adopt-abort");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
+    let mut payload = cursor_payload(&runtime, &db);
+    let ctx = work();
+
+    {
+        let Payload::Cursor { cursor, .. } = &mut payload else {
+            panic!("expected a cursor")
+        };
+        cursor.rebind_work(&ctx);
+        let mut ticket = DeliveryTicket::open(cursor);
+        assert!(ticket
+            .preview_page(&ctx, 1 << 20)
+            .expect("preview")
+            .is_some());
+        assert!(ticket.adopt().is_some());
+        ticket.abort();
+    }
+    {
+        let Payload::Cursor { cursor, .. } = &mut payload else {
+            panic!("expected a cursor")
+        };
+        DeliveryTicket::open(cursor).commit();
+    }
+
+    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("unpreviewed commit is a no-op") {
+        PullOutcome::Page { queued, .. } => {
+            assert_eq!(first_key(&queued), 1);
+            assert_eq!(queued.rows.len(), 3);
+        }
+        PullOutcome::Eof => panic!("fresh ticket must not commit an aborted preview"),
+        PullOutcome::Terminal(_) => panic!("adopt-and-abort is not backing failure"),
+    }
+
+    drop(db);
+    drop(owner);
+    drop(payload);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn d12_backing_failure_stays_terminal() {
+    let store = RuntimeError::Engine {
+        kind: crate::tags::error_family::STORE,
+        message: "scratch page unreadable".into(),
+    };
+    let corruption = RuntimeError::Engine {
+        kind: crate::tags::error_family::CORRUPTION,
+        message: "page unreadable".into(),
+    };
+    assert!(is_terminal_backing(&store));
+    assert!(is_terminal_backing(&corruption));
+    assert!(PullOutcome::Terminal(store.clone())
+        .committed_output()
+        .is_err());
+    match preview_error_outcome(store) {
+        Ok(PullOutcome::Terminal(_)) => {}
+        Ok(PullOutcome::Eof) => panic!("backing failure must not become EOF"),
+        Ok(PullOutcome::Page { .. }) => panic!("backing failure must not become a page"),
+        Err(_) => panic!("backing failure is Terminal, not a resource Err"),
+    }
+
+    let cancel = RuntimeError::Work(WorkError::Cancelled);
+    assert!(!is_terminal_backing(&cancel));
+    assert!(matches!(
+        preview_error_outcome(cancel),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    let budget = RuntimeError::ResourceLimit {
+        dimension: "resultBytes",
+        used: 0,
+        requested: 32,
+        limit: 0,
+    };
+    assert!(!is_terminal_backing(&budget));
+    assert!(matches!(
+        preview_error_outcome(budget),
+        Err(RuntimeError::ResourceLimit {
+            dimension: "resultBytes",
+            ..
+        })
+    ));
+}
+
+#[test]
+fn d25_terminal_store_error_is_never_eof() {
+    let store = RuntimeError::Engine {
+        kind: crate::tags::error_family::STORE,
+        message: "scratch page unreadable".into(),
+    };
+    assert!(is_terminal_backing(&store));
+    match preview_error_outcome(store) {
+        Ok(PullOutcome::Terminal(RuntimeError::Engine { kind, .. })) => {
+            assert_eq!(kind, crate::tags::error_family::STORE);
+        }
+        Ok(PullOutcome::Eof) => panic!("store failure must not become EOF"),
+        Ok(PullOutcome::Page { .. }) => panic!("store failure must not complete a page"),
+        Err(_) => panic!("store failure is Terminal, not a resource Err"),
+    }
+
+    // Retry after fail-close: preview returns None; still not EOF.
+    match preview_none_outcome() {
+        PullOutcome::Terminal(RuntimeError::ClosedHandle) => {}
+        PullOutcome::Eof => panic!("fail-closed retry must not be lawful EOF"),
+        PullOutcome::Page { .. } => panic!("fail-closed retry must not invent a page"),
+        PullOutcome::Terminal(_) => {}
+    }
+
+    let oversized = RuntimeError::ResourceLimit {
+        dimension: "resultBytes",
+        used: 0,
+        requested: 32,
+        limit: 0,
+    };
+    assert!(!is_terminal_backing(&oversized));
+    assert!(matches!(
+        preview_error_outcome(oversized),
+        Err(RuntimeError::ResourceLimit {
+            dimension: "resultBytes",
+            ..
+        })
+    ));
+}
+
+// ---- D07 drafts ------------------------------------------------------------
+
+fn draft_payload(allowance_input: u64, allowance_rows: u64) -> DraftPayload {
+    let descriptor = Mini.descriptor();
+    let schema = {
+        use bumbledb::schema::ValidateDescriptor as _;
+        descriptor.clone().validate().expect("valid schema")
+    };
+    DraftPayload {
+        schema: Arc::new(schema),
+        sealed: Arc::new(crate::seal(descriptor, Vec::new())),
+        pending: Vec::new(),
+        used_input: 0,
+        used_rows: 0,
+        allowance_input,
+        allowance_rows,
+        ledger: DraftLedger {
+            used_work: 0,
+            allowance_work: 1 << 30,
+            deadline: Instant::now() + Duration::from_secs(10),
+            terminal: false,
+        },
+    }
+}
+
+#[test]
+fn d07_draft_chunks_share_one_cumulative_budget_and_failure_is_terminal() {
+    let ctx = work();
+    let mut payload = Payload::Draft(draft_payload(100, 16));
+    let rows = vec![vec![Value::U64(1), Value::U64(10)]];
+    match ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone(), 60) {
+        Ok(Output::Mutation { submitted, .. }) => assert_eq!(submitted, 1),
+        other => panic!("first chunk admits, got {other:?}"),
+    }
+    match ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone(), 60) {
+        Err(RuntimeError::ResourceLimit {
+            dimension, used, ..
+        }) => {
+            assert_eq!(dimension, "inputBytes");
+            assert_eq!(used, 60);
+        }
+        other => panic!("cumulative budget must refuse, got {other:?}"),
+    }
+    assert!(matches!(
+        ingest_from_payload(&mut payload, &ctx, 0, true, rows, 1),
+        Err(RuntimeError::SpentHandle)
+    ));
+    assert!(matches!(
+        finish_from_payload(&mut payload, &ctx),
+        Err(RuntimeError::SpentHandle)
+    ));
+}
+
+#[test]
+fn d07_draft_finish_normalizes_add_wins_and_spends() {
+    let ctx = work();
+    let mut payload = Payload::Draft(draft_payload(1 << 20, 16));
+    let row = vec![vec![Value::U64(7), Value::U64(70)]];
+    ingest_from_payload(&mut payload, &ctx, 0, false, row.clone(), 16).expect("delete");
+    ingest_from_payload(&mut payload, &ctx, 0, true, row, 16).expect("insert");
+    let Output::Changes(changes) = finish_from_payload(&mut payload, &ctx).expect("finish") else {
+        panic!("expected a sealed change set")
+    };
+    assert_eq!(changes.changes.len(), 1);
+    assert!(matches!(
+        finish_from_payload(&mut payload, &ctx),
+        Err(RuntimeError::SpentHandle)
+    ));
+}
+
+// ---- D01 / D18 collect + result lifetime -----------------------------------
+
+fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Payload, u64) {
     let lease = db.access().expect("lease");
     let Output::Session(opened) = runtime.spawn_read_session_for(db, lease).expect("session")
     else {
@@ -150,19 +763,6 @@ fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Arc<ResultShared>, 
         panic!("expected a sealed result")
     };
     let rows = result.len();
-    let retained = runtime.retain_native(result.byte_len()).expect("retained");
-    let shared = Arc::new(ResultShared {
-        runtime: Arc::clone(runtime),
-        slot: Mutex::new(ResultSlot {
-            entry: Some(ResultEntry {
-                result,
-                _retained: retained,
-            }),
-            spent: false,
-        }),
-    });
-    // The result is OWNED and independent: closing the source session must
-    // not disturb it.
     let (tx, rx) = std::sync::mpsc::channel();
     opened.session.drain(Box::new(move |report| {
         tx.send(report).unwrap();
@@ -172,23 +772,17 @@ fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Arc<ResultShared>, 
             .expect("session drain"),
         CloseReport::Closed
     );
-    (shared, rows)
-}
-
-fn drain_runtime(runtime: &Arc<Runtime>) -> CloseReport {
-    let (tx, rx) = std::sync::mpsc::channel();
-    runtime.drain(
-        None,
-        Box::new(move |report| {
-            tx.send(report).unwrap();
-        }),
-    );
-    rx.recv_timeout(Duration::from_secs(10))
-        .expect("runtime drain")
+    (
+        Payload::Result {
+            result: Some(result),
+            state: ResultState::Live,
+        },
+        rows,
+    )
 }
 
 #[test]
-fn sealed_results_outlive_their_session_and_collect_leaves_the_backing() {
+fn d18_sealed_results_outlive_their_session_and_collect_is_bounded() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("collect");
     std::fs::create_dir_all(&base).unwrap();
@@ -196,199 +790,101 @@ fn sealed_results_outlive_their_session_and_collect_leaves_the_backing() {
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
 
-    let (shared, rows) = sealed_result(&runtime, &db);
-    assert_eq!(rows, 3, "the sealed result carries the complete answer set");
-    let work = policy().start().unwrap();
-
-    // A byte cap below the sealed size refuses BEFORE materializing and
-    // leaves the sealed backing available.
-    match collect_result(&shared, &work, 0) {
+    let (mut payload, rows) = sealed_result(&runtime, &db);
+    assert_eq!(rows, 3);
+    let ctx = work();
+    match collect_from_payload(&mut payload, &ctx, 0, 1 << 20) {
         Err(RuntimeError::ResourceLimit { dimension, .. }) => {
             assert_eq!(dimension, "resultBytes");
         }
-        _ => panic!("a zero-byte collect cap must refuse typed"),
+        other => panic!("zero-byte collect must refuse, got {other:?}"),
     }
-    match collect_result(&shared, &work, 1 << 20).expect("bounded collect") {
-        Output::Rows(collected) => assert_eq!(collected.len(), 3),
-        _ => panic!("expected rows"),
+    match collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20).expect("bounded collect") {
+        Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
+        other => panic!("expected rows, got {other:?}"),
     }
-    // Collect leaves the backing: a second collect still answers.
-    match collect_result(&shared, &work, 1 << 20).expect("second collect") {
-        Output::Rows(collected) => assert_eq!(collected.len(), 3),
-        _ => panic!("expected rows"),
+    match collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20).expect("second collect") {
+        Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
+        other => panic!("expected rows, got {other:?}"),
     }
 
     drop(db);
     drop(owner);
-    drop(shared);
+    drop(payload);
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
     let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
-fn one_shot_transfer_spends_the_result_and_pages_are_byte_bounded() {
+fn d12_one_shot_transfer_spends_and_second_use_refuses() {
     let runtime = Runtime::start(options()).unwrap();
-    let base = unique_dir("pages");
+    let base = unique_dir("transfer");
     std::fs::create_dir_all(&base).unwrap();
     let owner = acquire(&runtime, &base.join("tenant"));
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20], [3, 30], [4, 40]]);
 
-    let (shared, _) = sealed_result(&runtime, &db);
-    let work = policy().start().unwrap();
-    let Output::ResultCursor(cursor) = transfer_result(&shared, &work).expect("transfer") else {
+    let (mut payload, _) = sealed_result(&runtime, &db);
+    let ctx = work();
+    let Output::ResultCursor(_) = transfer_from_payload(&mut payload, &ctx).expect("transfer")
+    else {
         panic!("expected a cursor")
     };
-    // The spend is atomic and one-shot: a second transfer AND a collect
-    // both refuse SpentHandle before touching the backing.
     assert!(matches!(
-        transfer_result(&shared, &work),
+        transfer_from_payload(&mut payload, &ctx),
         Err(RuntimeError::SpentHandle)
     ));
     assert!(matches!(
-        collect_result(&shared, &work, 1 << 20),
+        collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20),
         Err(RuntimeError::SpentHandle)
-    ));
-
-    let retained = runtime.retain_native(cursor.byte_len()).expect("retained");
-    let cursor_shared = Arc::new(CursorShared {
-        runtime: Arc::clone(&runtime),
-        slot: Mutex::new(Some(CursorEntry {
-            cursor,
-            pending: None,
-            drained: false,
-            _retained: retained,
-        })),
-    });
-    // A 1-byte page cap still delivers AT LEAST one row per page; the
-    // overflow row is buffered, never dropped and never double-delivered.
-    let mut delivered = 0usize;
-    let mut pulls = 0usize;
-    loop {
-        pulls += 1;
-        assert!(pulls < 64, "paging terminates");
-        match cursor_pull(&cursor_shared, &work, 1).expect("pull") {
-            Output::Page(Some(rows)) => {
-                assert_eq!(rows.len(), 1, "a tiny byte cap bounds each page to one row");
-                delivered += rows.len();
-            }
-            Output::Page(None) => break,
-            _ => panic!("expected a page"),
-        }
-    }
-    assert_eq!(delivered, 4, "every row is delivered exactly once");
-    // EOF is terminal: further pulls stay EOF.
-    assert!(matches!(
-        cursor_pull(&cursor_shared, &work, 1 << 20).expect("post-EOF pull"),
-        Output::Page(None)
-    ));
-    // Close is join-idempotent; a closed cursor refuses typed.
-    {
-        let mut slot = cursor_shared.slot.lock().unwrap();
-        drop(slot.take());
-    }
-    assert!(matches!(
-        cursor_pull(&cursor_shared, &work, 1),
-        Err(RuntimeError::ClosedHandle)
     ));
 
     drop(db);
     drop(owner);
-    drop(cursor_shared);
+    drop(payload);
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
     let _ = std::fs::remove_dir_all(&base);
 }
 
 #[test]
-fn drafts_charge_a_cumulative_budget_and_finish_normalizes_add_wins() {
+fn d18_queued_output_close_drains_without_wrapper_authority() {
     let runtime = Runtime::start(options()).unwrap();
-    let work = policy().start().unwrap();
-    let descriptor = Mini.descriptor();
-    let schema = {
-        use bumbledb::schema::ValidateDescriptor as _;
-        descriptor.clone().validate().expect("valid schema")
-    };
-    let retained = runtime.retain_native(0).expect("retained");
-    let shared = Arc::new(DraftShared {
-        runtime: Arc::clone(&runtime),
-        slot: Mutex::new(DraftSlot {
-            entry: Some(DraftEntry {
-                schema: Arc::new(schema),
-                sealed: Arc::new(crate::seal(descriptor, Vec::new())),
-                pending: Vec::new(),
-                used_input: 0,
-                allowance_input: 100,
-                retained,
-            }),
+    let base = unique_dir("queued-close");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    insert_rows(&db, &[[1, 10], [2, 20]]);
+    let (payload, _) = sealed_result(&runtime, &db);
+    let admission = RegistryAdmission::admit(
+        Arc::clone(&runtime),
+        NativeKind::Result,
+        64,
+        payload,
+    )
+    .expect("admit result");
+    let cap = admission.cap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    close_admitted(
+        &runtime,
+        cap,
+        &admission,
+        Box::new(move |report| {
+            let _ = tx.send(report);
         }),
-    });
-
-    // Chunks accumulate against ONE cumulative input budget — the second
-    // chunk sees the first chunk's spend, and exhaustion SPENDS the draft.
-    let rows = vec![vec![Value::U64(1), Value::U64(10)]];
-    match draft_ingest(&shared, &work, 0, true, rows.clone(), 60) {
-        Ok(Output::Mutation { submitted, .. }) => assert_eq!(submitted, 1),
-        _ => panic!("first chunk admits"),
-    }
-    match draft_ingest(&shared, &work, 0, true, rows.clone(), 60) {
-        Err(RuntimeError::ResourceLimit {
-            dimension, used, ..
-        }) => {
-            assert_eq!(dimension, "inputBytes");
-            assert_eq!(used, 60, "the budget is cumulative, never reset per chunk");
-        }
-        _ => panic!("the cumulative budget must refuse the second chunk"),
-    }
-    // The failed draft is SPENT: later ingestion and finish refuse.
-    assert!(matches!(
-        draft_ingest(&shared, &work, 0, true, rows, 1),
-        Err(RuntimeError::SpentHandle)
-    ));
-    assert!(matches!(
-        draft_finish(&shared, &work),
-        Err(RuntimeError::SpentHandle)
-    ));
-
-    // A fresh draft: same-command add-wins over delete of the identical
-    // fact (the engine's one-command normalization).
-    let descriptor = Mini.descriptor();
-    let schema = {
-        use bumbledb::schema::ValidateDescriptor as _;
-        descriptor.clone().validate().expect("valid schema")
-    };
-    let retained = runtime.retain_native(0).expect("retained");
-    let fresh = Arc::new(DraftShared {
-        runtime: Arc::clone(&runtime),
-        slot: Mutex::new(DraftSlot {
-            entry: Some(DraftEntry {
-                schema: Arc::new(schema),
-                sealed: Arc::new(crate::seal(descriptor, Vec::new())),
-                pending: Vec::new(),
-                used_input: 0,
-                allowance_input: 1 << 20,
-                retained,
-            }),
-        }),
-    });
-    let row = vec![vec![Value::U64(7), Value::U64(70)]];
-    draft_ingest(&fresh, &work, 0, false, row.clone(), 16).expect("delete admits");
-    draft_ingest(&fresh, &work, 0, true, row, 16).expect("insert admits");
-    let Output::Changes(changes) = draft_finish(&fresh, &work).expect("finish") else {
-        panic!("expected a sealed change set")
-    };
-    assert_eq!(
-        changes.changes.len(),
-        1,
-        "one normalized effect: add wins over delete of the identical fact"
     );
-    // Finish consumed the draft.
+    let report = rx.recv_timeout(Duration::from_secs(10)).expect("close");
     assert!(matches!(
-        draft_finish(&fresh, &work),
-        Err(RuntimeError::SpentHandle)
+        report,
+        CloseReport::Closed | CloseReport::Incomplete(_)
     ));
 
+    drop(db);
+    drop(owner);
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
 }
+
+// ---- apply / codec (unchanged public verbs) --------------------------------
 
 #[test]
 fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
@@ -398,13 +894,13 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
     let owner = acquire(&runtime, &base.join("tenant"));
     let descriptor = Mini.descriptor();
     let db = attach(&owner, &descriptor);
-    let work = policy().start().unwrap();
+    let ctx = work();
     let schema = {
         use bumbledb::schema::ValidateDescriptor as _;
         descriptor.clone().validate().expect("valid schema")
     };
 
-    let mut builder = bumbledb::ChangeSet::builder(&schema, work.clone());
+    let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
     builder
         .insert(RelationId(0), &[Value::U64(1), Value::U64(10)])
         .expect("stages");
@@ -413,8 +909,6 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
     let lease = db.access().expect("lease");
     let store_hex = lease.db().integration_store().identity().store.to_string();
 
-    // A stale expected witness is a DOMAIN outcome (`moved`), never an
-    // error; a foreign store witness refuses typed.
     match apply_change_set(
         &lease,
         &changes,
@@ -422,7 +916,7 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
             store: store_hex.clone(),
             generation: 999,
         },
-        &work,
+        &ctx,
     )
     .expect("moved is a domain outcome")
     {
@@ -437,35 +931,31 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
                 store: "00".repeat(16),
                 generation: 0,
             },
-            &work,
+            &ctx,
         ),
         Err(RuntimeError::Engine { .. })
     ));
 
-    // The accepted apply commits once; re-applying the same set is
-    // no-change (set semantics, one normalized final effect).
     let accepted_generation =
-        match apply_change_set(&lease, &changes, &ExpectedOwned::Any, &work).expect("applies") {
+        match apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).expect("applies") {
             Output::Apply(ApplyOutcomeOwned::Accepted { generation, store }) => {
                 assert_eq!(store, store_hex);
                 generation
             }
             _ => panic!("expected accepted"),
         };
-    match apply_change_set(&lease, &changes, &ExpectedOwned::Any, &work).expect("re-applies") {
+    match apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).expect("re-applies") {
         Output::Apply(ApplyOutcomeOwned::NoChange { generation, .. }) => {
             assert!(generation >= accepted_generation);
         }
         _ => panic!("expected no-change"),
     }
 
-    // A live write session's admission flag fences apply with WriterBusy —
-    // refusal, never a parked worker.
     lease
         .writing
         .store(true, std::sync::atomic::Ordering::Release);
     assert!(matches!(
-        apply_change_set(&lease, &changes, &ExpectedOwned::Any, &work),
+        apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx),
         Err(RuntimeError::WriterBusy)
     ));
     lease
@@ -480,8 +970,8 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
 }
 
 #[test]
-fn the_row_codec_is_the_change_set_grammar_and_refuses_foreign_records() {
-    let work = policy().start().unwrap();
+fn the_row_codec_borrows_decoded_values_and_refuses_foreign_records() {
+    let ctx = work();
     let descriptor = Mini.descriptor();
     let schema = {
         use bumbledb::schema::ValidateDescriptor as _;
@@ -492,17 +982,33 @@ fn the_row_codec_is_the_change_set_grammar_and_refuses_foreign_records() {
         vec![Value::U64(1), Value::U64(10)],
         vec![Value::U64(1), Value::U64(10)],
     ];
-    let bytes = encode_rows_bytes(&schema, RelationId(0), &rows, &work).expect("encodes");
-    // Set semantics: the duplicate deduplicates; canonical order decides.
-    let decoded = decode_rows_values(&schema, RelationId(0), &bytes, &work).expect("decodes");
+    let bytes = encode_rows_bytes(&schema, RelationId(0), &rows, &ctx).expect("encodes");
+    let decoded = decode_rows_values(&schema, RelationId(0), &bytes, &ctx).expect("decodes");
     assert_eq!(decoded.len(), 2);
     assert_eq!(decoded[0], vec![Value::U64(1), Value::U64(10)]);
-    // Foreign-relation payloads refuse typed: the same bytes decoded as
-    // another relation are never silently reinterpreted.
-    assert!(decode_rows_values(&schema, RelationId(1), &bytes, &work).is_err());
-    // Tampered bytes refuse through the strict parser.
+    assert!(decode_rows_values(&schema, RelationId(1), &bytes, &ctx).is_err());
     let mut tampered = bytes;
     let last = tampered.len() - 1;
     tampered[last] ^= 0xff;
-    assert!(decode_rows_values(&schema, RelationId(0), &tampered, &work).is_err());
+    assert!(decode_rows_values(&schema, RelationId(0), &tampered, &ctx).is_err());
+}
+
+#[test]
+fn d01_answers_out_charges_empty_page_without_escaping() {
+    let ctx = ExecutionPolicy {
+        input_bytes: 16,
+        working_bytes: 16,
+        scratch_bytes: 16,
+        result_bytes: 8,
+        rows: 16,
+        work_units: 16,
+        timeout: Duration::from_secs(5),
+    }
+    .start()
+    .unwrap();
+    let answers = Answers::new();
+    let (rows, charge) = crate::marshal::answers_out_charged(&ctx, &answers)
+        .expect("empty conversion is a zero-charge owner");
+    assert!(rows.is_empty());
+    assert_eq!(charge.bytes(), 0);
 }

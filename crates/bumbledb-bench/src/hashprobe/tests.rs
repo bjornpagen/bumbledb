@@ -361,6 +361,7 @@ fn collision_schedule_is_deterministic_and_touches_every_path() {
     );
 }
 
+/// C-D04-collision-bytes — independent `Model`, not the production planner.
 #[test]
 fn collision_pair_judgment_is_exact_bytes_not_fingerprints() {
     // Within a command: same key, different payload = conflict; the same row

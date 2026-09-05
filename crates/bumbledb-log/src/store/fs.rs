@@ -23,11 +23,14 @@ use std::sync::Mutex;
 
 use super::fence::{acquire_mutation, sync_parent, synced_temp};
 use super::key_ok;
+use super::receive::{
+    ObservedError, ReceiveAccumulator, ReceiveFault, ReceiveLimits, ReceivedBody, ReceivedHead,
+    ReceivingStore, TransportContext, TransportObservation, RECEIVE_CHUNK_BYTES,
+};
 use crate::writer::verbs::{
-    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
+    ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, PutOutcome,
 };
 
-const QUANTUM: usize = 65_536;
 const PAGE: usize = 1_000;
 
 /// One phase boundary a deterministic schedule can intercept.
@@ -68,6 +71,13 @@ pub struct FsError {
     pub op: &'static str,
     pub key: String,
     pub source: io::Error,
+    pub observation: TransportObservation,
+}
+
+impl ObservedError for FsError {
+    fn observation(&self) -> TransportObservation {
+        self.observation
+    }
 }
 
 impl std::fmt::Display for FsError {
@@ -126,17 +136,41 @@ impl FsStore {
                 op,
                 key: key.to_string(),
                 source: io::Error::new(io::ErrorKind::InvalidInput, "invalid store key"),
+                observation: TransportObservation::Indeterminate,
             });
         }
         Ok(self.root.join(key))
     }
 
     fn fail(op: &'static str, key: &str, source: io::Error) -> FsError {
+        Self::fail_obs(op, key, source, observe_io(&source))
+    }
+
+    fn fail_obs(
+        op: &'static str,
+        key: &str,
+        source: io::Error,
+        observation: TransportObservation,
+    ) -> FsError {
         FsError {
             op,
             key: key.to_string(),
             source,
+            observation,
         }
+    }
+
+    fn fail_receive(op: &'static str, key: &str, fault: ReceiveFault) -> FsError {
+        let observation = fault.observation();
+        Self::fail_obs(op, key, fault.into_io(key), observation)
+    }
+}
+
+fn observe_io(error: &io::Error) -> TransportObservation {
+    match error.kind() {
+        io::ErrorKind::NotFound => TransportObservation::Missing,
+        io::ErrorKind::PermissionDenied => TransportObservation::Denied,
+        _ => TransportObservation::Indeterminate,
     }
 }
 
@@ -158,43 +192,93 @@ fn refuse_symlink(path: &Path) -> io::Result<()> {
     }
 }
 
-/// Read a whole object in bounded chunks; `None` on definite absence. The
-/// open inode is immune to a concurrent rename; a file that changes length
-/// in place refuses rather than growing its buffer.
-fn read_object(path: &Path) -> io::Result<Option<Vec<u8>>> {
+/// Open a regular file for incremental receive. `None` is definite absence.
+/// Stat length is never treated as a receiving bound.
+fn open_object(path: &Path) -> io::Result<Option<File>> {
     refuse_symlink(path)?;
-    let mut file = match File::open(path) {
+    let file = match File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err),
     };
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "key is not a regular file",
         ));
     }
-    let length = usize::try_from(metadata.len())
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "object exceeds address space"))?;
-    let mut bytes = Vec::new();
-    bytes
-        .try_reserve_exact(length)
-        .map_err(|_| io::Error::new(io::ErrorKind::OutOfMemory, "object allocation failed"))?;
-    while bytes.len() < length {
-        let begin = bytes.len();
-        let count = (length - begin).min(QUANTUM);
-        bytes.resize(begin + count, 0);
-        file.read_exact(&mut bytes[begin..])?;
+    Ok(Some(file))
+}
+
+fn receive_file(file: &mut File, acc: &mut ReceiveAccumulator<'_>) -> Result<(), ReceiveFault> {
+    let mut chunk = [0u8; RECEIVE_CHUNK_BYTES];
+    loop {
+        acc.checkpoint()?;
+        let want = acc
+            .remaining()
+            .saturating_add(1)
+            .min(RECEIVE_CHUNK_BYTES as u64) as usize;
+        if want == 0 {
+            return Err(ReceiveFault::Capped {
+                cap: acc.len(),
+                got: acc.len().saturating_add(1),
+            });
+        }
+        let read = file.read(&mut chunk[..want]).map_err(ReceiveFault::Io)?;
+        if read == 0 {
+            return Ok(());
+        }
+        acc.push(&chunk[..read])?;
     }
-    let mut extra = [0u8];
-    if file.read(&mut extra)? != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "object grew during read",
-        ));
+}
+
+fn receive_path(
+    path: &Path,
+    ctx: TransportContext<'_>,
+) -> Result<Option<ReceivedBody>, ReceiveFault> {
+    let Some(mut file) = open_object(path).map_err(ReceiveFault::Io)? else {
+        return Ok(None);
+    };
+    let mut acc = ReceiveAccumulator::new(ctx);
+    receive_file(&mut file, &mut acc)?;
+    Ok(Some(acc.finish()?))
+}
+
+fn file_content_version(path: &Path) -> io::Result<Option<HeadVersion>> {
+    let Some(mut file) = open_object(path)? else {
+        return Ok(None);
+    };
+    let mut hasher = blake3::Hasher::new();
+    let mut chunk = [0u8; RECEIVE_CHUNK_BYTES];
+    loop {
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&chunk[..read]);
     }
-    Ok(Some(bytes))
+    Ok(Some(HeadVersion(Box::from(
+        hasher.finalize().to_hex().as_bytes(),
+    ))))
+}
+
+fn contents_equal(path: &Path, expected: &[u8]) -> io::Result<Option<bool>> {
+    let Some(mut file) = open_object(path)? else {
+        return Ok(None);
+    };
+    let mut chunk = [0u8; RECEIVE_CHUNK_BYTES];
+    let mut offset = 0usize;
+    loop {
+        let read = file.read(&mut chunk)?;
+        if read == 0 {
+            return Ok(Some(offset == expected.len()));
+        }
+        let end = offset.saturating_add(read);
+        if end > expected.len() || expected[offset..end] != chunk[..read] {
+            return Ok(Some(false));
+        }
+        offset = end;
+    }
 }
 
 fn ensure_parent(root: &Path, path: &Path) -> io::Result<()> {
@@ -231,27 +315,15 @@ fn publish_bytes(root: &Path, path: &Path, bytes: &[u8]) -> io::Result<()> {
 impl ConditionalStore for FsStore {
     type Error = FsError;
 
-    fn read_head(&self, head_key: &str) -> Result<HeadRead, FsError> {
-        let path = self.path_of("read_head", head_key)?;
-        match read_object(&path).map_err(|e| Self::fail("read_head", head_key, e))? {
-            Some(bytes) => {
-                let version = content_version(&bytes);
-                Ok(HeadRead::Present {
-                    version,
-                    body: bytes.into_boxed_slice(),
-                })
-            }
-            None => Ok(HeadRead::Absent),
-        }
-    }
-
     fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, FsError> {
         let path = self.path_of("create_head", head_key)?;
         // The whole critical section — observe, stage, rename, sync — runs
         // under the kernel-held mutation lock. A paused holder remains owner.
         let _lock = acquire_mutation(&self.root, head_key)
             .map_err(|e| Self::fail("create_head", head_key, e))?;
-        let existing = read_object(&path).map_err(|e| Self::fail("create_head", head_key, e))?;
+        let existing = open_object(&path)
+            .map_err(|e| Self::fail("create_head", head_key, e))?
+            .is_some();
         match self.inject(Phase::HeadObserved, head_key) {
             Inject::Continue => {}
             Inject::Error => {
@@ -263,7 +335,7 @@ impl ConditionalStore for FsStore {
             }
             Inject::Indeterminate => return Ok(ConditionalOutcome::Indeterminate),
         }
-        if existing.is_some() {
+        if existing {
             return Ok(ConditionalOutcome::PreconditionFailed);
         }
         publish_bytes(&self.root, &path, body)
@@ -290,7 +362,8 @@ impl ConditionalStore for FsStore {
         let path = self.path_of("replace_head", head_key)?;
         let _lock = acquire_mutation(&self.root, head_key)
             .map_err(|e| Self::fail("replace_head", head_key, e))?;
-        let current = read_object(&path).map_err(|e| Self::fail("replace_head", head_key, e))?;
+        let current = file_content_version(&path)
+            .map_err(|e| Self::fail("replace_head", head_key, e))?;
         match self.inject(Phase::HeadObserved, head_key) {
             Inject::Continue => {}
             Inject::Error => {
@@ -305,7 +378,7 @@ impl ConditionalStore for FsStore {
         let Some(current) = current else {
             return Ok(ConditionalOutcome::PreconditionFailed);
         };
-        if content_version(&current) != *expected {
+        if current != *expected {
             return Ok(ConditionalOutcome::PreconditionFailed);
         }
         match self.inject(Phase::Staged, head_key) {
@@ -338,18 +411,20 @@ impl ConditionalStore for FsStore {
         let path = self.path_of("put_object", key)?;
         // Immutable names: an existing identical payload is idempotent
         // evidence; a conflicting payload refuses and never overwrites.
-        if let Some(existing) = read_object(&path).map_err(|e| Self::fail("put_object", key, e))? {
-            if existing == body {
-                return Ok(PutOutcome::Stored);
+        match contents_equal(&path, body).map_err(|e| Self::fail("put_object", key, e))? {
+            Some(true) => return Ok(PutOutcome::Stored),
+            Some(false) => {
+                return Err(Self::fail_obs(
+                    "put_object",
+                    key,
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "immutable object holds conflicting bytes",
+                    ),
+                    TransportObservation::Conflict,
+                ));
             }
-            return Err(Self::fail(
-                "put_object",
-                key,
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "immutable object holds conflicting bytes",
-                ),
-            ));
+            None => {}
         }
         match self.inject(Phase::Staged, key) {
             Inject::Continue => {}
@@ -367,18 +442,6 @@ impl ConditionalStore for FsStore {
             Inject::Continue => Ok(PutOutcome::Stored),
             Inject::Error | Inject::Indeterminate => Ok(PutOutcome::Indeterminate),
         }
-    }
-
-    fn get_object(&self, key: &str) -> Result<ObjectRead, FsError> {
-        let path = self.path_of("get_object", key)?;
-        Ok(
-            match read_object(&path).map_err(|e| Self::fail("get_object", key, e))? {
-                Some(bytes) => ObjectRead::Present {
-                    body: bytes.into_boxed_slice(),
-                },
-                None => ObjectRead::Absent,
-            },
-        )
     }
 
     fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, FsError> {
@@ -454,6 +517,42 @@ impl ConditionalStore for FsStore {
     }
 }
 
+impl ReceivingStore for FsStore {
+    fn receive_object(
+        &self,
+        key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedBody, FsError> {
+        let path = self.path_of("receive_object", key)?;
+        match receive_path(&path, ctx) {
+            Ok(Some(body)) => Ok(body),
+            Ok(None) => Err(Self::fail_obs(
+                "receive_object",
+                key,
+                io::Error::new(io::ErrorKind::NotFound, "object missing"),
+                TransportObservation::Missing,
+            )),
+            Err(fault) => Err(Self::fail_receive("receive_object", key, fault)),
+        }
+    }
+
+    fn receive_head(
+        &self,
+        head_key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedHead, FsError> {
+        let path = self.path_of("receive_head", head_key)?;
+        match receive_path(&path, ctx) {
+            Ok(Some(body)) => Ok(ReceivedHead::Present {
+                version: content_version(body.as_bytes()),
+                body,
+            }),
+            Ok(None) => Ok(ReceivedHead::Absent),
+            Err(fault) => Err(Self::fail_receive("receive_head", head_key, fault)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -488,9 +587,12 @@ mod tests {
             store.replace_head("t/HEAD", &v1, b"rev1b").unwrap(),
             ConditionalOutcome::PreconditionFailed
         );
-        match store.read_head("t/HEAD").unwrap() {
-            HeadRead::Present { body, .. } => assert_eq!(&*body, b"rev2"),
-            HeadRead::Absent => panic!("head exists"),
+        match store
+            .receive_head("t/HEAD", TransportContext::limited(64))
+            .unwrap()
+        {
+            ReceivedHead::Present { body, .. } => assert_eq!(body.as_bytes(), b"rev2"),
+            ReceivedHead::Absent => panic!("head exists"),
         }
         let _ = fs::remove_dir_all(&root);
     }
@@ -539,7 +641,9 @@ mod tests {
         assert_eq!(fs::read(&sentinel).unwrap(), b"sentinel");
         // A symlinked object path refuses reads and writes.
         symlink(&sentinel, root.join("v")).unwrap();
-        assert!(store.get_object("v").is_err());
+        assert!(store
+            .receive_object("v", TransportContext::limited(64))
+            .is_err());
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -549,8 +653,43 @@ mod tests {
         let store = FsStore::new(&root);
         for key in ["~tmp/x", "~lease/y", "a/~tmp/z", "a/b.lock", "a//b", "../a"] {
             assert!(store.put_object(key, b"x").is_err(), "{key}");
-            assert!(store.get_object(key).is_err(), "{key}");
+            assert!(
+                store
+                    .receive_object(key, TransportContext::limited(64))
+                    .is_err(),
+                "{key}"
+            );
         }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn receive_stops_at_the_envelope_without_trusting_stat_length() {
+        let root = scratch("receive-cap");
+        let store = FsStore::new(&root);
+        store
+            .put_object("t/objects/1/chunk/aa", b"0123456789")
+            .unwrap();
+        let error = store
+            .receive_object(
+                "t/objects/1/chunk/aa",
+                TransportContext {
+                    work: None,
+                    receive: ReceiveLimits::capped(4),
+                },
+            )
+            .expect_err("cap");
+        assert_eq!(error.observation, TransportObservation::Capped);
+        let missing = store
+            .receive_object(
+                "t/objects/1/chunk/zz",
+                TransportContext {
+                    work: None,
+                    receive: ReceiveLimits::capped(8),
+                },
+            )
+            .expect_err("missing");
+        assert_eq!(missing.observation, TransportObservation::Missing);
         let _ = fs::remove_dir_all(&root);
     }
 }

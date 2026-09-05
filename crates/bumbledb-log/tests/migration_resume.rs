@@ -162,7 +162,7 @@ fn conflicting_completed_output_refuses_instead_of_overwriting() {
     let namespace = TargetNamespace::new(&root.join("targets"), incarnation(0xe3)).unwrap();
     {
         let target: Db<SchemaDescriptor> =
-            Db::open(&namespace.target_dir(), tagged_schema()).unwrap();
+            Db::open(&namespace.target_dir(), tagged_schema(), work()).unwrap();
         let tamper = work();
         let mut session = target.integration_writer(&tamper).unwrap();
         let mut draft = ChangeSet::builder(target.schema(), tamper.clone());
@@ -623,10 +623,10 @@ fn a_same_schema_data_only_plan_is_still_a_recorded_migration() {
     assert!(matches!(applied.source, AppliedSource::Database { .. }));
     // The target holds the mapped rows plus the seed: three notes.
     let namespace = TargetNamespace::new(&root.join("targets"), incarnation(0xec)).unwrap();
-    let target: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), base_schema()).unwrap();
+    let target: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), base_schema(), work()).unwrap();
     let mut count = 0;
     target
-        .read(|read| {
+        .read(work(), |read| {
             for row in read.scan(RelationId(0))? {
                 row?;
                 count += 1;
@@ -638,7 +638,7 @@ fn a_same_schema_data_only_plan_is_still_a_recorded_migration() {
     // Its recorded history flattens to exactly this one-entry manifest.
     let mut rows = Vec::new();
     target
-        .read(|read| {
+        .read(work(), |read| {
             let record = read
                 .integration_host_record(&history_key(0))
                 .unwrap_or_else(|error| panic!("host record read: {error}"));

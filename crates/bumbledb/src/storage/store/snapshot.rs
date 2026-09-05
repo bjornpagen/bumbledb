@@ -15,7 +15,14 @@
 //! ```
 //!
 //! A held snapshot blocks map growth by design; the gate reports its count
-//! and age instead of invalidating a live Rust borrow.
+//! and age instead of invalidating a live Rust borrow. Projection visits
+//! take [`crate::schema::ProjectionId`], never a statement id.
+//!
+//! ```compile_fail
+//! fn require_statement_visit(snap: &bumbledb::store::OwnedSnapshot) {
+//!     let _ = snap.visit_statement;
+//! }
+//! ```
 
 use std::ops::Bound;
 use std::sync::Arc;
@@ -29,6 +36,7 @@ use super::fingerprint::FP_LEN;
 use super::format::{
     CoreStoreId, EnvironmentId, K_ATTACHMENT, K_HOST_RECORD_TAG, RowId, StoreIdentity,
 };
+use super::host::{HostResume, HostWindow};
 use super::gate::GatePass;
 use super::keys::{self, HOST_KEY_MAX};
 use super::rows;
@@ -114,6 +122,23 @@ impl OwnedSnapshot {
         self.generation
     }
 
+    /// One relation's committed change version at this snapshot — one small
+    /// meta read from this snapshot's own transaction (bounded and cheap; a
+    /// pinned old snapshot keeps reading its own versions). The version
+    /// advances exactly when a committed transaction changed that relation's
+    /// rows, so equal versions across two snapshots of one environment prove
+    /// the relation's rows are identical — the safe image-reuse key
+    /// (PERF-001). Host-record/attachment-only seals advance the generation
+    /// but no relation version.
+    /// # Errors
+    /// Storage failure or a malformed stored version word.
+    pub fn relation_version(
+        &self,
+        relation: RelationId,
+    ) -> StoreResult<super::format::RelationVersion> {
+        super::format::read_relation_version(&self.inner.meta, &self.txn, relation)
+    }
+
     #[must_use]
     pub fn identity(&self) -> StoreIdentity {
         self.inner.identity
@@ -176,9 +201,11 @@ impl OwnedSnapshot {
     /// Visit every committed host record whose key starts with `prefix`,
     /// in ascending key order, from this exact transaction (the P02R host
     /// enumeration seam under `ReadInstance::integration_host_scan`).
-    /// Logical host keys — the storage tag never escapes — and values
-    /// borrow the snapshot's mapped pages for the duration of one visit
-    /// only; charged one work step per record.
+    /// Already streams: logical host keys — the storage tag never escapes —
+    /// and values borrow the snapshot's mapped pages for the duration of
+    /// one visit only; charged one work step per record. No resume and no
+    /// byte cap — do not accumulate every key. Use [`Self::host_scan_batch`]
+    /// for charged windows.
     /// # Errors
     /// Host-key grammar or storage failure, stopped work, or the
     /// visitor's own refusal.
@@ -216,6 +243,91 @@ impl OwnedSnapshot {
         Ok(())
     }
 
+    /// One charged host window under `prefix`, exclusive after `after`.
+    /// Streams visits — peak is the visitor plus one resume key, never
+    /// every matching record. Stops when `key+value` bytes would exceed
+    /// `byte_cap` after at least one record, or the prefix is exhausted.
+    /// Full-prefix [`Self::host_scan`] already streams (one work step per
+    /// record) but has no resume or byte cap; do not accumulate its keys.
+    ///
+    /// # Errors
+    /// Host-key grammar or storage failure, stopped work, or the visitor.
+    #[expect(
+        clippy::type_complexity,
+        reason = "windowed twin of host_scan's visitor"
+    )]
+    pub fn host_scan_batch<E: From<StoreError>>(
+        &self,
+        prefix: &[u8],
+        after: Option<&[u8]>,
+        work: &WorkContext,
+        byte_cap: u64,
+        visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), E>,
+    ) -> Result<HostWindow, E> {
+        if prefix.len() > HOST_KEY_MAX {
+            return Err(E::from(StoreError::HostKey(HostKeyFault::TooLong {
+                actual: prefix.len(),
+            })));
+        }
+        if let Some(after) = after
+            && after.len() > HOST_KEY_MAX
+        {
+            return Err(E::from(StoreError::HostKey(HostKeyFault::TooLong {
+                actual: after.len(),
+            })));
+        }
+        let mut prefix_buf = [0u8; 1 + HOST_KEY_MAX];
+        prefix_buf[0] = K_HOST_RECORD_TAG;
+        prefix_buf[1..=prefix.len()].copy_from_slice(prefix);
+        let mut after_buf = [0u8; 1 + HOST_KEY_MAX];
+        let start = if let Some(after) = after {
+            after_buf[0] = K_HOST_RECORD_TAG;
+            after_buf[1..=after.len()].copy_from_slice(after);
+            Bound::Excluded(&after_buf[..=after.len()])
+        } else {
+            Bound::Included(&prefix_buf[..=prefix.len()])
+        };
+        let bounds = (start, Bound::Unbounded);
+        let range = self
+            .inner
+            .meta
+            .range(&self.txn, &bounds)
+            .map_err(|error| E::from(StoreError::from_heed(error)))?;
+        let mut records = 0u64;
+        let mut bytes = 0u64;
+        let mut last: Option<HostResume> = None;
+        for entry in range {
+            work.checkpoint()
+                .map_err(|error| E::from(StoreError::Work(error)))?;
+            let (key, value) = entry.map_err(|error| E::from(StoreError::from_heed(error)))?;
+            if key.first() != Some(&K_HOST_RECORD_TAG) {
+                break;
+            }
+            let logical = &key[1..];
+            if !logical.starts_with(prefix) {
+                break;
+            }
+            let record_bytes = (logical.len() + value.len()) as u64;
+            if records > 0 && bytes.saturating_add(record_bytes) > byte_cap {
+                return Ok(match last {
+                    Some(resume) => HostWindow::More {
+                        resume,
+                        records,
+                        bytes,
+                    },
+                    None => HostWindow::Done { records, bytes },
+                });
+            }
+            work.step(1)
+                .map_err(|error| E::from(StoreError::Work(error)))?;
+            visit(logical, value)?;
+            last = Some(HostResume::from_key(logical).map_err(E::from)?);
+            bytes = bytes.saturating_add(record_bytes);
+            records += 1;
+        }
+        Ok(HostWindow::Done { records, bytes })
+    }
+
     /// Bounded cursor over one relation's committed rows, local row-id
     /// order. Values borrow this snapshot's mapped pages; they are valid
     /// exactly as long as the snapshot.
@@ -245,6 +357,65 @@ impl OwnedSnapshot {
     /// Storage failure.
     pub fn fetch(&self, relation: RelationId, row: RowId) -> StoreResult<Option<&[u8]>> {
         rows::fetch_row(&self.inner, &self.txn, relation, row)
+    }
+
+    /// Bounded visitor over one interned projection's determinant bucket.
+    /// Named by [`crate::schema::ProjectionId`], never `StatementId`. The
+    /// visitor receives each `(row id, canonical row bytes)`; return
+    /// `false` to stop early. Charged bytes stay borrowed for the visit.
+    ///
+    /// # Errors
+    /// Storage failure, stopped work, or visitor failure.
+    pub fn visit_projection(
+        &self,
+        projection: crate::schema::ProjectionId,
+        projected: &[u8],
+        work: &WorkContext,
+        visit: &mut dyn FnMut(RowId, &[u8]) -> StoreResult<bool>,
+    ) -> StoreResult<()> {
+        let Some(key) = self.inner.det.projection(projection) else {
+            return Ok(());
+        };
+        let routing = rows::routing_for_projected(&self.inner, projection, projected)?;
+        rows::visit_determinant_bucket(
+            &self.inner,
+            &self.txn,
+            projection,
+            &routing,
+            work,
+            &mut |id| {
+                let bytes = rows::fetch_row(&self.inner, &self.txn, key.relation, id)?
+                    .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
+                visit(id, bytes)
+            },
+        )
+    }
+
+    /// Enumerate one committed determinant bucket at this snapshot: every
+    /// local row id indexed under the projection and the projected bytes'
+    /// fingerprint. Prefer [`Self::visit_projection`] when walking rows.
+    /// Candidates only — the caller confirms each row with exact decoded
+    /// values (a forced collision widens this set, never an answer).
+    /// `projected` follows the store's one projection convention.
+    /// # Errors
+    /// Storage failure or stopped work.
+    pub fn determinant_candidates(
+        &self,
+        projection: crate::schema::ProjectionId,
+        projected: &[u8],
+        work: &WorkContext,
+    ) -> StoreResult<Vec<RowId>> {
+        rows::determinant_bucket_ids(&self.inner, &self.txn, projection, projected, work)
+    }
+
+    /// The store's compiled theory (projection table and law adjacency).
+    pub(crate) fn compiled(&self) -> &crate::schema::CompiledTheory {
+        self.inner.det.theory()
+    }
+
+    /// The store's compiled determinant table (probe-side projection).
+    pub(crate) fn determinants(&self) -> &super::det_index::DeterminantTable {
+        &self.inner.det
     }
 
     /// Live row count of one relation at this snapshot.

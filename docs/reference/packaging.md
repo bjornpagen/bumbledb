@@ -1,9 +1,9 @@
 # Packaging — artifacts, staging, pins, handshake
 
-Status: permanent doc for the shipped packaging design (C12's
-format/artifact tables land here after the F3 probes freeze physical
-bytes; until then final-solution 32 + C12 remain normative and every
-physical-layout choice is provisional).
+Status: permanent doc for the shipped packaging design. Physical
+layout roles are in [performance.md](performance.md). Packed-consumer
+expectations are in [api.md](api.md). Publication (`PKG-07B`) is
+separately authorized and is not implied by local staging.
 
 ## Artifact roster
 
@@ -58,11 +58,22 @@ node ts/scripts/stage.ts --out <dir>        # core + platform tarballs
 node ts-log/scripts/stage.ts --out <dir>    # log tarball
 ```
 
+Each staged tarball carries `pack-provenance.json` binding
+`candidateSourceDigest` and `specificationRevision` to the same values
+computed by `scripts/release-results.mjs`. `scripts/packed-import.sh`
+refuses tarballs whose provenance does not match the current checkout.
+
 `scripts/packed-import.sh` consumes exactly these staged tarballs for the
-isolated-consumer gate (PKG-03): fresh empty project, no workspace links,
-strict downstream tsc over the chapter 34 fixtures
-(`examples/consumers/{core-ts,log-ts}`), and a runtime smoke
-(`scripts/packed-consumer.ts`).
+isolated-consumer gate (`PKG-03` / D07 / D22 / D27): fresh empty project,
+no workspace links, strict downstream tsc over copied
+`examples/consumers/{core-ts,log-ts,native-ledger}`, a ManagedRuntime
+consumer (`scripts/packed-consumer.ts` —
+`ManagedRuntime.make(NativeRuntime.layer(...))` for programs that no
+longer self-provide), a second addon-unavailable project
+(`scripts/packed-pure-authoring.ts`), the Rust consumer, and Notes
+`specimens.test` + `routes.test` (missing migrations fail, never skip
+green). D07 tiny collect must refuse. That gate is not registry
+publication proof.
 
 ## Deletion inventory (PKG-06)
 

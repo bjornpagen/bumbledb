@@ -45,7 +45,7 @@ fn view_of(schema: &Schema, rows: &[(u64, u64)]) -> Arc<crate::image::RelationIm
 }
 
 fn all(image: &Arc<crate::image::RelationImage>) -> View {
-    apply(image, &[], &[], Vec::new())
+    apply(image, &[], &[], Vec::new(), image.generation().text_eq(None))
 }
 
 fn scalars(columns: &[usize]) -> Vec<SelectionLevel> {
@@ -70,7 +70,9 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
     let mut token = BatchToken::default();
     let mut out = Vec::new();
     loop {
-        let (n, next) = colt.iter_batch(cursor, level, token, &mut keys, &mut children, 8);
+        let (n, next) = colt
+            .iter_batch(cursor, level, token, &mut keys, &mut children, 8)
+            .expect("iter");
         if n == 0 {
             break;
         }
@@ -82,6 +84,7 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
     out
 }
 
+mod admit;
 mod dense;
 mod model;
 mod overflow;

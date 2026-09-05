@@ -4,8 +4,10 @@ use crate::exec::run::Sink;
 use crate::exec::sink::{FindSpec, SinkBudget};
 
 impl EitherSink {
-    /// Install this execution's distinct-state allowance (main sinks only;
-    /// derived stage sinks stay RAM-bounded under the derived budget).
+    /// Install this execution's distinct-state allowance (the main sink
+    /// and interior stage sinks alike: past the RAM allowance the state
+    /// continues in the one scratch map; the derived-tuples budget still
+    /// judges stage row counts at seal).
     pub(super) fn begin_execution(&mut self, budget: Option<SinkBudget>) {
         match self {
             Self::Computed(sink) => sink.inner.begin_execution(budget),
@@ -45,23 +47,55 @@ impl EitherSink {
             Self::Aggregate(sink) => sink.distinct_seen(),
         }
     }
+
+    pub(super) fn progress(&self) -> crate::exec::sink::SinkProgress {
+        match self {
+            Self::Computed(sink) => {
+                if sink.error.is_some() {
+                    crate::exec::sink::SinkProgress::Error
+                } else {
+                    sink.inner.progress()
+                }
+            }
+            Self::Projection(sink) => sink.progress(),
+            Self::Aggregate(sink) => sink.progress(),
+        }
+    }
+
+    pub(super) fn take_error(&mut self) -> Option<crate::error::Error> {
+        match self {
+            Self::Computed(sink) => sink.error.take().or_else(|| sink.inner.take_error()),
+            Self::Projection(sink) => sink.take_error(),
+            Self::Aggregate(sink) => sink.take_error(),
+        }
+    }
 }
 
 impl Sink for EitherSink {
     fn emit(&mut self, bindings: &Bindings) -> crate::exec::run::Flow {
-        match self {
+        let flow = match self {
             Self::Computed(sink) => sink.emit(bindings),
             Self::Projection(sink) => sink.emit(bindings),
             Self::Aggregate(sink) => sink.emit(bindings),
-        }
+        };
+        crate::exec::run::Flow::from_sink_progress(self.progress()).or_skip(flow)
     }
 
     fn emit_batch(&mut self, batch: &crate::exec::run::LeafBatch<'_>) -> crate::exec::run::Flow {
-        match self {
+        let flow = match self {
             Self::Computed(sink) => sink.emit_batch(batch),
             Self::Projection(sink) => sink.emit_batch(batch),
             Self::Aggregate(sink) => sink.emit_batch(batch),
-        }
+        };
+        crate::exec::run::Flow::from_sink_progress(self.progress()).or_skip(flow)
+    }
+
+    fn progress(&self) -> crate::exec::sink::SinkProgress {
+        EitherSink::progress(self)
+    }
+
+    fn take_error(&mut self) -> Option<crate::error::Error> {
+        EitherSink::take_error(self)
     }
 
     fn emit_batch_until_skip(

@@ -13,6 +13,8 @@ use crate::{F64, Id128, Interval, Value, WorkContext, WorkError};
 /// declared `CommandResult` slot frames verbatim (C01; chapter 30).
 pub mod result;
 
+pub(crate) mod field;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowError {
     Work(WorkError),
@@ -201,6 +203,12 @@ impl CanonicalRow {
     }
 }
 
+impl AsRef<[u8]> for CanonicalRow {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
 // Work polling granularity, not a database/row-size limit. At most this many
 // bytes are copied/UTF-8 checked without returning to the operation ledger.
 const COPY_QUANTUM: usize = 4096;
@@ -245,10 +253,36 @@ pub(crate) fn validate(
 }
 
 /// Bridge-facing decoded row. Not embedding API.
+///
+/// The reservation covers the decoded values for as long as the owner
+/// lives. Borrow [`DecodedRow::values`]; transfer the whole owner with
+/// [`DecodedRow::into_owner`]. There is no owning `values` / `into_values`
+/// / `into_parts` escape that refunds while the payload remains live.
 #[doc(hidden)]
+#[derive(Debug)]
 pub struct DecodedRow {
-    pub values: Vec<Value>,
-    _reservation: ByteReservation,
+    values: Vec<Value>,
+    reservation: ByteReservation,
+}
+
+impl DecodedRow {
+    /// Borrow the decoded values; the row's reservation covers them.
+    /// There is no owning extraction: transfer the whole [`DecodedRow`].
+    #[must_use]
+    pub fn values(&self) -> &[Value] {
+        &self.values
+    }
+
+    #[must_use]
+    pub fn charged_bytes(&self) -> u64 {
+        self.reservation.bytes()
+    }
+
+    /// Transfer the charged owner. Charge and payload stay together (C2).
+    #[must_use]
+    pub fn into_owner(self) -> Self {
+        self
+    }
 }
 
 /// Bridge-facing strict canonical decode (the ONE row decoder).
@@ -272,7 +306,7 @@ pub fn decode(
     walk(fields, bytes, work, Some(&mut values))?;
     Ok(DecodedRow {
         values,
-        _reservation: reservation,
+        reservation,
     })
 }
 
@@ -331,37 +365,32 @@ fn walk(
                 }
                 continue;
             }
-            6 => Value::IntervalU64(
-                Interval::new(
-                    u64::from_be_bytes(reader.word()?),
-                    u64::from_be_bytes(reader.word()?),
-                )
-                .ok_or(RowError::InvalidInterval { field })?,
-            ),
-            7 => Value::IntervalI64(
-                Interval::new(
-                    i64::from_be_bytes(reader.word()?),
-                    i64::from_be_bytes(reader.word()?),
-                )
-                .ok_or(RowError::InvalidInterval { field })?,
-            ),
+            6 => field::decode_interval_u64(
+                u64::from_be_bytes(reader.word()?),
+                u64::from_be_bytes(reader.word()?),
+                descriptor,
+                field,
+            )?,
+            7 => field::decode_interval_i64(
+                i64::from_be_bytes(reader.word()?),
+                i64::from_be_bytes(reader.word()?),
+                descriptor,
+                field,
+            )?,
             8 => Value::Id128(Id128::from_bytes(reader.word()?)),
-            9 => {
-                // Each endpoint must be an already canonical payload — the
-                // parser rejects alternative NaN/zero encodings rather than
-                // normalizing wire input — and the checked constructor then
-                // refuses NaN endpoints and empty/inverted bounds.
-                let start = F64::from_canonical_be_bytes(reader.word()?)
-                    .map_err(|_| RowError::NonCanonicalFloat { field })?;
-                let end = F64::from_canonical_be_bytes(reader.word()?)
-                    .map_err(|_| RowError::NonCanonicalFloat { field })?;
-                Value::IntervalF64(
-                    Interval::new(start, end).ok_or(RowError::InvalidInterval { field })?,
-                )
-            }
+            9 => field::decode_interval_f64(
+                F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?,
+                F64::from_canonical_be_bytes(reader.word()?)
+                    .map_err(|_| RowError::NonCanonicalFloat { field })?,
+                descriptor,
+                field,
+            )?,
             _ => return Err(RowError::InvalidTag { field }),
         };
-        value_matches(&value, &descriptor.value_type).map_err(|_| RowError::Type { field })?;
+        if !matches!(tag, 6 | 7 | 9) {
+            value_matches(&value, &descriptor.value_type).map_err(|_| RowError::Type { field })?;
+        }
         if let Some(output) = &mut output {
             output.push(value);
         }
@@ -412,5 +441,23 @@ fn utf8(
     Ok(owned)
 }
 
+/// Canonical row owner for stable logical fact ordering (C4). Independent
+/// of local row ids, cursor order and reminting — the sort key for bounded
+/// diagnostic selection before truncation. Compare through
+/// [`CanonicalRow::as_bytes`]; retain this owner. Do not copy the bytes
+/// out from under the charge.
+/// # Errors
+/// Rejects wrong shape or insufficient work allowance.
+pub fn fact_sort_key(
+    fields: &[FieldDescriptor],
+    values: &[Value],
+    work: &WorkContext,
+) -> Result<CanonicalRow, RowError> {
+    CanonicalRow::encode(fields, values, work)
+}
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod f3c_accounting;

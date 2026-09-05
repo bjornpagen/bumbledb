@@ -30,6 +30,26 @@ pub fn receipt_key(id: CommandId) -> [u8; RECEIPT_KEY_LEN] {
     key
 }
 
+/// Parse a stored receipt-row key back into its `CommandId` (the inverse of
+/// [`receipt_key`]): retention walks and witness scans enumerate the host
+/// range by prefix and must re-bind each row to its key before trusting it.
+/// A wrong-length key, foreign prefix, or zero epoch is a foreign row.
+#[must_use]
+pub fn parse_receipt_key(key: &[u8]) -> Option<CommandId> {
+    if key.len() != RECEIPT_KEY_LEN || key[0] != RECEIPT_KEY_PREFIX {
+        return None;
+    }
+    let mut epoch = [0u8; 8];
+    epoch.copy_from_slice(&key[1..9]);
+    let epoch = super::ReceiptEpoch::new(u64::from_be_bytes(epoch))?;
+    let mut request = [0u8; 16];
+    request.copy_from_slice(&key[9..]);
+    Some(CommandId {
+        receipt_epoch: epoch,
+        request_id: super::RequestId::from_core(bumbledb::Id128::from_bytes(request)),
+    })
+}
+
 /// Errors converting a stored row into an owned receipt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReceiptRowError {
@@ -222,6 +242,17 @@ mod tests {
         assert!(high_request < high_epoch);
         assert!(retired(command(1, 7).id, 1));
         assert!(!retired(command(2, 0).id, 1));
+        // The key parse is the exact inverse of the key encode; foreign
+        // prefixes, wrong lengths and the zero epoch never become ids.
+        assert_eq!(parse_receipt_key(&low), Some(command(1, 7).id));
+        assert_eq!(parse_receipt_key(&high_epoch), Some(command(2, 0).id));
+        assert_eq!(parse_receipt_key(&low[..RECEIPT_KEY_LEN - 1]), None);
+        let mut foreign = low;
+        foreign[0] = b'x';
+        assert_eq!(parse_receipt_key(&foreign), None);
+        let mut zero_epoch = low;
+        zero_epoch[1..9].copy_from_slice(&0u64.to_be_bytes());
+        assert_eq!(parse_receipt_key(&zero_epoch), None);
     }
 
     #[test]

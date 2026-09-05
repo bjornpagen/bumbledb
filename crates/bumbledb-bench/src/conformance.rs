@@ -1761,9 +1761,13 @@ mod tests {
         eprintln!("conformance: {cases} checked-in cases replayed byte-identical");
     }
 
-    /// `scripts/lean.sh` runs it with `--ignored` after the corpus
+    /// Three-way (engine + naive + `lake exe conformance`) over the checked-in
+    /// corpus. L19 removed cargo tests from `scripts/lean.sh`. This is L20
+    /// qualification, not a Lean proof and not a G15 timing cell. Final
+    /// qualification only:
+    /// `cargo test -p bumbledb-bench three_way_conformance -- --ignored`.
     #[test]
-    #[ignore = "needs the Lean toolchain (elan/lake) on PATH; scripts/lean.sh runs it"]
+    #[ignore = "needs elan/lake on PATH; L20 qualification, not scripts/lean.sh"]
     fn three_way_conformance_over_the_checked_in_corpus() {
         let engine_started = Instant::now();
         let cases = replay_checked_in_corpus();

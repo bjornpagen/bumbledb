@@ -127,13 +127,18 @@ fn finalize_resolves_each_distinct_intern_once() {
     assert_eq!(out.len(), 64);
     assert_eq!(count, 1, "one distinct intern, one resolution");
     assert_eq!(out.byte_len(), "shared-memo".len(), "bytes stored once");
+    assert_eq!(prepared.uncharged_copy_bytes(), 0);
 
     let (out, count) = resolves(&mut prepared, 2);
     assert_eq!(out.len(), 16);
     assert_eq!(count, 16);
 
     let (out, count) = resolves(&mut prepared, 2);
-    assert_eq!(count, 0, "the arena tier survives across finalizes");
+    assert_eq!(
+        count, 16,
+        "each finalize re-resolves into the charged answer heap"
+    );
+    assert_eq!(prepared.uncharged_copy_bytes(), 0);
     assert_eq!(out.len(), 16);
     let mut memos: Vec<String> = (0..out.len())
         .map(|answer| {
@@ -149,5 +154,29 @@ fn finalize_resolves_each_distinct_intern_once() {
         memos.sort();
         memos
     };
-    assert_eq!(memos, expected, "arena copies materialize the same text");
+    assert_eq!(
+        memos, expected,
+        "charged answer heap materializes the same text"
+    );
+}
+
+/// Forced work refusal during text compare fails the query. It does
+/// not return a successful empty or wrong answer. Verification: NotRun.
+#[test]
+fn text_compare_refusal_fails_the_query() {
+    let fix = postings(&[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
+    let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
+    prepared.force_cursor_fallback(true);
+    let work = crate::api::prepared::source::UNBOUNDED_POLICY
+        .start()
+        .expect("work");
+    work.cancel();
+    let source = crate::api::prepared::source::QuerySource::heap(&fix.instance, 1, work);
+    let mut out = Answers::new();
+    let err = prepared.execute_source(
+        &source,
+        &[BindValue::U64(7), BindValue::I64(0)],
+        &mut out,
+    );
+    assert!(err.is_err(), "refusal must fail the query");
 }

@@ -10,10 +10,12 @@
 
 use std::fmt::Write as _;
 
+use crate::certainty::{AdminCertainty, PublicationPhase, ResolveEvidence, SubmitCertainty};
 use crate::history::admission::Refusal;
 use crate::history::authority::AuthorityError;
 use crate::history::command::FrameError;
 use crate::writer::LogError;
+use crate::store::TransportObservation;
 use crate::writer::verbs::{ConditionalOutcome, PutOutcome};
 use crate::writer::{ResolveOutcome, SubmitOutcome};
 
@@ -109,6 +111,14 @@ kinds! { resolve_outcome for ResolveOutcome {
     ResolveOutcome::ReceiptExpiredUnknown => "receiptExpiredUnknown",
 } }
 
+kinds! { resolve_evidence for ResolveEvidence {
+    ResolveEvidence::Found(_) => "found",
+    ResolveEvidence::NotRecordedAt { .. } => "notRecordedAt",
+    ResolveEvidence::CommandEpochClosed => "commandEpochClosed",
+    ResolveEvidence::ReceiptExpiredUnknown => "receiptExpiredUnknown",
+    ResolveEvidence::CoveredLoss(_) => "coveredLoss",
+} }
+
 kinds! { conditional_outcome for ConditionalOutcome {
     ConditionalOutcome::Published { .. } => "published",
     ConditionalOutcome::PreconditionFailed => "preconditionFailed",
@@ -120,7 +130,37 @@ kinds! { put_outcome for PutOutcome {
     PutOutcome::Indeterminate => "indeterminate",
 } }
 
-fn families() -> [(&'static str, Vec<&'static str>); 8] {
+kinds! { transport_observation for TransportObservation {
+    TransportObservation::Missing => "missing",
+    TransportObservation::Denied => "denied",
+    TransportObservation::Bucket => "bucket",
+    TransportObservation::Region => "region",
+    TransportObservation::Precondition => "precondition",
+    TransportObservation::Conflict => "conflict",
+    TransportObservation::Capped => "capped",
+    TransportObservation::Indeterminate => "indeterminate",
+} }
+
+kinds! { publication_phase for PublicationPhase {
+    PublicationPhase::Prepared => "prepared",
+    PublicationPhase::DispatchedUnresolved => "dispatchedUnresolved",
+    PublicationPhase::Confirmed => "confirmed",
+    PublicationPhase::ProvedNonpublication => "provedNonpublication",
+} }
+
+kinds! { submit_certainty for SubmitCertainty {
+    SubmitCertainty::Decided { .. } => "decided",
+    SubmitCertainty::NotSubmitted { .. } => "notSubmitted",
+    SubmitCertainty::OutcomeUnknown { .. } => "outcomeUnknown",
+} }
+
+kinds! { admin_certainty for AdminCertainty<()> {
+    AdminCertainty::Completed { .. } => "completed",
+    AdminCertainty::NotStarted { .. } => "notStarted",
+    AdminCertainty::OutcomeUnknown { .. } => "outcomeUnknown",
+} }
+
+fn families() -> [(&'static str, Vec<&'static str>); 13] {
     [
         ("frame", frame()),
         ("admissionRefusal", admission_refusal()),
@@ -128,8 +168,13 @@ fn families() -> [(&'static str, Vec<&'static str>); 8] {
         ("logError", log_error()),
         ("submitOutcome", submit_outcome()),
         ("resolveOutcome", resolve_outcome()),
+        ("resolveEvidence", resolve_evidence()),
         ("conditionalOutcome", conditional_outcome()),
         ("putOutcome", put_outcome()),
+        ("transportObservation", transport_observation()),
+        ("publicationPhase", publication_phase()),
+        ("submitCertainty", submit_certainty()),
+        ("adminCertainty", admin_certainty()),
     ]
 }
 

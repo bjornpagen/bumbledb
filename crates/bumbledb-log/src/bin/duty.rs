@@ -12,7 +12,6 @@
 //! The 0.x duty (braid checkpoint cadence/compaction/retention sweeps over
 //! the five-verb store) is deleted with those representations.
 
-use std::io;
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -26,11 +25,13 @@ use bumbledb_log::history::command::Limits;
 use bumbledb_log::history::{OperationId, ReceiptEpoch};
 use bumbledb_log::inspect::{render, status_hosted};
 use bumbledb_log::manifest::{RootKind, RootPolicy};
-use bumbledb_log::store::fs::FsStore;
-use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store};
+use bumbledb_log::store::fs::{FsError, FsStore};
+use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Error, S3Store};
 use bumbledb_log::store::{
-    ConditionalOutcome, ConditionalStore, HeadRead, HeadVersion, ListPage, ObjectRead, PutOutcome,
+    ConditionalOutcome, ConditionalStore, HeadVersion, ListPage, ObservedError, PutOutcome,
+    ReceivedBody, ReceivedHead, ReceivingStore, TransportContext, TransportObservation,
 };
+use bumbledb_log::certainty::AdminCertainty;
 use bumbledb_log::{admin, codec};
 
 const HEAD_CAP: usize = 1024 * 1024;
@@ -56,49 +57,57 @@ fn work() -> Result<WorkContext, String> {
     .map_err(|error| format!("work budget: {error:?}"))
 }
 
-/// One backend value over the two supported drivers.
+/// One backend value over the two supported drivers. Production reads
+/// are only [`ReceivingStore::receive_object`] / [`ReceivingStore::receive_head`]
+/// (`ReceivedBody` / `ReceivedHead`). Deleted `get_object` / `read_head`
+/// and the uncharged three-argument `get_verified` are not re-introduced.
+/// Library verbs take this type — no driver-unwrap macros, no second store API.
 enum AnyStore {
     Fs(FsStore),
     S3(Box<S3Store>),
 }
 
+/// Unified adapter fault so [`AnyStore`] is a [`ReceivingStore`].
 #[derive(Debug)]
-struct AnyError(io::Error);
+enum DutyFault {
+    Fs(FsError),
+    S3(S3Error),
+}
 
-impl std::fmt::Display for AnyError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+impl ObservedError for DutyFault {
+    fn observation(&self) -> TransportObservation {
+        match self {
+            Self::Fs(error) => error.observation(),
+            Self::S3(error) => error.observation(),
+        }
     }
 }
 
-impl std::error::Error for AnyError {}
-
-fn fs_err(error: &bumbledb_log::store::fs::FsError) -> AnyError {
-    AnyError(io::Error::other(error.to_string()))
+impl std::fmt::Display for DutyFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Fs(error) => error.fmt(f),
+            Self::S3(error) => error.fmt(f),
+        }
+    }
 }
 
-fn s3_err(error: &bumbledb_log::store::s3::S3Error) -> AnyError {
-    AnyError(io::Error::other(error.to_string()))
+impl std::error::Error for DutyFault {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Fs(error) => std::error::Error::source(error),
+            Self::S3(error) => std::error::Error::source(error),
+        }
+    }
 }
 
 impl ConditionalStore for AnyStore {
-    type Error = AnyError;
+    type Error = DutyFault;
 
-    fn read_head(&self, head_key: &str) -> Result<HeadRead, AnyError> {
+    fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, DutyFault> {
         match self {
-            Self::Fs(store) => store.read_head(head_key).map_err(|error| fs_err(&error)),
-            Self::S3(store) => store.read_head(head_key).map_err(|error| s3_err(&error)),
-        }
-    }
-
-    fn create_head(&self, head_key: &str, body: &[u8]) -> Result<ConditionalOutcome, AnyError> {
-        match self {
-            Self::Fs(store) => store
-                .create_head(head_key, body)
-                .map_err(|error| fs_err(&error)),
-            Self::S3(store) => store
-                .create_head(head_key, body)
-                .map_err(|error| s3_err(&error)),
+            Self::Fs(store) => store.create_head(head_key, body).map_err(DutyFault::Fs),
+            Self::S3(store) => store.create_head(head_key, body).map_err(DutyFault::S3),
         }
     }
 
@@ -107,46 +116,69 @@ impl ConditionalStore for AnyStore {
         head_key: &str,
         expected: &HeadVersion,
         body: &[u8],
-    ) -> Result<ConditionalOutcome, AnyError> {
+    ) -> Result<ConditionalOutcome, DutyFault> {
         match self {
             Self::Fs(store) => store
                 .replace_head(head_key, expected, body)
-                .map_err(|error| fs_err(&error)),
+                .map_err(DutyFault::Fs),
             Self::S3(store) => store
                 .replace_head(head_key, expected, body)
-                .map_err(|error| s3_err(&error)),
+                .map_err(DutyFault::S3),
         }
     }
 
-    fn put_object(&self, key: &str, body: &[u8]) -> Result<PutOutcome, AnyError> {
+    fn put_object(&self, key: &str, body: &[u8]) -> Result<PutOutcome, DutyFault> {
         match self {
-            Self::Fs(store) => store.put_object(key, body).map_err(|error| fs_err(&error)),
-            Self::S3(store) => store.put_object(key, body).map_err(|error| s3_err(&error)),
+            Self::Fs(store) => store.put_object(key, body).map_err(DutyFault::Fs),
+            Self::S3(store) => store.put_object(key, body).map_err(DutyFault::S3),
         }
     }
 
-    fn get_object(&self, key: &str) -> Result<ObjectRead, AnyError> {
+    fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, DutyFault> {
         match self {
-            Self::Fs(store) => store.get_object(key).map_err(|error| fs_err(&error)),
-            Self::S3(store) => store.get_object(key).map_err(|error| s3_err(&error)),
+            Self::Fs(store) => store.list_objects(prefix, after).map_err(DutyFault::Fs),
+            Self::S3(store) => store.list_objects(prefix, after).map_err(DutyFault::S3),
         }
     }
 
-    fn list_objects(&self, prefix: &str, after: Option<&[u8]>) -> Result<ListPage, AnyError> {
+    fn delete_object(&self, key: &str) -> Result<(), DutyFault> {
         match self {
-            Self::Fs(store) => store
-                .list_objects(prefix, after)
-                .map_err(|error| fs_err(&error)),
-            Self::S3(store) => store
-                .list_objects(prefix, after)
-                .map_err(|error| s3_err(&error)),
+            Self::Fs(store) => store.delete_object(key).map_err(DutyFault::Fs),
+            Self::S3(store) => store.delete_object(key).map_err(DutyFault::S3),
+        }
+    }
+}
+
+impl ReceivingStore for AnyStore {
+    fn receive_object(
+        &self,
+        key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedBody, DutyFault> {
+        match self {
+            Self::Fs(store) => store.receive_object(key, ctx).map_err(DutyFault::Fs),
+            Self::S3(store) => store.receive_object(key, ctx).map_err(DutyFault::S3),
         }
     }
 
-    fn delete_object(&self, key: &str) -> Result<(), AnyError> {
+    fn receive_head(
+        &self,
+        head_key: &str,
+        ctx: TransportContext<'_>,
+    ) -> Result<ReceivedHead, DutyFault> {
         match self {
-            Self::Fs(store) => store.delete_object(key).map_err(|error| fs_err(&error)),
-            Self::S3(store) => store.delete_object(key).map_err(|error| s3_err(&error)),
+            Self::Fs(store) => store.receive_head(head_key, ctx).map_err(DutyFault::Fs),
+            Self::S3(store) => store.receive_head(head_key, ctx).map_err(DutyFault::S3),
+        }
+    }
+}
+
+fn duty_admin<T>(certainty: AdminCertainty<T>, op: &str) -> Result<T, String> {
+    match certainty {
+        AdminCertainty::Completed { value } => Ok(value),
+        AdminCertainty::NotStarted { error } => Err(format!("{op}: not started: {error:?}")),
+        AdminCertainty::OutcomeUnknown { error } => {
+            Err(format!("{op}: outcome unknown: {error:?}"))
         }
     }
 }
@@ -289,7 +321,7 @@ fn run() -> Result<(), String> {
     match args.command.as_str() {
         "status" => {
             let backend = backend_of(&args, "--fs-root", true)?;
-            let status = status_hosted(&backend, &prefix, None, HEAD_CAP);
+            let status = status_hosted(&backend, &prefix, None, HEAD_CAP, &work);
             print!("{}", render(&status));
             Ok(())
         }
@@ -311,8 +343,10 @@ fn run() -> Result<(), String> {
         }
         "fence" => {
             let backend = backend_of(&args, "--fs-root", true)?;
-            let revision = admin::fence_revision_hosted(&backend, &prefix, HEAD_CAP, &work)
-                .map_err(|error| format!("fence: {error:?}"))?;
+            let revision = duty_admin(
+                admin::fence_revision_hosted(&backend, &prefix, HEAD_CAP, &work),
+                "fence",
+            )?;
             println!("fenced: head revision {}", revision.0);
             Ok(())
         }
@@ -323,8 +357,10 @@ fn run() -> Result<(), String> {
                 .parse()
                 .map_err(|_| "`--epoch` must be a positive integer")?;
             let next = ReceiptEpoch::new(raw).ok_or("`--epoch` must be positive")?;
-            let revision = admin::rotate_receipts_hosted(&backend, &prefix, next, HEAD_CAP, &work)
-                .map_err(|error| format!("rotate: {error:?}"))?;
+            let revision = duty_admin(
+                admin::rotate_receipts_hosted(&backend, &prefix, next, HEAD_CAP, &work),
+                "rotate",
+            )?;
             println!("rotated: open epoch {raw}, head revision {}", revision.0);
             Ok(())
         }
@@ -338,18 +374,20 @@ fn run() -> Result<(), String> {
             } else {
                 RootKind::RestorePoint
             };
-            let root = admin::add_named_root_hosted(
-                &backend,
-                &prefix,
-                root_id,
-                kind,
-                label,
-                op,
-                &RootPolicy::DEFAULT,
-                HEAD_CAP,
-                &work,
-            )
-            .map_err(|error| format!("root-add: {error:?}"))?;
+            let root = duty_admin(
+                admin::add_named_root_hosted(
+                    &backend,
+                    &prefix,
+                    root_id,
+                    kind,
+                    label,
+                    op,
+                    &RootPolicy::DEFAULT,
+                    HEAD_CAP,
+                    &work,
+                ),
+                "root-add",
+            )?;
             println!(
                 "root added: base seq {}, tip seq {}, label {:?}",
                 root.recovery.base.seq, root.recovery.tip.seq, root.label
@@ -359,10 +397,12 @@ fn run() -> Result<(), String> {
         "root-release" => {
             let backend = backend_of(&args, "--fs-root", true)?;
             let root_id = operation(&args, "--root-id")?;
-            let released = admin::release_named_root_hosted(
-                &backend, &prefix, root_id, false, HEAD_CAP, &work,
-            )
-            .map_err(|error| format!("root-release: {error:?}"))?;
+            let released = duty_admin(
+                admin::release_named_root_hosted(
+                    &backend, &prefix, root_id, false, HEAD_CAP, &work,
+                ),
+                "root-release",
+            )?;
             match released {
                 Some(root) => println!(
                     "released root {:?}: recovery capability base {}..tip {} is no longer pinned",
@@ -377,7 +417,7 @@ fn run() -> Result<(), String> {
             let destination = backend_of(&args, "--dest-fs-root", false)?;
             let dest_prefix = args.require("--dest-prefix")?;
             let op = operation(&args, "--op")?;
-            let (head, _) = read_live_head(&backend, &prefix, HEAD_CAP)
+            let (head, _) = read_live_head(&backend, &prefix, HEAD_CAP, &work)
                 .map_err(|error| format!("backup: head: {error:?}"))?;
             let live = head
                 .control
@@ -418,7 +458,7 @@ fn run() -> Result<(), String> {
             let destination = backend_of(&args, "--dest-fs-root", false)?;
             let dest_prefix = args.require("--dest-prefix")?;
             let op = operation(&args, "--op")?;
-            let (_, digest) = read_backup_manifest(&destination, dest_prefix, op)
+            let (_, digest) = read_backup_manifest(&destination, dest_prefix, op, &work)
                 .map_err(|error| format!("verify-backup: {error:?}"))?;
             let report = verify_backup(
                 &destination,
@@ -478,5 +518,81 @@ fn main() -> ExitCode {
             eprintln!("{message}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bumbledb::work::Resource;
+    use bumbledb_log::store::{ObjectKind, ReceiveLimits, get_verified, put_verified};
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "bdb-duty-charged-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(&path).expect("scratch");
+        path
+    }
+
+    fn modest_work() -> WorkContext {
+        ExecutionPolicy {
+            input_bytes: 0,
+            working_bytes: 1 << 20,
+            scratch_bytes: 0,
+            result_bytes: 0,
+            rows: 0,
+            work_units: 1_024,
+            timeout: Duration::from_secs(5),
+        }
+        .start()
+        .expect("work")
+    }
+
+    #[test]
+    fn any_store_receive_object_and_receive_head_keep_charged_bytes_not_a_vec() {
+        let root = scratch("receive");
+        let store = AnyStore::Fs(FsStore::new(&root));
+        let ctx = modest_work();
+        let reference =
+            put_verified(&store, "t", 1, ObjectKind::Chunk, b"duty-payload").expect("put");
+        store
+            .create_head("t/HEAD", b"duty-head")
+            .expect("create_head");
+        let transport = TransportContext::new(&ctx, ReceiveLimits::capped(1 << 20));
+        let baseline = ctx.used(Resource::WorkingBytes);
+        let body = get_verified(&store, "t", &reference, transport).expect("verified");
+        assert!(
+            ctx.used(Resource::WorkingBytes) > baseline,
+            "duty AnyStore must not hand out an uncharged Vec"
+        );
+        assert_eq!(body.as_bytes(), b"duty-payload");
+        let received = store
+            .receive_object(&reference.key("t"), transport)
+            .expect("receive_object");
+        assert!(
+            received.into_charged().is_some(),
+            "receive_object keeps ChargedBytes when work is present"
+        );
+        match store
+            .receive_head("t/HEAD", transport)
+            .expect("receive_head")
+        {
+            ReceivedHead::Present { body: head, .. } => {
+                assert_eq!(head.as_bytes(), b"duty-head");
+                assert!(
+                    head.into_charged().is_some(),
+                    "receive_head keeps ChargedBytes when work is present"
+                );
+            }
+            ReceivedHead::Absent => panic!("duty AnyStore receive_head must see the created head"),
+        }
+        drop(body);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

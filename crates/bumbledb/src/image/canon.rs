@@ -22,7 +22,10 @@
 
 use bumbledb_theory::schema::{FieldDescriptor, ValueType};
 
-use super::intern::{SENTINEL_WORD, TextInterner};
+use super::intern::{ResidentAdmit, SENTINEL_WORD, TextInterner};
+use crate::canonical::field::{
+    self, interval_f64_order_words, interval_i64_order_words, interval_u64_order_words,
+};
 use crate::error::{CorruptionError, Error, Result};
 use crate::work::WorkContext;
 
@@ -36,6 +39,7 @@ pub(crate) enum TextWords<'i> {
     Intern {
         interner: &'i mut TextInterner,
         work: &'i WorkContext,
+        generation: &'i crate::work::GenerationHandle,
     },
     /// Find the token or the sentinel — scan-side comparisons where an
     /// un-interned text can equal no interned word.
@@ -52,21 +56,46 @@ pub(crate) enum TextWords<'i> {
     HandleIntern(&'i crate::image::intern::InternerHandle<'i>),
     /// As `Lookup`, locking per field through the shared handle.
     HandleLookup(&'i crate::image::intern::InternerHandle<'i>),
+    /// Exact scratch-backed resolution for nonresident execution.
+    Nonresident {
+        store: &'i mut crate::image::NonresidentTextStore,
+        work: &'i WorkContext,
+    },
 }
 
 impl TextWords<'_> {
-    fn word(&mut self, text: &str) -> Result<u64> {
+    fn word(&mut self, text: &str) -> Result<ResidentAdmit<u64>> {
         match self {
-            Self::Intern { interner, work } => interner.intern(text, work).map_err(Error::from),
-            Self::Lookup(interner) => Ok(interner.lookup_word(text)),
-            Self::HandleIntern(handle) => handle.intern_text(text),
-            Self::HandleLookup(handle) => Ok(handle.lookup_word(text)),
+            Self::Intern {
+                interner,
+                work,
+                generation,
+            } => match interner.intern(text, work, generation.ledger()) {
+                Ok(token) => Ok(ResidentAdmit::Ready(token)),
+                Err(crate::image::intern::InternError::Cache(_))
+                | Err(crate::image::intern::InternError::Allocation) => {
+                    Ok(ResidentAdmit::BeyondMemory(
+                        crate::image::ResidentTextExhausted::new((*generation).clone()),
+                    ))
+                }
+                Err(error) => Err(Error::from(error)),
+            },
+            Self::Lookup(interner) => Ok(ResidentAdmit::Ready(interner.lookup_word(text))),
+            Self::HandleIntern(handle) => handle.intern_or_spill(text),
+            Self::HandleLookup(handle) => Ok(ResidentAdmit::Ready(handle.lookup_word(text))),
+            Self::Nonresident { store, work } => store.intern(text, work).map(ResidentAdmit::Ready),
         }
     }
 }
 
 const fn corrupt(what: &'static str) -> Error {
     Error::Corruption(CorruptionError::MalformedValue(what))
+}
+
+fn row_error(error: crate::canonical::RowError) -> Error {
+    Error::from_store(crate::storage::store::StoreError::Changes(
+        crate::changes::ChangeError::Row(error),
+    ))
 }
 
 struct Reader<'a> {
@@ -97,7 +126,7 @@ impl<'a> Reader<'a> {
 }
 
 pub(crate) const fn i64_word(value: i64) -> u64 {
-    value.cast_unsigned() ^ (1 << 63)
+    field::i64_word(value)
 }
 
 /// Decode one canonical row into flat column words (one word per image
@@ -115,7 +144,7 @@ pub(crate) fn row_words(
     bytes: &[u8],
     text: &mut TextWords<'_>,
     out: &mut Vec<u64>,
-) -> Result<()> {
+) -> Result<ResidentAdmit<()>> {
     let mut reader = Reader { bytes };
     if usize::from(u16::from_be_bytes(reader.word()?)) != fields.len() {
         return Err(corrupt("canonical row arity"));
@@ -140,7 +169,12 @@ pub(crate) fn row_words(
                 let blob = reader.blob()?;
                 let text_str =
                     std::str::from_utf8(blob).map_err(|_| corrupt("non-UTF-8 stored text"))?;
-                out.push(text.word(text_str)?);
+                match text.word(text_str)? {
+                    ResidentAdmit::Ready(token) => out.push(token),
+                    ResidentAdmit::BeyondMemory(exhausted) => {
+                        return Ok(ResidentAdmit::BeyondMemory(exhausted));
+                    }
+                }
             }
             (5, ValueType::FixedBytes { len }) => {
                 let blob = reader.blob()?;
@@ -154,38 +188,22 @@ pub(crate) fn row_words(
                     out.push(u64::from_be_bytes(word));
                 }
             }
-            (
-                6,
-                ValueType::Interval {
-                    element: bumbledb_theory::schema::IntervalElement::U64,
-                }
-                | ValueType::FixedInterval {
-                    element: bumbledb_theory::schema::FixedIntervalElement::U64,
-                    ..
-                },
-            ) => {
-                let start = u64::from_be_bytes(reader.word()?);
-                let end = u64::from_be_bytes(reader.word()?);
-                if start >= end {
-                    return Err(corrupt("stored interval bounds"));
-                }
+            (6, _) if field::interval_tag_u64(descriptor) => {
+                let (start, end) = interval_u64_order_words(
+                    u64::from_be_bytes(reader.word()?),
+                    u64::from_be_bytes(reader.word()?),
+                    descriptor,
+                )
+                .map_err(row_error)?;
                 out.extend([start, end]);
             }
-            (
-                7,
-                ValueType::Interval {
-                    element: bumbledb_theory::schema::IntervalElement::I64,
-                }
-                | ValueType::FixedInterval {
-                    element: bumbledb_theory::schema::FixedIntervalElement::I64,
-                    ..
-                },
-            ) => {
-                let start = i64_word(i64::from_be_bytes(reader.word()?));
-                let end = i64_word(i64::from_be_bytes(reader.word()?));
-                if start >= end {
-                    return Err(corrupt("stored interval bounds"));
-                }
+            (7, _) if field::interval_tag_i64(descriptor) => {
+                let (start, end) = interval_i64_order_words(
+                    i64::from_be_bytes(reader.word()?),
+                    i64::from_be_bytes(reader.word()?),
+                    descriptor,
+                )
+                .map_err(row_error)?;
                 out.extend([start, end]);
             }
             (8, ValueType::Id128) => {
@@ -197,18 +215,14 @@ pub(crate) fn row_words(
                     raw[8..].try_into().expect("sixteen bytes"),
                 ));
             }
-            (
-                9,
-                ValueType::Interval {
-                    element: bumbledb_theory::schema::IntervalElement::F64,
-                },
-            ) => {
+            (9, _) if field::interval_tag_f64(descriptor) => {
                 let start = bumbledb_theory::F64::from_canonical_be_bytes(reader.word()?)
                     .map_err(|_| corrupt("non-canonical stored F64 endpoint"))?;
                 let end = bumbledb_theory::F64::from_canonical_be_bytes(reader.word()?)
                     .map_err(|_| corrupt("non-canonical stored F64 endpoint"))?;
-                let (start, end) = (start.to_order_key(), end.to_order_key());
-                if start >= end || start == SENTINEL_WORD {
+                let (start, end) =
+                    interval_f64_order_words(start, end, descriptor).map_err(row_error)?;
+                if start == SENTINEL_WORD {
                     return Err(corrupt("stored dense interval bounds"));
                 }
                 out.extend([start, end]);
@@ -219,7 +233,7 @@ pub(crate) fn row_words(
     if !reader.bytes.is_empty() {
         return Err(corrupt("canonical row trailing bytes"));
     }
-    Ok(())
+    Ok(ResidentAdmit::Ready(()))
 }
 
 /// One decoded row's flat column words plus its field→column map — the
@@ -227,6 +241,7 @@ pub(crate) fn row_words(
 /// image layer's span dispatch for single rows).
 pub(crate) struct RowWords {
     spans: Box<[super::ColumnSpan]>,
+    strings: Box<[bool]>,
     words: Vec<u64>,
 }
 
@@ -234,8 +249,21 @@ impl RowWords {
     pub(crate) fn new(field_types: &[ValueType]) -> Self {
         Self {
             spans: super::column_spans(field_types),
+            strings: field_types
+                .iter()
+                .map(|ty| matches!(ty, ValueType::String))
+                .collect(),
             words: Vec::new(),
         }
+    }
+
+    /// True when this field's column word is an intern/scratch text token.
+    #[must_use]
+    pub(crate) fn field_is_string(&self, field: bumbledb_theory::schema::FieldId) -> bool {
+        self.strings
+            .get(usize::from(field.0))
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Decode `bytes` into this row's words (replacing the previous row).
@@ -246,7 +274,7 @@ impl RowWords {
         fields: &[FieldDescriptor],
         bytes: &[u8],
         text: &mut TextWords<'_>,
-    ) -> Result<()> {
+    ) -> Result<ResidentAdmit<()>> {
         self.words.clear();
         row_words(fields, bytes, text, &mut self.words)
     }
@@ -332,5 +360,37 @@ impl crate::image::view::Operands for RowWords {
                 crate::image::view::Loaded::Block { words, count }
             }
         })
+    }
+
+    fn string_field(&self, at: crate::image::view::OperandAddr) -> bool {
+        self.field_is_string(at.field())
+    }
+}
+
+#[cfg(test)]
+mod string_field_tests {
+    use super::*;
+    use crate::image::view::{OperandAddr, Operands};
+    use bumbledb_theory::schema::FieldId;
+
+    /// Probe/fallback `RowWords` must mark String columns so `holds` uses
+    /// [`crate::image::TextEq`] instead of raw word identity.
+    #[test]
+    fn d02_row_words_string_field_marks_string_columns() {
+        let row = RowWords::new(&[ValueType::U64, ValueType::String, ValueType::I64]);
+        assert!(!Operands::string_field(
+            &row,
+            OperandAddr::from(FieldId(0))
+        ));
+        assert!(Operands::string_field(
+            &row,
+            OperandAddr::from(FieldId(1))
+        ));
+        assert!(!Operands::string_field(
+            &row,
+            OperandAddr::from(FieldId(2))
+        ));
+        assert!(row.field_is_string(FieldId(1)));
+        assert!(!row.field_is_string(FieldId(0)));
     }
 }

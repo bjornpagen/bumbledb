@@ -95,7 +95,8 @@ fn a_wrong_width_stored_blob_refuses_typed() {
         let interner = TextInterner::default();
         let mut text = TextWords::Lookup(&interner);
         let mut out = Vec::new();
-        row_words(schema.relation(D).fields(), bytes, &mut text, &mut out)?;
+        row_words(schema.relation(D).fields(), bytes, &mut text, &mut out)?
+            .expect_ready("lookup never spills");
         Ok(out)
     };
     let words = walk(&healthy).expect("the healthy row walks");

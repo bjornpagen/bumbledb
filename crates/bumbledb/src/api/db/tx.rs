@@ -39,7 +39,7 @@ pub(super) enum TxPhase {
 
 /// One write transaction over the committed parent. `!Send`/`!Sync`
 /// (borrows the parent snapshot, which is `!Sync`); carries the handle's
-/// schema typestate `S`. No prepared-query or [`super::ReadInstance`] is
+/// schema typestate `S`. No prepared-query or [`super::ReadFrame`] is
 /// reachable from here.
 pub struct WriteTx<'a, S> {
     schema: &'a Arc<Schema>,
@@ -271,7 +271,12 @@ impl<'a, S> WriteTx<'a, S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        let Some(coll) = self.accept_dyn(rel, facts)? else {
+        // A shape refusal after an applied prefix poisons the transaction:
+        // the collection boundary is part of the apply, not a free pre-check.
+        let Some(coll) = self
+            .accept_dyn(rel, facts)
+            .map_err(|error| self.poison(error))?
+        else {
             return Ok(MutationReport::EMPTY);
         };
         self.apply_accepted(&coll, ChangeKind::Add)
@@ -284,7 +289,10 @@ impl<'a, S> WriteTx<'a, S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        let Some(coll) = self.accept_dyn(rel, facts)? else {
+        let Some(coll) = self
+            .accept_dyn(rel, facts)
+            .map_err(|error| self.poison(error))?
+        else {
             return Ok(MutationReport::EMPTY);
         };
         self.apply_accepted(&coll, ChangeKind::Remove)
@@ -335,31 +343,40 @@ impl<'a, S> WriteTx<'a, S> {
         }
         self.refuse_poisoned()?;
         let rel = coll.relation();
-        self.refuse_closed(rel)?;
+        // Shape refusals after an applied prefix poison the transaction —
+        // the same hook `apply` failures take, so the accepted-collection
+        // bridge cannot leave a half-applied transaction usable.
+        if let Err(error) = self.refuse_closed(rel) {
+            return Err(self.poison(error));
+        }
         let schema = Arc::clone(self.schema);
         let Some(relation) = schema.relation_checked(rel) else {
-            return Err(DynIdError::UnknownRelation { relation: rel }.into());
+            return Err(self.poison(DynIdError::UnknownRelation { relation: rel }.into()));
         };
         if usize::from(coll.arity()) != relation.fields().len() {
-            return Err(FactShapeError::ArityMismatch {
-                relation: rel,
-                mismatch: Mismatch {
-                    witnessed: usize::from(coll.arity()),
-                    required: relation.fields().len(),
-                },
-            }
-            .into());
+            return Err(self.poison(
+                FactShapeError::ArityMismatch {
+                    relation: rel,
+                    mismatch: Mismatch {
+                        witnessed: usize::from(coll.arity()),
+                        required: relation.fields().len(),
+                    },
+                }
+                .into(),
+            ));
         }
         // The parsed roster must echo the sealed roster: an ETL-time schema
         // drift is the honest `TypeMismatch` naming the first foreign field.
         for (ordinal, (echoed, field)) in (0u16..).zip(coll.roster().iter().zip(relation.fields()))
         {
             if *echoed != field.value_type {
-                return Err(FactShapeError::TypeMismatch {
-                    relation: rel,
-                    field: FieldId(ordinal),
-                }
-                .into());
+                return Err(self.poison(
+                    FactShapeError::TypeMismatch {
+                        relation: rel,
+                        field: FieldId(ordinal),
+                    }
+                    .into(),
+                ));
             }
         }
         let mut values = Vec::new();
@@ -428,9 +445,98 @@ impl<'a, S> WriteTx<'a, S> {
                 None => Ok(None),
             };
         }
-        match self.find_by_key(relation, &statement.projection, &key_values)? {
+        match self.find_by_key(relation, &statement.projection, &key_values, self.work)? {
             Some(bytes) => K::Fact::decode(RowReader::new(bytes)?).map(Some),
             None => Ok(None),
+        }
+    }
+
+    /// Keyed point read over the final-state view with an explicit work
+    /// budget (native/E seam).
+    /// # Errors
+    /// Shape refusals or storage failure.
+    pub fn get_with_work<'tx, K: Key<'tx, Schema = S>>(
+        &'tx self,
+        key: K,
+        work: WorkContext,
+    ) -> Result<Option<K::Fact>> {
+        self.refuse_poisoned()?;
+        let relation = <K::Fact as Fact<'tx>>::RELATION;
+        let (_, statement) =
+            get_path::key_statement_of(self.schema.as_ref(), relation, K::STATEMENT)?;
+        let mut key_values = Vec::new();
+        key.append_key_values(&mut key_values)?;
+        get_path::check_key_shape(
+            self.schema.as_ref(),
+            relation,
+            &statement.projection,
+            &key_values,
+        )?;
+        if let Some(rows) = self.closed.get(relation) {
+            return match get_path::closed_row_by_key(rows, statement, &key_values) {
+                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                None => Ok(None),
+            };
+        }
+        match self.find_by_key(relation, &statement.projection, &key_values, &work)? {
+            Some(bytes) => K::Fact::decode(RowReader::new(bytes)?).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// # Errors
+    /// Shape refusals or storage failure.
+    pub fn get_dyn_with_work(
+        &self,
+        relation: RelationId,
+        key: StatementId,
+        key_values: &[Value],
+        work: WorkContext,
+    ) -> Result<Option<Vec<Value>>> {
+        let mut out = Vec::new();
+        Ok(self
+            .get_dyn_into_with_work(relation, key, key_values, &mut out, work)?
+            .then_some(out))
+    }
+
+    /// # Errors
+    /// Shape refusals or storage failure.
+    pub fn get_dyn_into_with_work(
+        &self,
+        relation: RelationId,
+        key: StatementId,
+        key_values: &[Value],
+        out: &mut Vec<Value>,
+        work: WorkContext,
+    ) -> Result<bool> {
+        out.clear();
+        self.refuse_poisoned()?;
+        let (_, statement) = get_path::key_statement_of(self.schema.as_ref(), relation, key)?;
+        get_path::check_key_shape(
+            self.schema.as_ref(),
+            relation,
+            &statement.projection,
+            key_values,
+        )?;
+        if let Some(rows) = self.closed.get(relation) {
+            return Ok(
+                match get_path::closed_row_by_key(rows, statement, key_values) {
+                    Some(row) => {
+                        out.extend(row.values.iter().cloned());
+                        true
+                    }
+                    None => false,
+                },
+            );
+        }
+        match self.find_by_key(relation, &statement.projection, key_values, &work)? {
+            Some(bytes) => {
+                let fields = self.schema.relation(relation).fields();
+                let decoded = crate::canonical::decode(fields, bytes, &work).map_err(row_error)?;
+                out.extend(decoded.values);
+                Ok(true)
+            }
+            None => Ok(false),
         }
     }
 
@@ -477,7 +583,7 @@ impl<'a, S> WriteTx<'a, S> {
                 },
             );
         }
-        match self.find_by_key(relation, &statement.projection, key_values)? {
+        match self.find_by_key(relation, &statement.projection, key_values, self.work)? {
             Some(bytes) => {
                 let fields = self.schema.relation(relation).fields();
                 let decoded =
@@ -489,15 +595,18 @@ impl<'a, S> WriteTx<'a, S> {
         }
     }
 
-    /// Reference keyed lookup over the final-state view: pending adds
-    /// first (they are the freshest proposal), then parent rows that are
-    /// not pending removes. Exact decoded-value comparison; acceleration
-    /// is the recorded C04/C05 follow-up.
+    /// Keyed lookup over the final-state view: pending adds first (they are
+    /// the freshest proposal, an in-memory walk of this transaction's own
+    /// net delta), then the committed parent through the store's determinant
+    /// index ([`get_path::find_snapshot_row`] — bucket-shaped work with
+    /// exact decoded confirmation, never a relation scan), skipping a
+    /// committed row this transaction pending-removes.
     fn find_by_key(
         &self,
         relation: RelationId,
         projection: &[FieldId],
         key_values: &[Value],
+        work: &WorkContext,
     ) -> Result<Option<&[u8]>> {
         let fields = self.schema.relation(relation).fields();
         let lower = (relation, row_key(&[][..]));
@@ -508,30 +617,37 @@ impl<'a, S> WriteTx<'a, S> {
             if *kind != ChangeKind::Add {
                 continue;
             }
-            self.work.step(1).map_err(store_work)?;
-            let decoded = crate::canonical::decode(fields, row, self.work).map_err(row_error)?;
-            if get_path::projection_matches(&decoded.values, projection, key_values) {
+            work.step(1).map_err(store_work)?;
+            let decoded = crate::canonical::decode(fields, row, &work).map_err(row_error)?;
+            if get_path::projection_matches(decoded.values(), projection, key_values) {
                 return Ok(Some(row));
             }
         }
-        let iterator = self.parent.rows(relation).map_err(Error::from_store)?;
-        for entry in iterator {
-            self.work.step(1).map_err(store_work)?;
-            let (_, row) = entry.map_err(Error::from_store)?;
-            if let Some((_, kind)) = self
-                .pending
-                .range((relation, row_key(row))..=(relation, row_key(row)))
-                .next()
-                && *kind == ChangeKind::Remove
-            {
-                continue;
-            }
-            let decoded = crate::canonical::decode(fields, row, self.work).map_err(row_error)?;
-            if get_path::projection_matches(&decoded.values, projection, key_values) {
-                return Ok(Some(row));
-            }
+        // Committed fall-through: the parent snapshot answers through the
+        // determinant bucket with exact confirmation. The committed state is
+        // judged lawful against this key, so at most one committed row
+        // matches the full projection; if this transaction removes it, the
+        // final state holds no such row.
+        let Some(row) = get_path::find_snapshot_row(
+            self.parent,
+            self.schema.as_ref(),
+            relation,
+            projection,
+            key_values,
+            &work,
+        )?
+        else {
+            return Ok(None);
+        };
+        if let Some((_, kind)) = self
+            .pending
+            .range((relation, row_key(row))..=(relation, row_key(row)))
+            .next()
+            && *kind == ChangeKind::Remove
+        {
+            return Ok(None);
         }
-        Ok(None)
+        Ok(Some(row))
     }
 }
 

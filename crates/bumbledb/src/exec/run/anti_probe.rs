@@ -9,6 +9,7 @@ use super::{
     AntiProbeForm, AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source,
     grow_scratch, word_base,
 };
+use crate::work::WorkError;
 
 #[expect(
     clippy::too_many_arguments,
@@ -35,7 +36,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
     point_sources: &mut Vec<(usize, usize, Source, bool)>,
     read_slot: impl Fn(usize, usize) -> u64,
     counters: &mut C,
-) {
+) -> Result<(), WorkError> {
     let width_of = |var: crate::ir::VarId| -> usize {
         var_widths
             .iter()
@@ -45,7 +46,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
     };
     for (a_idx, spec) in specs.iter().enumerate() {
         if survivors.is_empty() {
-            return;
+            return Ok(());
         }
         let n = survivors.len();
 
@@ -115,7 +116,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
 
                 counters.phase_start(node_idx, JoinPhase::Force);
                 let start = colts[spec.occ].start();
-                colts[spec.occ].ensure_forced(start, 0);
+                colts[spec.occ].ensure_forced(start, 0)?;
                 counters.phase_end(node_idx, JoinPhase::Force);
 
                 counters.phase_start(node_idx, JoinPhase::Hash);
@@ -163,7 +164,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                             0,
                             &probe_keys[k * kw..(k + 1) * kw],
                             hashes[k],
-                        );
+                        )?;
                         let hit = match child {
                             None => false,
                             Some(_) if spec.point_parts.is_empty() => true,
@@ -194,4 +195,5 @@ pub(super) fn anti_probe_pass<C: Counters>(
             }
         }
     }
+    Ok(())
 }

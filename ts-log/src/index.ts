@@ -29,22 +29,13 @@ export type { LogError, ProtocolReason } from "#errors.ts"
 export { ProtocolError } from "#errors.ts"
 export { HostedHistory, LocalHistory } from "#history.ts"
 export type {
-	CommandDigest,
 	CommandId,
 	CommandRef,
-	DatabaseId,
 	DatabaseIdentity,
-	DecisionDigest,
 	DecisionStamp,
 	Freshness,
-	IncarnationId,
-	OperationId,
 	OperationRef,
-	PlanSetDigest,
 	ReadConsistency,
-	ReceiptEpoch,
-	RequestId,
-	RootId,
 	StateStamp
 } from "#identity.ts"
 export {
@@ -118,7 +109,8 @@ export type {
 	SourceAccessReport,
 	SubmitOutcome,
 	TerminalOutcome,
-	TerminalReceipt
+	TerminalReceipt,
+	PublicationPhase
 } from "#outcome.ts"
 export type {
 	Command as CommandValue,

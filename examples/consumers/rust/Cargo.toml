@@ -1,14 +1,19 @@
-# The chapter 34 Rust consumer fixture (API-12 / G01 "test public examples
-# as downstream consumers"): a standalone package OUTSIDE the workspace
+# Packed Rust consumer (D07/D22): a standalone package OUTSIDE the workspace
 # consuming the public core crate the way an installed application would.
+# Current public spellings: ChangeSet::builder(schema, work) + apply +
+# ApplyOutcome::InvariantRejected + db.snapshot(&work) + Db::close() -> CloseReport.
+# Verification: NotRun until packed-consumer qualification.
 # Crate publication is not authorized (`publish = false` on the core), so a
 # path dependency is the installed-consumer stand-in for Rust.
 #
 # Compile and run in F3:
 #   cargo run --manifest-path examples/consumers/rust/Cargo.toml
+# No `version` field on purpose: this fixture is not a shipped package, and
+# the release lockstep sweep (ts/scripts/build.ts assertRosterComplete)
+# treats any tracked versioned manifest as roster-bearing. Cargo defaults
+# an unpublished package to 0.0.0.
 [package]
 name = "bumbledb-consumer-fixture"
-version = "0.0.0"
 edition = "2024"
 publish = false
 

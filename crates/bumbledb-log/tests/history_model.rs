@@ -562,3 +562,75 @@ fn compare_guard(model: &Model, intent: &Intent, stored: u8) {
         "model={model:?}, intent={intent:?}, stored={stored}"
     );
 }
+
+/// Independent post-dispatch observation. Does not call production
+/// `AdmissionView` or writer decision logic (D15 / L08).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndependentResolve {
+    Found,
+    CoveredLoss,
+    ExpiredUnprovable,
+    Unresolved,
+}
+
+impl Model {
+    fn resolve_after_unknown(&self, epoch: u64, request: u8, version_consumed: bool) -> IndependentResolve {
+        if self.receipts.contains_key(&(epoch, request)) {
+            return IndependentResolve::Found;
+        }
+        if epoch <= self.retired {
+            return IndependentResolve::ExpiredUnprovable;
+        }
+        if !version_consumed {
+            return IndependentResolve::Unresolved;
+        }
+        IndependentResolve::CoveredLoss
+    }
+}
+
+#[test]
+fn same_tip_maintenance_advances_head_without_a_user_decision() {
+    let mut model = Model::genesis(BTreeSet::new());
+    let receipt = decided(model.submit(Intent::new(1, [(0, 0)], []), 2, Fault::None));
+    let decision_before = model.decision;
+    let facts_before = model.facts.clone();
+    model.maintain(2, 0, 0);
+    assert_eq!(model.decision, decision_before);
+    assert_eq!(model.facts, facts_before);
+    assert_eq!(model.head, receipt.decision + 1);
+    assert!(model.receipts.contains_key(&(1, 1)));
+}
+
+#[test]
+fn lost_ack_then_retirement_is_expired_unprovable_not_covered_loss() {
+    let mut model = Model::genesis(BTreeSet::new());
+    let intent = Intent::new(1, [(0, 0)], []);
+    assert_eq!(
+        model.submit(intent.clone(), 2, Fault::LostReply),
+        Answer::Unknown
+    );
+    assert!(model.receipts.contains_key(&(1, 1)));
+    model.maintain(2, 1, 0);
+    assert!(model.receipts.is_empty());
+    assert_eq!(
+        model.resolve_after_unknown(1, 1, true),
+        IndependentResolve::ExpiredUnprovable
+    );
+    assert_ne!(
+        model.resolve_after_unknown(1, 1, true),
+        IndependentResolve::CoveredLoss
+    );
+}
+
+#[test]
+fn consumed_version_and_retained_absence_is_covered_loss() {
+    let model = Model::genesis(BTreeSet::new());
+    assert_eq!(
+        model.resolve_after_unknown(1, 9, true),
+        IndependentResolve::CoveredLoss
+    );
+    assert_eq!(
+        model.resolve_after_unknown(1, 9, false),
+        IndependentResolve::Unresolved
+    );
+}

@@ -139,6 +139,14 @@ impl ComputedSink {
         }
         self.inner.emit(&self.bindings);
     }
+
+    fn flow_after_row(&self) -> Flow {
+        if self.error.is_some() {
+            Flow::Error
+        } else {
+            Flow::from_sink_progress(self.inner.progress())
+        }
+    }
 }
 
 impl Sink for ComputedSink {
@@ -147,11 +155,14 @@ impl Sink for ComputedSink {
             self.bindings.set(slot, bindings.get(slot));
         }
         self.row();
-        Flow::Continue
+        self.flow_after_row()
     }
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         for &entry in batch.survivors {
+            if self.error.is_some() {
+                break;
+            }
             for slot in 0..self.slots {
                 let value = match batch.source_of(slot) {
                     LeafSource::Key(word) => batch.key(entry, word),
@@ -161,6 +172,18 @@ impl Sink for ComputedSink {
             }
             self.row();
         }
-        Flow::Continue
+        self.flow_after_row()
+    }
+
+    fn progress(&self) -> crate::exec::sink::SinkProgress {
+        if self.error.is_some() {
+            crate::exec::sink::SinkProgress::Error
+        } else {
+            self.inner.progress()
+        }
+    }
+
+    fn take_error(&mut self) -> Option<crate::error::Error> {
+        self.error.take().or_else(|| self.inner.take_error())
     }
 }

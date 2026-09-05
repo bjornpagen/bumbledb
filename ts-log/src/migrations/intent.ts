@@ -105,13 +105,15 @@ export function dropField(relation: AnyRelation | string, field: string): Migrat
 }
 
 /**
- * A typed value for a NEW required field, as a core `ScalarExpr` over the
- * source row's old fields. No fabricated zero/null and no callback.
+ * A value for a NEW required field, as a core `ScalarExpr` over the source
+ * row's old fields — including unresolved field arithmetic. Native compile
+ * binds kinds; this constructor does not require a resolved result. No
+ * fabricated zero/null and no callback.
  */
 export function backfill<R extends AnyRelation, K extends keyof Fact<R> & string>(
 	relation: R,
 	field: K,
-	expression: ScalarExpr<Fact<R>[K]>
+	expression: ScalarExpr<Fact<R>[K]> | ScalarExpr<"unresolved">
 ): MigrationIntentEntry {
 	return Object.freeze({
 		kind: "backfill" as const,
@@ -122,13 +124,15 @@ export function backfill<R extends AnyRelation, K extends keyof Fact<R> & string
 }
 
 /**
- * An explicit checked conversion for an EXISTING field whose type or meaning
- * changes, as a core `ScalarExpr` over the source row's old fields.
+ * An explicit conversion for an EXISTING field whose type or meaning
+ * changes, as a core `ScalarExpr` over the source row's old fields —
+ * including unresolved field arithmetic (`Scalar.add(Scalar.field("units"),
+ * Scalar.u64(1n))`). Same-schema convert is a recorded plan, not a no-op.
  */
 export function convert<R extends AnyRelation, K extends keyof Fact<R> & string>(
 	relation: R,
 	field: K,
-	expression: ScalarExpr<Fact<R>[K]>
+	expression: ScalarExpr<Fact<R>[K]> | ScalarExpr<"unresolved">
 ): MigrationIntentEntry {
 	return Object.freeze({
 		kind: "convert" as const,

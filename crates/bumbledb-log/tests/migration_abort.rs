@@ -700,10 +700,10 @@ fn wrong_and_stale_activation_references_refuse() {
 
     // The control on disk carries the one-time activation marker.
     let namespace = TargetNamespace::new(&root.join("targets"), incarnation(0xec)).unwrap();
-    let target: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), tagged_schema()).unwrap();
+    let target: Db<SchemaDescriptor> = Db::open(&namespace.target_dir(), tagged_schema(), work()).unwrap();
     let mut control = None;
     target
-        .read(|read| {
+        .read(work(), |read| {
             control = read.integration_host_attachment()?.map(<[u8]>::to_vec);
             Ok(())
         })
