@@ -3,7 +3,6 @@ use super::{Answers, ResolveMemo};
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::NonresidentTextStore;
 use crate::image::intern::InternerHandle;
-use crate::obs;
 
 impl ResolveMemo {
     pub(super) fn new() -> Self {
@@ -30,7 +29,28 @@ impl ResolveMemo {
     /// Resolve one token into this finalize's answer heap. Intern text
     /// is read from the generation owner; scratch text from the live
     /// store. No persistent uncharged dictionary is retained.
+    #[inline]
     pub(super) fn resolve(
+        &mut self,
+        interner: &InternerHandle<'_>,
+        store: Option<&mut NonresidentTextStore>,
+        word: u64,
+        buffer: &mut Answers,
+    ) -> Result<(usize, usize)> {
+        // The resident last-token hit needs no lookup or owner check.
+        // Scratch tokens must still validate their live store and epoch
+        // before consulting the same cached range.
+        if !crate::image::is_scratch_token(word)
+            && let Some((last_word, range)) = self.last
+            && last_word == word
+        {
+            return Ok(range);
+        }
+        self.resolve_checked(interner, store, word, buffer)
+    }
+
+    #[inline(never)]
+    fn resolve_checked(
         &mut self,
         interner: &InternerHandle<'_>,
         store: Option<&mut NonresidentTextStore>,
@@ -68,31 +88,42 @@ impl ResolveMemo {
             return Ok(range);
         }
         let key = [word];
-        if let (range, false) = self.ranges.get_or_insert_with(&key, || (0, 0)) {
-            let range = (range.0 as usize, range.1 as usize);
+        let (slot, inserted) = self.ranges.get_or_insert_with(&key, || (0, 0));
+        if !inserted {
+            let range = (slot.0 as usize, slot.1 as usize);
             self.last = Some((word, range));
             return Ok(range);
         }
 
         let start = buffer.text.len();
-        let Some(len) = super::text::resolve_tagged(interner, store, word, |text| {
-            buffer.text.push_str(text);
-        })?
-        else {
-            return Err(Error::Corruption(CorruptionError::DanglingInternId(
-                crate::encoding::InternId::from_raw(word),
-            )));
-        };
-        obs::event(
-            obs::names::DICT_RESOLVE,
-            obs::TraceArgs::Pair(word, len as u64),
-        );
+        // Resolution touches only the resolver and answer heap, never this
+        // map. Retain the inserted slot instead of probing (and possibly
+        // growing before a duplicate lookup) a second time.
+        let resolved = (|| {
+            let Some(len) = super::text::resolve_tagged(interner, store, word, |text| {
+                buffer.text.push_str(text);
+            })?
+            else {
+                return Err(Error::Corruption(CorruptionError::DanglingInternId(
+                    crate::encoding::InternId::from_raw(word),
+                )));
+            };
 
-        let range = (
-            u32::try_from(start).map_err(|_| Error::ResultBytesOverflow)?,
-            u32::try_from(len).map_err(|_| Error::ResultBytesOverflow)?,
-        );
-        let (slot, _) = self.ranges.get_or_insert_with(&key, || range);
+            let range = (
+                u32::try_from(start).map_err(|_| Error::ResultBytesOverflow)?,
+                u32::try_from(len).map_err(|_| Error::ResultBytesOverflow)?,
+            );
+            Ok((range, len))
+        })();
+        let (range, len) = match resolved {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                // Failed resolution must not leave (0, 0) as a valid hit.
+                // Keep the existing answer-buffer/error semantics intact.
+                self.clear();
+                return Err(error);
+            }
+        };
         *slot = range;
         self.last = Some((word, (start, len)));
         Ok((start, len))

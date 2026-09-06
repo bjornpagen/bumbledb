@@ -1,4 +1,84 @@
 use super::*;
+
+#[test]
+fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves() {
+    #[derive(Default)]
+    struct RawRows(Vec<Vec<u64>>);
+    impl Sink for RawRows {
+        fn may_use_distinct_traversal() -> bool {
+            true
+        }
+
+        fn emit(&mut self, bindings: &Bindings) -> Flow {
+            self.0.push(
+                (0..bindings.slot_count())
+                    .map(|slot| bindings.get(slot))
+                    .collect(),
+            );
+            Flow::Continue
+        }
+        fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
+            for &entry in batch.survivors {
+                self.0.push(
+                    (0..batch.bindings.slot_count())
+                        .map(|slot| match batch.source_of(slot) {
+                            LeafSource::Key(word) => batch.key(entry, word),
+                            LeafSource::Outer => batch.bindings.get(slot),
+                        })
+                        .collect(),
+                );
+            }
+            Flow::Continue
+        }
+        fn begin_scan(&mut self, _: &LeafScan<'_>) -> ScanOffer {
+            panic!("physical distinctness must never offer raw source multiplicity")
+        }
+    }
+    let schema = schema(2);
+    let normalized = normalized(
+        vec![occurrence(0, 0, &[(0, 0)]), occurrence(1, 1, &[(0, 1)])],
+        vec![],
+    );
+    let plan = planned(&normalized, &schema, &[0, 1]);
+    assert_eq!(
+        plan.nodes().len(),
+        2,
+        "first occurrence terminates before the leaf"
+    );
+    assert!(
+        plan.distinct_witness().is_none(),
+        "hidden fields distinguish stored facts"
+    );
+    let witness = plan.scalar_set_traversal().expect("scalar physical proof");
+    let images = views_of(
+        &schema,
+        &[
+            vec![(7, 1), (7, 2), (8, 3)],
+            vec![(11, 1), (11, 2), (12, 3)],
+        ],
+    );
+    let mut colts = colts_for(&plan, &images);
+    let mut executor = Executor::new(&plan);
+    executor.set_physical_distinct(Some(witness));
+    let mut bindings = Bindings::new(plan.slot_count());
+    for _ in 0..2 {
+        let mut sink = RawRows::default();
+        executor
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut NoopCounters,
+            )
+            .unwrap();
+        sink.0.sort_unstable();
+        assert_eq!(
+            sink.0,
+            vec![vec![7, 11], vec![7, 12], vec![8, 11], vec![8, 12]]
+        );
+    }
+}
 use crate::ir::WordCmp;
 
 #[test]

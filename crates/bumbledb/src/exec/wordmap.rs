@@ -49,6 +49,11 @@ const LOAD_DEN: usize = 3;
 
 impl<V: Copy> WordMap<V> {
     #[must_use]
+    pub(crate) const fn arity(&self) -> usize {
+        self.arity
+    }
+
+    #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }

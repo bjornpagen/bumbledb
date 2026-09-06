@@ -77,7 +77,8 @@ fn bench_parses_every_knob() {
         "point,containment_walk",
         "--samples",
         "8",
-        "--trace",
+        "--read-batch",
+        "16",
         "--alloc",
         "--proxy-per-rep",
         "--out",
@@ -91,7 +92,7 @@ fn bench_parses_every_knob() {
             corpus: CorpusArgs::default(),
             families: Some(vec!["point".to_owned(), "containment_walk".to_owned()]),
             samples: Some(8),
-            trace: true,
+            read_batch: std::num::NonZeroU32::new(16),
             alloc: true,
             proxy_per_rep: true,
             out: Some(PathBuf::from("artifacts")),
@@ -110,48 +111,81 @@ fn bench_parses_every_knob() {
 }
 
 #[test]
-fn trace_requires_a_family() {
-    let cmd = parse(&argv(&["trace", "--family", "skew"])).expect("parses");
-    assert_eq!(
-        cmd,
-        Cmd::Trace {
-            corpus: CorpusArgs::default(),
-            family: "skew".to_owned(),
-        }
-    );
-    let err = parse(&argv(&["trace"])).unwrap_err();
-    assert!(err.contains("--family"), "{err}");
+fn read_batch_is_positive_bounded_and_defaults_to_auto() {
+    let Cmd::Bench(default) = parse(&argv(&["bench"])).expect("default parses") else {
+        panic!("bench command");
+    };
+    assert_eq!(default.read_batch, None);
+    for batch in ["1", "16"] {
+        let Cmd::Bench(args) =
+            parse(&argv(&["bench", "--read-batch", batch])).expect("valid batch")
+        else {
+            panic!("bench command");
+        };
+        assert_eq!(
+            args.read_batch.map(std::num::NonZeroU32::get),
+            batch.parse().ok()
+        );
+    }
+    for batch in ["0", "17", "-1", "1.5", "4294967296"] {
+        let err = parse(&argv(&["bench", "--read-batch", batch])).expect_err("invalid batch");
+        assert!(err.contains("--read-batch"), "{err}");
+    }
+    assert!(parse(&argv(&["bench", "--read-batch"])).is_err());
 }
 
 #[test]
-fn sweep_commit_parses_its_knobs() {
-    let cmd = parse(&argv(&["sweep-commit"])).expect("parses bare");
-    assert_eq!(cmd, Cmd::SweepCommit(SweepArgs::default()));
-    let cmd = parse(&argv(&[
-        "sweep-commit",
-        "--sizes",
-        "4,64",
-        "--samples",
-        "3",
-        "--seed",
-        "9",
-        "--dir",
-        "/tmp/z",
-    ]))
-    .expect("parses");
+fn native_profile_keeps_the_corpus_and_rejects_invalid_windows() {
     assert_eq!(
-        cmd,
-        Cmd::SweepCommit(SweepArgs {
-            sizes: Some(vec![4, 64]),
-            samples: Some(3),
-            seed: 9,
-            dir: PathBuf::from("/tmp/z"),
-        })
+        parse(&argv(&[
+            "profile",
+            "--family",
+            "balance",
+            "--scale",
+            "M",
+            "--seed",
+            "7",
+            "--dir",
+            "corpus",
+            "--seconds",
+            "30",
+            "--out",
+            "profile-out"
+        ])),
+        Ok(Cmd::Profile(ProfileArgs {
+            corpus: CorpusArgs {
+                scale: Scale::M,
+                seed: 7,
+                dir: PathBuf::from("corpus")
+            },
+            family: "balance".to_owned(),
+            seconds: 30,
+            out: Some(PathBuf::from("profile-out")),
+        }))
     );
-    let err = parse(&argv(&["sweep-commit", "--sizes", "4,x"])).unwrap_err();
-    assert!(err.contains("--sizes"), "{err}");
-    let err = parse(&argv(&["sweep-commit", "--scale", "S"])).unwrap_err();
-    assert!(err.contains("--scale"), "{err}");
+    let cmd = parse(&argv(&["profile", "--family", "point"])).expect("default window");
+    assert!(cmd.runs_measurements());
+    assert!(matches!(cmd, Cmd::Profile(ProfileArgs { seconds: 10, .. })));
+    for seconds in ["0", "3601", "-1", "1.5", "4294967296"] {
+        assert!(
+            parse(&argv(&[
+                "profile",
+                "--family",
+                "point",
+                "--seconds",
+                seconds
+            ]))
+            .is_err()
+        );
+    }
+    for args in [
+        vec!["profile"],
+        vec!["profile", "--family", ""],
+        vec!["profile", "--family", "point", "--trace"],
+        vec!["profile", "--family", "point", "--seconds"],
+    ] {
+        assert!(parse(&argv(&args)).is_err(), "{args:?}");
+    }
 }
 
 #[test]
@@ -178,6 +212,7 @@ fn storage_parses_the_lane_flags() {
             dir: PathBuf::from("/tmp/x"),
             churn_dir: Some(PathBuf::from("/tmp/churn")),
             out: Some(PathBuf::from("artifacts")),
+            ..StorageArgs::default()
         })
     );
 
@@ -191,6 +226,50 @@ fn storage_parses_the_lane_flags() {
     assert!(err.contains("XXL"), "{err}");
     let err = parse(&argv(&["storage", "--scales", ""])).unwrap_err();
     assert!(err.contains("--scales"), "{err}");
+}
+
+#[test]
+fn storage_home_costs_is_opt_in_bounded_and_separate_from_corpus_options() {
+    assert_eq!(
+        parse(&argv(&[
+            "storage",
+            "--profile",
+            "home-costs",
+            "--rows",
+            "512",
+            "--samples",
+            "4"
+        ])),
+        Ok(Cmd::Storage(StorageArgs {
+            profile: StorageProfile::HomeCosts,
+            rows: 512,
+            samples: 4,
+            ..StorageArgs::default()
+        }))
+    );
+    assert_eq!(
+        parse(&argv(&["storage", "--profile", "home-costs"])),
+        Ok(Cmd::Storage(StorageArgs {
+            profile: StorageProfile::HomeCosts,
+            ..StorageArgs::default()
+        }))
+    );
+    for flags in [
+        vec!["--rows", "256"],
+        vec!["--samples", "4"],
+        vec!["--profile", "unknown"],
+        vec!["--profile", "home-costs", "--scales", "S"],
+        vec!["--profile", "home-costs", "--churn-dir", "old"],
+        vec!["--profile", "home-costs", "--rows", "0"],
+        vec!["--profile", "home-costs", "--rows", "257"],
+        vec!["--profile", "home-costs", "--rows", "1048832"],
+        vec!["--profile", "home-costs", "--samples", "0"],
+        vec!["--profile", "home-costs", "--samples", "4097"],
+    ] {
+        let mut args = vec!["storage"];
+        args.extend(flags);
+        assert!(parse(&argv(&args)).is_err(), "accepted {args:?}");
+    }
 }
 
 #[test]
@@ -209,7 +288,6 @@ fn writes_parses_the_lane_flags() {
         "1,10,100,1000",
         "--samples",
         "4",
-        "--trace",
         "--out",
         "artifacts",
     ]))
@@ -223,7 +301,6 @@ fn writes_parses_the_lane_flags() {
             lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: Some(4),
-            trace: true,
             out: Some(PathBuf::from("artifacts")),
         })
     );
@@ -341,7 +418,6 @@ fn primerlane_parses_the_lane_flags() {
         "2",
         "--dir",
         "/tmp/p",
-        "--trace",
         "--out",
         "artifacts",
     ]))
@@ -353,7 +429,6 @@ fn primerlane_parses_the_lane_flags() {
             relations: 6,
             seed: 2,
             dir: PathBuf::from("/tmp/p"),
-            trace: true,
             alloc: false,
             out: Some(PathBuf::from("artifacts")),
         })
@@ -367,7 +442,7 @@ fn primerlane_parses_the_lane_flags() {
     let err = parse(&argv(&["primerlane", "--facts", "0"])).unwrap_err();
     assert!(err.contains("rejects 0"), "{err}");
     let err = parse(&argv(&["primerlane", "--trace", "--alloc"])).unwrap_err();
-    assert!(err.contains("mutually exclusive"), "{err}");
+    assert!(err.contains("--trace"), "{err}");
 }
 
 #[test]
@@ -450,7 +525,6 @@ fn crud_parses_its_flags() {
             dir: PathBuf::from("x"),
             only: Some(vec!["crud_insert".to_owned(), "crud_rmw".to_owned()]),
             samples: Some(9),
-            trace: false,
             alloc: false,
             out: Some(PathBuf::from("y")),
         })
@@ -483,7 +557,6 @@ fn lawful_parses_its_flags() {
                 "law_reject_window".to_owned()
             ]),
             samples: Some(9),
-            trace: false,
             alloc: false,
             out: Some(PathBuf::from("y")),
         })
@@ -499,33 +572,16 @@ fn crud_refuses_an_unknown_flag() {
 }
 
 #[test]
-fn scenarios_parses_the_trace_and_alloc_flags() {
-    let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--trace"])).expect("parses") else {
-        panic!("scenarios");
-    };
-    assert!(args.trace && !args.alloc);
+fn scenarios_parses_the_allocation_flag() {
     let Cmd::Scenarios(args) = parse(&argv(&["scenarios", "--alloc"])).expect("parses") else {
         panic!("scenarios");
     };
-    assert!(args.alloc && !args.trace);
+    assert!(args.alloc);
 }
 
 #[test]
-fn the_world_commands_refuse_trace_with_alloc() {
-    let err = parse(&argv(&["scenarios", "--trace", "--alloc"])).unwrap_err();
-    assert!(err.contains("mutually exclusive"), "{err}");
-    assert!(err.contains("scenarios"), "{err}");
-}
-
-#[test]
-fn the_write_worlds_take_trace_and_refuse_alloc() {
+fn the_write_worlds_refuse_alloc() {
     for cmd in ["crud", "lawful"] {
-        let parsed = parse(&argv(&[cmd, "--trace"])).expect("parses");
-        let args = match parsed {
-            Cmd::Crud(args) | Cmd::Lawful(args) => args,
-            other => panic!("{cmd}: {other:?}"),
-        };
-        assert!(args.trace && !args.alloc, "{cmd}");
         let err = parse(&argv(&[cmd, "--alloc"])).unwrap_err();
         assert!(err.contains("no alloc pass"), "{cmd}: {err}");
         assert!(err.contains(cmd), "{cmd}: {err}");
@@ -550,11 +606,9 @@ fn help_names_the_shared_machine_boost_switch() {
 fn the_boost_seam_membership_is_pinned() {
     for tokens in [
         vec!["bench"],
-        vec!["trace", "--family", "point"],
         vec!["scenarios"],
         vec!["crud"],
         vec!["lawful"],
-        vec!["sweep-commit"],
         vec!["storage"],
         vec!["writes"],
         vec!["curves"],
@@ -596,8 +650,6 @@ fn help_text_names_the_binary_and_version() {
         "verify",
         "verify-store",
         "bench",
-        "trace",
-        "sweep-commit",
         "storage",
         "writes",
         "curves",

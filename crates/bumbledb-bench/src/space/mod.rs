@@ -17,11 +17,14 @@ pub mod variants;
 /// from the successor store; they survive only as historical attribution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Namespace {
-    /// Fact rows: `tag 1 + relation 4 + local row 8` key, canonical payload.
+    /// Fact rows: tag + schema-fixed relation ordinal + selected exact home
+    /// (zero bytes for unclustered relations) + eight-byte row ordinal.
     Fact,
-    /// Membership: `(relation, 16-byte fingerprint, row id) → ()`.
+    /// Fingerprint membership for relations without an eligible exact
+    /// scalar-key index: `(relation, 16-byte fingerprint, row id) → ()`.
     Membership,
-    /// Determinant: `(projection id, routing, optional interval tail, row) → ()`.
+    /// Secondary determinant: `(projection id, routing, optional interval tail,
+    /// row ordinal) → home bytes`. The selected primary has no separate entry.
     Determinant,
     /// Host / meta database records (not multiplied by live fact count).
     HostMeta,
@@ -52,70 +55,31 @@ impl Namespace {
     /// Classify one `OwnedSnapshot::entry_census` record.
     #[must_use]
     pub const fn from_census_tag(is_meta: bool, tag: u8) -> Self {
-        if is_meta {
-            return Self::HostMeta;
-        }
-        match tag {
-            0x01 => Self::Fact,
-            0x02 => Self::Membership,
-            0x03 => Self::Determinant,
-            _ => Self::Unknown,
+        use bumbledb::store::PhysicalKeyKind;
+        match PhysicalKeyKind::from_census_tag(is_meta, tag) {
+            PhysicalKeyKind::Row => Self::Fact,
+            PhysicalKeyKind::Membership => Self::Membership,
+            PhysicalKeyKind::Determinant => Self::Determinant,
+            PhysicalKeyKind::Metadata => Self::HostMeta,
+            PhysicalKeyKind::Unknown => Self::Unknown,
         }
     }
 }
 
 /// Live raw key/value model. Discriminator is interned [`ProjectionId`],
-/// not a declaration-order statement number. Values for membership and
-/// determinant entries are empty.
+/// not a declaration-order statement number. Membership values are empty;
+/// secondary determinant values carry the relation's selected home bytes.
 pub mod current_layout {
-    /// Fact key: tag 1 + relation 4 + local row 8.
-    pub const ROW_KEY: u64 = 13;
-    /// Membership key: tag 1 + relation 4 + fingerprint 16 + local row 8.
-    pub const MEMBERSHIP_KEY: u64 = 29;
-    pub const MEMBERSHIP_VALUE: u64 = 0;
-    pub const MEMBERSHIP_ENTRY: u64 = MEMBERSHIP_KEY + MEMBERSHIP_VALUE;
-    /// Determinant overhead: tag 1 + projection id 2 + row surrogate 8.
-    pub const DETERMINANT_OVERHEAD: u64 = 11;
-    /// Exact u64 routing width (C1: scalar grouping ≤16 encoded bytes).
-    pub const EXACT_U64_ROUTING: u64 = 8;
-    /// Fingerprint routing width (BLAKE3 truncated, exact-checked).
-    pub const FINGERPRINT_ROUTING: u64 = 16;
-    /// Application Uuid stored width (not a physical row id).
-    pub const UUID_WIDTH: u64 = 16;
-
+    pub use bumbledb::store::PhysicalKeyWidths;
+    /// Raw bytes for one row, membership entry and fingerprint determinant.
+    /// A hypothetical shape, not a per-row bill for all relations: eligible
+    /// scalar-key relations cluster their bodies by that key, omit membership
+    /// and the selected determinant, and put home bytes in secondary values.
     #[must_use]
-    pub const fn fact_entry(payload: u64) -> u64 {
-        ROW_KEY + payload
-    }
-
-    #[must_use]
-    pub const fn determinant_entry(routing: u64, interval_tail: u64) -> u64 {
-        DETERMINANT_OVERHEAD + routing + interval_tail
-    }
-
-    #[must_use]
-    pub const fn determinant_exact_u64() -> u64 {
-        determinant_entry(EXACT_U64_ROUTING, 0)
-    }
-
-    #[must_use]
-    pub const fn determinant_fingerprint() -> u64 {
-        determinant_entry(FINGERPRINT_ROUTING, 0)
-    }
-
-    /// Raw key bytes for one fact + membership + one fingerprint determinant
-    /// (chapter 40: 13+29+27 = 69) — payload is extra.
-    pub const KEY_BYTES_FACT_MEMBERSHIP_FP_DET: u64 = ROW_KEY + MEMBERSHIP_KEY + 27;
-
-    #[must_use]
-    pub const fn fact_plus_membership(payload: u64) -> u64 {
-        fact_entry(payload) + MEMBERSHIP_ENTRY
-    }
-
-    /// One fact, membership, and one fingerprint determinant, including payload.
-    #[must_use]
-    pub const fn fact_membership_fp_det(payload: u64) -> u64 {
-        fact_plus_membership(payload) + determinant_fingerprint()
+    pub fn fact_membership_fp_det(widths: PhysicalKeyWidths, payload: u64) -> u64 {
+        (widths.row + widths.membership + widths.determinant_overhead + bumbledb::store::FP_LEN)
+            as u64
+            + payload
     }
 }
 
@@ -164,7 +128,8 @@ pub mod audited_layout {
 }
 
 pub mod successor_layout {
-    pub const MEMBERSHIP_ENTRY: u64 = super::current_layout::MEMBERSHIP_ENTRY;
-    pub const MEMBERSHIP_SAVING_PER_FACT: u64 =
-        super::historical_layout::MEMBERSHIP_ENTRY - MEMBERSHIP_ENTRY;
+    #[must_use]
+    pub fn membership_saving_per_fact(widths: bumbledb::store::PhysicalKeyWidths) -> u64 {
+        super::historical_layout::MEMBERSHIP_ENTRY - widths.membership as u64
+    }
 }

@@ -1,9 +1,11 @@
 # Correspondence cases — current Rust, independent oracles
 
-Authored by L19. Verification **NotRun**. These are expected results and
-counterexamples for L02/L05/L08/L20; they are not a second engine and
+These are expected results and
+counterexamples for the engine and its independent evaluators; they are not a second engine and
 not a production-planner twin. Lean theorems name hypotheses only.
 Substrate (LMDB, S3, native lifetimes, host FP control) is unmodeled.
+Run the workspace correspondence tests and `scripts/lean.sh` for current
+evidence; this catalog is not a test result or an all-platform certificate.
 
 A case fails if the named current constructor disagrees with the
 independent oracle, or if a deleted filename/symbol count is treated as

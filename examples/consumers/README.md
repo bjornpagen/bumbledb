@@ -1,38 +1,40 @@
-# Packed public consumers (D07 / D22 / D27)
+# Public API consumers
 
-These are the installed-package specimens: Rust core, TypeScript core,
-TypeScript log, and the native-ledger-shaped application. They compile
-against the **shipped** surfaces — never workspace path aliases, `#`-import
-conditions, or repo compiler settings.
+These examples exercise Rust core, TypeScript core, TypeScript log, and a
+ledger-shaped application using the current public APIs.
 
-Verification: **NotRun** until packed-consumer qualification with freshly
-installed tarballs. Authoring these files is not evidence they executed.
+## Run the installed-package check
 
-- `core-ts/consumer.ts`, `log-ts/consumer.ts`, `native-ledger/consumer.ts`
-  — copied by `scripts/packed-import.sh` into an isolated tarball consumer.
-  They construct lazy programs and export them; import performs no native
-  work. Runtime lifecycle lives in `scripts/packed-consumer.ts`.
-- `rust/` — a standalone Cargo package outside the workspace. Crate
-  publication is not authorized (`publish = false`); a path dependency is
-  the installed-consumer stand-in:
-  `cargo run --manifest-path examples/consumers/rust/Cargo.toml`.
+After building the TypeScript packages and this host's native addon, run
+from the repository root:
 
-All four spell the same `Learning` schema so schema-identity gates can
-compare one fingerprint across public surfaces.
+```sh
+scripts/packed-import.sh --host-only
+```
 
-## Journey L21 must run
+The script stages actual tarballs, installs them into temporary projects,
+typechecks downstream declarations without workspace aliases, and executes
+the shared runtime journey. It also checks pure metadata authoring with the
+addon absent, runs the Rust example, and generates and exercises the Notes
+application in an isolated copy. The default invocation, without
+`--host-only`, requires all three platform binaries.
 
-1. Pure import of schema/query/`Scalar.add(Scalar.field("units"), Scalar.u64(1n))` with the native package unavailable.
-2. Install fresh packed core/log/native artifacts outside the workspace.
-3. Generate history, initialize, mutate with sealed IDs, same-ID retry/resolve, witnessed correction.
-4. Reuse `readAttempts` on a core snapshot and a published snapshot.
-5. `collect` / `pages` under explicit delivery work; tiny `resultBytes` must refuse.
-6. Generated increment-units convert, reopen, backup/restore, joined close.
-7. Public Rust consumer: `ChangeSet::builder(db.schema(), work.clone())` + `db.apply` + `ApplyOutcome::InvariantRejected` + `db.snapshot(&work)` + `Db::close() -> CloseReport`.
-8. Generated runner input is `{ manifest, plans, snapshots }` (empty-base plus one snapshot per entry).
+This checks staged artifacts, not installation from the public registry.
 
-## What these files delete
+## Examples
 
-Old replica/`Promise`/callback APIs, private imports, handwritten plan
-bytes, runtime-per-request, unlimited work twins, and fake successful
-outcomes. Lost ack is resolved under the original command identity.
+- `core-ts/consumer.ts`: schemas, changes, bounded reads, and reusable queries.
+- `log-ts/consumer.ts`: sealed commands, retained identity, and history reads.
+- `native-ledger/consumer.ts`: application composition over those surfaces.
+- `rust/`: a standalone Cargo consumer. It uses a source dependency because
+  the Rust workspace crates currently have `publish = false`.
+
+The TypeScript examples export lazy programs; the application supplies one
+`NativeRuntime.layer`. Database work is Effect, while schema/query/scalar
+authoring remains pure. `readAttempts` accepts the shared `QueryReader`
+implemented by both core and published snapshots.
+
+The runtime driver is `scripts/packed-consumer.ts`. It owns operational
+assertions such as durable retries, bounded result refusal, migration, and
+backup/restore. Read that driver and its execution output for actual coverage;
+the existence of an example alone is not qualification.

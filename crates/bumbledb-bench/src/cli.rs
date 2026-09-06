@@ -32,10 +32,6 @@ impl Default for CorpusArgs {
     }
 }
 
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent booleans mirror the external configuration"
-)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BenchArgs {
     pub corpus: CorpusArgs,
@@ -43,13 +39,22 @@ pub struct BenchArgs {
     pub families: Option<Vec<String>>,
     /// Measured-sample override for the read protocol.
     pub samples: Option<u32>,
-    pub trace: bool,
+    /// Fixed operations per timed read sample; None retains automatic batching.
+    pub read_batch: Option<std::num::NonZeroU32>,
     pub alloc: bool,
 
     pub proxy_per_rep: bool,
     pub out: Option<PathBuf>,
 
     pub i_am_lying: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileArgs {
+    pub corpus: CorpusArgs,
+    pub family: String,
+    pub seconds: u32,
+    pub out: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -69,18 +74,13 @@ pub enum Cmd {
 
     Bench(BenchArgs),
 
-    Trace {
-        corpus: CorpusArgs,
-        family: String,
-    },
+    Profile(ProfileArgs),
 
     Scenarios(ScenarioArgs),
 
     Crud(ScenarioArgs),
 
     Lawful(ScenarioArgs),
-
-    SweepCommit(SweepArgs),
 
     Merge {
         dirs: Vec<PathBuf>,
@@ -115,11 +115,10 @@ impl Cmd {
     pub fn runs_measurements(&self) -> bool {
         match self {
             Self::Bench(_)
-            | Self::Trace { .. }
+            | Self::Profile(_)
             | Self::Scenarios(_)
             | Self::Crud(_)
             | Self::Lawful(_)
-            | Self::SweepCommit(_)
             | Self::Storage(_)
             | Self::Writes(_)
             | Self::Curves(_)
@@ -140,27 +139,6 @@ impl Cmd {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SweepArgs {
-    pub sizes: Option<Vec<u64>>,
-
-    pub samples: Option<u32>,
-    pub seed: u64,
-
-    pub dir: PathBuf,
-}
-
-impl Default for SweepArgs {
-    fn default() -> Self {
-        Self {
-            sizes: None,
-            samples: None,
-            seed: 1,
-            dir: PathBuf::from("bench-data"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScenarioArgs {
     pub seed: u64,
     pub dir: PathBuf,
@@ -168,8 +146,6 @@ pub struct ScenarioArgs {
     pub only: Option<Vec<String>>,
 
     pub samples: Option<u32>,
-
-    pub trace: bool,
 
     pub alloc: bool,
     pub out: Option<PathBuf>,
@@ -182,15 +158,24 @@ impl Default for ScenarioArgs {
             dir: PathBuf::from("bench-data"),
             only: None,
             samples: None,
-            trace: false,
             alloc: false,
             out: None,
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageProfile {
+    Corpus,
+    HomeCosts,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageArgs {
+    pub profile: StorageProfile,
+    /// Opt-in home-cost experiment only; ordinary corpus scales are unchanged.
+    pub rows: u64,
+    pub samples: u32,
     pub scales: Vec<Scale>,
     pub seed: u64,
     pub dir: PathBuf,
@@ -202,6 +187,9 @@ pub struct StorageArgs {
 impl Default for StorageArgs {
     fn default() -> Self {
         Self {
+            profile: StorageProfile::Corpus,
+            rows: 16_384,
+            samples: 64,
             scales: vec![Scale::S],
             seed: 1,
             dir: PathBuf::from("bench-data"),
@@ -225,8 +213,6 @@ pub struct WritesArgs {
     pub batches: Vec<u32>,
 
     pub samples: Option<u32>,
-
-    pub trace: bool,
     pub out: Option<PathBuf>,
 }
 
@@ -239,7 +225,6 @@ impl Default for WritesArgs {
             lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10, 100, 1000],
             samples: None,
-            trace: false,
             out: None,
         }
     }
@@ -315,8 +300,6 @@ pub struct PrimerlaneArgs {
 
     pub dir: PathBuf,
 
-    pub trace: bool,
-
     pub alloc: bool,
     pub out: Option<PathBuf>,
 }
@@ -328,7 +311,6 @@ impl Default for PrimerlaneArgs {
             relations: 12,
             seed: 1,
             dir: PathBuf::from("bench-data"),
-            trace: false,
             alloc: false,
             out: None,
         }

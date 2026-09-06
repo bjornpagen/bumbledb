@@ -185,6 +185,79 @@ fn repeated_same_shape_executions_plateau_capacity_and_charges() {
     }
 }
 
+#[test]
+fn forced_probes_preserve_pools_and_work_until_reset_requires_construction() {
+    let schema = schema();
+    let rows: Vec<_> = (0..16).map(|i| (i, i)).collect();
+    let image = view_of(&schema, &rows);
+    let work = working(u64::MAX);
+    let mut colt = join_colt(&image);
+    colt.bind(Some(&work));
+    colt.force_root().unwrap();
+    let root = Colt::root();
+    let hit = colt.get_prehashed(root, 0, &[7], hash_key(&[7])).unwrap();
+    assert!(hit.is_some());
+    let lengths = |colt: &Colt| {
+        let mark = colt.pool_mark();
+        [
+            mark.nodes,
+            mark.chunks,
+            mark.chunk_positions,
+            mark.maps,
+            mark.ctrl,
+            mark.buckets,
+            mark.dense,
+        ]
+    };
+    let before = lengths(&colt);
+    let retained = colt.retained_bytes();
+    let charged = colt.charged_bytes();
+    let units = work.used(Resource::WorkUnits);
+    let bytes = work.used(Resource::WorkingBytes);
+    for _ in 0..32 {
+        assert_eq!(
+            colt.get_prehashed(root, 0, &[7], hash_key(&[7])).unwrap(),
+            hit
+        );
+        assert_eq!(
+            colt.get_prehashed(root, 0, &[99], hash_key(&[99])).unwrap(),
+            None
+        );
+    }
+    assert_eq!(lengths(&colt), before);
+    assert_eq!(colt.retained_bytes(), retained);
+    assert_eq!(colt.charged_bytes(), charged);
+    assert_eq!(work.used(Resource::WorkingBytes), bytes);
+    assert_eq!(work.used(Resource::WorkUnits), units);
+
+    // A different same-shaped view invalidates the forced map. Retained
+    // allocation cannot bypass construction, its work poll, or rollback.
+    let replacement: Vec<_> = (100..116).map(|i| (i, i)).collect();
+    let replacement = view_of(&schema, &replacement);
+    drop(colt.reset(all(&replacement)));
+    let stopped = working(u64::MAX);
+    stopped.cancel();
+    colt.bind(Some(&stopped));
+    assert_eq!(colt.force_root(), Err(WorkError::Cancelled));
+    assert!(colt.forced_capacity(root).is_none());
+    let resumed = working(u64::MAX);
+    colt.bind(Some(&resumed));
+    colt.force_root().unwrap();
+    assert!(resumed.used(Resource::WorkUnits) > 0);
+    assert_eq!(
+        colt.get_prehashed(root, 0, &[7], hash_key(&[7])).unwrap(),
+        None
+    );
+    assert!(
+        colt.get_prehashed(root, 0, &[107], hash_key(&[107]))
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(lengths(&colt), before);
+    assert_eq!(colt.retained_bytes(), retained);
+    assert_eq!(colt.charged_bytes(), charged);
+}
+
 /// Rebinding a fresh ledger clears a cancelled prior context.
 /// Verification: `NotRun`.
 #[test]

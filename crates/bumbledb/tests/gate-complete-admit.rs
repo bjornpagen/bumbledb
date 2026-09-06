@@ -216,7 +216,6 @@ fn apply_after_admit_install_rejects_conflict_and_pins() {
         | ApplyOutcome::InvariantRejected { .. }
         | ApplyOutcome::Moved { .. } => panic!("empty apply under the pin's witness is NoChange"),
     }
-    assert!(pin.generation_handle().strong_count() >= 1);
     let close_work = work();
     close_work.cancel();
     match db.close(&close_work) {

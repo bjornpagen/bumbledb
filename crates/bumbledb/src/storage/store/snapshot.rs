@@ -26,7 +26,7 @@
 
 use std::ops::Bound;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use bumbledb_theory::schema::RelationId;
 use heed::{RoTxn, WithoutTls};
@@ -34,13 +34,13 @@ use heed::{RoTxn, WithoutTls};
 use super::error::{HostKeyFault, StoreCorruption, StoreError, StoreResult};
 use super::fingerprint::FP_LEN;
 use super::format::{
-    CoreStoreId, EnvironmentId, K_ATTACHMENT, K_HOST_RECORD_TAG, RowId, StoreIdentity,
+    CoreStoreId, EnvironmentId, K_ATTACHMENT, K_HOST_RECORD_TAG, RowId, RowLocator, StoreIdentity,
 };
-use super::gate::GatePass;
+use super::gate::{CachedRead, GatePass, ReadLease};
 use super::host::{HostResume, HostWindow};
 use super::keys::{self, HOST_KEY_MAX};
 use super::rows;
-use super::store_env::{StoreInner, read_generation};
+use super::store_env::StoreInner;
 use crate::storage::GenerationId;
 use crate::work::{ByteKind, ByteReservation, WorkContext};
 
@@ -80,13 +80,82 @@ pub struct StorePageStats {
 }
 
 pub struct OwnedSnapshot {
-    // Declared txn-before-inner: the read transaction ends before the inner
-    // store state (and its directory lock, held transitively) can release.
-    txn: RoTxn<'static, WithoutTls>,
+    // The complete lease, including its gate Arc, drops before inner. A
+    // parked txn then lives only in inner's gate, which drops before its
+    // directory lock; the environment can never outlive that lock.
+    txn: ReadLease,
     inner: Arc<StoreInner>,
-    _pass: GatePass,
     generation: GenerationId,
-    opened: Instant,
+}
+
+/// A projection resolved against its exact pinned store. Keeping both
+/// borrows together prevents callers from pairing another schema's
+/// descriptor with this snapshot, without retaining another owner.
+pub(crate) struct SnapshotProjection<'snapshot> {
+    snapshot: &'snapshot OwnedSnapshot,
+    compiled: &'snapshot crate::schema::CompiledProjection,
+}
+
+impl<'snapshot> SnapshotProjection<'snapshot> {
+    pub(crate) fn compiled(&self) -> &'snapshot crate::schema::CompiledProjection {
+        self.compiled
+    }
+
+    pub(crate) fn count_bounded(
+        &self,
+        projected: &[u8],
+        limit: u64,
+        work: &WorkContext,
+    ) -> StoreResult<Option<u64>> {
+        let snapshot = self.snapshot;
+        let routing = rows::routing_for_compiled(&snapshot.inner, self.compiled, projected);
+        rows::count_determinant_bucket_bounded(
+            &snapshot.inner,
+            &snapshot.txn,
+            self.compiled,
+            &routing,
+            limit,
+            work,
+        )
+    }
+
+    /// Internal first-match probe. Generic projection visitation and
+    /// judgment deliberately keep their ordinary streaming cursor.
+    pub(crate) fn probe(
+        &self,
+        projected: &[u8],
+        work: &WorkContext,
+        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> StoreResult<bool>,
+    ) -> StoreResult<()> {
+        let snapshot = self.snapshot;
+        let routing = rows::routing_for_compiled(&snapshot.inner, self.compiled, projected);
+        rows::probe_determinant_bucket(
+            &snapshot.inner,
+            &snapshot.txn,
+            self.compiled,
+            &routing,
+            work,
+            &mut |locator, bytes| visit(locator.id, bytes),
+        )
+    }
+
+    pub(crate) fn visit(
+        &self,
+        projected: &[u8],
+        work: &WorkContext,
+        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> StoreResult<bool>,
+    ) -> StoreResult<()> {
+        let snapshot = self.snapshot;
+        let routing = rows::routing_for_compiled(&snapshot.inner, self.compiled, projected);
+        rows::visit_determinant_bucket(
+            &snapshot.inner,
+            &snapshot.txn,
+            self.compiled,
+            &routing,
+            work,
+            &mut |locator, bytes| visit(locator.id, bytes),
+        )
+    }
 }
 
 impl std::fmt::Debug for OwnedSnapshot {
@@ -100,19 +169,13 @@ impl std::fmt::Debug for OwnedSnapshot {
 }
 
 impl OwnedSnapshot {
-    pub(crate) fn capture(
-        inner: Arc<StoreInner>,
-        pass: GatePass,
-        txn: RoTxn<'static, WithoutTls>,
-    ) -> StoreResult<Self> {
-        let generation = read_generation(&inner, &txn)?;
-        Ok(Self {
-            txn,
+    pub(crate) fn capture(inner: Arc<StoreInner>, pass: GatePass, reader: CachedRead) -> Self {
+        let generation = reader.generation;
+        Self {
+            txn: ReadLease::new(reader, pass),
             inner,
-            _pass: pass,
             generation,
-            opened: Instant::now(),
-        })
+        }
     }
 
     /// The generation this snapshot witnessed — read from this transaction
@@ -144,11 +207,12 @@ impl OwnedSnapshot {
         self.inner.identity
     }
 
-    /// How long this snapshot has been held; surfaced so a caller blocking
-    /// map growth can find and release it.
+    /// Time since this borrow was admitted to the transaction gate,
+    /// including native transaction setup. This is the same growth-blocking
+    /// admission tracked by gate diagnostics, not the age of a reused reader.
     #[must_use]
     pub fn age(&self) -> Duration {
-        self.opened.elapsed()
+        self.txn.age()
     }
 
     /// Declared C05 seam: P03's cursor/probe execution reads through this
@@ -328,19 +392,30 @@ impl OwnedSnapshot {
         Ok(HostWindow::Done { records, bytes })
     }
 
-    /// Bounded cursor over one relation's committed rows, local row-id
-    /// order. Values borrow this snapshot's mapped pages; they are valid
+    /// Cursor over one relation's committed rows in physical key order.
+    /// Locators retain stable ordinals independently of traversal order.
+    /// Values borrow this snapshot's mapped pages; they are valid
     /// exactly as long as the snapshot.
     /// # Errors
     /// Storage failure.
     pub fn rows(
         &self,
         relation: RelationId,
-    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowId, &[u8])>>> {
+    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowLocator, &[u8])>>> {
         rows::scan_rows(&self.inner, &self.txn, relation)
     }
 
-    /// Exact membership: fingerprint bucket then full canonical bytes.
+    /// Same validated scan and pinned row lifetime as `rows`, without
+    /// constructing physical locators that the query image would discard.
+    pub(crate) fn row_bytes(
+        &self,
+        relation: RelationId,
+    ) -> StoreResult<impl Iterator<Item = StoreResult<&[u8]>>> {
+        rows::scan_row_bytes(&self.inner, &self.txn, relation)
+    }
+
+    /// Exact membership: selected scalar-home or fingerprint bucket,
+    /// followed by full canonical byte confirmation.
     /// # Errors
     /// Storage failure or stopped work.
     pub fn contains(
@@ -352,48 +427,50 @@ impl OwnedSnapshot {
         Ok(rows::exact_lookup(&self.inner, &self.txn, relation, row, work)?.is_some())
     }
 
-    /// Fetch one row's canonical bytes by local id.
+    /// Fetch one row's canonical bytes by its physical locator.
     /// # Errors
     /// Storage failure.
-    pub fn fetch(&self, relation: RelationId, row: RowId) -> StoreResult<Option<&[u8]>> {
+    pub fn fetch(&self, relation: RelationId, row: RowLocator) -> StoreResult<Option<&[u8]>> {
         rows::fetch_row(&self.inner, &self.txn, relation, row)
     }
 
     /// Bounded visitor over one interned projection's determinant bucket.
     /// Named by [`crate::schema::ProjectionId`], never `StatementId`. The
     /// visitor receives each `(row id, canonical row bytes)`; return
-    /// `false` to stop early. Charged bytes stay borrowed for the visit.
+    /// `false` to stop early. Row bytes borrow this pinned snapshot, not
+    /// the temporary index cursor, and may be retained after the visit.
     ///
     /// # Errors
     /// Storage failure, stopped work, or visitor failure.
-    pub fn visit_projection(
-        &self,
+    pub fn visit_projection<'snapshot>(
+        &'snapshot self,
         projection: crate::schema::ProjectionId,
         projected: &[u8],
         work: &WorkContext,
-        visit: &mut dyn FnMut(RowId, &[u8]) -> StoreResult<bool>,
+        visit: &mut dyn FnMut(RowId, &'snapshot [u8]) -> StoreResult<bool>,
     ) -> StoreResult<()> {
-        let Some(key) = self.inner.det.projection(projection) else {
+        let Some(projection) = self.projection(projection) else {
             return Ok(());
         };
-        let routing = rows::routing_for_projected(&self.inner, projection, projected)?;
-        rows::visit_determinant_bucket(
-            &self.inner,
-            &self.txn,
-            projection,
-            &routing,
-            work,
-            &mut |id| {
-                let bytes = rows::fetch_row(&self.inner, &self.txn, key.relation, id)?
-                    .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
-                visit(id, bytes)
-            },
-        )
+        projection.visit(projected, work, visit)
+    }
+
+    pub(crate) fn projection(
+        &self,
+        projection: crate::schema::ProjectionId,
+    ) -> Option<SnapshotProjection<'_>> {
+        self.inner
+            .det
+            .projection(projection)
+            .map(|compiled| SnapshotProjection {
+                snapshot: self,
+                compiled,
+            })
     }
 
     /// Enumerate one committed determinant bucket at this snapshot: every
-    /// local row id indexed under the projection and the projected bytes'
-    /// fingerprint. Prefer [`Self::visit_projection`] when walking rows.
+    /// physical locator under the projection's exact or fingerprint routing.
+    /// Prefer [`Self::visit_projection`] when walking rows.
     /// Candidates only — the caller confirms each row with exact decoded
     /// values (a forced collision widens this set, never an answer).
     /// `projected` follows the store's one projection convention.
@@ -404,7 +481,7 @@ impl OwnedSnapshot {
         projection: crate::schema::ProjectionId,
         projected: &[u8],
         work: &WorkContext,
-    ) -> StoreResult<Vec<RowId>> {
+    ) -> StoreResult<Vec<RowLocator>> {
         rows::determinant_bucket_ids(&self.inner, &self.txn, projection, projected, work)
     }
 
@@ -426,6 +503,12 @@ impl OwnedSnapshot {
         rows::row_count(&self.inner, &self.txn, relation)
     }
 
+    /// Exact key-family widths used by this snapshot's store codec.
+    #[must_use]
+    pub fn physical_key_widths(&self) -> super::PhysicalKeyWidths {
+        self.inner.keys.widths()
+    }
+
     /// Raw physical census (SPACE-01 seam for the bench walker, P14): every
     /// entry of the data and meta databases as (database, leading namespace
     /// tag, key bytes, value bytes) sizes, from this one coherent
@@ -440,8 +523,11 @@ impl OwnedSnapshot {
         work: &WorkContext,
         sink: &mut dyn FnMut(bool, u8, usize, usize) -> StoreResult<()>,
     ) -> StoreResult<()> {
-        for (is_meta, database) in [(false, &self.inner.data), (true, &self.inner.meta)] {
-            let range = database.iter(&self.txn).map_err(StoreError::from_heed)?;
+        for (is_meta, range) in [
+            (false, self.inner.data.iter(&self.txn)),
+            (true, self.inner.meta.iter(&self.txn)),
+        ] {
+            let range = range.map_err(StoreError::from_heed)?;
             for entry in range {
                 work.step(1)?;
                 let (key, value) = entry.map_err(StoreError::from_heed)?;
@@ -507,11 +593,13 @@ impl OwnedSnapshot {
         Ok(stats)
     }
 
-    /// Canonical logical export: rows ordered by relation, then tuple
-    /// fingerprint, then full canonical bytes within a collision bucket.
-    /// Physical row ids never enter the logical identity. An adversarial
-    /// collision bucket is handled by a repeated bounded-memory minimum
-    /// scan — slow, exact, and never an unbounded in-memory list.
+    /// Canonical logical export: relation order, then the schema-selected
+    /// exact scalar key where available, otherwise the tuple fingerprint.
+    /// Rows sharing a routing key are ordered by full canonical bytes.
+    /// Physical row ids never enter the logical identity. This layout's
+    /// export order is part of its logical digest contract. An adversarial
+    /// collision bucket uses repeated bounded-memory minimum scans, never
+    /// an unbounded in-memory list or a full-relation sort.
     ///
     /// Every emitted row, the returned generation, and the attachment all
     /// come from this snapshot's one transaction; the copy helper consumes
@@ -524,16 +612,51 @@ impl OwnedSnapshot {
         sink: &mut dyn FnMut(RelationId, &[u8]) -> StoreResult<()>,
     ) -> StoreResult<ExportReport> {
         let mut emitted = 0u64;
-        let mut lower: Vec<u8> = vec![keys::TAG_MEMBERSHIP];
+        for relation in self.inner.det.relations() {
+            let mut prefix = [0; 1 + 4];
+            let (prefix_len, routing_width) =
+                if let Some(home) = self.inner.det.membership_projection(relation) {
+                    let key = self.inner.keys.row_bucket(relation, &[])?;
+                    prefix[..key.len()].copy_from_slice(&key);
+                    (key.len(), home.encoding.routing_width())
+                } else {
+                    let key = self.inner.keys.membership_bucket(relation, &[0; FP_LEN])?;
+                    let len = key.len() - FP_LEN;
+                    prefix[..len].copy_from_slice(&key[..len]);
+                    (len, FP_LEN)
+                };
+            emitted +=
+                self.export_relation(relation, &prefix[..prefix_len], routing_width, work, sink)?;
+        }
+        Ok(ExportReport {
+            store: self.inner.identity.store,
+            environment: self.inner.identity.environment,
+            generation: self.generation,
+            rows: emitted,
+        })
+    }
+
+    fn export_relation(
+        &self,
+        relation: RelationId,
+        prefix: &[u8],
+        routing_width: usize,
+        work: &WorkContext,
+        sink: &mut dyn FnMut(RelationId, &[u8]) -> StoreResult<()>,
+    ) -> StoreResult<u64> {
+        let mut emitted = 0;
+        let mut lower = [0; 1 + 4 + FP_LEN + 8];
+        let mut lower_len = prefix.len();
+        lower[..lower_len].copy_from_slice(prefix);
         let mut included_lower = true;
         loop {
             work.step(1)?;
             let head = {
                 let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (
                     if included_lower {
-                        Bound::Included(lower.as_slice())
+                        Bound::Included(&lower[..lower_len])
                     } else {
-                        Bound::Excluded(lower.as_slice())
+                        Bound::Excluded(&lower[..lower_len])
                     },
                     Bound::Unbounded,
                 );
@@ -546,69 +669,57 @@ impl OwnedSnapshot {
                     None => None,
                     Some(entry) => {
                         let (key, _) = entry.map_err(StoreError::from_heed)?;
-                        if key.first() == Some(&keys::TAG_MEMBERSHIP) {
-                            let relation = RelationId(u32::from_be_bytes(
-                                key[1..5].try_into().map_err(|_| {
-                                    StoreError::Corruption(StoreCorruption::MalformedKey(
-                                        "membership relation",
-                                    ))
-                                })?,
-                            ));
-                            let mut fp = [0u8; FP_LEN];
-                            if key.len() != keys::MEMBERSHIP_KEY_LEN {
-                                return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
-                                    "membership key width",
-                                )));
-                            }
-                            fp.copy_from_slice(&key[5..5 + FP_LEN]);
-                            Some((relation, fp))
+                        if key.starts_with(prefix) {
+                            keys::row_id_from_suffix(key, prefix.len() + routing_width + 8)?;
+                            Some(&key[..key.len() - 8])
                         } else {
                             None
                         }
                     }
                 }
             };
-            let Some((relation, fp)) = head else {
+            let Some(bucket) = head else {
                 break;
             };
-            emitted += self.export_bucket(relation, &fp, work, sink)?;
-            lower = keys::membership_key(relation, &fp, RowId(u64::MAX)).to_vec();
+            emitted += self.export_bucket(relation, bucket, work, sink)?;
+            lower_len = bucket.len() + 8;
+            lower[..bucket.len()].copy_from_slice(bucket);
+            lower[bucket.len()..lower_len].copy_from_slice(&u64::MAX.to_be_bytes());
             included_lower = false;
         }
-        Ok(ExportReport {
-            store: self.inner.identity.store,
-            environment: self.inner.identity.environment,
-            generation: self.generation,
-            rows: emitted,
-        })
+        Ok(emitted)
     }
 
     fn export_bucket(
         &self,
         relation: RelationId,
-        fp: &[u8; FP_LEN],
+        bucket: &[u8],
         work: &WorkContext,
         sink: &mut dyn FnMut(RelationId, &[u8]) -> StoreResult<()>,
     ) -> StoreResult<u64> {
-        let bucket = keys::membership_bucket(relation, fp);
         // Count first: the common bucket has one row and no ordering work.
         let mut count = 0u64;
+        let mut first = None;
         {
             let range = self
                 .inner
                 .data
-                .prefix_iter(&self.txn, bucket.as_slice())
+                .prefix_iter(&self.txn, bucket)
                 .map_err(StoreError::from_heed)?;
             for entry in range {
                 work.step(1)?;
-                entry.map_err(StoreError::from_heed)?;
+                let (key, value) = entry.map_err(StoreError::from_heed)?;
+                keys::row_id_from_suffix(key, bucket.len() + 8)?;
+                if first.is_none() {
+                    first = Some(self.export_row(relation, key, value)?);
+                }
                 count += 1;
             }
         }
         if count == 1 {
-            let row_id = self.single_bucket_row(&bucket, work)?;
-            let row = rows::fetch_row(&self.inner, &self.txn, relation, row_id)?
-                .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
+            let Some(row) = first else {
+                return Err(StoreError::Corruption(StoreCorruption::DanglingIndexEntry));
+            };
             sink(relation, row)?;
             return Ok(1);
         }
@@ -616,19 +727,18 @@ impl OwnedSnapshot {
         // owned copy of the last emitted row, never the whole bucket.
         let mut last: Option<(Vec<u8>, ByteReservation)> = None;
         for _ in 0..count {
-            let mut best: Option<(RowId, &[u8])> = None;
+            let mut best: Option<&[u8]> = None;
             {
                 let range = self
                     .inner
                     .data
-                    .prefix_iter(&self.txn, bucket.as_slice())
+                    .prefix_iter(&self.txn, bucket)
                     .map_err(StoreError::from_heed)?;
                 for entry in range {
                     work.step(1)?;
-                    let (key, _) = entry.map_err(StoreError::from_heed)?;
-                    let row_id = keys::row_id_from_suffix(key, keys::MEMBERSHIP_KEY_LEN)?;
-                    let row = rows::fetch_row(&self.inner, &self.txn, relation, row_id)?
-                        .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
+                    let (key, value) = entry.map_err(StoreError::from_heed)?;
+                    keys::row_id_from_suffix(key, bucket.len() + 8)?;
+                    let row = self.export_row(relation, key, value)?;
                     if let Some((emitted_bytes, _)) = &last
                         && rows::chunked_cmp(row, emitted_bytes, work)?
                             != std::cmp::Ordering::Greater
@@ -636,21 +746,23 @@ impl OwnedSnapshot {
                         continue;
                     }
                     match &best {
-                        Some((_, best_bytes))
+                        Some(best_bytes)
                             if rows::chunked_cmp(row, best_bytes, work)?
                                 != std::cmp::Ordering::Less => {}
-                        _ => best = Some((row_id, row)),
+                        _ => best = Some(row),
                     }
                 }
             }
-            let (_, row) =
-                best.ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
+            let Some(row) = best else {
+                return Err(StoreError::Corruption(StoreCorruption::DanglingIndexEntry));
+            };
             sink(relation, row)?;
-            let reservation = work.reserve(ByteKind::Working, row.len() as u64)?;
+            let mut reservation = work.reserve(ByteKind::Working, row.len() as u64)?;
             let mut owned = Vec::new();
             owned
                 .try_reserve_exact(row.len())
                 .map_err(|_| StoreError::Allocation)?;
+            reservation.resize(owned.capacity() as u64)?;
             for chunk in row.chunks(rows::BYTE_QUANTUM) {
                 work.step(chunk.len() as u64)?;
                 owned.extend_from_slice(chunk);
@@ -660,18 +772,39 @@ impl OwnedSnapshot {
         Ok(count)
     }
 
-    fn single_bucket_row(&self, bucket: &[u8], work: &WorkContext) -> StoreResult<RowId> {
-        let mut range = self
-            .inner
-            .data
-            .prefix_iter(&self.txn, bucket)
-            .map_err(StoreError::from_heed)?;
-        let entry = range
-            .next()
-            .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
-        work.step(1)?;
-        let (key, _) = entry.map_err(StoreError::from_heed)?;
-        keys::row_id_from_suffix(key, keys::MEMBERSHIP_KEY_LEN)
+    fn export_row<'snapshot>(
+        &'snapshot self,
+        relation: RelationId,
+        key: &[u8],
+        value: &'snapshot [u8],
+    ) -> StoreResult<&'snapshot [u8]> {
+        if key.first() == Some(&keys::TAG_ROW) {
+            let (stored_relation, locator) = self.inner.keys.decode_row(key)?;
+            if stored_relation != relation
+                || locator.home().len() != self.inner.det.home_width(relation)
+            {
+                return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
+                    "export row home width",
+                )));
+            }
+            return Ok(value);
+        }
+        let (stored_relation, _, id) = self.inner.keys.decode_membership(key)?;
+        if stored_relation != relation || !value.is_empty() {
+            return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
+                "export membership entry",
+            )));
+        }
+        let Some(row) = rows::fetch_row(
+            &self.inner,
+            &self.txn,
+            relation,
+            RowLocator::unclustered(id),
+        )?
+        else {
+            return Err(StoreError::Corruption(StoreCorruption::DanglingIndexEntry));
+        };
+        Ok(row)
     }
 }
 

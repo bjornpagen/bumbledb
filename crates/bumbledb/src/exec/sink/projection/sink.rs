@@ -28,19 +28,30 @@ impl Sink for ProjectionSink {
         crate::exec::run::SkipCapability::Licensed
     }
 
-    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
+    fn prepare_scan(&mut self, key_slots: &[usize]) {
         let ProjectionSources::Plain(sources) = &self.sources;
+        self.scan_sources.clear();
+        self.scan_outer.clear();
         for (i, slot) in sources.iter().enumerate() {
-            self.batch_sources[i] = scan
-                .key_slots
+            let source = key_slots
                 .iter()
                 .position(|k| k == slot)
                 .map_or(LeafSource::Outer, LeafSource::Key);
-        }
-        for (i, slot) in sources.iter().enumerate() {
-            if matches!(self.batch_sources[i], LeafSource::Outer) {
-                self.scratch[i] = scan.bindings.get(*slot);
+            self.scan_sources.push(source);
+            if matches!(source, LeafSource::Outer) {
+                self.scan_outer.push((i, *slot));
             }
+        }
+    }
+
+    fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
+        // Unprepared direct callers, or a changed aim, use the ordinary
+        // batch path until the executor installs this rule's scan layout.
+        if self.scan_sources.len() != self.scratch.len() {
+            return ScanOffer::Declined;
+        }
+        for &(output, slot) in &self.scan_outer {
+            self.scratch[output] = scan.bindings.get(slot);
         }
         self.scan_count = 0;
         ScanOffer::Open
@@ -51,7 +62,7 @@ impl Sink for ProjectionSink {
 
         let seen = &mut self.seen;
         let scratch = &mut self.scratch;
-        let sources = &self.batch_sources;
+        let sources = &self.scan_sources;
         if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
             let arity = sources.len();
             let rows = &mut self.scan_rows;
@@ -87,8 +98,10 @@ impl Sink for ProjectionSink {
                     }
                 }
             }
-            for row in rows.chunks_exact(arity) {
-                seen.insert(row);
+            if seen.unique_rows.is_some() {
+                seen.insert_unique_rows(rows);
+            } else {
+                seen.insert_hashed_rows(rows);
             }
         } else {
             run_positions(run, &mut |position: u32| {

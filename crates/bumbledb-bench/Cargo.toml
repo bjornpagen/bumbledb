@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [features]
-obs = ["bumbledb/trace", "bumbledb/alloc-counter"]
+alloc-counter = ["bumbledb/alloc-counter"]
 
 [dependencies]
 aegis = "=0.9.15"

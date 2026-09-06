@@ -120,6 +120,7 @@ fn order_cost(
                 match theory.distinctness_witness(*id)? {
                     crate::schema::DistinctnessWitness::ScalarKeyUnique { .. } => {}
                     crate::schema::DistinctnessWitness::FullRowEquality
+                    | crate::schema::DistinctnessWitness::IntervalKeyUnique { .. }
                     | crate::schema::DistinctnessWitness::ExistenceOnly { .. } => return None,
                 }
                 let projection = theory.projection(*id)?;
@@ -167,6 +168,61 @@ fn selective_filtered_occurrence_leads_a_reference_walk() {
     assert_eq!(order.order, vec![OccId(1), OccId(0)]);
 
     assert_eq!(order.estimates, vec![1, 2]);
+}
+
+#[test]
+fn pruning_unshared_statistics_preserves_every_join_order_estimate() {
+    let schema = schema(3, 3);
+    let mut negated = occurrence(3, 1, vec![(1, 3)]);
+    negated.role = Role::Negated;
+    let mut eliminated = occurrence(4, 1, vec![(1, 2)]);
+    eliminated.role = Role::Eliminated(bumbledb_theory::schema::StatementId(0));
+    let mut folded = occurrence(5, 1, vec![(1, 2)]);
+    folded.role = Role::Folded(crate::ir::normalize::FoldedMark::Positive {
+        relation: RelationId(1),
+        survivors: Box::new([]),
+    });
+    let query = normalized(vec![
+        occurrence(0, 0, vec![(0, 10), (1, 0), (2, 1)]),
+        occurrence(1, 1, vec![(0, 11), (1, 0), (2, 2)]),
+        occurrence(2, 2, vec![(0, 12), (1, 1), (2, 3)]),
+        negated,
+        eliminated,
+        folded,
+    ]);
+    let shared = crate::plan::selectivity::join_variables(&query);
+    assert_eq!(
+        shared,
+        std::collections::BTreeSet::from([VarId(0), VarId(1)])
+    );
+    for seed in 1..=32u64 {
+        let full: Vec<_> = query
+            .occurrences
+            .iter()
+            .filter(|o| o.role.participates())
+            .map(|o| {
+                let rows = 100 + seed * (u64::from(o.occ_id.0) + 1);
+                OccStats {
+                    occ_id: o.occ_id,
+                    rows,
+                    var_distincts: o
+                        .vars
+                        .iter()
+                        .map(|(_, var)| (*var, 1 + (seed * 37 + u64::from(var.0)) % rows))
+                        .collect(),
+                }
+            })
+            .collect();
+        let mut pruned = full.clone();
+        for stat in &mut pruned {
+            stat.var_distincts.retain(|(var, _)| shared.contains(var));
+        }
+        assert_eq!(
+            plan(&query, &schema, &full),
+            plan(&query, &schema, &pruned),
+            "seed {seed}"
+        );
+    }
 }
 
 #[test]

@@ -12,7 +12,7 @@ fn work() -> WorkContext {
 
 fn heap_identity() -> ResultIdentity {
     ResultIdentity {
-        source: PinnedSource::Heap,
+        source: PinnedSource::Heap(crate::schema::fingerprint::SchemaFingerprint([0; 32])),
         generation: None,
     }
 }
@@ -56,38 +56,76 @@ fn assert_rows(collected: &Answers, expected_rows: u64) {
 
 #[test]
 fn ram_and_scratch_backings_agree_on_every_cell() {
-    let work = work();
-    let ram = CompleteResult::seal(sample_answers(32), heap_identity(), &work, usize::MAX)
+    let execute = work();
+    let ram = CompleteResult::seal(sample_answers(32), heap_identity(), &execute, usize::MAX)
         .expect("seal RAM");
     // Forcing the allowance to zero moves the same rows into scratch.
-    let scratch =
-        CompleteResult::seal(sample_answers(32), heap_identity(), &work, 0).expect("seal scratch");
+    let scratch = CompleteResult::seal(sample_answers(32), heap_identity(), &execute, 0)
+        .expect("seal scratch");
     let mut ram = ram;
     let mut scratch = scratch;
     assert_eq!(ram.len(), 32);
     assert_eq!(scratch.len(), 32);
+    let ram_delivery = work();
+    let scratch_delivery = work();
     let a = ram
-        .collect_with_work(u64::MAX, &work, u64::MAX)
+        .collect_with_work(u64::MAX, &ram_delivery, u64::MAX)
         .expect("collect RAM");
     let b = scratch
-        .collect_with_work(u64::MAX, &work, u64::MAX)
+        .collect_with_work(u64::MAX, &scratch_delivery, u64::MAX)
         .expect("collect scratch");
     assert_rows(&a, 32);
     assert_rows(&b, 32);
+    assert_eq!(ram_delivery.used(crate::work::Resource::WorkUnits), 1);
+    assert_eq!(
+        scratch_delivery.used(crate::work::Resource::WorkUnits),
+        1 + 32,
+        "one collection admission plus one scratch lookup per row, not two"
+    );
 }
 
 #[test]
 fn collect_cap_refuses_and_leaves_the_backing_available() {
-    let work = work();
-    let mut sealed =
-        CompleteResult::seal(sample_answers(10), heap_identity(), &work, 0).expect("seal");
-    let refused = sealed.collect_with_work(5, &work, u64::MAX);
-    assert!(matches!(refused, Err(Error::ResultBytesOverflow)));
-    // The sealed backing is still whole after the cap refusal.
-    let collected = sealed
-        .collect_with_work(10, &work, u64::MAX)
-        .expect("collect after refusal");
-    assert_rows(&collected, 10);
+    let execute = work();
+    for ram_allowance in [usize::MAX, 0] {
+        let mut sealed =
+            CompleteResult::seal(sample_answers(3), heap_identity(), &execute, ram_allowance)
+                .expect("seal");
+        let charge = sealed.byte_len();
+        let delivery = work();
+        assert!(matches!(
+            sealed.collect_with_work(2, &delivery, u64::MAX),
+            Err(Error::ResultBytesOverflow)
+        ));
+        assert!(matches!(
+            sealed.collect_with_work(3, &delivery, 0),
+            Err(Error::Store(_))
+        ));
+        if ram_allowance == 0 {
+            // Admit collection and its first scratch read, then refuse
+            // mid-copy. The private prefix must not consume sealed rows.
+            let limited = crate::work::ExecutionPolicy {
+                work_units: 2,
+                ..UNBOUNDED_POLICY
+            }
+            .start()
+            .expect("limited delivery");
+            assert!(matches!(
+                sealed.collect_with_work(3, &limited, u64::MAX),
+                Err(Error::Store(_))
+            ));
+            assert_eq!(limited.used(crate::work::Resource::ResultBytes), 0);
+        }
+        for _ in 0..2 {
+            let collected = sealed
+                .collect_with_work(3, &delivery, u64::MAX)
+                .expect("collect after refusal");
+            assert_rows(&collected, 3);
+        }
+        assert_eq!(sealed.len(), 3);
+        assert_eq!(sealed.byte_len(), charge);
+        assert_eq!(delivery.used(crate::work::Resource::ResultBytes), 0);
+    }
 }
 
 #[test]

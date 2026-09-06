@@ -64,6 +64,7 @@ impl SealedStage {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub(crate) fn resident(&self) -> Option<&Arc<RelationImage>> {
         match self {
             Self::Resident(image) => Some(image),

@@ -32,6 +32,69 @@ fn create_then_reopen_round_trips_identity_and_rows() {
 }
 
 #[test]
+fn physical_key_order_and_prefix_boundaries_survive_reopen() {
+    let (_dir, path) = store_dir("wordwise-key-order");
+    {
+        let store = create_default(&path);
+        let rows: Vec<_> = [u64::MAX, 0, 1, 255, 256, 65535, 65536, 1 << 32, 1 << 63]
+            .into_iter()
+            .map(|id| (NOTE, note(id, "payload")))
+            .chain([(TAG, tag("first")), (TAG, tag("last"))])
+            .collect();
+        commit_changes(&store, &change_set(&schema(), &rows, &[]));
+        assert_prefix_order(&store);
+    }
+    let reopened = open_default(&path);
+    commit_changes(
+        &reopened,
+        &change_set(&schema(), &[(NOTE, note(257, "after-open"))], &[]),
+    );
+    assert_prefix_order(&reopened);
+}
+
+fn assert_prefix_order(store: &Store) {
+    let context = work();
+    let snapshot = store.snapshot(&context).unwrap();
+    let data = snapshot.store_inner().data;
+    let txn = snapshot.read_txn();
+    let keys: Vec<Vec<u8>> = data
+        .iter(txn)
+        .unwrap()
+        .map(|entry| entry.unwrap().0.to_vec())
+        .collect();
+    assert!(
+        keys.windows(2).all(|pair| pair[0] < pair[1]),
+        "physical tree order equals ordinary byte order"
+    );
+    let mut prefixes = std::collections::BTreeSet::from([vec![0], vec![255]]);
+    for key in &keys {
+        for length in 0..=key.len() {
+            prefixes.insert(key[..length].to_vec());
+        }
+    }
+    for prefix in prefixes {
+        let actual: Vec<_> = data
+            .prefix_iter(txn, &prefix)
+            .unwrap()
+            .map(|entry| entry.unwrap().0.to_vec())
+            .collect();
+        let expected: Vec<_> = keys
+            .iter()
+            .filter(|key| key.starts_with(&prefix))
+            .cloned()
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "empty, exact, absent, and bucket prefixes stop at their own boundary"
+        );
+    }
+    assert!(
+        data.prefix_iter(txn, &[0; 44]).is_err(),
+        "overwide physical prefix is refused before slicing"
+    );
+}
+
+#[test]
 fn environment_identity_differs_per_open() {
     let (_dir, path) = store_dir("store-env-identity");
     let first = create_default(&path).environment_id();
@@ -60,6 +123,46 @@ fn a_second_open_refuses_while_the_owner_lives_and_succeeds_after_drop() {
     }
     drop(owner);
     drop(open_default(&path)); // lock released with the owner
+}
+
+#[test]
+fn duplicated_lock_description_does_not_outlive_the_final_environment_owner() {
+    for retain_snapshot in [false, true] {
+        let (_dir, path) = store_dir("store-inherited-lock-description");
+        let owner = create_default(&path);
+        // dup and fork share the same flock description. Keeping this
+        // duplicate alive deterministically models a concurrent subprocess
+        // that has inherited the descriptor but has not reached exec yet.
+        let inherited = owner.duplicate_lock_for_tests();
+        drop(owner.snapshot(&work()).unwrap());
+        let held = retain_snapshot.then(|| owner.snapshot(&work()).unwrap());
+        assert!(matches!(
+            Store::open(&path, &schema(), MapPolicy::default()),
+            Err(StoreError::StoreLocked { .. })
+        ));
+        drop(owner);
+        if held.is_some() {
+            assert!(matches!(
+                Store::open(&path, &schema(), MapPolicy::default()),
+                Err(StoreError::StoreLocked { .. })
+            ));
+        }
+        drop(held);
+        let reopened = Store::open(&path, &schema(), MapPolicy::default())
+            .expect("native close must release the lock even before an inherited fd closes");
+        assert_eq!(
+            reopened.snapshot(&work()).unwrap().row_count(NOTE).unwrap(),
+            0
+        );
+        drop(inherited);
+        // Closing the old description must not release the new owner's lock.
+        assert!(matches!(
+            Store::open(&path, &schema(), MapPolicy::default()),
+            Err(StoreError::StoreLocked { .. })
+        ));
+        drop(reopened);
+        drop(open_default(&path));
+    }
 }
 
 /// Build a directory shaped like the deleted transitional format-8 store:
@@ -139,17 +242,22 @@ fn an_old_family_transitional_store_refuses_before_any_cleanup() {
 
 #[test]
 fn a_layout_bump_refuses_with_both_counters() {
-    let (_dir, path) = store_dir("store-layout");
-    {
-        let store = create_default(&path);
-        store.force_layout_for_tests(super::super::format::LAYOUT + 1);
-    }
-    match Store::open(&path, &schema(), MapPolicy::default()) {
-        Err(StoreError::LayoutMismatch { found, expected }) => {
-            assert_eq!(found, super::super::format::LAYOUT + 1);
-            assert_eq!(expected, super::super::format::LAYOUT);
+    for incompatible in [
+        super::super::format::LAYOUT - 1,
+        super::super::format::LAYOUT + 1,
+    ] {
+        let (_dir, path) = store_dir("store-layout");
+        {
+            let store = create_default(&path);
+            store.force_layout_for_tests(incompatible);
         }
-        other => panic!("expected LayoutMismatch, got {other:?}"),
+        match Store::open(&path, &schema(), MapPolicy::default()) {
+            Err(StoreError::LayoutMismatch { found, expected }) => {
+                assert_eq!(found, incompatible);
+                assert_eq!(expected, super::super::format::LAYOUT);
+            }
+            other => panic!("expected LayoutMismatch, got {other:?}"),
+        }
     }
 }
 
@@ -247,6 +355,33 @@ fn row_id_exhaustion_is_a_typed_refusal() {
         Err(StoreError::RowIdExhausted) => {}
         other => panic!("expected RowIdExhausted, got {other:?}"),
     }
+}
+
+#[test]
+fn cached_row_id_exhaustion_aborts_the_entire_batch_without_advancing_highwater() {
+    let (_dir, path) = store_dir("store-rowid-batch-exhaustion");
+    let store = create_default(&path);
+    store.force_next_row_id_for_tests(u64::MAX - 1);
+    let changes = change_set(
+        &schema(),
+        &[(NOTE, note(1, "first")), (NOTE, note(2, "overflow"))],
+        &[],
+    );
+    assert!(matches!(
+        try_commit_changes(&store, &changes),
+        Err(StoreError::RowIdExhausted)
+    ));
+    assert_eq!(store.snapshot(&work()).unwrap().row_count(NOTE).unwrap(), 0);
+    let one = change_set(&schema(), &[(NOTE, note(1, "first"))], &[]);
+    commit_changes(&store, &one);
+    let snapshot = store.snapshot(&work()).unwrap();
+    assert_eq!(snapshot.row_count(NOTE).unwrap(), 1);
+    assert_eq!(
+        snapshot.rows(NOTE).unwrap().next().unwrap().unwrap().0.id,
+        super::super::format::RowId(u64::MAX - 1)
+    );
+    // Exhausted allocation must not turn an idempotent insertion into an error.
+    assert!(!try_commit_changes(&store, &one).unwrap().changed);
 }
 
 #[test]

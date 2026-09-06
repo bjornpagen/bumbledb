@@ -1,11 +1,10 @@
 //! [`Db::snapshot`]: one owned coherent snapshot the caller pins.
-//! [`Db::read`]: one ephemeral frame over that pin for a scoped operation.
+//! [`Db::read`]: one ephemeral frame borrowing database metadata and a scoped snapshot.
 //!
-//! Deliberately no parked-reader cache: a permanently parked LMDB read
-//! transaction would block the elastic map's exclusive resize forever. The
-//! store's gate reports long-held snapshots by age instead of invalidating
-//! them. A caller's own pinned [`super::OwnedRead`] blocks resize as a
-//! typed refusal; live mapped pages are never invalidated.
+//! The store's admission gate reuses at most one unborrowed transaction
+//! during write-free periods, evicting it before writes, resize or close.
+//! A caller's own pinned [`super::OwnedRead`] still blocks resize as a typed
+//! refusal; live mapped pages are never invalidated.
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -17,8 +16,8 @@ use crate::work::{ExecutionPolicy, WorkContext};
 impl<S> Db<S> {
     /// Pin one owned coherent snapshot. Work is charged only for admitting
     /// the pin; each later operation takes a fresh frame and its own work.
-    /// [`ImageCache::acquire`](crate::image::cache::ImageCache::acquire) is
-    /// the generation pin — there is no `pin_generation`.
+    /// Canonical rows belong to the LMDB snapshot. Query operations acquire
+    /// their own current cache resolver only while interpreting text tokens.
     ///
     /// # Errors
     /// Storage failure opening the snapshot, or stopped work.
@@ -29,7 +28,6 @@ impl<S> Db<S> {
             closed: Arc::clone(&self.closed),
             snapshot,
             cache: Arc::clone(&self.cache),
-            pin: self.cache.acquire(),
             marker: PhantomData,
         })
     }
@@ -67,6 +65,25 @@ impl<S> Db<S> {
 
     /// Runs `f` over one operation frame with an explicit work budget.
     /// Prefer [`Self::snapshot`] when the pin must outlive a single call.
+    /// A scoped frame cannot escape its read:
+    /// ```compile_fail
+    /// fn escape<'a>(
+    ///     db: &'a bumbledb::Db<()>,
+    ///     work: bumbledb::WorkContext,
+    /// ) -> &'a bumbledb::ReadFrame<'a, ()> {
+    ///     db.read(work, |frame| Ok(frame)).unwrap()
+    /// }
+    /// ```
+    /// Nor can a fact borrowing that frame's mapped rows:
+    /// ```compile_fail
+    /// fn escape_fact<'a, S, K: bumbledb::Key<'a, Schema = S>>(
+    ///     db: &'a bumbledb::Db<S>,
+    ///     work: bumbledb::WorkContext,
+    ///     key: K,
+    /// ) -> Option<K::Fact> {
+    ///     db.read(work, |frame| frame.get(key)).unwrap()
+    /// }
+    /// ```
     /// # Errors
     /// Storage failure opening the snapshot, or the closure's own error.
     #[expect(
@@ -78,7 +95,14 @@ impl<S> Db<S> {
         work: WorkContext,
         f: impl FnOnce(&ReadFrame<'_, S>) -> Result<R>,
     ) -> Result<R> {
-        let owned = self.snapshot(&work)?;
-        f(&owned.frame(&work))
+        let snapshot = self.store.snapshot(&work).map_err(Error::from_store)?;
+        f(&ReadFrame {
+            schema: &self.schema,
+            closed: &self.closed,
+            snapshot: &snapshot,
+            cache: &self.cache,
+            work: &work,
+            marker: PhantomData,
+        })
     }
 }

@@ -175,14 +175,14 @@ storage cost, and hash probes.
 Preview the runner without building or timing anything:
 
 ```sh
-scripts/bench-night.sh bench-out/next-round --plan
+scripts/bench-night.sh bench-out/next-round --full --plan
 ```
 
 Once builds, tests, and other CPU-heavy work have stopped, run on a quiet host
 with a **new** output directory:
 
 ```sh
-scripts/bench-night.sh bench-out/quiet-round-YYYYMMDD-HHMM
+scripts/bench-night.sh bench-out/quiet-round-YYYYMMDD-HHMM --full
 ```
 
 The measurement lock serializes benchmark processes; it does **not** establish
@@ -193,6 +193,22 @@ qualification. Preserve raw reports and refusals, not just winning charts.
 Apple Silicon is the first performance target. Linux ARM64/Graviton and Linux
 x64 Node deployments must be measured separately. Correctness gates and a
 zero-allocation test do not prove a throughput improvement.
+
+For bottleneck analysis, use the [native profiling workflow](docs/perf/measurement-plan.md#native-stack-profiling).
+The `profiling` build retains release optimization plus full inline/source
+debug information. Samply captures native stacks without a production tracing
+dependency or hand-maintained span hierarchy.
+Every registered read and individual scenario query can be sampled by name;
+generated worlds pass their ordinary SQLite oracle before the sampling window.
+Displaced reads preserve their actual foreign-memory interleaving. Attribution
+includes source sites, sample support and explicit unresolved costs; matched
+captures can compare sampled CPU per completed draw without confusing profile
+duration with performance.
+Profiled runs explain costs. Unprofiled full-suite runs establish performance.
+Native exports can be reanalyzed from preserved address-specific symbols,
+with full caller paths, sample support, and unwinding-coverage diagnostics.
+An explicit-roster survey compares caller costs across queries while keeping
+missing workloads and per-query costs visible; it is not a release verdict.
 
 ## Development
 

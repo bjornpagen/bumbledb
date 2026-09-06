@@ -29,6 +29,7 @@ use bumbledb_theory::schema::{
 
 use crate::error::{Admission, Error, Result, Violation};
 use crate::ir::Value;
+use crate::schema::ValidateDescriptor as _;
 use crate::storage::store::StoreError;
 use crate::testutil::{TempDir, expect_rejected};
 use crate::work::{ExecutionPolicy, Resource};
@@ -124,6 +125,216 @@ fn create(dir: &TempDir) -> Db<Ledger> {
         .expect("empty theory admits")
 }
 
+#[test]
+fn pending_canonical_owners_refund_duplicates_and_cancellation_and_transfer_into_seal() {
+    let dir = TempDir::new("pending-owner-seal");
+    let db = create(&dir);
+    let work = operation();
+    let parent = db.store.snapshot(&work).unwrap();
+    let mut tx: super::WriteTx<'_, Ledger> =
+        super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+    let baseline = work.used(Resource::WorkingBytes);
+    let fact = Entry {
+        name: "alpha",
+        amount: 3,
+    };
+    tx.insert([&fact]).unwrap();
+    let retained = work.used(Resource::WorkingBytes);
+    assert!(retained > baseline);
+    tx.insert_dyn(ENTRY, [entry_row("alpha", 3)]).unwrap();
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        retained,
+        "duplicate's temporary owner drops"
+    );
+    assert!(tx.contains_dyn(ENTRY, &entry_row("alpha", 3)).unwrap());
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        retained,
+        "borrowed lookup retains no copied keys"
+    );
+    let accepted = crate::AcceptedCollection::from_value_rows(
+        ENTRY,
+        db.schema.relation(ENTRY).fields(),
+        [entry_row("alpha", 3)],
+    )
+    .unwrap();
+    tx.delete_accepted(&accepted).unwrap();
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        baseline,
+        "opposite mutation drops both rows and empty trees"
+    );
+    tx.delete_dyn(ENTRY, [entry_row("missing", 0)]).unwrap();
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        baseline,
+        "parent no-op retains nothing"
+    );
+    tx.insert_dyn(ENTRY, [entry_row("alpha", 3), entry_row("beta", 4)])
+        .unwrap();
+    let retained = work.used(Resource::WorkingBytes);
+    tx.delete_dyn(ENTRY, [entry_row("absent", 0)]).unwrap();
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        retained,
+        "parent no-op refunds an incoming payload adopted by an existing relation"
+    );
+    let pending = tx.into_pending();
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        retained,
+        "ownership survives the transaction"
+    );
+    let changes = pending.seal(&db.schema, &work).unwrap();
+    assert_eq!(changes.len(), 2);
+    assert!(work.used(Resource::WorkingBytes) > baseline);
+    assert!(
+        work.used(Resource::WorkingBytes) < retained,
+        "only sealed payload remains, not staging trees"
+    );
+    let clone = changes.clone();
+    drop(changes);
+    assert!(work.used(Resource::WorkingBytes) > baseline);
+    drop(clone);
+    assert_eq!(work.used(Resource::WorkingBytes), baseline);
+}
+
+#[test]
+fn pending_tree_occupancy_charge_grows_and_shrinks_at_five_key_thresholds() {
+    let dir = TempDir::new("pending-occupancy");
+    let db = create(&dir);
+    let work = operation();
+    let parent = db.store.snapshot(&work).unwrap();
+    let mut tx: super::WriteTx<'_, Ledger> =
+        super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+    let sample = crate::canonical::CanonicalRow::encode(
+        db.schema.relation(ENTRY).fields(),
+        &entry_row("000", 0),
+        &work,
+    )
+    .unwrap();
+    let payload = sample.len() as u64;
+    drop(sample);
+    let baseline = work.used(Resource::WorkingBytes);
+    let mut used = vec![baseline];
+    for id in 0..16 {
+        tx.insert_dyn(ENTRY, [entry_row(&format!("{id:03}"), id)])
+            .unwrap();
+        used.push(work.used(Resource::WorkingBytes));
+    }
+    let node_bytes = used[6] - used[5] - payload;
+    assert!(node_bytes > 0);
+    for n in 1usize..=16 {
+        assert_eq!(
+            used[n],
+            used[1] + (n as u64 - 1) * payload + ((n as u64 - 1) / 5) * node_bytes
+        );
+    }
+    for id in (0..16).rev() {
+        tx.delete_dyn(ENTRY, [entry_row(&format!("{id:03}"), id)])
+            .unwrap();
+        assert_eq!(
+            work.used(Resource::WorkingBytes),
+            used[usize::try_from(id).unwrap()],
+            "delete/rebalance refunds the matching occupancy bound"
+        );
+    }
+}
+
+#[test]
+fn pending_budget_refusal_keeps_prefix_charged_and_poisoned_until_drop() {
+    let dir = TempDir::new("pending-budget");
+    let db = create(&dir);
+    let work = operation();
+    let parent = db.store.snapshot(&work).unwrap();
+    let mut tx: super::WriteTx<'_, Ledger> =
+        super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+    tx.insert_dyn(ENTRY, (0..5).map(|id| entry_row(&format!("{id:03}"), id)))
+        .unwrap();
+    let prefix = work.used(Resource::WorkingBytes);
+    // Measure the sixth row's actual ownership delta, rather than assuming
+    // a particular key/guard layout or allocator-dependent node size.
+    tx.insert_dyn(ENTRY, [entry_row("005", 5)]).unwrap();
+    let sixth_delta = work.used(Resource::WorkingBytes) - prefix;
+    tx.delete_dyn(ENTRY, [entry_row("005", 5)]).unwrap();
+    assert_eq!(work.used(Resource::WorkingBytes), prefix);
+    let sample = crate::canonical::CanonicalRow::encode(
+        db.schema.relation(ENTRY).fields(),
+        &entry_row("005", 5),
+        &work,
+    )
+    .unwrap();
+    let collection_scratch =
+        sample.len() as u64 + 2 * std::mem::size_of::<crate::canonical::CanonicalRow>() as u64;
+    drop(sample);
+    let remaining = sixth_delta - 1;
+    assert!(
+        collection_scratch <= remaining,
+        "encoding fits; the refusal must happen when the pending tree grows"
+    );
+    let held = work
+        .reserve(
+            crate::work::ByteKind::Working,
+            work.limit(Resource::WorkingBytes) - prefix - remaining,
+        )
+        .unwrap();
+    let before = work.used(Resource::WorkingBytes);
+    assert!(
+        tx.insert_dyn(ENTRY, [entry_row("005", 5)]).is_err(),
+        "the next tree occupancy envelope does not fit"
+    );
+    assert!(tx.poisoned().is_some());
+    assert_eq!(
+        work.used(Resource::WorkingBytes),
+        before,
+        "failed row and collection scratch are released; prior owner remains"
+    );
+    drop(tx);
+    assert_eq!(work.used(Resource::WorkingBytes), held.bytes());
+    drop(held);
+    assert_eq!(work.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
+fn pending_collection_and_seal_refusals_release_all_owned_memory() {
+    let dir = TempDir::new("pending-refusals");
+    let db = create(&dir);
+    for seal in [false, true] {
+        let work = operation();
+        let parent = db.store.snapshot(&work).unwrap();
+        let mut tx: super::WriteTx<'_, Ledger> =
+            super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+        if seal {
+            tx.insert_dyn(ENTRY, [entry_row("kept", 1)]).unwrap();
+        }
+        let held = work
+            .reserve(
+                crate::work::ByteKind::Working,
+                work.limit(Resource::WorkingBytes)
+                    - work.used(Resource::WorkingBytes)
+                    - if seal { 0 } else { 512 },
+            )
+            .unwrap();
+        if seal {
+            assert!(tx.into_pending().seal(&db.schema, &work).is_err());
+        } else {
+            assert!(
+                tx.insert_dyn(ENTRY, (0..64).map(|id| entry_row(&format!("{id:03}"), id)))
+                    .is_err()
+            );
+            assert!(
+                tx.poisoned().is_none(),
+                "parse-all-first collection failure applies no prefix"
+            );
+            drop(tx);
+        }
+        assert_eq!(work.used(Resource::WorkingBytes), held.bytes());
+        drop(held);
+        assert_eq!(work.used(Resource::WorkingBytes), 0);
+    }
+}
+
 // --- The three write lanes produce identical stores. ---
 
 #[test]
@@ -134,6 +345,9 @@ fn the_three_write_lanes_produce_identical_stores() {
     let typed = create(&typed_dir);
     let dynamic = create(&dyn_dir);
     let accepted = create(&accepted_dir);
+    let typed_work = operation();
+    let dynamic_work = operation();
+    let accepted_work = operation();
 
     let facts = [
         Entry {
@@ -146,7 +360,7 @@ fn the_three_write_lanes_produce_identical_stores() {
         },
     ];
     typed
-        .write(operation(), |tx| {
+        .write(typed_work.clone(), |tx| {
             let report = tx.insert(facts.iter())?;
             assert_eq!(report.submitted(), 2);
             assert_eq!(report.changed(), 2);
@@ -156,7 +370,7 @@ fn the_three_write_lanes_produce_identical_stores() {
         .unwrap();
 
     dynamic
-        .write(operation(), |tx| {
+        .write(dynamic_work.clone(), |tx| {
             tx.insert_dyn(ENTRY, [entry_row("alpha", 3), entry_row("beta", -7)])
                 .map(|_| ())
         })
@@ -171,11 +385,16 @@ fn the_three_write_lanes_produce_identical_stores() {
     )
     .expect("shape proof");
     accepted
-        .write(operation(), |tx| {
+        .write(accepted_work.clone(), |tx| {
             tx.insert_accepted(&collection).map(|_| ())
         })
         .expect("write")
         .unwrap();
+
+    for resource in [Resource::Rows, Resource::InputBytes, Resource::WorkUnits] {
+        assert_eq!(typed_work.used(resource), dynamic_work.used(resource));
+        assert_eq!(typed_work.used(resource), accepted_work.used(resource));
+    }
 
     let digest = typed.catalog_digest(operation()).expect("digest");
     assert_eq!(digest, dynamic.catalog_digest(operation()).expect("digest"));
@@ -312,6 +531,219 @@ fn get_dyn_reads_its_own_writes_exactly_as_a_later_transaction_does() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one snapshot-borrow lifetime across collision lookup, replacement, and reader reuse"
+)]
+fn keyed_reads_retain_snapshot_bytes_across_collisions_repeated_reads_and_replacement() {
+    use crate::Theory as _;
+    use crate::schema::FieldId;
+    use crate::storage::store::{MapPolicy, Store};
+
+    for forced_collision in [false, true] {
+        let dir = TempDir::new("db-get-borrowed-snapshot");
+        let schema = Ledger.descriptor().validate().expect("schema");
+        let store = if forced_collision {
+            Store::create_forced_fingerprint(dir.path(), &schema, MapPolicy::default(), [0xCC; 16])
+                .expect("forced store")
+        } else {
+            Store::create(dir.path(), &schema, MapPolicy::default())
+                .expect("store")
+                .0
+        };
+        let db = Db::<Ledger>::assemble(store, schema, operation()).expect("db");
+        db.write(operation(), |tx| {
+            tx.insert_dyn(
+                ENTRY,
+                [
+                    entry_row("alpha", 1),
+                    entry_row("beta", 2),
+                    entry_row("gamma", 3),
+                ],
+            )?;
+            Ok(())
+        })
+        .expect("write")
+        .unwrap();
+        let work = operation();
+        let pin = db.owned_read().expect("old pin");
+        let snapshot = pin.snapshot();
+        let key = snapshot
+            .determinants()
+            .key_for(ENTRY, &[FieldId(0)])
+            .expect("name key");
+        let mut borrowed = Vec::new();
+        {
+            let projected = crate::storage::store::det_index::determinant_bytes(
+                key,
+                &[Value::String("beta".into())],
+                &work,
+            )
+            .expect("projection");
+            snapshot
+                .visit_projection(key.id, &projected, &work, &mut |_id, bytes| {
+                    borrowed.push(bytes);
+                    Ok(true)
+                })
+                .expect("retain borrowed rows beyond the cursor and routing buffer");
+        }
+        assert_eq!(borrowed.len(), if forced_collision { 3 } else { 1 });
+        let selected = super::get::find_snapshot_row(
+            snapshot,
+            db.schema(),
+            ENTRY,
+            &[FieldId(0)],
+            &[Value::String("beta".into())],
+            &work,
+        )
+        .expect("get borrowed bytes")
+        .expect("beta");
+        assert!(borrowed.iter().any(|bytes| std::ptr::eq(*bytes, selected)));
+        let old = pin
+            .get(EntryName("beta"), &work)
+            .expect("typed get")
+            .expect("beta");
+        for name in ["gamma", "absent", "alpha", "beta"] {
+            let found = pin
+                .get_dyn(ENTRY, ENTRY_NAME_KEY, &[Value::String(name.into())], &work)
+                .expect("repeat dynamic get");
+            assert_eq!(found.is_some(), name != "absent");
+        }
+        db.write(operation(), |tx| {
+            tx.delete_dyn(ENTRY, [entry_row("beta", 2)])?;
+            tx.insert_dyn(ENTRY, [entry_row("beta", 22)])?;
+            Ok(())
+        })
+        .expect("replace")
+        .unwrap();
+        assert_eq!((old.name, old.amount), ("beta", 2));
+        assert_eq!(
+            crate::canonical::decode(db.schema().relation(ENTRY).fields(), selected, &work)
+                .expect("retained canonical bytes")
+                .values(),
+            entry_row("beta", 2)
+        );
+        assert_eq!(
+            pin.get(EntryName("beta"), &work)
+                .expect("old snapshot get")
+                .map(|entry| entry.amount),
+            Some(2)
+        );
+        drop(pin);
+        for _ in 0..2 {
+            let latest = db.owned_read().expect("fresh or reused reader");
+            assert_eq!(
+                latest
+                    .get(EntryName("beta"), &work)
+                    .expect("latest get")
+                    .map(|entry| entry.amount),
+                Some(22)
+            );
+        }
+    }
+}
+
+#[test]
+fn selected_free_join_images_confirm_composite_fingerprint_collisions() {
+    use crate::ir::{Atom, AtomSource, FindTerm, ParamId, Query, Rule, Term, VarId};
+    use crate::schema::{FieldId, RelationDescriptor, Side, StatementDescriptor};
+    use crate::storage::store::{MapPolicy, Store};
+
+    let fields = [FieldId(0), FieldId(1), FieldId(2)];
+    let side = |relation| Side {
+        relation,
+        projection: fields.into(),
+        selection: Box::new([]),
+    };
+    let schema = SchemaDescriptor {
+        relations: [("R", 4), ("Key", 3)]
+            .into_iter()
+            .map(|(name, arity)| RelationDescriptor {
+                name: name.into(),
+                extension: None,
+                fields: (0..arity)
+                    .map(|i| FieldDescriptor {
+                        name: format!("f{i}").into(),
+                        value_type: ValueType::U64,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        // Containment installs a nonunique reverse projection. Three
+        // u64 coordinates force fingerprint routing, not ExactBounded.
+        statements: vec![
+            StatementDescriptor::Functionality {
+                relation: RelationId(1),
+                projection: fields.into(),
+            },
+            StatementDescriptor::Containment {
+                source: side(RelationId(0)),
+                target: side(RelationId(1)),
+            },
+        ],
+    }
+    .validate()
+    .unwrap();
+    let dir = TempDir::new("selected-image-collision");
+    let store =
+        Store::create_forced_fingerprint(dir.path(), &schema, MapPolicy::default(), [0xA5; 16])
+            .unwrap();
+    let db = Db::<()>::assemble(store, schema, operation()).unwrap();
+    db.write(operation(), |tx| {
+        tx.insert_dyn(
+            RelationId(1),
+            (0..4).map(|i| vec![Value::U64(i), Value::U64(9), Value::U64(u64::MAX)]),
+        )?;
+        tx.insert_dyn(
+            RelationId(0),
+            (0..32).map(|i| {
+                vec![
+                    Value::U64(i % 4),
+                    Value::U64(9),
+                    Value::U64(u64::MAX),
+                    Value::U64(i),
+                ]
+            }),
+        )?;
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms: vec![Atom {
+            source: AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (FieldId(0), Term::Param(ParamId(0))),
+                (FieldId(1), Term::Literal(Value::U64(9))),
+                (FieldId(2), Term::Literal(Value::U64(u64::MAX))),
+                (FieldId(3), Term::Var(VarId(0))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let mut prepared = db.prepare(&query, operation()).unwrap();
+    for key in [0, 3, 4, 1, 0] {
+        let answers = db
+            .read(operation(), |snap| {
+                snap.execute_collect(&mut prepared, &[crate::BindValue::U64(key)])
+            })
+            .unwrap();
+        let mut actual: Vec<_> = (0..answers.len())
+            .map(|i| {
+                let crate::AnswerValue::U64(value) = answers.get(i, 0) else {
+                    panic!("u64")
+                };
+                value
+            })
+            .collect();
+        actual.sort_unstable();
+        assert_eq!(actual, (0..32).filter(|i| i % 4 == key).collect::<Vec<_>>());
+    }
+}
+
+#[test]
 fn get_with_work_charges_the_supplied_operation_budget() {
     let dir = TempDir::new("db-get-with-work");
     let db = create(&dir);
@@ -377,6 +809,37 @@ fn get_dyn_falls_through_to_committed_state() {
             .contains_dyn(ENTRY, &entry_row("base", 10)))
             .expect("read"),
         "the aborted delete never reached storage"
+    );
+}
+
+#[test]
+fn repeated_pending_removal_uses_known_parent_presence() {
+    let dir = TempDir::new("db-pending-parent-presence");
+    let db = create(&dir);
+    let row = entry_row("existing", 10);
+    db.write(operation(), |tx| tx.insert_dyn(ENTRY, [&row]))
+        .unwrap()
+        .unwrap();
+    let ctx = operation();
+    db.write(ctx.clone(), |tx| {
+        let before = ctx.used(Resource::WorkUnits);
+        assert_eq!(tx.delete_dyn(ENTRY, [&row])?.changed(), 1);
+        let after_first = ctx.used(Resource::WorkUnits);
+        assert_eq!(tx.delete_dyn(ENTRY, [&row])?.changed(), 0);
+        let after_second = ctx.used(Resource::WorkUnits);
+        assert!(
+            after_second - after_first < after_first - before,
+            "an occupied pending row must not re-probe its committed parent"
+        );
+        assert_eq!(tx.insert_dyn(ENTRY, [&row])?.changed(), 1);
+        assert!(tx.contains_dyn(ENTRY, &row)?);
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    assert!(
+        db.read(operation(), |snap| snap.contains_dyn(ENTRY, &row))
+            .unwrap()
     );
 }
 
@@ -686,9 +1149,42 @@ fn write_from_rejects_a_foreign_witness() {
 fn a_shape_failure_does_not_poison_a_clean_write() {
     let dir = TempDir::new("db-clean-shape-fail");
     let db = create(&dir);
-    db.write(operation(), |tx| {
-        // A mis-shaped dyn insert refuses before anything is staged.
-        assert!(tx.insert_dyn(ENTRY, [vec![Value::U64(1)]]).is_err());
+    let work = operation();
+    db.write(work.clone(), |tx| {
+        for delete in [false, true] {
+            for bad_row in [vec![Value::U64(1)], vec![Value::U64(1), Value::I64(2)]] {
+                let arity = bad_row.len();
+                let rows = [entry_row("not-staged", 2), bad_row];
+                let attempted = work.used(Resource::Rows);
+                let failure = if delete {
+                    tx.delete_dyn(ENTRY, rows)
+                } else {
+                    tx.insert_dyn(ENTRY, rows)
+                }
+                .unwrap_err();
+                assert_eq!(work.used(Resource::Rows), attempted + 2);
+                match failure {
+                    Error::FactShape(crate::error::FactShapeError::ArityMismatch {
+                        relation,
+                        mismatch,
+                    }) => {
+                        assert_eq!(relation, ENTRY);
+                        assert_eq!((mismatch.witnessed, mismatch.required), (arity, 2));
+                    }
+                    Error::FactShape(crate::error::FactShapeError::TypeMismatch {
+                        relation,
+                        field,
+                    }) => {
+                        assert_eq!(relation, ENTRY);
+                        assert_eq!(field, bumbledb_theory::schema::FieldId(0));
+                        assert_eq!(arity, 2);
+                    }
+                    error => panic!("wrong shape error: {error:?}"),
+                }
+                assert!(tx.poisoned().is_none());
+                assert!(!tx.contains_dyn(ENTRY, &entry_row("not-staged", 2))?);
+            }
+        }
         // The transaction is still usable: nothing had applied.
         tx.insert_dyn(ENTRY, [entry_row("fine", 1)]).map(|_| ())
     })
@@ -702,6 +1198,63 @@ fn a_shape_failure_does_not_poison_a_clean_write() {
 }
 
 #[test]
+fn dynamic_ingestion_stops_at_work_refusal_before_later_bad_rows() {
+    let dir = TempDir::new("dynamic-input-refusal");
+    let db = create(&dir);
+    for cancel in [false, true] {
+        for prefix in [false, true] {
+            let work = operation();
+            let parent = db.store.snapshot(&work).unwrap();
+            let mut tx: super::WriteTx<'_, Ledger> =
+                super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
+            if prefix {
+                tx.insert_dyn(ENTRY, [entry_row("prior", 0)]).unwrap();
+            }
+            let retained = work.used(Resource::WorkingBytes);
+            if cancel {
+                work.cancel();
+            } else {
+                work.rows(work.limit(Resource::Rows) - work.used(Resource::Rows) - 1)
+                    .unwrap();
+            }
+            let mut seen = 0;
+            let rows = [
+                entry_row("never-staged", 1),
+                entry_row("also-never-staged", 2),
+                vec![Value::U64(9)],
+            ]
+            .into_iter()
+            .inspect(|_| seen += 1);
+            let error = tx.insert_dyn(ENTRY, rows).unwrap_err();
+            let Error::Store(error) = error else {
+                panic!("ingestion must stop at its work refusal");
+            };
+            assert!(
+                matches!(
+                    *error,
+                    StoreError::Changes(crate::changes::ChangeError::Row(
+                        crate::canonical::RowError::Work(crate::WorkError::Cancelled)
+                    )) if cancel
+                ) || matches!(
+                    *error,
+                    StoreError::Changes(crate::changes::ChangeError::Row(
+                        crate::canonical::RowError::Work(crate::WorkError::Exhausted {
+                            resource: Resource::Rows,
+                            ..
+                        })
+                    )) if !cancel
+                )
+            );
+            assert_eq!(seen, if cancel { 1 } else { 2 });
+            assert_eq!(tx.poisoned().is_some(), prefix);
+            assert_eq!(work.used(Resource::WorkingBytes), retained);
+            let pending = tx.into_pending().seal(&db.schema, &operation()).unwrap();
+            assert_eq!(pending.len(), u64::from(prefix));
+        }
+    }
+}
+
+#[test]
 fn poison_preserves_the_original_error_after_an_applied_prefix() {
     let dir = TempDir::new("db-poison");
     let db = create(&dir);
@@ -711,6 +1264,12 @@ fn poison_preserves_the_original_error_after_an_applied_prefix() {
             // Now a later collection fails its shape check: the transaction
             // poisons (a prefix already entered the delta).
             let failure = tx.insert_dyn(ENTRY, [vec![Value::U64(9)]]).unwrap_err();
+            for report in [
+                tx.insert_dyn(RelationId(77), std::iter::empty::<Vec<Value>>())?,
+                tx.delete_dyn(RelationId(77), std::iter::empty::<Vec<Value>>())?,
+            ] {
+                assert_eq!((report.submitted(), report.changed()), (0, 0));
+            }
             // Every later operation reports the poisoned state.
             let poisoned = tx
                 .contains_dyn(ENTRY, &entry_row("applied", 1))
@@ -736,6 +1295,53 @@ fn an_empty_write_commits_without_moving_the_generation() {
     let committed = db.write(operation(), |_tx| Ok(42)).expect("write").unwrap();
     assert_eq!(committed.value, 42);
     assert_eq!(committed.generation.value(), 0);
+}
+
+#[test]
+fn dynamic_empty_collections_bypass_guards_and_nullary_rows_remain_facts() {
+    let dir = TempDir::new("dynamic-nullary");
+    let descriptor = SchemaDescriptor {
+        relations: vec![
+            bumbledb_theory::schema::RelationDescriptor {
+                name: "flag".into(),
+                fields: vec![],
+                extension: None,
+            },
+            bumbledb_theory::schema::RelationDescriptor {
+                name: "closed".into(),
+                fields: vec![],
+                extension: Some(Box::new([Row {
+                    handle: "present".into(),
+                    values: Box::new([]),
+                }])),
+            },
+        ],
+        statements: vec![],
+    };
+    let db = Db::create(dir.path(), descriptor, operation())
+        .unwrap()
+        .unwrap();
+    db.write(operation(), |tx| {
+        for relation in [RelationId(1), RelationId(77)] {
+            for report in [
+                tx.insert_dyn(relation, std::iter::empty::<Vec<Value>>())?,
+                tx.delete_dyn(relation, std::iter::empty::<Vec<Value>>())?,
+            ] {
+                assert_eq!((report.submitted(), report.changed()), (0, 0));
+            }
+        }
+        let empty_rows = || std::iter::repeat_with(Vec::<Value>::new).take(3);
+        let inserted = tx.insert_dyn(ENTRY, empty_rows())?;
+        assert_eq!((inserted.submitted(), inserted.changed()), (3, 1));
+        assert!(tx.contains_dyn(ENTRY, &[])?);
+        let deleted = tx.delete_dyn(ENTRY, empty_rows())?;
+        assert_eq!((deleted.submitted(), deleted.changed()), (3, 1));
+        assert!(!tx.contains_dyn(ENTRY, &[])?);
+        Ok(())
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(db.generation(operation()).unwrap().value(), 0);
 }
 
 #[test]
@@ -1210,16 +1816,214 @@ fn apply_conflict_is_invariant_rejected_after_accepted_write() {
     );
 }
 
-/// `cache.acquire()` is the pin. There is no `pin_generation`.
-/// Verification `NotRun`.
 #[test]
-fn owned_read_pin_is_cache_acquire() {
-    let dir = TempDir::new("db-owned-read-pin");
+fn scoped_read_borrows_metadata_while_owned_read_retains_it() {
+    let dir = TempDir::new("db-read-metadata-ownership");
     let db = create(&dir);
-    let pin = db.owned_read().expect("pin");
-    let acquired = db.cache.acquire();
-    assert_eq!(pin.pin.identity(), acquired.identity());
-    assert_eq!(pin.generation_handle().identity(), acquired.identity());
+    db.write(operation(), |tx| {
+        tx.insert([&Entry {
+            name: "alpha",
+            amount: 7,
+        }])
+        .map(|_| ())
+    })
+    .expect("seed")
+    .expect("lawful seed");
+    let metadata_owners = || {
+        [
+            std::sync::Arc::strong_count(&db.schema),
+            std::sync::Arc::strong_count(&db.closed),
+            std::sync::Arc::strong_count(&db.cache),
+        ]
+    };
+    let before = metadata_owners();
+    let witness = db
+        .read(operation(), |frame| {
+            assert_eq!(
+                metadata_owners(),
+                before,
+                "a scoped frame borrows metadata instead of retaining three temporary owners"
+            );
+            assert_eq!(
+                frame.get(EntryName("alpha"))?,
+                Some(Entry {
+                    name: "alpha",
+                    amount: 7,
+                })
+            );
+            frame.witness()
+        })
+        .expect("scoped read");
+    assert_eq!(metadata_owners(), before);
+    let work = operation();
+    let empty = ChangeSet::builder(db.schema(), work.clone())
+        .finish()
+        .expect("empty delta");
+    assert!(matches!(
+        db.apply(&empty, super::ApplyExpected::Exact(witness), &work)
+            .expect("scoped witness remains usable"),
+        super::ApplyOutcome::NoChange { .. }
+    ));
+    let snapshot = db.snapshot(&operation()).expect("owned snapshot");
+    assert_eq!(metadata_owners(), before.map(|count| count + 1));
+    let fact = {
+        let temporary_work = operation();
+        snapshot
+            .get(EntryName("alpha"), &temporary_work)
+            .expect("owned read")
+            .expect("stored fact")
+    };
+    assert_eq!(
+        fact,
+        Entry {
+            name: "alpha",
+            amount: 7,
+        },
+        "borrowed row bytes depend on the snapshot, not its operation's work lifetime"
+    );
+    drop(snapshot);
+    assert_eq!(metadata_owners(), before);
+}
+
+#[test]
+fn owned_read_keeps_rows_but_does_not_retain_retired_resolvers() {
+    let dir = TempDir::new("db-owned-read-resolver-retirement");
+    let db = create(&dir);
+    db.write(operation(), |tx| {
+        tx.insert([&Entry {
+            name: "alpha",
+            amount: 7,
+        }])?;
+        Ok(())
+    })
+    .expect("seed")
+    .expect("lawful seed");
+    let retired = db.cache.weak_current();
+    let snapshot = db.owned_read().expect("snapshot");
+    let generation = snapshot.generation();
+    db.cache.trim();
+    assert!(
+        retired.upgrade().is_none(),
+        "a canonical-row snapshot must not retain an unused retired text resolver"
+    );
+    assert_eq!(snapshot.generation(), generation);
+    assert_eq!(
+        snapshot.get(EntryName("alpha"), &operation()).expect("get"),
+        Some(Entry {
+            name: "alpha",
+            amount: 7,
+        })
+    );
+}
+
+fn entry_scan_query() -> crate::ir::Query {
+    use crate::ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, VarId};
+    use bumbledb_theory::schema::FieldId;
+
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))],
+        atoms: vec![Atom {
+            source: AtomSource::Edb(ENTRY),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(1), Term::Var(VarId(1))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+#[test]
+fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
+    let dir = TempDir::new("db-owned-text-snapshot");
+    let db = create(&dir);
+    db.write(operation(), |tx| {
+        tx.insert([&Entry {
+            name: "alpha",
+            amount: 7,
+        }])
+        .map(|_| ())
+    })
+    .expect("seed")
+    .expect("lawful seed");
+    let admission = operation();
+    let snapshot = db.snapshot(&admission).expect("snapshot");
+    let durable_generation = snapshot.generation();
+    admission.cancel();
+    let mut prepared = snapshot
+        .prepare(&entry_scan_query(), &operation())
+        .expect("prepare");
+    let params: &[crate::ParamArg] = &[];
+    let assert_row = |answers: &crate::Answers, name: &str, amount: i64| {
+        assert_eq!(answers.len(), 1);
+        assert_eq!(answers.get(0, 0), crate::AnswerValue::String(name));
+        assert_eq!(answers.get(0, 1), crate::AnswerValue::I64(amount));
+    };
+    let original = prepared
+        .execute_collect_owned(&snapshot, &operation(), params)
+        .expect("original query");
+    assert_row(&original, "alpha", 7);
+
+    db.write(operation(), |tx| {
+        tx.delete([&Entry {
+            name: "alpha",
+            amount: 7,
+        }])?;
+        tx.insert([&Entry {
+            name: "beta",
+            amount: 9,
+        }])
+        .map(|_| ())
+    })
+    .expect("replace")
+    .expect("lawful replacement");
+    assert_ne!(
+        db.generation(operation()).expect("generation"),
+        durable_generation
+    );
+    for _ in 0..2 {
+        db.cache.trim();
+        let current = db.cache.acquire();
+        assert_eq!(current.resolver().lookup("alpha"), None);
+        let answers = prepared
+            .execute_collect_owned(&snapshot, &operation(), params)
+            .expect("same snapshot under fresh resolver and work");
+        assert_row(&answers, "alpha", 7);
+        assert!(
+            current.resolver().lookup("alpha").is_some(),
+            "an old durable snapshot must use this operation's current resolver"
+        );
+        assert_eq!(snapshot.generation(), durable_generation);
+        let latest = db
+            .read(operation(), |frame| {
+                frame.execute_collect(&mut prepared, params)
+            })
+            .expect("latest snapshot");
+        assert_row(&latest, "beta", 9);
+        // A newer cached image cannot replace the older snapshot's rows.
+        let old_again = prepared
+            .execute_collect_owned(&snapshot, &operation(), params)
+            .expect("old snapshot after newer image");
+        assert_row(&old_again, "alpha", 7);
+    }
+    let cancelled = operation();
+    cancelled.cancel();
+    let error = prepared
+        .execute_collect_owned(&snapshot, &cancelled, params)
+        .expect_err("execution obeys its fresh work, not admission's work");
+    assert!(matches!(
+        error,
+        Error::Store(error) if matches!(error.as_ref(), StoreError::Work(crate::work::WorkError::Cancelled))
+    ));
+    let recovered = prepared
+        .execute_collect_owned(&snapshot, &operation(), params)
+        .expect("fresh work after cancellation");
+    assert_row(&recovered, "alpha", 7);
+    drop(snapshot);
+    prepared.trim();
+    assert_row(&original, "alpha", 7);
+    assert_row(&recovered, "alpha", 7);
 }
 
 /// After apply, the owned pin's frame reads the row, collects the scan,
@@ -1263,8 +2067,6 @@ fn owned_read_frame_reads_applied_row_and_close_waits() {
             panic!("empty apply under the pin's witness is NoChange")
         }
     }
-    let handle = pin.generation_handle();
-    assert_eq!(handle.identity(), pin.pin.identity());
     let frame = pin.frame(&work);
     assert!(
         frame
@@ -1283,27 +2085,7 @@ fn owned_read_frame_reads_applied_row_and_close_waits() {
         .expect("rows");
     assert_eq!(scanned.len(), 1);
     assert_eq!(scanned[0].values(), entry_row("pin", 4));
-    let query = crate::ir::Query::single(crate::ir::Rule {
-        finds: vec![
-            crate::ir::FindTerm::Var(crate::ir::VarId(0)),
-            crate::ir::FindTerm::Var(crate::ir::VarId(1)),
-        ],
-        atoms: vec![crate::ir::Atom {
-            source: crate::ir::AtomSource::Edb(ENTRY),
-            bindings: vec![
-                (
-                    bumbledb_theory::schema::FieldId(0),
-                    crate::ir::Term::Var(crate::ir::VarId(0)),
-                ),
-                (
-                    bumbledb_theory::schema::FieldId(1),
-                    crate::ir::Term::Var(crate::ir::VarId(1)),
-                ),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
+    let query = entry_scan_query();
     let mut prepared = frame.prepare(&query).expect("prepare");
     let answers = prepared
         .execute_collect_owned(&pin, &work, &[] as &[crate::ParamArg])

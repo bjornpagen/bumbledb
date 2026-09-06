@@ -93,6 +93,11 @@ fn fresh_create_adopts_complete_snapshot() {
         .expect("fresh destination adopts");
     let snap = dest.snapshot(&work).expect("read dest");
     assert_eq!(snap.row_count(RelationId(0)).expect("count"), 1);
+    drop(snap);
+    commit_row(&dest, &schema, &work, 8);
+    let snap = dest.snapshot(&work).expect("after adoption insert");
+    assert_eq!(snap.row_count(RelationId(0)).expect("count"), 2);
+    assert_eq!(snap.rows(RelationId(0)).expect("rows").count(), 2);
 }
 
 fn commit_row(store: &Store, schema: &Schema, work: &WorkContext, id: u64) {
@@ -122,4 +127,251 @@ fn commit_row(store: &Store, schema: &Schema, work: &WorkContext, id: u64) {
         .expect("seal")
         .commit()
         .expect("commit");
+}
+
+type Entries = Vec<(Vec<u8>, Vec<u8>)>;
+
+fn entries(snapshot: &super::super::OwnedSnapshot, metadata: bool) -> Entries {
+    let inner = snapshot.store_inner();
+    let range = if metadata {
+        inner.meta.iter(snapshot.read_txn())
+    } else {
+        inner.data.iter(snapshot.read_txn())
+    };
+    range
+        .expect("iterate physical entries")
+        .map(|entry| {
+            let (key, value) = entry.expect("physical entry");
+            (key.to_vec(), value.to_vec())
+        })
+        .collect()
+}
+
+fn attach_receipt(store: &Store, schema: &Schema, context: &WorkContext, attachment: &[u8]) {
+    let mut owner = store.writer(context).expect("writer");
+    let empty = change_set(schema, &[], &[]);
+    let prepared = match owner.prepare(&empty, &NoIndex, &AdmitAll).expect("prepare") {
+        Prepared::Admitted(prepared) => prepared,
+        Prepared::Rejected(never) => match never {},
+    };
+    prepared
+        .seal(HostChanges {
+            records: &host_put(b"receipt/1", b"settled"),
+            attachment: AttachmentChange::Put(attachment),
+        })
+        .expect("seal")
+        .commit()
+        .expect("commit");
+}
+
+#[test]
+fn physical_compaction_preserves_pinned_indexes_metadata_and_sparse_row_ids() {
+    use super::super::format::{K_NEXT_ROW_ID, K_STORE_ID, RowId};
+
+    let dir = TempDir::new("physical-compact-coherent");
+    let schema = schema();
+    let context = work();
+    let source = create_default(&dir.path().join("source"));
+    commit_changes(
+        &source,
+        &change_set(
+            &schema,
+            &[
+                (NOTE, note(1, "kept")),
+                (NOTE, note(2, "removed")),
+                (TAG, tag("removed")),
+            ],
+            &[],
+        ),
+    );
+    commit_changes(
+        &source,
+        &change_set(
+            &schema,
+            &[],
+            &[(NOTE, note(2, "removed")), (TAG, tag("removed"))],
+        ),
+    );
+    attach_receipt(&source, &schema, &context, b"attached");
+    let pinned = source.snapshot(&context).expect("pin source");
+    let expected_data = entries(&pinned, false);
+    assert!(
+        expected_data.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        "the custom comparator preserves the byte order required by compact APPEND"
+    );
+    let expected_meta = entries(&pinned, true);
+    let next_row = expected_meta
+        .iter()
+        .find(|(key, _)| key == K_NEXT_ROW_ID)
+        .map(|(_, value)| u64::from_be_bytes(value.as_slice().try_into().expect("counter")))
+        .expect("next row counter");
+    commit_changes(
+        &source,
+        &change_set(&schema, &[(NOTE, note(99, "later"))], &[]),
+    );
+
+    let dest_path = dir.path().join("dest");
+    let (dest, fresh) = Store::create(&dest_path, &schema, MapPolicy::default()).expect("dest");
+    let destination_identity = dest.snapshot(&context).expect("new dest").identity().store;
+    dest.compact_snapshot(&pinned, fresh, &context)
+        .expect("compact pinned view");
+    {
+        let copied = dest.snapshot(&context).expect("copied snapshot");
+        assert_eq!(entries(&copied, false), expected_data);
+        assert_eq!(
+            entries(&copied, true)
+                .into_iter()
+                .filter(|(key, _)| key != K_STORE_ID)
+                .collect::<Entries>(),
+            expected_meta
+                .into_iter()
+                .filter(|(key, _)| key != K_STORE_ID)
+                .collect::<Entries>()
+        );
+        assert_eq!(copied.identity().store, destination_identity);
+        assert_ne!(copied.identity().store, pinned.identity().store);
+        assert_eq!(copied.generation(), pinned.generation());
+    }
+    drop(dest);
+    let dest = Store::open(&dest_path, &schema, MapPolicy::default()).expect("reopen compacted");
+    commit_changes(
+        &dest,
+        &change_set(&schema, &[(NOTE, note(100, "new"))], &[]),
+    );
+    let copied = dest.snapshot(&context).expect("after new insert");
+    assert_eq!(copied.row_count(NOTE).expect("count"), 2);
+    assert!(
+        copied
+            .rows(NOTE)
+            .expect("rows")
+            .any(|entry| entry.expect("row").0.id == RowId(next_row))
+    );
+    let after = entries(&copied, false);
+    assert!(
+        after.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        "reopened compacted trees retain the same order after insertion"
+    );
+    for entry in expected_data {
+        assert!(
+            after.contains(&entry),
+            "a new insert must not overwrite copied rows/indexes"
+        );
+    }
+}
+
+#[test]
+fn physical_compaction_grows_and_copies_overflow_values_without_reencoding() {
+    let dir = TempDir::new("physical-compact-growth");
+    let schema = schema();
+    let context = work();
+    let (source, _) =
+        Store::create(&dir.path().join("source"), &schema, tiny_map()).expect("source");
+    commit_changes(
+        &source,
+        &change_set(
+            &schema,
+            &[(NOTE, note(1, &"x".repeat(2 * 1024 * 1024)))],
+            &[],
+        ),
+    );
+    let pinned = source.snapshot(&context).expect("snapshot");
+    let (dest, fresh) = Store::create(&dir.path().join("dest"), &schema, tiny_map()).expect("dest");
+    let initial = dest.current_map_bytes();
+    dest.compact_snapshot(&pinned, fresh, &context)
+        .expect("grow and compact");
+    assert!(dest.current_map_bytes() > initial);
+    assert_eq!(
+        entries(&dest.snapshot(&context).expect("dest snapshot"), false),
+        entries(&pinned, false)
+    );
+}
+
+#[test]
+fn physical_compaction_budget_failure_rolls_back_data_and_fresh_metadata() {
+    use crate::work::{Resource, WorkError};
+
+    let dir = TempDir::new("physical-compact-abort");
+    let schema = schema();
+    let source = create_default(&dir.path().join("source"));
+    commit_changes(
+        &source,
+        &change_set(&schema, &[(NOTE, note(1, "kept"))], &[]),
+    );
+    // Fail while copying metadata: the data tree has already been populated
+    // and the fresh metadata tree cleared. Both must roll back together.
+    attach_receipt(&source, &schema, &work(), &[0xAB; 8192]);
+    let pinned = source.snapshot(&work()).expect("snapshot");
+    for resource in [Resource::InputBytes, Resource::WorkUnits] {
+        let (dest, fresh) = Store::create(
+            &dir.path().join(format!("dest-{resource:?}")),
+            &schema,
+            MapPolicy::default(),
+        )
+        .expect("dest");
+        let initial_metadata = entries(&dest.snapshot(&work()).expect("fresh snapshot"), true);
+        let budget = ExecutionPolicy {
+            input_bytes: if resource == Resource::InputBytes {
+                4096
+            } else {
+                1 << 20
+            },
+            working_bytes: 1 << 20,
+            scratch_bytes: 1 << 20,
+            result_bytes: 1 << 20,
+            rows: 16,
+            work_units: if resource == Resource::WorkUnits {
+                5000
+            } else {
+                1 << 20
+            },
+            timeout: Duration::from_secs(10),
+        }
+        .start()
+        .expect("budget");
+        assert!(
+            matches!(dest.compact_snapshot(&pinned, fresh, &budget), Err(StoreError::Work(WorkError::Exhausted { resource: actual, .. })) if actual == resource)
+        );
+        if resource == Resource::WorkUnits {
+            assert!(
+                budget.used(Resource::WorkUnits) >= 4096,
+                "first overflow chunk was copied before refusal"
+            );
+        }
+        let copied = dest.snapshot(&work()).expect("after refusal");
+        assert!(entries(&copied, false).is_empty());
+        assert_eq!(entries(&copied, true), initial_metadata);
+    }
+}
+
+#[test]
+fn physical_compaction_reindexes_test_only_fingerprint_policy_changes() {
+    let dir = TempDir::new("physical-compact-fingerprint");
+    let schema = schema();
+    let source = Store::create_forced_fingerprint(
+        &dir.path().join("source"),
+        &schema,
+        MapPolicy::default(),
+        [0xCC; 16],
+    )
+    .expect("forced source");
+    let values = note(7, "collision-safe");
+    commit_changes(
+        &source,
+        &change_set(&schema, &[(NOTE, values.clone())], &[]),
+    );
+    let context = work();
+    let pinned = source.snapshot(&context).expect("snapshot");
+    let (dest, fresh) =
+        Store::create(&dir.path().join("dest"), &schema, MapPolicy::default()).expect("dest");
+    dest.compact_snapshot(&pinned, fresh, &context)
+        .expect("logical fallback");
+    let row =
+        crate::canonical::CanonicalRow::encode(schema.relation(NOTE).fields(), &values, &context)
+            .expect("canonical row");
+    assert!(
+        dest.snapshot(&context)
+            .expect("dest snapshot")
+            .contains(NOTE, row.as_bytes(), &context)
+            .expect("membership reindexed")
+    );
 }

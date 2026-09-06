@@ -29,6 +29,39 @@ enum Engine {
 }
 
 impl Engine {
+    /// The same operation in timing, allocation and native-sampling windows.
+    fn sample(
+        &mut self,
+        stores: &Stores,
+        params: &[Value],
+        buffer: &mut Answers,
+    ) -> Result<u64, String> {
+        match self {
+            Self::Prepared(prepared) => {
+                let params = bind_values(params);
+                stores
+                    .db
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.execute(prepared, &params, buffer)
+                    })
+                    .map_err(|e| format!("execute: {e:?}"))?;
+                Ok(std::hint::black_box(buffer).len() as u64)
+            }
+            Self::KeyedGet {
+                relation,
+                statement,
+            } => {
+                let fact = stores
+                    .db
+                    .read(crate::harness::bench_work(), |snap| {
+                        snap.get_dyn(*relation, *statement, params)
+                    })
+                    .map_err(|e| format!("get_dyn: {e:?}"))?;
+                Ok(std::hint::black_box(fact).map_or(0, |_| 1))
+            }
+        }
+    }
+
     fn answers(
         &mut self,
         stores: &Stores,
@@ -141,8 +174,7 @@ pub(super) fn gate(
         }
     };
 
-    // The oracle gate: agreement on every param set × lane before any
-
+    // The oracle gate checks every parameter set and lane before timing.
     for (idx, params) in sets.iter().enumerate() {
         let ours = engine
             .answers(stores, &types, params)
@@ -185,12 +217,8 @@ pub(super) fn gate(
 /// every `SQLite` lane — uncapped lanes exactly as before; capped lanes
 /// pre-flight one untimed sample per param set and report
 /// [`LaneOutcome::ExceededCap`] the moment any sample trips (no censored
-/// percentiles can exist). The optional alloc and trace passes ([`QueryModes`])
+/// percentiles can exist). The optional allocation pass ([`QueryModes`])
 /// run after timing, each a separate scoped window.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one query's full protocol: gate, time, the optional alloc/trace passes, the lanes"
-)]
 pub(super) fn run_query(
     stores: &Stores,
     scenario: &Scenario,
@@ -208,32 +236,10 @@ pub(super) fn run_query(
 
     // Timing, the ledger protocol: rotation across param sets, medians.
     let mut rotation = Rotation::new(sets.clone());
-    let db = &stores.db;
-    let ours = match &mut engine {
-        Engine::Prepared(prepared) => {
-            let mut buffer = Answers::new();
-            harness::measure(proto, || {
-                let params = bind_values(rotation.next_set());
-                db.read(crate::harness::bench_work(), |snap| {
-                    snap.execute(prepared, &params, &mut buffer)
-                })
-                .map_err(|e| format!("execute: {e:?}"))?;
-                Ok(buffer.len() as u64)
-            })?
-        }
-        Engine::KeyedGet {
-            relation,
-            statement,
-        } => harness::measure(proto, || {
-            let fact = db
-                .read(crate::harness::bench_work(), |snap| {
-                    snap.get_dyn(*relation, *statement, rotation.next_set())
-                })
-                .map_err(|e| format!("get_dyn: {e:?}"))?;
-
-            Ok(std::hint::black_box(fact).map_or(0, |_| 1))
-        })?,
-    };
+    let mut buffer = Answers::new();
+    let ours = harness::measure(proto, || {
+        engine.sample(stores, rotation.next_set(), &mut buffer)
+    })?;
 
     // alloc window over the same protocol, so `scenarios --alloc` scopes
 
@@ -243,30 +249,10 @@ pub(super) fn run_query(
             alloc_window: true,
             ..Modes::default()
         };
-        let measured = match &mut engine {
-            Engine::Prepared(prepared) => {
-                let mut buffer = Answers::new();
-                harness::measure_batched(proto, alloc_modes, 1, || {
-                    let params = bind_values(rotation.next_set());
-                    db.read(crate::harness::bench_work(), |snap| {
-                        snap.execute(prepared, &params, &mut buffer)
-                    })
-                    .map_err(|e| format!("execute: {e:?}"))?;
-                    Ok(buffer.len() as u64)
-                })?
-            }
-            Engine::KeyedGet {
-                relation,
-                statement,
-            } => harness::measure_batched(proto, alloc_modes, 1, || {
-                let fact = db
-                    .read(crate::harness::bench_work(), |snap| {
-                        snap.get_dyn(*relation, *statement, rotation.next_set())
-                    })
-                    .map_err(|e| format!("get_dyn: {e:?}"))?;
-                Ok(std::hint::black_box(fact).map_or(0, |_| 1))
-            })?,
-        };
+        let mut buffer = Answers::new();
+        let measured = harness::measure_batched(proto, alloc_modes, 1, || {
+            engine.sample(stores, rotation.next_set(), &mut buffer)
+        })?;
         measured.alloc.map(crate::report::AllocReport::from)
     } else {
         None
@@ -333,13 +319,6 @@ pub(super) fn run_query(
         lane_reports.push(LaneReport { lane, outcome });
     }
 
-    let flame = match &modes.trace_root {
-        Some(root) => Some(super::trace::capture_query(
-            stores, scenario, sq, seed, root,
-        )?),
-        None => None,
-    };
-
     Ok(QueryReport {
         scenario: scenario.name,
         name: sq.name,
@@ -347,7 +326,50 @@ pub(super) fn run_query(
         answers: ours.work / u64::from(proto.samples.max(1)),
         ours: ours.stats,
         lanes: lane_reports,
-        flame,
         alloc,
     })
+}
+
+pub(super) fn profile(
+    stores: &Stores,
+    scenario: &Scenario,
+    query: &ScenarioQuery,
+    args: &crate::cli::ProfileArgs,
+) -> Result<crate::driver::profile::ProfileResult, String> {
+    let Gated {
+        mut engine,
+        types,
+        sets,
+        ..
+    } = gate(stores, scenario, query, args.corpus.seed)?;
+    let surface = match &engine {
+        Engine::Prepared(prepared) => prepared.rendered_query().to_owned(),
+        Engine::KeyedGet {
+            relation,
+            statement,
+        } => format!("get({relation:?}, {statement:?})"),
+    };
+    let input_digest = crate::driver::profile::input_fingerprint(&(
+        bumbledb::schema::fingerprint::fingerprint(stores.db.schema()),
+        surface,
+        &sets,
+    ));
+    let mut expected = Vec::with_capacity(sets.len());
+    let mut digest = bumbledb::digest::Digest::new();
+    for params in &sets {
+        let mut answers = engine.answers(stores, &types, params)?;
+        expected.push(answers.len() as u64);
+        answers.sort_unstable();
+        let encoded = format!("{answers:?}");
+        digest.update(&(encoded.len() as u64).to_le_bytes());
+        digest.update(encoded.as_bytes());
+    }
+    let mut buffer = Answers::new();
+    crate::driver::profile::profile_cycles(
+        args,
+        &expected,
+        input_digest,
+        crate::corpus_gen::digest_hex(&digest.finalize()),
+        |index| engine.sample(stores, &sets[index], &mut buffer),
+    )
 }

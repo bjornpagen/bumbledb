@@ -386,15 +386,9 @@ fn load_poisoned(
 fn the_crud_gate_refuses_a_divergent_oracle() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-gate-divergent");
-    let err = super::run::fold(
-        &dir,
-        RUN_SEED,
-        sizes,
-        Some(2),
-        None,
-        None,
-        &|lane_dir, lane| load_poisoned(lane_dir, lane, sizes),
-    )
+    let err = super::run::fold(&dir, RUN_SEED, sizes, Some(2), None, &|lane_dir, lane| {
+        load_poisoned(lane_dir, lane, sizes)
+    })
     .expect_err("a poisoned mirror must not be timed");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -405,7 +399,7 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-full");
     let (md, json_text) =
-        super::run_with(&dir, RUN_SEED, sizes, Some(2), None, None).expect("the full crud run");
+        super::run_with(&dir, RUN_SEED, sizes, Some(2), None).expect("the full crud run");
     assert!(md.contains("## lane durable"), "{md}");
     for family in super::families() {
         assert!(md.contains(family.name), "missing {} in\n{md}", family.name);
@@ -449,15 +443,8 @@ fn the_full_crud_run_produces_both_lanes_and_parses() {
 fn an_unknown_only_name_is_refused() {
     let sizes = CrudSizes::of(Scale::Tiny);
     let dir = scratch("run-unknown-only");
-    let err = super::run_with(
-        &dir,
-        RUN_SEED,
-        sizes,
-        Some(2),
-        Some(&["nope".to_owned()]),
-        None,
-    )
-    .expect_err("an unknown family name must refuse");
+    let err = super::run_with(&dir, RUN_SEED, sizes, Some(2), Some(&["nope".to_owned()]))
+        .expect_err("an unknown family name must refuse");
     assert!(err.contains("unknown family `nope`"), "{err}");
     assert!(err.contains("crud_read_point"), "{err}");
     assert!(err.contains("crud_mixed_90_10"), "{err}");
@@ -475,52 +462,10 @@ fn a_filtered_run_still_gates_the_read_query() {
         sizes,
         Some(2),
         Some(&only),
-        None,
         &|lane_dir, lane| load_poisoned(lane_dir, lane, sizes),
     )
     .expect_err("the gate must run even when read_point is filtered out");
     assert!(err.contains("ENGINES DISAGREE"), "{err}");
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[cfg(feature = "obs")]
-#[test]
-fn traced_crud_lands_the_pair_with_judgment_and_commit_spans() {
-    let sizes = CrudSizes::of(Scale::Tiny);
-    let dir = scratch("run-traced");
-    let only = vec!["crud_insert".to_owned()];
-    let (md, json_text) = super::run_with(&dir, RUN_SEED, sizes, Some(1), Some(&only), Some(&dir))
-        .expect("the traced crud run (post-state fold included)");
-    assert!(md.contains("Flame summaries"), "{md}");
-    assert!(json_text.contains("\"flame\":"), "{json_text}");
-    for lane in duralane::ALL {
-        let lane_dir = dir.join("trace").join("crud").join(lane.label());
-        let json_path = lane_dir.join("crud_insert.json");
-        let text = std::fs::read_to_string(&json_path)
-            .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
-        assert!(
-            text.starts_with("[\n") && text.ends_with("\n]\n"),
-            "{} parses as a Chrome array",
-            json_path.display()
-        );
-        assert!(
-            text.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
-            "{}: the LMDB commit span reaches the artifact",
-            json_path.display()
-        );
-        assert!(
-            text.contains("judgment"),
-            "{}: the judgment spans reach the artifact",
-            json_path.display()
-        );
-        let folded = std::fs::read_to_string(lane_dir.join("crud_insert.folded"))
-            .expect("the folded twin lands beside the json");
-        assert!(!folded.is_empty(), "a non-degenerate fold");
-        for line in folded.lines() {
-            let count = line.rsplit(' ').next().expect("a self-ns tail");
-            assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
-        }
-    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -19,7 +19,7 @@ use super::{
 };
 use crate::Value;
 use crate::schema::StatementKind;
-use crate::schema::{FixedIntervalElement, IntervalElement, ValueType};
+use crate::schema::ValueType;
 
 /// Stable physical projection identity (chapter 40). Assigned in canonical
 /// statement order at compile time; survives incidental reordering.
@@ -56,8 +56,7 @@ pub enum KeyEncoding {
 
 impl KeyEncoding {
     /// Routing bytes width in the physical determinant index key (after the
-    /// namespace tag and projection id, before the optional interval tail
-    /// and row surrogate).
+    /// namespace tag and projection id, before the row ordinal).
     #[must_use]
     pub const fn routing_width(self) -> usize {
         match self {
@@ -83,6 +82,10 @@ pub enum DistinctnessWitness {
     FullRowEquality,
     /// Scalar projection is unique under the sealed key law.
     ScalarKeyUnique { projection: ProjectionId },
+    /// The scalar group AND complete interval value determine one row under
+    /// a pointwise key. This does not make the scalar routing bucket unique:
+    /// it may contain many rows with disjoint intervals.
+    IntervalKeyUnique { projection: ProjectionId },
     /// Existence-only suffix may stop after the first sufficient witness.
     ExistenceOnly { projection: ProjectionId },
 }
@@ -199,25 +202,22 @@ pub enum VisitOutcome {
     Stopped { visited: usize },
 }
 
-/// One compiled access path: relation, scalar positions, encoding and
-/// optional ordered interval tail (chapter 10 §2).
+/// One compiled access path: relation, scalar routing and logical interval
+/// metadata. Interval values are read from canonical rows, not index keys.
 #[derive(Debug, Clone)]
 pub struct CompiledProjection {
     pub id: ProjectionId,
     pub relation: RelationId,
-    /// Complete sealed projection in physical intern order (interval tail
+    /// Complete sealed projection in physical intern order (interval field
     /// included). Shared indexes use this order, not a statement spelling.
     pub projection: Box<[FieldId]>,
     /// Positions into `projection` for scalar determinant fields only.
     pub scalar_positions: Box<[usize]>,
     pub scalar_fields: Box<[FieldDescriptor]>,
     pub encoding: KeyEncoding,
-    /// Optional interval tail position within `projection`.
+    /// Optional logical interval position within `projection`.
     pub interval_position: Option<usize>,
     pub interval_type: Option<ValueType>,
-    /// Encoded interval-tail width in the complete physical key (0 if none).
-    /// Separate from the 16-byte scalar grouping crossover.
-    pub interval_tail_width: u8,
 }
 
 impl CompiledProjection {
@@ -232,29 +232,41 @@ impl CompiledProjection {
             .collect()
     }
 
+    /// Encode an exact scalar projection into caller-owned bounded storage.
+    /// Neither a projected value row nor a routing allocation is necessary.
+    pub(crate) fn encode_scalar_row<'a>(
+        &self,
+        row: &[Value],
+        out: &'a mut [u8; MAX_EXACT_SCALAR_BYTES],
+    ) -> Option<&'a [u8]> {
+        let KeyEncoding::ExactBounded { scalar_width } = self.encoding else {
+            return None;
+        };
+        let mut written = 0usize;
+        for (&position, field) in self.scalar_positions.iter().zip(&self.scalar_fields) {
+            let value = row.get(usize::from(self.projection[position].0))?;
+            with_exact_scalar_bytes(value.into(), &field.value_type, |bytes| {
+                let end = written.checked_add(bytes.len())?;
+                out.get_mut(written..end)?.copy_from_slice(bytes);
+                written = end;
+                Some(())
+            })?;
+        }
+        (written == usize::from(scalar_width)).then_some(&out[..written])
+    }
+
     #[must_use]
     pub fn interval_field(&self) -> Option<FieldId> {
         self.interval_position
             .map(|position| self.projection[position])
     }
 
-    /// Complete physical determinant key width: tag + projection id +
-    /// routing + interval tail + row surrogate.
+    /// Conservative physical key bound using the widest projection ordinal.
+    /// Actual store widths come from `store::PhysicalKeyWidths`; validation
+    /// must remain safe before the final projection count is known.
     #[must_use]
     pub fn complete_key_width(&self) -> usize {
-        DETERMINANT_KEY_OVERHEAD
-            + self.encoding.routing_width()
-            + usize::from(self.interval_tail_width)
-    }
-
-    /// Order-preserving interval-tail bytes, or `None` when this access
-    /// has no ordered tail or the row is missing that field.
-    #[must_use]
-    pub fn interval_tail_bytes(&self, row: &[Value]) -> Option<Vec<u8>> {
-        let position = self.interval_position?;
-        let field = self.projection[position];
-        let value = row.get(usize::from(field.0))?;
-        encode_interval_tail(value, self.interval_type.as_ref()?)
+        DETERMINANT_KEY_OVERHEAD + self.encoding.routing_width()
     }
 }
 
@@ -330,7 +342,7 @@ pub struct CompiledTheory {
     fields: Box<[Box<[FieldDescriptor]>]>,
     pub adjacency: LawAdjacency,
     /// Maximum complete physical determinant key width (prefix + routing +
-    /// interval tail + row surrogate), for schema validation.
+    /// row ordinal), for schema validation.
     pub max_determinant_key_width: usize,
 }
 
@@ -338,7 +350,7 @@ pub struct CompiledTheory {
 /// scattered 400/496/511 axioms.
 pub const LMDB_KEY_LIMIT: usize = 511;
 
-/// Prefix + projection id + row surrogate before routing / interval tail.
+/// Prefix + projection id + row ordinal, excluding scalar routing.
 const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
 
 /// Maximum encoded scalar bytes for the exact-bounded crossover (chapter 40).
@@ -701,7 +713,9 @@ fn compile_key(
         KeyForm::Scalar => DistinctnessWitness::ScalarKeyUnique {
             projection: ProjectionId(0),
         },
-        KeyForm::Pointwise { .. } => DistinctnessWitness::FullRowEquality,
+        KeyForm::Pointwise { .. } => DistinctnessWitness::IntervalKeyUnique {
+            projection: ProjectionId(0),
+        },
     };
     let id = intern.intern(statement.relation, &statement.projection, witness, true)?;
     let access = by_statement
@@ -1000,6 +1014,9 @@ fn placed_witness(id: ProjectionId, witness: DistinctnessWitness) -> Distinctnes
         DistinctnessWitness::ScalarKeyUnique { .. } => {
             DistinctnessWitness::ScalarKeyUnique { projection: id }
         }
+        DistinctnessWitness::IntervalKeyUnique { .. } => {
+            DistinctnessWitness::IntervalKeyUnique { projection: id }
+        }
         DistinctnessWitness::ExistenceOnly { .. } => {
             DistinctnessWitness::ExistenceOnly { projection: id }
         }
@@ -1012,6 +1029,10 @@ fn stronger_witness(left: DistinctnessWitness, right: DistinctnessWitness) -> Di
         (DistinctnessWitness::ScalarKeyUnique { projection }, _)
         | (_, DistinctnessWitness::ScalarKeyUnique { projection }) => {
             DistinctnessWitness::ScalarKeyUnique { projection }
+        }
+        (DistinctnessWitness::IntervalKeyUnique { projection }, _)
+        | (_, DistinctnessWitness::IntervalKeyUnique { projection }) => {
+            DistinctnessWitness::IntervalKeyUnique { projection }
         }
         (DistinctnessWitness::FullRowEquality, _) | (_, DistinctnessWitness::FullRowEquality) => {
             DistinctnessWitness::FullRowEquality
@@ -1033,20 +1054,17 @@ fn compile_projection(
     let mut scalar_fields = Vec::new();
     let mut interval_position = None;
     let mut interval_type = None;
-    let mut interval_tail_width = 0u8;
     for (position, field) in projection.iter().enumerate() {
         let descriptor = &descriptors[usize::from(field.0)];
         if descriptor.value_type.is_interval() {
             interval_position = Some(position);
             interval_type = Some(descriptor.value_type);
-            interval_tail_width = u8::try_from(interval_tail_encoded_width(&descriptor.value_type))
-                .unwrap_or(u8::MAX);
         } else {
             scalar_positions.push(position);
             scalar_fields.push(descriptor.clone());
         }
     }
-    let encoding = select_encoding_with_tail(&scalar_fields, usize::from(interval_tail_width));
+    let encoding = select_encoding(&scalar_fields);
     CompiledProjection {
         id,
         relation,
@@ -1056,15 +1074,6 @@ fn compile_projection(
         encoding,
         interval_position,
         interval_type,
-        interval_tail_width,
-    }
-}
-
-fn interval_tail_encoded_width(value_type: &ValueType) -> usize {
-    match value_type {
-        ValueType::Interval { .. } => 16,
-        ValueType::FixedInterval { .. } => 8,
-        _ => 0,
     }
 }
 
@@ -1078,13 +1087,6 @@ pub fn select_key_encoding_width(scalar_fields: &[FieldDescriptor]) -> usize {
 }
 
 pub(crate) fn select_encoding(scalar_fields: &[FieldDescriptor]) -> KeyEncoding {
-    select_encoding_with_tail(scalar_fields, 0)
-}
-
-fn select_encoding_with_tail(
-    scalar_fields: &[FieldDescriptor],
-    interval_tail_width: usize,
-) -> KeyEncoding {
     let mut width = 0usize;
     for field in scalar_fields {
         let Some(exact) = exact_scalar_width(&field.value_type) else {
@@ -1095,9 +1097,7 @@ fn select_encoding_with_tail(
             return KeyEncoding::FingerprintBucket;
         }
     }
-    let complete = DETERMINANT_KEY_OVERHEAD
-        .saturating_add(width)
-        .saturating_add(interval_tail_width);
+    let complete = DETERMINANT_KEY_OVERHEAD.saturating_add(width);
     if complete > LMDB_KEY_LIMIT {
         return KeyEncoding::FingerprintBucket;
     }
@@ -1108,7 +1108,7 @@ fn select_encoding_with_tail(
 
 /// Exact order-preserving width for one scalar type, or `None` for the
 /// fingerprint arm (text, variable width).
-fn exact_scalar_width(value_type: &ValueType) -> Option<usize> {
+pub(crate) fn exact_scalar_width(value_type: &ValueType) -> Option<usize> {
     match value_type {
         ValueType::Bool => Some(1),
         ValueType::U64 | ValueType::I64 | ValueType::F64 => Some(8),
@@ -1133,62 +1133,70 @@ pub fn encode_scalar_group(values: &[Value], fields: &[FieldDescriptor]) -> Opti
     Some(out)
 }
 
+/// Encode already-projected scalar values into caller-owned storage using
+/// the same order-preserving scalar codec as the allocating group encoder.
+pub(crate) fn encode_scalar_group_into<'a>(
+    values: &[Value],
+    fields: &[FieldDescriptor],
+    out: &'a mut [u8; MAX_EXACT_SCALAR_BYTES],
+) -> Option<&'a [u8]> {
+    if values.len() != fields.len() {
+        return None;
+    }
+    let mut written = 0usize;
+    for (value, field) in values.iter().zip(fields) {
+        with_exact_scalar_bytes(value.into(), &field.value_type, |bytes| {
+            let end = written.checked_add(bytes.len())?;
+            out.get_mut(written..end)?.copy_from_slice(bytes);
+            written = end;
+            Some(())
+        })?;
+    }
+    Some(&out[..written])
+}
+
 fn append_exact_scalar(value: &Value, value_type: &ValueType, out: &mut Vec<u8>) -> Option<()> {
+    with_exact_scalar_bytes(value.into(), value_type, |bytes| {
+        out.extend_from_slice(bytes);
+        Some(())
+    })
+}
+
+/// The scalar codec can also consume a checked borrowed byte field without
+/// manufacturing an owned `Value::FixedBytes` just to encode its route.
+#[derive(Clone, Copy)]
+pub(crate) enum ExactScalarRef<'a> {
+    Value(&'a Value),
+    FixedBytes(&'a [u8]),
+}
+
+impl<'a> From<&'a Value> for ExactScalarRef<'a> {
+    fn from(value: &'a Value) -> Self {
+        match value {
+            Value::FixedBytes(bytes) => Self::FixedBytes(bytes),
+            _ => Self::Value(value),
+        }
+    }
+}
+
+pub(crate) fn with_exact_scalar_bytes(
+    value: ExactScalarRef<'_>,
+    value_type: &ValueType,
+    emit: impl FnOnce(&[u8]) -> Option<()>,
+) -> Option<()> {
     use crate::encoding::{encode_bool, encode_f64, encode_i64, encode_u64};
     match (value, value_type) {
-        (Value::Bool(v), ValueType::Bool) => out.push(encode_bool(*v)),
-        (Value::U64(v), ValueType::U64) => out.extend_from_slice(&encode_u64(*v)),
-        (Value::I64(v), ValueType::I64) => out.extend_from_slice(&encode_i64(*v)),
-        (Value::F64(v), ValueType::F64) => out.extend_from_slice(&encode_f64(*v)),
-        (Value::Uuid(v), ValueType::Uuid) => out.extend_from_slice(v.as_bytes()),
-        (Value::FixedBytes(bytes), ValueType::FixedBytes { len }) => {
+        (ExactScalarRef::Value(Value::Bool(v)), ValueType::Bool) => emit(&[encode_bool(*v)]),
+        (ExactScalarRef::Value(Value::U64(v)), ValueType::U64) => emit(&encode_u64(*v)),
+        (ExactScalarRef::Value(Value::I64(v)), ValueType::I64) => emit(&encode_i64(*v)),
+        (ExactScalarRef::Value(Value::F64(v)), ValueType::F64) => emit(&encode_f64(*v)),
+        (ExactScalarRef::Value(Value::Uuid(v)), ValueType::Uuid) => emit(v.as_bytes()),
+        (ExactScalarRef::FixedBytes(bytes), ValueType::FixedBytes { len }) => {
             if bytes.len() != usize::from(*len) {
                 return None;
             }
-            out.extend_from_slice(bytes);
+            emit(bytes)
         }
-        _ => return None,
-    }
-    Some(())
-}
-
-fn encode_interval_tail(value: &Value, value_type: &ValueType) -> Option<Vec<u8>> {
-    use crate::encoding::{
-        encode_i64, encode_interval_f64, encode_interval_i64, encode_interval_u64, encode_u64,
-    };
-    match (value, value_type) {
-        (
-            Value::IntervalU64(interval),
-            ValueType::Interval {
-                element: IntervalElement::U64,
-            },
-        ) => Some(encode_interval_u64(*interval).to_vec()),
-        (
-            Value::IntervalI64(interval),
-            ValueType::Interval {
-                element: IntervalElement::I64,
-            },
-        ) => Some(encode_interval_i64(*interval).to_vec()),
-        (
-            Value::IntervalF64(interval),
-            ValueType::Interval {
-                element: IntervalElement::F64,
-            },
-        ) => Some(encode_interval_f64(*interval).to_vec()),
-        (
-            Value::IntervalU64(interval),
-            ValueType::FixedInterval {
-                element: FixedIntervalElement::U64,
-                ..
-            },
-        ) => Some(encode_u64(interval.start()).to_vec()),
-        (
-            Value::IntervalI64(interval),
-            ValueType::FixedInterval {
-                element: FixedIntervalElement::I64,
-                ..
-            },
-        ) => Some(encode_i64(interval.start()).to_vec()),
         _ => None,
     }
 }
@@ -1198,10 +1206,166 @@ mod tests {
     use super::*;
     use crate::encoding::encode_u64;
     use crate::schema::tests::{capacity, closed, containment, fd, field, row, side, side_where};
-    use crate::schema::{RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _};
+    use crate::schema::{
+        IntervalElement, RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _,
+    };
 
     fn compile(schema: &Schema) -> CompiledTheory {
         CompiledTheory::compile(schema).expect("projection ids")
+    }
+
+    #[test]
+    fn stack_scalar_projection_preserves_every_exact_type_and_order() {
+        let cases = [
+            (ValueType::Bool, vec![Value::Bool(false), Value::Bool(true)]),
+            (ValueType::U64, vec![Value::U64(0), Value::U64(u64::MAX)]),
+            (
+                ValueType::I64,
+                vec![Value::I64(i64::MIN), Value::I64(0), Value::I64(i64::MAX)],
+            ),
+            (
+                ValueType::F64,
+                vec![
+                    Value::F64(crate::F64::NEG_INFINITY),
+                    Value::F64(crate::F64::from(-1.0)),
+                    Value::F64(crate::F64::from(0.0)),
+                    Value::F64(crate::F64::INFINITY),
+                    Value::F64(crate::F64::NAN),
+                ],
+            ),
+            (
+                ValueType::Uuid,
+                vec![
+                    Value::Uuid(crate::Uuid::from_bytes([0; 16])),
+                    Value::Uuid(crate::Uuid::from_bytes([255; 16])),
+                ],
+            ),
+            (
+                ValueType::FixedBytes { len: 16 },
+                vec![
+                    Value::FixedBytes(Box::new([0; 16])),
+                    Value::FixedBytes(Box::new([255; 16])),
+                ],
+            ),
+        ];
+        for (value_type, values) in cases {
+            let schema = SchemaDescriptor {
+                relations: vec![RelationDescriptor {
+                    extension: None,
+                    name: "T".into(),
+                    fields: vec![field("key", value_type)],
+                }],
+                statements: vec![fd(RelationId(0), &[FieldId(0)])],
+            }
+            .validate()
+            .unwrap();
+            let theory = compile(&schema);
+            let projection = theory.projection(ProjectionId(0)).unwrap();
+            let mut previous = None;
+            for value in values {
+                let row = [value];
+                let expected = encode_scalar_group(&row, &projection.scalar_fields).unwrap();
+                let mut stack = [0xaa; MAX_EXACT_SCALAR_BYTES];
+                let actual = projection.encode_scalar_row(&row, &mut stack).unwrap();
+                assert_eq!(actual, expected);
+                assert_eq!(
+                    encode_scalar_group_into(&row, &projection.scalar_fields, &mut stack),
+                    Some(expected.as_slice())
+                );
+                if let Some(previous) = previous {
+                    assert!(previous < expected, "encoded scalar ordering");
+                }
+                previous = Some(expected);
+            }
+        }
+    }
+
+    #[test]
+    fn bounded_scalar_group_preserves_arity_and_does_not_cap_the_allocating_codec() {
+        let fields = [field("a", ValueType::U64), field("b", ValueType::I64)];
+        let values = [Value::U64(42), Value::I64(-1)];
+        let mut bytes = [0; MAX_EXACT_SCALAR_BYTES];
+        let expected = encode_scalar_group(&values, &fields).unwrap();
+        assert_eq!(
+            encode_scalar_group_into(&values, &fields, &mut bytes),
+            Some(expected.as_slice())
+        );
+        assert_eq!(
+            encode_scalar_group_into(&[], &[], &mut bytes),
+            Some(&[][..])
+        );
+        assert!(encode_scalar_group_into(&values[..1], &fields, &mut bytes).is_none());
+        assert!(encode_scalar_group_into(&values, &fields[..1], &mut bytes).is_none());
+        assert!(encode_scalar_group_into(&[Value::Bool(true)], &fields[..1], &mut bytes).is_none());
+        let wide = [field("wide", ValueType::FixedBytes { len: 17 })];
+        let wide_value = [Value::FixedBytes(Box::new([7; 17]))];
+        assert!(encode_scalar_group_into(&wide_value, &wide, &mut bytes).is_none());
+        assert_eq!(encode_scalar_group(&wide_value, &wide), Some(vec![7; 17]));
+        assert!(
+            encode_scalar_group_into(&[Value::FixedBytes(Box::new([7; 16]))], &wide, &mut bytes)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stack_scalar_projection_handles_composites_empty_and_invalid_rows() {
+        let mut projection = CompiledProjection {
+            id: ProjectionId(0),
+            relation: RelationId(0),
+            projection: Box::new([FieldId(1), FieldId(0)]),
+            scalar_positions: Box::new([0, 1]),
+            scalar_fields: Box::new([field("b", ValueType::U64), field("a", ValueType::I64)]),
+            encoding: KeyEncoding::ExactBounded { scalar_width: 16 },
+            interval_position: None,
+            interval_type: None,
+        };
+        let row = [Value::I64(-1), Value::U64(42)];
+        let mut stack = [0; MAX_EXACT_SCALAR_BYTES];
+        let expected =
+            encode_scalar_group(&[row[1].clone(), row[0].clone()], &projection.scalar_fields)
+                .unwrap();
+        assert_eq!(
+            projection.encode_scalar_row(&row, &mut stack),
+            Some(expected.as_slice())
+        );
+        assert!(
+            projection
+                .encode_scalar_row(&row[..1], &mut stack)
+                .is_none()
+        );
+        assert!(
+            projection
+                .encode_scalar_row(&[Value::Bool(true), Value::U64(42)], &mut stack)
+                .is_none()
+        );
+        projection.scalar_fields[0] = field("b", ValueType::FixedBytes { len: 16 });
+        assert!(
+            projection
+                .encode_scalar_row(
+                    &[Value::I64(0), Value::FixedBytes(Box::new([0; 16]))],
+                    &mut stack
+                )
+                .is_none(),
+            "overwide projection is refused, never sliced out of bounds"
+        );
+        assert!(
+            projection
+                .encode_scalar_row(
+                    &[Value::I64(0), Value::FixedBytes(Box::new([0; 8]))],
+                    &mut stack
+                )
+                .is_none(),
+            "fixed byte width mismatch"
+        );
+        projection.encoding = KeyEncoding::FingerprintBucket;
+        assert!(projection.encode_scalar_row(&row, &mut stack).is_none());
+        projection.scalar_positions = Box::new([]);
+        projection.scalar_fields = Box::new([]);
+        projection.encoding = KeyEncoding::ExactBounded { scalar_width: 0 };
+        assert_eq!(
+            projection.encode_scalar_row(&[], &mut stack),
+            Some([].as_slice())
+        );
     }
 
     #[test]
@@ -1472,7 +1636,7 @@ mod tests {
     }
 
     #[test]
-    fn d04_pointwise_interval_tail_is_not_scalar_uniqueness() {
+    fn d04_pointwise_interval_field_is_not_scalar_uniqueness() {
         let iv = ValueType::Interval {
             element: IntervalElement::I64,
         };
@@ -1507,18 +1671,24 @@ mod tests {
             key.encoding,
             KeyEncoding::ExactBounded { scalar_width: 8 }
         ));
-        assert_eq!(key.interval_tail_width, 16);
-        assert_eq!(key.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8 + 16);
+        assert_eq!(key.interval_position, Some(1));
+        assert_eq!(key.interval_type, Some(iv));
+        assert_eq!(key.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8);
         assert_eq!(
             theory.distinctness_witness(key.id),
-            Some(DistinctnessWitness::FullRowEquality),
-            "pointwise match is not scalar uniqueness"
+            Some(DistinctnessWitness::IntervalKeyUnique { projection: key.id }),
+            "only the complete interval key, not its scalar bucket, is unique"
+        );
+        assert_eq!(
+            theory.key_witness(StatementId(0)),
+            Some(DistinctnessWitness::IntervalKeyUnique { projection: key.id }),
         );
         let source = theory
             .source_projection(StatementId(1))
             .expect("coverage source");
-        assert_eq!(source.interval_tail_width, 16);
         assert_eq!(source.interval_position, Some(1));
+        assert_eq!(source.interval_type, Some(iv));
+        assert_eq!(source.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8);
     }
 
     #[test]

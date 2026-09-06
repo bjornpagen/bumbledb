@@ -17,18 +17,15 @@ echo "==> bumbledb with the ground-off test-support feature (clippy + tests)"
 cargo clippy -p bumbledb --all-targets --features ground-off -- -D warnings
 cargo nextest run -p bumbledb --features ground-off
 
-echo "==> bumbledb with the trace feature (tests)"
-cargo nextest run -p bumbledb --features trace
-
 echo "==> bumbledb --all-features (clippy, the pairwise co-compile check)"
 cargo clippy -p bumbledb --all-targets --all-features -- -D warnings
 
-echo "==> bumbledb-bench with the obs feature (clippy + harness tests)"
-cargo clippy -p bumbledb-bench --features obs --all-targets -- -D warnings
+echo "==> bumbledb-bench with allocation counters (clippy + harness tests)"
+cargo clippy -p bumbledb-bench --features alloc-counter --all-targets -- -D warnings
 
 # Exercise the entire feature-enabled crate in one process pool, rather
 # than a hand-maintained list of filters that can omit new tests.
-cargo nextest run -p bumbledb-bench --features obs
+cargo nextest run -p bumbledb-bench --features alloc-counter
 
 echo "==> flame renderer golden selftest"
 python3 scripts/flame.py selftest

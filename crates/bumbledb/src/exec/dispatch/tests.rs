@@ -211,7 +211,15 @@ fn fully_key_bound_single_atom_classifies_as_key_probe() {
             ..
         }
     ));
-    assert_eq!(plan.kind.key(), &[(FieldId(0), Const::Word(5))]);
+    assert_eq!(
+        plan.kind.key(),
+        &[KeyProbePart {
+            field: FieldId(0),
+            start: 0,
+            end: 1,
+            value: Const::Word(5),
+        }]
+    );
     assert!(plan.remaining_filters.is_empty());
     assert_eq!(plan.slot_count(), 2);
 }
@@ -403,6 +411,13 @@ fn run_key_probe(
     let mut sink = ProjectionSink::new((0..plan.slot_count()).collect());
     let mut key = Vec::new();
     let mut store = None;
+    let field_types: Vec<_> = schema
+        .relation(plan.relation)
+        .fields()
+        .iter()
+        .map(|field| field.value_type)
+        .collect();
+    let mut row = crate::image::canon::RowWords::new(&field_types);
     execute_key_probe(
         plan,
         &source,
@@ -410,6 +425,7 @@ fn run_key_probe(
         &interner,
         &mut store,
         params,
+        &mut row,
         &mut key,
         &mut bindings,
         &mut sink,
@@ -479,6 +495,95 @@ fn an_unstored_pending_literal_is_empty_not_an_error() {
 }
 
 #[test]
+fn uniqueness_reuses_row_storage_without_interning_rejected_candidates() {
+    for payload_type in [ValueType::U64, ValueType::String] {
+        let payload = |id: u64| match payload_type {
+            ValueType::U64 => Value::U64(id * 10),
+            ValueType::String => Value::String(format!("row-{id}").into()),
+            _ => unreachable!("test cases are numeric or text"),
+        };
+        let schema = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                extension: None,
+                name: "Entry".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                    },
+                    FieldDescriptor {
+                        name: "payload".into(),
+                        value_type: payload_type,
+                    },
+                ],
+            }],
+            statements: vec![StatementDescriptor::Functionality {
+                relation: REL,
+                projection: Box::new([FieldId(0)]),
+            }],
+        }
+        .validate()
+        .expect("valid schema");
+        let fixture = value_source(
+            &schema,
+            &[
+                vec![Value::U64(1), payload(1)],
+                vec![Value::U64(2), payload(2)],
+                vec![Value::U64(3), payload(3)],
+            ],
+        );
+        let plan = classify(
+            &single(occurrence(
+                &[(1, 0)],
+                vec![eq_filter(0, Const::Param(ParamId(0)))],
+            )),
+            &schema,
+        )
+        .expect("unique key");
+        let cache = crate::image::cache::ImageCache::new(&schema);
+        let generation = cache.acquire();
+        let source = fixture.source();
+        let interner = InternerHandle::new(&generation, source.work());
+        let mut row = crate::image::canon::RowWords::new(&[ValueType::U64, payload_type]);
+        let mut scratch = Vec::new();
+        let mut store = None;
+        for id in [2, 99, 1] {
+            let hit = key_probe_row(
+                &plan,
+                &source,
+                &schema,
+                &interner,
+                &mut store,
+                &[Const::Word(id)],
+                &mut row,
+                &mut scratch,
+            )
+            .expect("probe");
+            assert_eq!(hit, id != 99);
+            if hit {
+                assert_eq!(row.span_words(FieldId(0)), &[id]);
+                let word = row.span_words(FieldId(1))[0];
+                if payload_type == ValueType::String {
+                    assert_eq!(
+                        crate::api::prepared::owned_text(&interner, store.as_mut(), word)
+                            .expect("resolve")
+                            .as_deref(),
+                        Some(format!("row-{id}").as_str())
+                    );
+                } else {
+                    assert_eq!(word, id * 10);
+                }
+            }
+            assert_eq!(
+                interner.lookup_word("row-3"),
+                crate::image::intern::SENTINEL_WORD,
+                "an unmatched candidate must not acquire a resident token"
+            );
+        }
+    }
+}
+
+#[test]
 fn full_fact_membership_lookup_with_an_interval_field() {
     let schema = stay_schema();
     let fixture = value_source(
@@ -536,6 +641,8 @@ fn full_fact_membership_lookup_with_an_interval_field() {
     };
     assert!(probe((5, 10)), "exact membership hits");
     assert!(!probe((5, 11)), "one past the end misses");
+    assert!(!probe((5, 5)), "an empty interval remains a nonmatch");
+    assert!(!probe((10, 5)), "an inverted interval remains a nonmatch");
 }
 
 #[test]
@@ -578,6 +685,8 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
     let mut sink = AggregateSink::new(vec![FindSpec::Agg(AggSpec::Count)], 1);
     let mut key = Vec::new();
     let mut store = None;
+    let mut row =
+        crate::image::canon::RowWords::new(&[ValueType::U64, ValueType::U64, ValueType::String]);
     execute_key_probe(
         &plan,
         &source,
@@ -585,6 +694,7 @@ fn aggregate_over_a_point_lookup_folds_one_binding() {
         &interner,
         &mut store,
         &[],
+        &mut row,
         &mut key,
         &mut bindings,
         &mut sink,

@@ -22,6 +22,7 @@ use bumbledb_theory::Value;
 /// Physical LMDB key bound for one key statement's scalar determinant (chapter
 /// 40). Schema validation rejects only when the complete physical key cannot
 /// fit the backend — not the obsolete 496-byte scalar embedding limit.
+/// Conservative maximum framing: validation precedes schema-fixed encoding.
 pub(crate) const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
 
 /// The admission boundary as an extension trait: [`SchemaDescriptor`] is

@@ -8,8 +8,7 @@ use crate::schema::Ledger;
 use crate::{clockproxy, corpus, families, harness, report, sqlite_run, writebench};
 
 /// `pub(crate)` (not `pub(super)`) so the device-honesty lock test can point it
-/// at a live ram disk and assert the refusal. delete-bearing touch + walk after
-/// the timed window.
+/// at a live ram disk and assert the refusal.
 #[expect(
     clippy::too_many_lines,
     reason = "one lane list, ordered by the fsync-shadow rule — splitting would hide the order"
@@ -19,8 +18,6 @@ pub(crate) fn write_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
     lane: DurabilityLane,
-    trace_dir: Option<&Path>,
-    flames: &mut Vec<report::FlameEmbed>,
 ) -> Result<Vec<report::WriteFamilyReport>, String> {
     type EngineRunner = fn(&Db<Ledger>, GenConfig) -> Result<harness::Measurement, String>;
     type OracleRunner =
@@ -48,8 +45,7 @@ pub(crate) fn write_families(
         ),
     ];
 
-    // would report a number physics never signed. Checked before any
-
+    // Refuse RAM-backed durable timings before loading a scratch corpus.
     crate::devhonesty::assert_disk_backed(scratch, "the timed write families")
         .map_err(|refusal| refusal.to_string())?;
 
@@ -67,24 +63,24 @@ pub(crate) fn write_families(
                 continue;
             }
             eprintln!("bench: {name}");
-            let ((ours, theirs), ghz) =
-                clockproxy::stamped(|| Ok((engine(&db, cfg)?, oracle(&conn, cfg)?)))?;
+            let ((ours, theirs, boundary), ghz) = clockproxy::stamped(|| {
+                let ours = engine(&db, cfg)?;
+                // One untimed observation separates the engine blocks.
+                // Keep the original outer stamp, including its flag.
+                let boundary = clockproxy::effective_ghz();
+                let theirs = oracle(&conn, cfg)?;
+                Ok((ours, theirs, boundary))
+            })?;
+            let (ghz_ours, ghz_theirs) = ghz.split_at(boundary);
             out.push(report::WriteFamilyReport {
                 name: name.to_owned(),
                 ours: ours.stats,
                 theirs: Some(theirs.stats),
                 facts_per_sec: None,
                 ghz: Some(ghz.into()),
+                ghz_ours: Some(ghz_ours.into()),
+                ghz_theirs: Some(ghz_theirs.into()),
             });
-            if name == "cold_containment_walk_delete"
-                && let Some(table) =
-                    writebench::trace_cold_containment_walk_delete(&db, cfg, trace_dir)?
-            {
-                flames.push(report::FlameEmbed {
-                    name: name.to_owned(),
-                    table,
-                });
-            }
         }
 
         if selected("commit_witnessed") {
@@ -97,6 +93,8 @@ pub(crate) fn write_families(
                 theirs: None,
                 facts_per_sec: None,
                 ghz: Some(ghz.into()),
+                ghz_ours: Some(ghz.into()),
+                ghz_theirs: None,
             });
         }
     }
@@ -108,8 +106,6 @@ pub(crate) fn write_families(
         &scratch.join("windowed"),
         selected,
         lane.store_mode(),
-        trace_dir,
-        flames,
     )?);
 
     out.extend(crate::capacity::write_families(
@@ -117,11 +113,9 @@ pub(crate) fn write_families(
         &scratch.join("capacity"),
         selected,
         lane.store_mode(),
-        trace_dir,
-        flames,
     )?);
 
-    // may measure after it in this process.
+    // The insertion stream runs last: no family follows its fsync-heavy window.
     if selected("insert_stream") {
         eprintln!("bench: insert_stream");
         let proto = families::write_families()
@@ -129,22 +123,27 @@ pub(crate) fn write_families(
             .find(|f| f.name == "insert_stream")
             .expect("registered")
             .protocol;
-        let ((ours, theirs), ghz) = clockproxy::stamped(|| {
-            Ok((
-                writebench::insert_stream_bumbledb(cfg, scratch, lane.store_mode())?,
-                sqlite_run::insert_stream(cfg, scratch, lane)?,
-            ))
+        let ((ours, theirs, boundary), ghz) = clockproxy::stamped(|| {
+            let ours = writebench::insert_stream_bumbledb(cfg, scratch, lane.store_mode())?;
+            // Runners include their own untimed preseed/teardown. This is
+            // block attribution, not an in-sample frequency measurement.
+            let boundary = clockproxy::effective_ghz();
+            let theirs = sqlite_run::insert_stream(cfg, scratch, lane)?;
+            Ok((ours, theirs, boundary))
         })?;
+        let (ghz_ours, ghz_theirs) = ghz.split_at(boundary);
         out.push(report::WriteFamilyReport {
             name: "insert_stream".to_owned(),
             facts_per_sec: Some(harness::facts_per_sec(&ours, proto.samples)),
             ours: ours.stats,
             theirs: Some(theirs.stats),
             ghz: Some(ghz.into()),
+            ghz_ours: Some(ghz_ours.into()),
+            ghz_theirs: Some(ghz_theirs.into()),
         });
     }
 
-    // leave the deepest clock shadow — nothing measures after it.
+    // Preserve that ordering if the family roster changes.
     debug_assert!(
         out.iter()
             .position(|w| w.name == "insert_stream")

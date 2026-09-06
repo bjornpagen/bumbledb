@@ -41,3 +41,29 @@ pub fn gate_scenario(dir: &Path, scenario: &Scenario, seed: u64) -> Result<(), S
     }
     Ok(())
 }
+
+/// Fresh diagnostic corpus, ordinary independent oracle, then only the
+/// selected query in the native window. Never erase a previous capture.
+pub(crate) fn profile(
+    dir: &Path,
+    args: &crate::cli::ProfileArgs,
+) -> Result<Option<crate::driver::profile::ProfileResult>, String> {
+    for scenario in all() {
+        let Some(query) = (scenario.queries)()
+            .into_iter()
+            .find(|q| q.name == args.family)
+        else {
+            continue;
+        };
+        if args.corpus.scale != crate::corpus_gen::Scale::S {
+            return Err("scenario profile corpora have one fixed scale; use --scale S".to_owned());
+        }
+        if let Some(parent) = dir.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("profile parent: {e}"))?;
+        }
+        std::fs::create_dir(dir).map_err(|e| format!("fresh profile corpus: {e}"))?;
+        let stores = load(dir, &scenario, args.corpus.seed)?;
+        return super::run_query::profile(&stores, &scenario, &query, args).map(Some);
+    }
+    Ok(None)
+}

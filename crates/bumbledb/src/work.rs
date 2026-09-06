@@ -8,7 +8,11 @@ use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+mod deadline;
+pub(crate) use deadline::AdmissionStamp;
+use deadline::Deadline;
 
 /// Explicit finite allowances. Zero means no allowance, never unlimited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +77,7 @@ impl std::error::Error for WorkError {}
 struct Ledger {
     limits: [u64; 6],
     used: [AtomicU64; 6],
-    deadline: Instant,
+    deadline: Deadline,
     cancelled: AtomicBool,
 }
 
@@ -88,9 +92,7 @@ impl ExecutionPolicy {
     /// # Errors
     /// Returns [`WorkError::InvalidTimeout`] for an unrepresentable deadline.
     pub fn start(self) -> Result<WorkContext, WorkError> {
-        let deadline = Instant::now()
-            .checked_add(self.timeout)
-            .ok_or(WorkError::InvalidTimeout)?;
+        let deadline = Deadline::start(self.timeout)?;
         Ok(WorkContext(Arc::new(Ledger {
             limits: [
                 self.input_bytes,
@@ -120,6 +122,34 @@ impl Resource {
     }
 }
 
+impl Ledger {
+    fn checkpoint(&self) -> Result<(), WorkError> {
+        if self.cancelled.load(Ordering::Acquire) {
+            return Err(WorkError::Cancelled);
+        }
+        if self.deadline.expired() {
+            return Err(WorkError::DeadlineExceeded);
+        }
+        Ok(())
+    }
+
+    fn charge(&self, resource: Resource, amount: u64) -> Result<(), WorkError> {
+        self.checkpoint()?;
+        let limit = self.limits[resource.index()];
+        self.used[resource.index()]
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+                used.checked_add(amount).filter(|next| *next <= limit)
+            })
+            .map(|_| ())
+            .map_err(|used| WorkError::Exhausted {
+                resource,
+                used,
+                requested: amount,
+                limit,
+            })
+    }
+}
+
 impl WorkContext {
     pub fn cancel(&self) {
         self.0.cancelled.store(true, Ordering::Release);
@@ -128,13 +158,7 @@ impl WorkContext {
     /// # Errors
     /// Refuses a cancelled or expired operation, even if it has spare bytes.
     pub fn checkpoint(&self) -> Result<(), WorkError> {
-        if self.0.cancelled.load(Ordering::Acquire) {
-            return Err(WorkError::Cancelled);
-        }
-        if Instant::now() >= self.0.deadline {
-            return Err(WorkError::DeadlineExceeded);
-        }
-        Ok(())
+        self.0.checkpoint()
     }
 
     #[must_use]
@@ -151,35 +175,19 @@ impl WorkContext {
     /// # Errors
     /// Refuses input beyond the operation's byte allowance or stopped work.
     pub fn input(&self, bytes: u64) -> Result<(), WorkError> {
-        self.charge(Resource::InputBytes, bytes)
+        self.0.charge(Resource::InputBytes, bytes)
     }
 
     /// # Errors
     /// Refuses input beyond the operation's row allowance or stopped work.
     pub fn rows(&self, rows: u64) -> Result<(), WorkError> {
-        self.charge(Resource::Rows, rows)
+        self.0.charge(Resource::Rows, rows)
     }
 
     /// # Errors
     /// Refuses work beyond the operation's cumulative allowance or stopped work.
     pub fn step(&self, units: u64) -> Result<(), WorkError> {
-        self.charge(Resource::WorkUnits, units)
-    }
-
-    fn charge(&self, resource: Resource, amount: u64) -> Result<(), WorkError> {
-        self.checkpoint()?;
-        let limit = self.limit(resource);
-        self.0.used[resource.index()]
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(amount).filter(|next| *next <= limit)
-            })
-            .map(|_| ())
-            .map_err(|used| WorkError::Exhausted {
-                resource,
-                used,
-                requested: amount,
-                limit,
-            })
+        self.0.charge(Resource::WorkUnits, units)
     }
 
     /// Reserve before allocation/growth; retain the returned owner until the
@@ -188,7 +196,7 @@ impl WorkContext {
     /// Refuses bytes beyond the operation allowance or stopped work.
     pub fn reserve(&self, kind: ByteKind, bytes: u64) -> Result<ByteReservation, WorkError> {
         let resource = kind.resource();
-        self.charge(resource, bytes)?;
+        self.0.charge(resource, bytes)?;
         Ok(ByteReservation {
             ledger: Arc::clone(&self.0),
             resource,
@@ -227,6 +235,19 @@ impl ByteReservation {
     #[must_use]
     pub const fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    /// Grow before the owner allocates; shrink only after its allocation
+    /// shrinks. Refused growth leaves both this owner and the ledger intact.
+    /// Shrinking remains permitted after cancellation for cleanup.
+    pub(crate) fn resize(&mut self, bytes: u64) -> Result<(), WorkError> {
+        if bytes > self.bytes {
+            self.ledger.charge(self.resource, bytes - self.bytes)?;
+        } else if bytes < self.bytes {
+            self.ledger.used[self.resource.index()].fetch_sub(self.bytes - bytes, Ordering::AcqRel);
+        }
+        self.bytes = bytes;
+        Ok(())
     }
 
     /// Fold `other` into this owner. Both must charge the same ledger and

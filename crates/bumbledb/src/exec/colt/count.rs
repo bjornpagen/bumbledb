@@ -49,11 +49,6 @@ impl Colt {
     }
 
     #[must_use]
-    pub fn probe_footprint_bytes(&self) -> usize {
-        self.ctrl.len() + self.buckets.len() * 8 + self.dense.len() * 4
-    }
-
-    #[must_use]
     pub fn key_count(&self, cursor: Cursor) -> KeyCount {
         match cursor {
             Cursor::Row(_) => KeyCount::Estimate(1),

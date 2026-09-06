@@ -40,6 +40,7 @@ impl EitherSink {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn distinct_seen(&self) -> Option<usize> {
         match self {
             Self::Computed(sink) => sink.inner.distinct_seen(),
@@ -114,6 +115,12 @@ impl Sink for EitherSink {
             Self::Computed(_) => crate::exec::run::SkipCapability::Forbidden,
             Self::Projection(sink) => sink.skip_capability(),
             Self::Aggregate(sink) => sink.skip_capability(),
+        }
+    }
+
+    fn prepare_scan(&mut self, key_slots: &[usize]) {
+        if let Self::Projection(sink) = self {
+            sink.prepare_scan(key_slots);
         }
     }
 

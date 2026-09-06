@@ -10,7 +10,7 @@ use super::derived::{ScratchStage, SealedStage};
 use super::run_join::run_join;
 use super::{
     Bindings, EitherSink, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery,
-    PreparedRule, ProjectionSink, RecArm,
+    PreparedRule, ProjectionSink,
 };
 use crate::error::{Error, Result};
 use crate::exec::run::Counters;
@@ -52,11 +52,11 @@ pub const DEFAULT_DERIVED_TUPLES: u64 = 10_000_000;
 
 pub(crate) struct ReachDriver {
     pub(super) base: Vec<PreparedRule>,
-    pub(super) rec: Vec<RecArm>,
+    pub(super) rec: Vec<FreeJoinRule>,
     pub(super) field_types: Vec<ValueType>,
     pub(super) sink: crate::exec::sink::ProjectionSink,
     pub(super) units: usize,
-    pub(super) scratch: RecPingPong,
+    pub(super) frontier: TransientImage,
 }
 
 #[derive(Default)]
@@ -81,15 +81,6 @@ impl OccImages {
         }
         unreachable!("fill_plan_images wrote every live derived occurrence")
     }
-}
-
-#[derive(Clone, Copy)]
-enum DerivedBind<'a> {
-    Finished,
-    Rec {
-        delta: &'a Arc<RelationImage>,
-        acc: &'a Arc<RelationImage>,
-    },
 }
 
 /// One derived-image protocol: a working transient per derived id, a
@@ -314,45 +305,6 @@ fn seal_interior(
     }
 }
 
-#[derive(Default)]
-pub(super) struct RecPingPong {
-    delta_a: TransientImage,
-    delta_b: TransientImage,
-    acc_a: TransientImage,
-    acc_b: TransientImage,
-    acc_filled: [usize; 2],
-    flip: bool,
-    watermark: usize,
-    /// Once a rec table leaves RAM, later rounds append only — never a
-    /// whole-image resurrection.
-    acc_disk: Option<Box<ScratchStage>>,
-}
-
-impl RecPingPong {
-    fn begin(&mut self) {
-        self.acc_filled = [0; 2];
-        self.flip = false;
-        self.watermark = 0;
-        self.acc_disk = None;
-    }
-
-    fn delta_mut(&mut self) -> &mut TransientImage {
-        if self.flip {
-            &mut self.delta_b
-        } else {
-            &mut self.delta_a
-        }
-    }
-
-    fn acc_mut(&mut self) -> &mut TransientImage {
-        if self.flip {
-            &mut self.acc_b
-        } else {
-            &mut self.acc_a
-        }
-    }
-}
-
 struct RunCtx<'a> {
     schema: &'a Schema,
     images: &'a SourceImages<'a>,
@@ -371,29 +323,13 @@ pub(super) fn rule_uses_scratch_derived(
     plan: &crate::plan::fj::ValidatedPlan,
     published: &[SealedStage],
 ) -> bool {
-    rule_uses_scratch_derived_rec(plan, published, None, None)
-}
-
-pub(super) fn rule_uses_scratch_derived_rec(
-    plan: &crate::plan::fj::ValidatedPlan,
-    published: &[SealedStage],
-    rec_delta: Option<&SealedStage>,
-    rec_acc: Option<&SealedStage>,
-) -> bool {
-    plan.occurrences()
-        .iter()
-        .any(|occurrence| match occurrence.bind {
-            crate::plan::fj::OccBind::Finished(id) => published
-                .get(id.index())
-                .is_some_and(|stage| !stage.is_resident()),
-            crate::plan::fj::OccBind::RecDelta(_) => {
-                rec_delta.is_some_and(|stage| !stage.is_resident())
-            }
-            crate::plan::fj::OccBind::RecAcc(_) => {
-                rec_acc.is_some_and(|stage| !stage.is_resident())
-            }
-            crate::plan::fj::OccBind::Edb(_) => false,
-        })
+    plan.occurrences().iter().any(|occurrence| {
+        occurrence
+            .bind
+            .interior()
+            .and_then(|id| published.get(id.index()))
+            .is_some_and(|stage| !stage.is_resident())
+    })
 }
 
 impl<S> PreparedQuery<S> {
@@ -424,16 +360,13 @@ impl<S> PreparedQuery<S> {
                 }
             }
         }
-        let fast_eligible = self.latch.is_latched() && self.params.is_empty();
-        let mut latched = 0u32;
+        let fast_eligible = self.params.is_empty();
         let mut ran = false;
         let mut derived_tuples: u64 = 0;
         let interner = images.interner();
 
         let n_interiors = self.pipeline.interiors().len();
         if n_interiors > 0 {
-            let mut interiors_span = crate::obs::span(crate::obs::names::INTERIORS);
-            let mut interior_emits: u64 = 0;
             for i in 0..n_interiors {
                 {
                     let interiors = self.pipeline.interiors_mut();
@@ -484,7 +417,6 @@ impl<S> PreparedQuery<S> {
                         &mut interior.sink,
                         &mut self.bindings,
                         &mut self.key_scratch,
-                        &mut latched,
                         counters,
                     )?;
                     self.derived.occ_images = occ_images;
@@ -510,9 +442,7 @@ impl<S> PreparedQuery<S> {
                     )?
                 };
                 derived_tuples += sealed;
-                interior_emits += sealed;
             }
-            interiors_span.set_pair(n_interiors as u64, interior_emits);
         }
 
         let rec_ran = match &mut self.pipeline {
@@ -541,7 +471,6 @@ impl<S> PreparedQuery<S> {
                     self.forced_fallback,
                     &mut self.nonresident,
                     counters,
-                    &mut latched,
                     derived_tuples,
                 )?
             }
@@ -549,7 +478,6 @@ impl<S> PreparedQuery<S> {
         };
         ran |= rec_ran;
 
-        self.latch = self.latch.credit(latched);
         Ok(ran)
     }
 
@@ -558,7 +486,7 @@ impl<S> PreparedQuery<S> {
             self.derived.occ_images.clear();
             return;
         };
-        fill_plan_images(plan, &mut self.derived, DerivedBind::Finished);
+        fill_plan_images(plan, &mut self.derived);
     }
 }
 
@@ -588,11 +516,9 @@ fn run_reach<Cnt: Counters>(
     forced_fallback: bool,
     nonresident: &mut Option<crate::image::NonresidentTextStore>,
     counters: &mut Cnt,
-    latched: &mut u32,
-    mut derived_tuples: u64,
+    derived_tuples: u64,
 ) -> Result<bool> {
     let mut ran = false;
-    let mut reach_span = crate::obs::span(crate::obs::names::REACH);
 
     driver.sink.reset();
     // The rec seen/frontier state is charged like the main sink's distinct
@@ -602,18 +528,14 @@ fn run_reach<Cnt: Counters>(
         work: images.source().work().clone(),
         ram_bytes: sink_ram,
     }));
-    driver.scratch.begin();
     for rule in &mut driver.base {
         if let PreparedRule::FreeJoin(fj) = rule {
             unbind_interior_rule(fj, &mut derived.retired);
         }
     }
-    for arm in &mut driver.rec {
-        unbind_interior_rule(&mut arm.rule, &mut derived.retired);
+    for rule in &mut driver.rec {
+        unbind_interior_rule(rule, &mut derived.retired);
     }
-
-    let mut round_span = Some(crate::obs::span(crate::obs::names::FIXPOINT_ROUND));
-    let mut round_emits_before = counters.emits();
 
     for rule_idx in 0..driver.base.len() {
         fill_finished_images(&driver.base[rule_idx], derived);
@@ -638,22 +560,17 @@ fn run_reach<Cnt: Counters>(
             &mut driver.sink,
             bindings,
             key_scratch,
-            latched,
             counters,
         )?;
     }
-    let emitted = counters.emits() - round_emits_before;
-    let newly = driver.sink.len() as u64;
-    counters.fixpoint_round(emitted, emitted.saturating_sub(newly));
-    if let Some(mut span) = round_span.take() {
-        span.set_pair(emitted, emitted.saturating_sub(newly));
-    }
-
     let mut rounds: u32 = 0;
+    let mut watermark = 0;
     loop {
         let len = driver.sink.len();
-        let tuples = derived_tuples + len as u64;
-        let any_delta = len > driver.scratch.watermark;
+        // Earlier interiors plus the ONE accumulated set. Repeated
+        // derivations and earlier prefixes are not new derived tuples.
+        let tuples = derived_tuples.saturating_add(len as u64);
+        let any_delta = len > watermark;
         if !any_delta {
             let ReachDriver {
                 sink, field_types, ..
@@ -665,42 +582,28 @@ fn run_reach<Cnt: Counters>(
                 images.source().work(),
                 images.generation(),
             )?;
-            reach_span.set_pair(u64::from(rounds), tuples);
             break;
         }
         if rounds >= rounds_budget || tuples > tuples_budget {
             return Err(Error::DerivedBudgetExceeded { rounds, tuples });
         }
         rounds += 1;
-        round_span = Some(crate::obs::span(crate::obs::names::FIXPOINT_ROUND));
-        round_emits_before = counters.emits();
-        let flip = usize::from(driver.scratch.flip);
-        let since = driver.scratch.watermark;
-        counters.fixpoint_delta((len - since) as u64);
-        // Incremental Δ / acc: small stages stay resident; a spilled
-        // producer appends only new rows (no whole-image resurrection).
-        let (mut delta_stage, mut acc_stage) = next_rec_tables(
+        // Validation admits exactly one self-read per arm. Its source
+        // slot holds this round's immutable frontier, not another copy
+        // of the accumulated set. All consumers use the ordinary stage
+        // environment, including scratch-backed execution.
+        debug_assert_eq!(derived.published.len(), rec_id);
+        derived.published.push(next_frontier(
             driver,
             images.source().work(),
             images.generation(),
-            since,
+            watermark,
             len,
-            flip,
-        )?;
-        driver.scratch.acc_filled[flip] = len;
-        driver.scratch.flip = !driver.scratch.flip;
-        driver.scratch.watermark = len;
+        )?);
+        watermark = len;
 
-        for arm_idx in 0..driver.rec.len() {
-            if let (Some(delta), Some(acc)) = (delta_stage.resident(), acc_stage.resident()) {
-                fill_plan_images(
-                    &driver.rec[arm_idx].rule.plan,
-                    derived,
-                    DerivedBind::Rec { delta, acc },
-                );
-            } else {
-                derived.occ_images.clear();
-            }
+        for rule in &mut driver.rec {
+            fill_plan_images(&rule.plan, derived);
             let mut ctx = RunCtx {
                 schema,
                 images,
@@ -712,31 +615,27 @@ fn run_reach<Cnt: Counters>(
                 published: &mut derived.published,
                 nonresident,
             };
-            ran |= run_free_join_into_projection(
+            let result = run_free_join_into_projection(
                 &mut ctx,
-                Some(&mut delta_stage),
-                Some(&mut acc_stage),
-                &mut driver.rec[arm_idx].rule,
+                rule,
                 driver.units,
                 &derived.occ_images,
                 &mut derived.retired,
                 &mut driver.sink,
                 bindings,
-                latched,
                 counters,
-            )?;
+            );
+            // End every consumer lease, including a failed arm, before
+            // the next refill. Derived views never enter parked memos.
+            unbind_interior_rule(rule, &mut derived.retired);
+            if result.is_err() {
+                derived.occ_images.clear();
+                derived.published.pop();
+            }
+            ran |= result?;
         }
         derived.occ_images.clear();
-        if let SealedStage::Scratch(stage) = acc_stage {
-            driver.scratch.acc_disk = Some(stage);
-        }
-        let emitted = counters.emits() - round_emits_before;
-        let newly = (driver.sink.len() - driver.scratch.watermark) as u64;
-        counters.fixpoint_round(emitted, emitted.saturating_sub(newly));
-        if let Some(mut span) = round_span.take() {
-            span.set_pair(emitted, emitted.saturating_sub(newly));
-        }
-        derived_tuples = tuples;
+        derived.published.pop();
     }
     Ok(ran)
 }
@@ -780,95 +679,48 @@ fn fill_finished_images(rule: &PreparedRule, derived: &mut DerivedImages) {
             return;
         }
     };
-    fill_plan_images(plan, derived, DerivedBind::Finished);
+    fill_plan_images(plan, derived);
 }
 
-fn next_rec_tables(
+fn next_frontier(
     driver: &mut ReachDriver,
     work: &crate::work::WorkContext,
     generation: &crate::work::GenerationHandle,
     since: usize,
     len: usize,
-    flip: usize,
-) -> Result<(SealedStage, SealedStage)> {
-    let spilled = driver.sink.spilled() || driver.scratch.acc_disk.is_some();
-    if spilled {
-        return rec_tables_scratch(driver, work, since, len);
-    }
+) -> Result<SealedStage> {
     let ReachDriver {
         sink,
-        scratch,
+        frontier,
         field_types,
         ..
     } = driver;
-    let delta = scratch.delta_mut().refill_drained(
+    if sink.spilled() {
+        return seal_scratch_range(sink, work, field_types, since);
+    }
+    // The round publication and all COLT views have been released. One
+    // reusable SoA buffer suffices; the set remains the sole accumulator.
+    debug_assert!(frontier.is_uniquely_owned());
+    match frontier.refill_drained(
         Some(work),
         field_types,
         len - since,
         generation,
         |_, write| write_projection_rows(sink, since, write),
-    );
-    let filled = scratch.acc_filled[flip];
-    let acc = scratch.acc_mut().append_drained(
-        Some(work),
-        field_types,
-        filled,
-        len,
-        generation,
-        |from, write| write_projection_rows(sink, from, write),
-    );
-    match (delta, acc) {
-        (Ok(delta), Ok(acc)) => Ok((SealedStage::Resident(delta), SealedStage::Resident(acc))),
-        (Err(error), _) | (_, Err(error)) if super::source::is_working_exhaustion(&error) => {
-            rec_tables_scratch(driver, work, since, len)
+    ) {
+        Ok(delta) => Ok(SealedStage::Resident(delta)),
+        Err(error) if super::source::is_working_exhaustion(&error) => {
+            seal_scratch_range(sink, work, field_types, since)
         }
-        (Err(error), _) | (_, Err(error)) => Err(error),
+        Err(error) => Err(error),
     }
-}
-
-fn rec_tables_scratch(
-    driver: &mut ReachDriver,
-    work: &crate::work::WorkContext,
-    since: usize,
-    len: usize,
-) -> Result<(SealedStage, SealedStage)> {
-    let row_words = stage_row_words(&driver.field_types);
-    let delta = seal_scratch_range(
-        &mut driver.sink,
-        work,
-        &driver.field_types,
-        row_words,
-        since,
-        len,
-    )?;
-    let mut acc = match driver.scratch.acc_disk.take() {
-        Some(mut acc) => {
-            append_scratch_range(&mut acc, &mut driver.sink, since, len)?;
-            acc
-        }
-        None => match seal_scratch_range(
-            &mut driver.sink,
-            work,
-            &driver.field_types,
-            row_words,
-            0,
-            len,
-        )? {
-            SealedStage::Scratch(stage) => stage,
-            SealedStage::Resident(_) => unreachable!("scratch seal"),
-        },
-    };
-    let _ = &mut acc;
-    Ok((delta, SealedStage::Scratch(acc)))
 }
 
 fn seal_scratch_range(
     sink: &mut ProjectionSink,
     work: &crate::work::WorkContext,
     field_types: &[ValueType],
-    row_words: usize,
     since: usize,
-    _len: usize,
 ) -> Result<SealedStage> {
     let mut rows = ScratchRelation::new(work, 0);
     rows.force_spill()?;
@@ -876,52 +728,23 @@ fn seal_scratch_range(
     Ok(SealedStage::Scratch(Box::new(ScratchStage {
         rows,
         field_types: field_types.to_vec(),
-        row_words,
+        row_words: stage_row_words(field_types),
         count,
     })))
 }
 
-fn append_scratch_range(
-    acc: &mut ScratchStage,
-    sink: &mut ProjectionSink,
-    since: usize,
-    _len: usize,
-) -> Result<()> {
-    let written = sink.stream_into_scratch(&mut acc.rows, since, acc.count)?;
-    acc.count += written;
-    Ok(())
-}
-
-fn fill_plan_images(
-    plan: &crate::plan::fj::ValidatedPlan,
-    derived: &mut DerivedImages,
-    bind: DerivedBind<'_>,
-) {
+fn fill_plan_images(plan: &crate::plan::fj::ValidatedPlan, derived: &mut DerivedImages) {
     derived.occ_images.clear();
     for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
         if occurrence.role.discharged() {
             continue;
         }
-        let image = match occurrence.bind {
-            crate::plan::fj::OccBind::Edb(_) => continue,
-            crate::plan::fj::OccBind::Finished(id) => match &derived.published[id.index()] {
-                SealedStage::Resident(image) => image.clone(),
-                SealedStage::Scratch(_) => continue,
-            },
-            crate::plan::fj::OccBind::RecDelta(_) => match bind {
-                DerivedBind::Rec { delta, .. } => delta.clone(),
-                DerivedBind::Finished => {
-                    unreachable!("RecDelta is stamped only on rec arms")
-                }
-            },
-            crate::plan::fj::OccBind::RecAcc(_) => match bind {
-                DerivedBind::Rec { acc, .. } => acc.clone(),
-                DerivedBind::Finished => {
-                    unreachable!("RecAcc is stamped only on rec arms")
-                }
-            },
+        let Some(id) = occurrence.bind.interior() else {
+            continue;
         };
-        derived.occ_images.insert(occ_idx, image);
+        if let SealedStage::Resident(image) = &derived.published[id.index()] {
+            derived.occ_images.insert(occ_idx, image.clone());
+        }
     }
 }
 
@@ -939,7 +762,6 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
     sink: &mut S,
     bindings: &mut Bindings,
     key_scratch: &mut Vec<u64>,
-    latched: &mut u32,
     counters: &mut Cnt,
 ) -> Result<bool> {
     let multi_unit = units > 1;
@@ -956,6 +778,7 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
                 ctx.interner,
                 ctx.nonresident,
                 ctx.resolved_params,
+                &mut rule.row,
                 key_scratch,
                 bindings,
                 sink,
@@ -964,7 +787,7 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
             Ok(true)
         }
         PreparedRule::FreeJoin(rule) => run_free_join_into_projection(
-            ctx, None, None, rule, units, occ_images, retired, sink, bindings, latched, counters,
+            ctx, rule, units, occ_images, retired, sink, bindings, counters,
         ),
     }
 }
@@ -977,29 +800,21 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
     clippy::too_many_lines,
     reason = "Keep the ordered execution and cleanup transitions together"
 )]
-fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
+fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
     ctx: &mut RunCtx<'_>,
-    rec_delta: Option<&'a mut SealedStage>,
-    rec_acc: Option<&'a mut SealedStage>,
     rule: &mut FreeJoinRule,
     units: usize,
     occ_images: &OccImages,
     retired: &mut Vec<Vec<u32>>,
     sink: &mut S,
     bindings: &mut Bindings,
-    latched: &mut u32,
     counters: &mut Cnt,
 ) -> Result<bool> {
     let multi_unit = units > 1;
     bindings.resize(rule.plan.slot_count());
     if ctx.fallback
         || ctx.nonresident.is_some()
-        || rule_uses_scratch_derived_rec(
-            &rule.plan,
-            ctx.published,
-            rec_delta.as_deref(),
-            rec_acc.as_deref(),
-        )
+        || rule_uses_scratch_derived(&rule.plan, ctx.published)
         || resident_edb_overflow(ctx.images.source(), &rule.plan)?
     {
         if multi_unit {
@@ -1017,11 +832,8 @@ fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
             &mut rule.fallback,
             &mut fallback_ctx,
             ctx.published,
-            rec_delta,
-            rec_acc,
             bindings,
             sink,
-            latched,
         )?;
         return Ok(true);
     }
@@ -1034,10 +846,9 @@ fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
             work: ctx.images.source().work(),
             params: ctx.resolved_params,
             missed: ctx.missed_params,
-            latched,
         }
         .filters(
-            &mut rule.plan,
+            &rule.plan,
             &mut rule.resolved_filters,
             &mut rule.resolved_selections,
         )?;
@@ -1067,11 +878,8 @@ fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
             &mut rule.fallback,
             &mut fallback_ctx,
             ctx.published,
-            rec_delta,
-            rec_acc,
             bindings,
             sink,
-            latched,
         )?;
         return Ok(true);
     }
@@ -1108,11 +916,8 @@ fn run_free_join_into_projection<'a, S: StageSink, Cnt: Counters>(
             &mut rule.fallback,
             &mut fallback_ctx,
             ctx.published,
-            rec_delta,
-            rec_acc,
             bindings,
             sink,
-            latched,
         )?;
     }
     Ok(true)

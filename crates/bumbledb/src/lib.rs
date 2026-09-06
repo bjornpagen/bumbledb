@@ -79,9 +79,6 @@ pub(crate) mod exec;
 pub(crate) mod image;
 mod interval;
 pub mod ir;
-/// Execution tracing used by the bench harness. Not embedding API.
-#[doc(hidden)]
-pub mod obs;
 pub(crate) mod plan;
 pub mod scalar;
 pub mod schema;

@@ -32,9 +32,8 @@ pub const fn encode_f64(value: bumbledb_theory::F64) -> [u8; 8] {
 
 /// Encodes an Interval over U64 as `start ‖ end`, each half [`encode_u64`].
 /// Because each half is order-preserving, the 16 bytes sort
-/// lexicographically by `(start, end)` — load-bearing for the storage
-/// layer's neighbor probes.
-/// The checked input type makes `start < end` unconstructible.
+/// lexicographically by `(start, end)` for ordered query-image words.
+/// The checked input type guarantees `start < end`.
 #[must_use]
 pub fn encode_interval_u64(interval: Interval<u64>) -> [u8; 16] {
     let (start, end) = interval.bounds();

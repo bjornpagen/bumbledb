@@ -217,9 +217,15 @@ impl CompleteResult {
         let mut used = 0u64;
         let mut encoded = Vec::new();
         for index in 0..self.len() {
-            encoded.clear();
-            self.encode_row(index, &mut encoded)?;
-            let row_bytes = encoded.len() as u64;
+            let row_bytes = match &mut self.backing {
+                Backing::Ram(answers) => ram_encoded_row_len(answers, index)?,
+                Backing::Scratch { rows, .. } => {
+                    if !rows.get(&index.to_be_bytes(), &mut encoded)? {
+                        return Err(missing_row());
+                    }
+                    encoded.len() as u64
+                }
+            };
             if used.saturating_add(row_bytes) > byte_allowance {
                 return Err(super::source::work_error(
                     crate::work::WorkError::Exhausted {
@@ -230,49 +236,16 @@ impl CompleteResult {
                     },
                 ));
             }
-            self.push_row(index, &mut out)?;
+            match &self.backing {
+                Backing::Ram(answers) => ram_push_row(answers, index, &mut out)?,
+                Backing::Scratch { arity, .. } => decode_row(&encoded, *arity, &mut out)?,
+            }
             used = used.saturating_add(row_bytes);
         }
         let _delivery = work
             .reserve(ByteKind::Result, used)
             .map_err(super::source::work_error)?;
         Ok(out)
-    }
-
-    fn encode_row(&mut self, index: u64, encoded: &mut Vec<u8>) -> Result<()> {
-        encoded.clear();
-        match &mut self.backing {
-            Backing::Ram(answers) => {
-                let row = usize::try_from(index).expect("64-bit usize");
-                if row >= answers.len() {
-                    return Err(missing_row());
-                }
-                for column in 0..answers.arity() {
-                    encode_value(&answers.get(row, column), encoded);
-                }
-                Ok(())
-            }
-            Backing::Scratch { rows, .. } => {
-                if !rows.get(&index.to_be_bytes(), encoded)? {
-                    return Err(missing_row());
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn push_row(&mut self, index: u64, out: &mut Answers) -> Result<()> {
-        match &mut self.backing {
-            Backing::Ram(answers) => ram_push_row(answers, index, out),
-            Backing::Scratch { rows, arity, .. } => {
-                let arity = *arity;
-                let mut value = Vec::new();
-                if !rows.get(&index.to_be_bytes(), &mut value)? {
-                    return Err(missing_row());
-                }
-                decode_row(&value, arity, out)
-            }
-        }
     }
 
     /// Consume this result: the sealed backing transfers to one explicitly

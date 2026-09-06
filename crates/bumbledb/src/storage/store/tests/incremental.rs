@@ -153,11 +153,19 @@ impl CandidateFacts for ReferenceFacts<'_, '_, '_> {
         relation: RelationId,
         visit: &mut dyn FnMut(&[Value]) -> Result<bool, StoreError>,
     ) -> Result<(), StoreError> {
+        self.visit_ranked_rows(relation, &mut |_rank, values| visit(values))
+    }
+
+    fn visit_ranked_rows(
+        &self,
+        relation: RelationId,
+        visit: crate::schema::judge::RankedRowVisitor<'_, StoreError>,
+    ) -> Result<(), StoreError> {
         let fields = self.schema.relation(relation).fields();
         for entry in self.candidate.rows(relation)? {
-            let (_, bytes) = entry?;
+            let (row_id, bytes) = entry?;
             let decoded = crate::canonical::decode(fields, bytes, self.work)?;
-            if !visit(decoded.values())? {
+            if !visit(row_id.id.0, decoded.values())? {
                 break;
             }
         }
@@ -265,6 +273,158 @@ fn compare_and_commit(
             false
         }
     }
+}
+
+/// Exercise physical buckets through the existing complete/incremental
+/// differential judge, including byte-for-byte canonical rejection evidence.
+#[test]
+fn interval_prefix_order_coverage_collisions_and_cleanup() {
+    use crate::schema::{FixedIntervalElement, IntervalElement};
+    for target_type in [
+        ValueType::Interval {
+            element: IntervalElement::U64,
+        },
+        ValueType::Interval {
+            element: IntervalElement::I64,
+        },
+        ValueType::Interval {
+            element: IntervalElement::F64,
+        },
+        ValueType::FixedInterval {
+            element: FixedIntervalElement::U64,
+            width: 10,
+        },
+        ValueType::FixedInterval {
+            element: FixedIntervalElement::I64,
+            width: 10,
+        },
+    ] {
+        let (schema, span) = interval_coverage_fixture(target_type);
+        let (_dir, path) = store_dir("interval-prefix-differential");
+        let store =
+            Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0xA5; FP_LEN])
+                .expect("colliding scalar groups");
+        let target_row = |group: &str, start, end, id| {
+            (
+                RelationId(0),
+                vec![
+                    Value::String(group.into()),
+                    span(start, end),
+                    Value::U64(id),
+                ],
+            )
+        };
+        let source_row = |group: &str, start, end| {
+            (
+                RelationId(1),
+                vec![Value::String(group.into()), span(start, end)],
+            )
+        };
+        let commit = |adds: &[_], removes: &[_]| compare_and_commit(&store, &schema, adds, removes);
+        let late = target_row("a", 10, 20, 1);
+        let early = target_row("a", 0, 10, 2);
+        let foreign = target_row("b", 20, 30, 3);
+        // Neither the physical primary home nor row ordinal has endpoint order.
+        assert!(commit(std::slice::from_ref(&late), &[]));
+        assert!(commit(&[early.clone(), foreign.clone()], &[]));
+        let request = source_row("a", 0, 20);
+        assert!(commit(std::slice::from_ref(&request), &[]));
+        // A colliding foreign group cannot supply a missing span. Overlap
+        // keeps byte-identical rejection evidence despite changed scan order.
+        assert!(!commit(&[source_row("a", 20, 30)], &[]));
+        assert!(!commit(&[target_row("a", 5, 15, 4)], &[]));
+        assert!(!commit(&[], std::slice::from_ref(&early)));
+        // Remove the dependency with its interval: no stale index may supply it.
+        assert!(commit(&[], &[request.clone(), early.clone()]));
+        assert!(!commit(std::slice::from_ref(&request), &[]));
+        assert!(commit(std::slice::from_ref(&early), &[]));
+        assert!(commit(std::slice::from_ref(&request), &[]));
+        {
+            let context = work();
+            let snapshot = store.snapshot(&context).expect("snapshot");
+            let mut entries = 0;
+            snapshot
+                .entry_census(&context, &mut |is_meta, tag, key_len, _| {
+                    if !is_meta && tag == super::super::keys::TAG_DETERMINANT {
+                        assert_eq!(
+                            key_len,
+                            snapshot.physical_key_widths().determinant_overhead + FP_LEN,
+                            "ordinary, float, and fixed intervals add no physical tail"
+                        );
+                        entries += 1;
+                    }
+                    Ok(())
+                })
+                .expect("physical census");
+            assert_eq!(
+                entries, 4,
+                "three target references and one source reference"
+            );
+        }
+        assert!(commit(&[], &[late, early, foreign, request]));
+        let context = work();
+        let snapshot = store.snapshot(&context).expect("empty snapshot");
+        assert!(
+            store
+                .inner
+                .data
+                .is_empty(snapshot.read_txn())
+                .expect("all rows and indexes removed")
+        );
+    }
+}
+
+fn interval_coverage_fixture(target_type: ValueType) -> (Schema, impl Fn(u32, u32) -> Value) {
+    use crate::schema::IntervalElement;
+    use crate::schema::tests::{containment, fd, field, side};
+    let element = target_type.interval_element().expect("interval domain");
+    let span = move |start: u32, end: u32| match element {
+        IntervalElement::U64 => {
+            Value::IntervalU64(crate::Interval::new(u64::from(start), u64::from(end)).unwrap())
+        }
+        IntervalElement::I64 => {
+            Value::IntervalI64(crate::Interval::new(i64::from(start), i64::from(end)).unwrap())
+        }
+        IntervalElement::F64 => Value::IntervalF64(
+            crate::Interval::new(
+                crate::F64::from(f64::from(start)),
+                crate::F64::from(f64::from(end)),
+            )
+            .unwrap(),
+        ),
+    };
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Coverage".into(),
+                fields: vec![
+                    field("group", ValueType::String),
+                    field("span", target_type),
+                    field("id", ValueType::U64),
+                ],
+                extension: None,
+            },
+            RelationDescriptor {
+                name: "Request".into(),
+                fields: vec![
+                    field("group", ValueType::String),
+                    field("span", ValueType::Interval { element }),
+                ],
+                extension: None,
+            },
+        ],
+        statements: vec![
+            fd(RelationId(0), &[FieldId(2)]),
+            fd(RelationId(0), &[FieldId(0), FieldId(1)]),
+            containment(
+                side(RelationId(1), &[FieldId(0), FieldId(1)]),
+                side(RelationId(0), &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    }
+    .validate()
+    .expect("pointwise coverage schema");
+    (schema, span)
 }
 
 struct XorShift(u64);
@@ -409,6 +569,61 @@ fn incremental_judge_matches_the_complete_judge_under_forced_collisions() {
         Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0x5A; FP_LEN])
             .expect("forced-collision store");
     run_differential(&store, &schema, 0x1BAD_B002_CAFE_BABE, 40);
+}
+
+#[test]
+fn capacity_measure_follows_target_row_order_not_delta_group_order() {
+    for forced_collision in [false, true] {
+        let (_dir, path) = store_dir("capacity-measure-order");
+        let schema = delta_schema();
+        let store = if forced_collision {
+            Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0x5A; FP_LEN])
+                .expect("forced-collision store")
+        } else {
+            Store::create(&path, &schema, MapPolicy::default())
+                .expect("create")
+                .0
+        };
+        // Separate lawful commits make the target row order room1, room0,
+        // independent of the canonical order within each change set.
+        for group in [1, 0] {
+            assert!(compare_and_commit(
+                &store,
+                &schema,
+                &[(ROOM, room(group)), (BOOKING, booking(group, 0, 1))],
+                &[],
+            ));
+        }
+        // Canonical delta order visits room0 then room1. Their totals are
+        // three and four; the reference target order must witness three.
+        let changes = build_changes(
+            &schema,
+            &[
+                (BOOKING, booking(0, 1, 2)),
+                (BOOKING, booking(0, 2, 3)),
+                (BOOKING, booking(1, 1, 2)),
+                (BOOKING, booking(1, 2, 3)),
+                (BOOKING, booking(1, 3, 4)),
+            ],
+            &[],
+        );
+        let context = work();
+        let mut owner = store.writer(&context).expect("writer");
+        match owner
+            .prepare(&changes, &UnindexedRows, &CompareJudge { schema: &schema })
+            .expect("prepare")
+        {
+            Prepared::Admitted(_) => panic!("both room capacities are exceeded"),
+            Prepared::Rejected(violations) => {
+                assert_eq!(violations.len(), 1);
+                assert_eq!(violations[0].kind, StatementKind::Capacity);
+                assert_eq!(violations[0].measure, Some(3));
+            }
+        }
+        drop(owner);
+        let snapshot = store.snapshot(&context).expect("snapshot");
+        assert_eq!(snapshot.row_count(BOOKING).expect("count"), 2);
+    }
 }
 
 #[test]
@@ -712,4 +927,38 @@ fn incremental_judgment_work_is_delta_shaped_not_relation_shaped() {
         large <= small + 32,
         "judgment work must not grow with the relation: {small} -> {large}"
     );
+}
+
+#[test]
+fn selected_home_preservation_does_not_hide_alternate_or_interval_keys() {
+    let schema = delta_schema();
+    let (_dir, path) = store_dir("home-preservation-other-laws");
+    let store = Store::create_forced_fingerprint(&path, &schema, MapPolicy::default(), [0; FP_LEN])
+        .unwrap();
+    assert!(compare_and_commit(
+        &store,
+        &schema,
+        &[(USER, user(1, "same"))],
+        &[]
+    ));
+    // Different exact homes, but the alternate text key still conflicts.
+    assert!(!compare_and_commit(
+        &store,
+        &schema,
+        &[(USER, user(2, "same"))],
+        &[]
+    ));
+    assert_eq!(store.snapshot(&work()).unwrap().row_count(USER).unwrap(), 1);
+    assert!(compare_and_commit(
+        &store,
+        &schema,
+        &[(ROOM, room(7)), (BOOKING, booking(7, 0, 10))],
+        &[]
+    ));
+    assert!(!compare_and_commit(
+        &store,
+        &schema,
+        &[(BOOKING, booking(7, 5, 15))],
+        &[]
+    ));
 }

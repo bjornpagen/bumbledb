@@ -7,7 +7,6 @@ use crate::error::Error;
 use crate::image::intern::InternerHandle;
 use crate::image::{ColumnView, ColumnWidth, RelationImage, TextEq, is_scratch_token};
 use crate::ir::WordCmp;
-use crate::obs;
 use crate::schema::Relation;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
@@ -133,7 +132,7 @@ pub(crate) trait Operands {
 
     fn intern(&self, bytes: &[u8]) -> Result<u64, Self::Error> {
         let _ = bytes;
-        unreachable!("validated: PendingIntern is latched before this provider")
+        unreachable!("validated: text literals resolve before this provider")
     }
 
     /// String fields compare through [`TextEq`], never raw word identity.
@@ -740,37 +739,39 @@ pub(crate) fn kernel_scan(
 
 /// Substitutes one filter's symbolic constants into its resolved slot,
 /// in place. `Ready(false)` = the positive-occurrence `Eq` short-circuit.
-/// Latch cache refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
+/// Text-retention refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
 )]
 pub(crate) fn resolve_filter_into(
     interner: &InternerHandle<'_>,
-    template: &mut FilterPredicate,
+    template: &FilterPredicate,
     params: &[Const],
     missed: &[bool],
     negated: bool,
     dst: &mut FilterPredicate,
-    latched: &mut u32,
 ) -> crate::error::Result<crate::image::ResidentAdmit<bool>> {
     match template {
         FilterPredicate::Compare { field, op, value } => {
             if let Const::PendingIntern { bytes } = value {
-                // Interning is append-only and never misses: the literal
-                // latches to a final token on its first resolution. A text
-                // absent from every image is an ordinary unequal word.
-                // Cache refusal is BeyondMemory — L05 execute must open
-                // scratch, not treat latch as Allocation.
+                // Resolved slots, unlike immutable templates, belong to
+                // the execution's generation and are cleared on rotation.
+                if matches!(
+                    dst,
+                    FilterPredicate::Compare { value: Const::Word(word), .. }
+                        if crate::image::is_resident_token(*word)
+                ) {
+                    return Ok(crate::image::ResidentAdmit::Ready(true));
+                }
                 let word = match interner.latch(bytes)? {
                     crate::image::ResidentAdmit::Ready(word) => word,
                     crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
                         return Ok(crate::image::ResidentAdmit::BeyondMemory(exhausted));
                     }
                 };
-                *value = Const::Word(word);
-                *latched += 1;
-                obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
+                write_compare(dst, *field, *op, Some(Const::Word(word)));
+                return Ok(crate::image::ResidentAdmit::Ready(true));
             }
             let resolved = match value {
                 Const::Word(_) | Const::Byte(_) | Const::Interval { .. } => value.clone(),
@@ -810,7 +811,7 @@ pub(crate) fn resolve_filter_into(
                     write_word_set_value(dst, words);
                     return Ok(crate::image::ResidentAdmit::Ready(true));
                 }
-                Const::PendingIntern { .. } => unreachable!("latched or short-circuited above"),
+                Const::PendingIntern { .. } => unreachable!("resolved or refused above"),
             };
             write_compare(dst, *field, *op, Some(resolved));
         }

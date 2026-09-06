@@ -145,11 +145,11 @@ fn span(off: u32, len: u32) -> std::ops::Range<usize> {
     off as usize..off as usize + len as usize
 }
 
-/// THE one dynamic-row parse implementation: feeds cells positionally,
+/// The bridge's owned collection parser: feeds cells positionally,
 /// judges each against the sealed roster, and [`CollectionBuilder::seal`]s
-/// into the proof-carrying [`AcceptedCollection`]. Two feeding surfaces —
-/// [`CollectionBuilder::push_value`] for the engine dyn lane and the typed
-/// pushes for the bridge — share one judgment, so the rules cannot fork.
+/// into the proof-carrying [`AcceptedCollection`]. Generic value rows and
+/// typed bridge pushes use the same `value_matches` compatibility rules as
+/// direct Rust writes, which encode into charged canonical ownership.
 pub struct CollectionBuilder<'s> {
     relation: RelationId,
     fields: &'s [FieldDescriptor],

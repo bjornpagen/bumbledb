@@ -195,7 +195,7 @@ fn there_is_no_dictionary_database_in_the_successor_store() {
 }
 
 #[test]
-fn export_orders_by_relation_then_fingerprint_then_bytes() {
+fn export_orders_by_relation_then_home_or_fingerprint_then_bytes() {
     let (_dir, path) = store_dir("snap-export-order");
     let store = create_default(&path);
     commit_changes(
@@ -212,24 +212,120 @@ fn export_orders_by_relation_then_fingerprint_then_bytes() {
         ),
     );
     let snapshot = store.snapshot(&work()).expect("snapshot");
-    let mut relations = Vec::new();
+    let mut exported = Vec::new();
     snapshot
-        .export(&work(), &mut |relation, _| {
-            relations.push(relation);
+        .export(&work(), &mut |relation, row| {
+            exported.push((relation, row.to_vec()));
             Ok(())
         })
         .expect("export");
     // Relation-major order; physical row ids and insert order are invisible.
-    assert_eq!(relations, vec![NOTE, NOTE, TAG, TAG]);
+    assert_eq!(
+        exported
+            .iter()
+            .map(|(relation, _)| *relation)
+            .collect::<Vec<_>>(),
+        vec![NOTE, NOTE, TAG, TAG]
+    );
+    let fields = schema();
+    let expected = |relation, values: &[crate::Value]| {
+        crate::canonical::CanonicalRow::encode(fields.relation(relation).fields(), values, &work())
+            .unwrap()
+            .as_bytes()
+            .to_vec()
+    };
+    assert_eq!(exported[0].1, expected(NOTE, &note(3, "three")));
+    assert_eq!(exported[1].1, expected(NOTE, &note(9, "nine")));
+    let mut tags = [expected(TAG, &tag("alpha")), expected(TAG, &tag("zeta"))];
+    tags.sort_by_key(|bytes| store.inner.fingerprinter.row(TAG, bytes));
+    assert_eq!(exported[2].1, tags[0]);
+    assert_eq!(exported[3].1, tags[1]);
+}
+
+#[test]
+fn export_uses_the_selected_nonleading_scalar_key_not_canonical_row_order() {
+    let (_dir, path) = store_dir("snap-export-selected-key");
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            name: "Record".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "label".into(),
+                    value_type: ValueType::String,
+                },
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                },
+            ],
+            extension: None,
+        }],
+        statements: vec![crate::schema::StatementDescriptor::Functionality {
+            relation: NOTE,
+            projection: Box::from([crate::schema::FieldId(1)]),
+        }],
+    }
+    .validate()
+    .unwrap();
+    let store = Store::create(&path, &schema, MapPolicy::default())
+        .unwrap()
+        .0;
+    let values = [
+        vec![crate::Value::String("alpha".into()), crate::Value::U64(9)],
+        vec![crate::Value::String("omega".into()), crate::Value::U64(3)],
+    ];
+    let context = work();
+    let mut owner = store.writer(&context).unwrap();
+    let changes = change_set(
+        &schema,
+        &[(NOTE, values[0].clone()), (NOTE, values[1].clone())],
+        &[],
+    );
+    match owner.prepare(&changes, &NoIndex, &AdmitAll).unwrap() {
+        Prepared::Admitted(prepared) => {
+            prepared.seal(NO_HOST).unwrap().commit().unwrap();
+        }
+        Prepared::Rejected(never) => match never {},
+    }
+    drop(owner);
+    let snapshot = store.snapshot(&context).unwrap();
+    let mut actual = Vec::new();
+    snapshot
+        .export(&context, &mut |relation, bytes| {
+            assert_eq!(relation, NOTE);
+            actual.push(
+                crate::canonical::decode(schema.relation(NOTE).fields(), bytes, &context)?
+                    .values()
+                    .to_vec(),
+            );
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(actual, [values[1].clone(), values[0].clone()]);
 }
 
 #[test]
 fn snapshot_age_is_exposed_for_growth_diagnostics() {
     let (_dir, path) = store_dir("snap-age");
     let store = create_default(&path);
-    let snapshot = store.snapshot(&work()).expect("snapshot");
+    let (pass, cached) = store.inner.gate.enter_read(&work()).expect("admission");
+    assert!(cached.is_none());
+    let txn = store.inner.env.clone().static_read_txn().expect("reader");
+    let reader = super::super::gate::CachedRead::new(txn, GenerationId::initial());
+    // Admission already blocks growth, even while the native snapshot is
+    // being initialized. Its age must not restart at the later capture.
+    let setup = std::time::Instant::now();
     std::thread::sleep(std::time::Duration::from_millis(5));
-    assert!(snapshot.age() >= std::time::Duration::from_millis(5));
+    let elapsed = setup.elapsed();
+    let snapshot = super::super::snapshot::OwnedSnapshot::capture(
+        std::sync::Arc::clone(&store.inner),
+        pass,
+        reader,
+    );
+    assert!(
+        snapshot.age() >= elapsed,
+        "age includes growth-blocking setup"
+    );
 }
 
 #[test]
@@ -247,6 +343,21 @@ fn generation_starts_at_zero_and_moves_only_on_change() {
     assert!(!noop.changed);
     assert_eq!(noop.generation, first.generation);
     assert_eq!(noop.application.added, 0);
+}
+
+fn assert_census_key_width(
+    tag: u8,
+    key_len: usize,
+    widths: crate::storage::store::PhysicalKeyWidths,
+) {
+    use crate::storage::store::keys::{TAG_DETERMINANT, TAG_MEMBERSHIP, TAG_ROW};
+    let expected = match tag {
+        TAG_ROW => widths.row + 8,
+        TAG_MEMBERSHIP => widths.membership,
+        TAG_DETERMINANT => widths.determinant_overhead + 8,
+        other => panic!("unclassified data namespace tag {other}"),
+    };
+    assert_eq!(key_len, expected);
 }
 
 #[test]
@@ -300,6 +411,7 @@ fn census_and_page_stats_read_one_coherent_snapshot() {
     let mut meta_other = 0u64;
     let mut live_key_bytes = 0u64;
     let mut live_value_bytes = 0u64;
+    let widths = pinned.physical_key_widths();
     pinned
         .entry_census(&context, &mut |is_meta, tag, key_len, value_len| {
             live_key_bytes += key_len as u64;
@@ -313,6 +425,7 @@ fn census_and_page_stats_read_one_coherent_snapshot() {
                     meta_other += 1;
                 }
             } else {
+                assert_census_key_width(tag, key_len, widths);
                 match tag {
                     crate::storage::store::keys::TAG_ROW => data_rows += 1,
                     crate::storage::store::keys::TAG_MEMBERSHIP => data_membership += 1,
@@ -323,12 +436,11 @@ fn census_and_page_stats_read_one_coherent_snapshot() {
             Ok(())
         })
         .expect("census");
-    // The pinned view has exactly the two committed rows, each with one
-    // membership entry and (this fixture indexes the key statement) one
-    // determinant entry; the sealed host record and attachment are present.
+    // The pinned view has exactly two primary rows. Their scalar home is
+    // embedded in the row key; neither redundant index exists.
     assert_eq!(data_rows, 2);
-    assert_eq!(data_membership, 2);
-    assert_eq!(data_determinants, 2);
+    assert_eq!(data_membership, 0);
+    assert_eq!(data_determinants, 0);
     assert_eq!(meta_host_records, 1);
     assert_eq!(meta_attachment, 1);
     // Core meta entries exist (family, layout, ids, generation, counters).

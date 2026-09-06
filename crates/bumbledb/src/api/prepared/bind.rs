@@ -6,11 +6,47 @@ use super::{
 use crate::error::{Error, Mismatch, Result};
 use crate::image::intern::InternerHandle;
 use crate::ir::{ParamId, Value};
-use crate::obs;
 use crate::work::WorkContext;
 use bumbledb_theory::schema::IntervalElement;
 
 impl<S> PreparedQuery<S> {
+    /// Establish one resolver namespace before binding any parameter.
+    /// The caller holds `generation` for the entire operation, including
+    /// cache pressure or a sibling query's concurrent trim.
+    #[inline]
+    pub(super) fn bind_text_generation(&mut self, generation: &crate::work::GenerationHandle) {
+        if self
+            .text_generation
+            .as_ref()
+            .is_some_and(|previous| previous.identity() == generation.identity())
+        {
+            return;
+        }
+        self.rotate_text_generation(generation);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn rotate_text_generation(&mut self, generation: &crate::work::GenerationHandle) {
+        self.visit_rules_mut(|rule| {
+            if let PreparedRule::FreeJoin(rule) = rule {
+                forget_resolved_text(rule);
+                rule.memo.trim();
+            }
+        });
+        self.visit_rec_arms_mut(|arm| {
+            forget_resolved_text(arm);
+            arm.memo.trim();
+        });
+        self.derived = super::reach::DerivedImages::default();
+        self.resolve_memo.forget_scratch();
+        for memo in &mut self.param_word_memo {
+            memo.word = None;
+            memo.epoch = None;
+        }
+        self.text_generation = Some(generation.downgrade());
+    }
+
     #[doc(hidden)]
     pub fn set_batch_size(&mut self, batch: usize) {
         self.visit_rules_mut(|rule| match rule {
@@ -20,7 +56,7 @@ impl<S> PreparedQuery<S> {
             PreparedRule::KeyProbe(_) => {}
         });
         self.visit_rec_arms_mut(|arm| {
-            arm.rule.executor = Executor::with_batch_size(&arm.rule.plan, batch);
+            arm.executor = Executor::with_batch_size(&arm.plan, batch);
         });
     }
 
@@ -34,7 +70,7 @@ impl<S> PreparedQuery<S> {
                     forget_resolved_text(fj);
                 }
             });
-            self.visit_rec_arms_mut(|arm| forget_resolved_text(&mut arm.rule));
+            self.visit_rec_arms_mut(forget_resolved_text);
         }
         for memo in &mut self.param_word_memo {
             if memo.word.is_some_and(crate::image::is_scratch_token) {
@@ -193,6 +229,15 @@ impl<S> PreparedQuery<S> {
                     return Ok(());
                 }
 
+                if let (ValueType::Uuid, BindValue::Uuid(id)) = (ty, value)
+                    && let Const::Words(slot) = &mut self.resolved_params[idx]
+                    && slot.len() == 2
+                {
+                    slot.copy_from_slice(&uuid_words(id));
+                    self.missed_params[idx] = false;
+                    return Ok(());
+                }
+
                 if matches!(ty, ValueType::String)
                     && let BindValue::Str(text) = value
                 {
@@ -201,19 +246,21 @@ impl<S> PreparedQuery<S> {
                         && memo.text == text
                         && param_memo_live(memo, self.nonresident.as_ref())
                     {
-                        obs::event(
-                            obs::names::PARAM_WORD_MEMO,
-                            obs::TraceArgs::Pair(idx as u64, word),
-                        );
                         self.resolved_params[idx] = Const::Word(word);
                         self.missed_params[idx] = false;
                         return Ok(());
                     }
                 }
-                let generation = self.cache.acquire();
-                let interner = InternerHandle::new(&generation, work);
-                let Some(resolved) =
-                    convert_scalar(&interner, &mut self.nonresident, work, value, ty)?
+                let owner = &self.text_generation;
+                let cache = &self.cache;
+                let Some(resolved) = convert_scalar(value, ty, |text| {
+                    let generation = owner
+                        .as_ref()
+                        .and_then(crate::work::cache::WeakGenerationHandle::upgrade)
+                        .unwrap_or_else(|| cache.acquire());
+                    let interner = InternerHandle::new(&generation, work);
+                    super::text::intern_admitted(&interner, &mut self.nonresident, text, work)
+                })?
                 else {
                     return Err(Error::ParamTypeMismatch {
                         param,
@@ -274,17 +321,21 @@ impl<S> PreparedQuery<S> {
             }
             _ => Vec::new(),
         };
-        let generation = self.cache.acquire();
-        let interner = InternerHandle::new(&generation, work);
+        // Numeric sets never need a text generation. String sets acquire it
+        // once, lazily, and keep the same resolver for every element.
+        let owner = &self.text_generation;
+        let cache = &self.cache;
+        let generation = std::cell::LazyCell::new(|| {
+            owner
+                .as_ref()
+                .and_then(crate::work::cache::WeakGenerationHandle::upgrade)
+                .unwrap_or_else(|| cache.acquire())
+        });
         for (element, value) in values.iter().enumerate() {
-            let Some(word_count) = element_words(
-                &interner,
-                &mut self.nonresident,
-                work,
-                value,
-                expected,
-                &mut words,
-            )?
+            let Some(word_count) = element_words(value, expected, &mut words, |text| {
+                let interner = InternerHandle::new(&generation, work);
+                super::text::intern_admitted(&interner, &mut self.nonresident, text, work)
+            })?
             else {
                 // Park the pooled Vec back before erroring: the slot
 
@@ -349,12 +400,10 @@ fn sort_dedup_spans<const K: usize>(words: &mut Vec<u64>) {
 }
 
 fn element_words(
-    interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
-    work: &WorkContext,
     value: &Value,
     expected: &ValueType,
     out: &mut Vec<u64>,
+    intern_text: impl FnOnce(&str) -> Result<u64>,
 ) -> Result<Option<usize>> {
     if let ValueType::FixedBytes { len } = expected {
         let Value::FixedBytes(raw) = value else {
@@ -367,8 +416,7 @@ fn element_words(
         out.extend_from_slice(&words[..count]);
         return Ok(Some(count));
     }
-    let Some(resolved) = convert_scalar(interner, store, work, element_view(value), expected)?
-    else {
+    let Some(resolved) = convert_scalar(element_view(value), expected, intern_text)? else {
         return Ok(None);
     };
     Ok(Some(match resolved {
@@ -401,17 +449,16 @@ pub(super) struct LiteralResolution<'a, 'generation> {
     pub work: &'a WorkContext,
     pub params: &'a [Const],
     pub missed: &'a [bool],
-    pub latched: &'a mut u32,
 }
 
 impl LiteralResolution<'_, '_> {
     pub(super) fn filters(
         &mut self,
-        plan: &mut crate::plan::fj::ValidatedPlan,
+        plan: &crate::plan::fj::ValidatedPlan,
         out_filters: &mut [Vec<FilterPredicate>],
         out_selections: &mut [Vec<Vec<u64>>],
     ) -> Result<bool> {
-        for (occ_idx, occurrence) in plan.occurrences_mut().iter_mut().enumerate() {
+        for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
             if occurrence.role.discharged() {
                 debug_assert!(occurrence.selections.is_empty());
                 continue;
@@ -423,7 +470,7 @@ impl LiteralResolution<'_, '_> {
                 filters.clear();
                 filters.extend(occurrence.filters.iter().cloned());
             }
-            for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
+            for (template, slot) in occurrence.filters.iter().zip(filters.iter_mut()) {
                 if !self.filter(template, negated, slot)? {
                     return Ok(false);
                 }
@@ -437,7 +484,7 @@ impl LiteralResolution<'_, '_> {
                 !negated || occurrence.selections.is_empty(),
                 "negated occurrences keep Eq-constants in their filters"
             );
-            for (selection, words) in occurrence.selections.iter_mut().zip(selections.iter_mut()) {
+            for (selection, words) in occurrence.selections.iter().zip(selections.iter_mut()) {
                 if !self.selection(selection, words)? {
                     return Ok(false);
                 }
@@ -448,7 +495,7 @@ impl LiteralResolution<'_, '_> {
 
     pub(super) fn filter(
         &mut self,
-        template: &mut FilterPredicate,
+        template: &FilterPredicate,
         negated: bool,
         slot: &mut FilterPredicate,
     ) -> Result<bool> {
@@ -459,7 +506,6 @@ impl LiteralResolution<'_, '_> {
             self.missed,
             negated,
             slot,
-            self.latched,
         )? {
             crate::image::ResidentAdmit::Ready(keep) => Ok(keep),
             crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
@@ -489,24 +535,21 @@ impl LiteralResolution<'_, '_> {
 
     pub(super) fn selection(
         &mut self,
-        selection: &mut crate::plan::fj::Selection,
+        selection: &crate::plan::fj::Selection,
         out: &mut Vec<u64>,
     ) -> Result<bool> {
-        out.clear();
-
         if let Const::PendingIntern { bytes } = &selection.value {
+            if matches!(out.as_slice(), [word] if crate::image::is_resident_token(*word)) {
+                return Ok(true);
+            }
+            out.clear();
             let text = std::str::from_utf8(bytes)
                 .expect("IR string literals are UTF-8 by construction (Value::String)");
             let word = super::text::intern_admitted(self.interner, self.store, text, self.work)?;
-            if crate::image::is_resident_token(word) {
-                selection.value = Const::Word(word);
-                *self.latched += 1;
-                obs::event(obs::names::LITERAL_LATCH, obs::TraceArgs::Count(word));
-            } else {
-                out.push(word);
-                return Ok(true);
-            }
+            out.push(word);
+            return Ok(true);
         }
+        out.clear();
         let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
             Const::Word(word) => out.push(*word),
             Const::Byte(byte) => out.push(u64::from(*byte)),
@@ -541,7 +584,7 @@ impl LiteralResolution<'_, '_> {
             }
 
             Const::WordSet(words) => out.extend_from_slice(words),
-            Const::PendingIntern { .. } => unreachable!("latched above"),
+            Const::PendingIntern { .. } => unreachable!("resolved above"),
         }
         Ok(true)
     }
@@ -563,23 +606,16 @@ fn element_view(value: &Value) -> BindValue<'_> {
 }
 
 fn convert_scalar(
-    interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
-    work: &WorkContext,
     value: BindValue<'_>,
     expected: &ValueType,
+    intern_text: impl FnOnce(&str) -> Result<u64>,
 ) -> Result<Option<Const>> {
     let resolved = match (value, expected) {
         (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
         (BindValue::U64(v), ValueType::U64) => Const::Word(v),
         (BindValue::I64(v), ValueType::I64) => Const::Word(i64_word(v)),
         (BindValue::F64(v), ValueType::F64) => Const::Word(v.to_order_key()),
-        (BindValue::Uuid(id), ValueType::Uuid) => {
-            let bytes = id.into_bytes();
-            let hi = u64::from_be_bytes(bytes[..8].try_into().expect("sixteen bytes"));
-            let lo = u64::from_be_bytes(bytes[8..].try_into().expect("sixteen bytes"));
-            Const::Words(Box::from([hi, lo]))
-        }
+        (BindValue::Uuid(id), ValueType::Uuid) => Const::Words(Box::from(uuid_words(id))),
 
         (
             BindValue::IntervalU64(start, end),
@@ -637,9 +673,7 @@ fn convert_scalar(
         // Interning is append-only and never misses: the bound text's
         // token is final. A text absent from every image is an ordinary
         // unequal word — no sentinel machinery, no dictionary descent.
-        (BindValue::Str(text), ValueType::String) => {
-            Const::Word(super::text::intern_admitted(interner, store, text, work)?)
-        }
+        (BindValue::Str(text), ValueType::String) => Const::Word(intern_text(text)?),
 
         _ => return Ok(None),
     };
@@ -648,6 +682,14 @@ fn convert_scalar(
 
 fn i64_word(value: i64) -> u64 {
     u64::from_be_bytes(crate::encoding::encode_i64(value))
+}
+
+fn uuid_words(id: crate::Uuid) -> [u64; 2] {
+    let bytes = id.into_bytes();
+    [
+        u64::from_be_bytes(bytes[..8].try_into().expect("sixteen bytes")),
+        u64::from_be_bytes(bytes[8..].try_into().expect("sixteen bytes")),
+    ]
 }
 
 fn param_memo_live(
@@ -674,4 +716,73 @@ fn forget_resolved_text(rule: &mut super::FreeJoinRule) {
         selections.clear();
     }
     rule.resolution = super::ResolutionState::Pending;
+    rule.fallback.forget_resolved_text();
+}
+
+#[cfg(test)]
+mod scalar_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn nontext_scalars_and_type_mismatches_never_acquire_a_text_resolver() {
+        let id = crate::Uuid::from_bytes([42; 16]);
+        for (value, expected) in [
+            (BindValue::Bool(true), ValueType::Bool),
+            (BindValue::U64(7), ValueType::U64),
+            (BindValue::I64(-7), ValueType::I64),
+            (BindValue::F64(crate::F64::from(1.5)), ValueType::F64),
+            (BindValue::Uuid(id), ValueType::Uuid),
+            (
+                BindValue::IntervalU64(1, 3),
+                ValueType::Interval {
+                    element: IntervalElement::U64,
+                },
+            ),
+            (
+                BindValue::IntervalI64(-1, 3),
+                ValueType::Interval {
+                    element: IntervalElement::I64,
+                },
+            ),
+        ] {
+            assert!(
+                convert_scalar(value, &expected, |_| panic!("nontext resolver"))
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        for (value, expected) in [
+            (BindValue::Str("wrong type"), ValueType::U64),
+            (BindValue::U64(7), ValueType::String),
+        ] {
+            assert!(
+                convert_scalar(value, &expected, |_| panic!("mismatch resolver"))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let mut words = Vec::new();
+        assert_eq!(
+            element_words(&Value::U64(7), &ValueType::U64, &mut words, |_| panic!(
+                "nontext set resolver"
+            ))
+            .unwrap(),
+            Some(1)
+        );
+        assert_eq!(words, [7]);
+    }
+
+    #[test]
+    fn text_conversion_uses_the_supplied_resolver_and_propagates_refusal() {
+        let result = convert_scalar(BindValue::Str("needle"), &ValueType::String, |text| {
+            assert_eq!(text, "needle");
+            Ok(42)
+        })
+        .unwrap();
+        assert!(matches!(result, Some(Const::Word(42))));
+        let refused = convert_scalar(BindValue::Str("needle"), &ValueType::String, |_| {
+            Err(Error::ForeignPreparedQuery)
+        });
+        assert!(matches!(refused, Err(Error::ForeignPreparedQuery)));
+    }
 }

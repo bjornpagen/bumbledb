@@ -51,7 +51,7 @@ fn validate_cq(
     let derived = interiors.len();
     overflow(derived)?;
     let mut params = ParamTables::default();
-    let (sealed, interiors_out, mut rule_count) = seal_interiors(
+    let (sealed, interiors_out) = seal_interiors(
         schema,
         interiors,
         |sealed, id| InteriorSignatures::cq(sealed, Some(id), derived),
@@ -63,9 +63,8 @@ fn validate_cq(
         rules,
         &InteriorSignatures::cq(&sealed, None, derived),
         &mut params,
-        &mut rule_count,
     )?;
-    finish_cq(params, interiors_out, main, rule_count)
+    finish(params, interiors_out, main, None)
 }
 
 fn validate_reach(
@@ -78,7 +77,7 @@ fn validate_reach(
     let derived = interiors.len() + 1;
     overflow(derived)?;
     let mut params = ParamTables::default();
-    let (sealed, interiors_out, mut rule_count) = seal_interiors(
+    let (sealed, interiors_out) = seal_interiors(
         schema,
         interiors,
         |sealed, id| InteriorSignatures::reach_open(sealed, Some(id), derived),
@@ -96,7 +95,6 @@ fn validate_reach(
         &mut params,
         true,
     )?;
-    rule_count += base_typing.len() as u64;
     let rec_signature = super::Signature::derive(&base[0], &base_typing[0]);
     let rec_typing = type_rules(
         schema,
@@ -116,7 +114,6 @@ fn validate_reach(
             });
         }
     }
-    rule_count += rec_typing.len() as u64;
     let base_arms = NonEmpty::from_vec(
         base.into_iter()
             .zip(base_typing)
@@ -147,9 +144,8 @@ fn validate_reach(
         rules,
         &InteriorSignatures::reach_sealed(&sealed, rec_out.signature(), derived),
         &mut params,
-        &mut rule_count,
     )?;
-    finish_reach(params, interiors_out, rec_out, main, rule_count)
+    finish(params, interiors_out, main, Some(rec_out))
 }
 
 fn seal_interiors(
@@ -157,11 +153,9 @@ fn seal_interiors(
     interiors: &[crate::ir::Interior],
     sigs: impl for<'a> Fn(&'a [Signature], InteriorId) -> InteriorSignatures<'a>,
     params: &mut ParamTables,
-) -> Result<(Vec<Signature>, Vec<ValidatedInterior>, u64), ValidationError> {
+) -> Result<(Vec<Signature>, Vec<ValidatedInterior>), ValidationError> {
     let mut sealed: Vec<Signature> = Vec::with_capacity(interiors.len());
     let mut interiors_out = Vec::with_capacity(interiors.len());
-    let mut rule_count = 0u64;
-    let mut seal_span = crate::obs::span(crate::obs::names::VALIDATE_SEAL);
     for (index, interior) in interiors.iter().enumerate() {
         let id = InteriorId(u32::try_from(index).expect("derived count fits u32"));
         if interior.rules.is_empty() {
@@ -178,7 +172,6 @@ fn seal_interiors(
             true,
         )?;
         let typings = type_rules(schema, &sigs(&sealed, id), &head, &lowered, params, false)?;
-        rule_count += typings.len() as u64;
         let signature = super::Signature::derive(&lowered[0], &typings[0]);
         sealed.push(signature.clone());
         interiors_out.push(ValidatedInterior {
@@ -187,9 +180,7 @@ fn seal_interiors(
             rules: typings,
         });
     }
-    seal_span.set_pair(interiors.len() as u64, sealed.len() as u64);
-    seal_span.end();
-    Ok((sealed, interiors_out, rule_count))
+    Ok((sealed, interiors_out))
 }
 
 fn type_main(
@@ -198,11 +189,9 @@ fn type_main(
     rules: &[crate::ir::Rule],
     sigs: &InteriorSignatures<'_>,
     params: &mut ParamTables,
-    rule_count: &mut u64,
 ) -> Result<ValidatedMain, ValidationError> {
     let lowered = lower_rules(head, rules, ValidationError::EmptyRuleSet, true)?;
     let typings = type_rules(schema, sigs, head, &lowered, params, false)?;
-    *rule_count += typings.len() as u64;
     let signature = super::Signature::derive(&lowered[0], &typings[0]);
     Ok(ValidatedMain {
         lowered,
@@ -211,15 +200,12 @@ fn type_main(
     })
 }
 
-fn finish_cq(
+fn finish(
     params: ParamTables,
     interiors: Vec<ValidatedInterior>,
     main: ValidatedMain,
-    rule_count: u64,
+    rec: Option<ValidatedRec>,
 ) -> Result<ValidatedQuery, ValidationError> {
-    let mut rules_span = crate::obs::span(crate::obs::names::VALIDATE_RULES);
-    rules_span.set_count(rule_count);
-    rules_span.end();
     params.check_masks_and_density()?;
     let set_params = set_params_of(&params);
     Ok(ValidatedQuery {
@@ -228,29 +214,7 @@ fn finish_cq(
         param_types: params.param_types,
         set_params,
         point_params: params.point_params,
-        rec: None,
-    })
-}
-
-fn finish_reach(
-    params: ParamTables,
-    interiors: Vec<ValidatedInterior>,
-    rec: ValidatedRec,
-    main: ValidatedMain,
-    rule_count: u64,
-) -> Result<ValidatedQuery, ValidationError> {
-    let mut rules_span = crate::obs::span(crate::obs::names::VALIDATE_RULES);
-    rules_span.set_count(rule_count);
-    rules_span.end();
-    params.check_masks_and_density()?;
-    let set_params = set_params_of(&params);
-    Ok(ValidatedQuery {
-        interiors,
-        rec: Some(rec),
-        main,
-        param_types: params.param_types,
-        set_params,
-        point_params: params.point_params,
+        rec,
     })
 }
 
@@ -382,7 +346,6 @@ fn lower_rules(
     empty: ValidationError,
     count_across: bool,
 ) -> Result<Vec<LoweredRule>, ValidationError> {
-    let mut span = crate::obs::span(crate::obs::names::VALIDATE_LOWER);
     if rules.is_empty() {
         return Err(empty);
     }
@@ -442,8 +405,6 @@ fn lower_rules(
             rules: lowered.len(),
         });
     }
-    span.set_count(lowered.len() as u64);
-    span.end();
     Ok(lowered)
 }
 

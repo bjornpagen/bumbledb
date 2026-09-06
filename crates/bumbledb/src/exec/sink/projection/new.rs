@@ -10,6 +10,20 @@ use crate::work::WorkContext;
 
 impl ProjectionSink {
     #[cfg(test)]
+    pub(crate) fn output_hashing_is_elided(&self) -> bool {
+        self.seen.unique_rows.is_some()
+    }
+
+    /// Install the exact rule/head proof before execution. The caller must
+    /// not share this sink across union arms, stages or recursive iterations.
+    pub(crate) fn elide_output_hashing(
+        &mut self,
+        witness: crate::plan::fj::ProjectionDistinctWitness,
+    ) {
+        self.seen.elide_output_hashing(witness);
+    }
+
+    #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
         Self::with_capacity_hint_sources(ProjectionSources::Plain(slots), 0)
@@ -26,6 +40,8 @@ impl ProjectionSink {
             seen: SpillSet::with_capacity_hint(arity, hint, true),
             scratch: vec![0; arity],
             batch_sources: vec![crate::exec::run::LeafSource::Outer; arity],
+            scan_sources: Vec::with_capacity(arity),
+            scan_outer: Vec::with_capacity(arity),
             scan_rows: Vec::new(),
             scan_count: 0,
         }
@@ -41,6 +57,8 @@ impl ProjectionSink {
     }
 
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
+        self.scan_sources.clear();
+        self.scan_outer.clear();
         parse_finds_into(finds, slot_count, &mut self.finds);
         match &mut self.sources {
             ProjectionSources::Plain(slots) => {

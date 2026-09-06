@@ -14,25 +14,35 @@ use bumbledb_theory::schema::ValueType;
 
 use super::decode::{decode_fact, decode_plan};
 use super::{
-    Column, ColumnSpan, ColumnWidth, LINE, RelationImage, SET_STRIDE, SlabCharge, StridePadder,
-    column_spans,
+    Column, ColumnSpan, ColumnWidth, LINE, PAD_MIN_STRIDE, RelationImage, SET_STRIDE, SlabCharge,
+    StridePadder, column_spans,
 };
 
 /// The `S` value is data: overflow in any size computation is typed Corruption
 /// before a single byte is allocated.
 fn slab_lengths(row_count: usize, word_cols: usize, byte_cols: usize) -> Result<(usize, usize)> {
     let corrupt = || Error::Corruption(CorruptionError::MalformedValue("S row count"));
-    let word_len = row_count
-        .checked_add(SET_STRIDE / 8 + LINE / 8)
-        .and_then(|per_col| per_col.checked_mul(word_cols))
-        .and_then(|words| words.checked_mul(8))
-        .ok_or_else(corrupt)?
-        / 8;
-    let byte_len = row_count
-        .checked_add(SET_STRIDE + LINE)
-        .and_then(|per_col| per_col.checked_mul(byte_cols))
-        .ok_or_else(corrupt)?;
-    Ok((word_len, byte_len))
+    let length = |element_size: usize, columns: usize| {
+        // Alignment adds less than LINE bytes. If even this upper bound
+        // stays below PAD_MIN_STRIDE, the padder cannot add a pitch gap.
+        // Small images therefore need alignment headroom only, not 16 KiB
+        // per column. Large-column placement and its conservative capacity
+        // stay unchanged, including experimental padding tolerances.
+        let aligned_bound = row_count.checked_add(LINE / element_size)?;
+        let per_column = if aligned_bound >= PAD_MIN_STRIDE / element_size {
+            aligned_bound.checked_add(SET_STRIDE / element_size)?
+        } else {
+            aligned_bound
+        };
+        per_column
+            .checked_mul(columns)?
+            .checked_mul(element_size)
+            .map(|bytes| bytes / element_size)
+    };
+    Ok((
+        length(8, word_cols).ok_or_else(corrupt)?,
+        length(1, byte_cols).ok_or_else(corrupt)?,
+    ))
 }
 
 struct Frame {
@@ -109,13 +119,14 @@ fn allocate_with(
 fn seal(
     row_count: usize,
     frame: Frame,
-    distincts: Box<[super::distinct::DistinctState]>,
     generation: GenerationHandle,
     charge: Option<SlabCharge>,
 ) -> Arc<RelationImage> {
     Arc::new(RelationImage {
         row_count,
-        distincts,
+        distincts: (0..frame.columns.len())
+            .map(|_| std::sync::OnceLock::new())
+            .collect(),
         spans: frame.spans,
         columns: frame.columns.into_boxed_slice(),
         words: frame.words,
@@ -147,17 +158,6 @@ pub(crate) fn estimated_slab_bytes(field_types: &[ValueType], row_count: usize) 
         )))
 }
 
-fn count_frame(row_count: usize, frame: &Frame) -> Box<[super::distinct::DistinctState]> {
-    let span = crate::obs::span_args(
-        crate::obs::names::IMAGE_DISTINCTS,
-        crate::obs::TraceArgs::Pair(frame.columns.len() as u64, row_count as u64),
-    );
-    let states =
-        super::distinct::count_columns(&frame.columns, row_count, &frame.words, &frame.bytes);
-    span.end();
-    states
-}
-
 #[cfg(test)]
 pub(super) fn image_with_tolerance(
     field_types: &[ValueType],
@@ -170,8 +170,7 @@ pub(super) fn image_with_tolerance(
         StridePadder::with_tolerance(tolerance),
     )
     .expect("falsifier row counts sit far below the checked slab ceiling");
-    let distincts = count_frame(row_count, &frame);
-    seal(row_count, frame, distincts, test_generation(), None)
+    seal(row_count, frame, test_generation(), None)
 }
 
 #[cfg(test)]
@@ -206,6 +205,23 @@ pub(crate) fn build_from_source(
         "closed relations synthesize from the theory, never from a scan"
     );
     let claimed = source.row_count(rel)?;
+    build_from_scan(schema, generation, rel, claimed, source.work(), |sink| {
+        source.scan(schema, rel, sink)
+    })
+}
+
+/// The same admitted columns and decoder for a full relation or a counted
+/// physical bucket. The caller owns the coverage proof; this builder never
+/// publishes into the shared full-relation cache.
+pub(super) fn build_from_scan(
+    schema: &Schema,
+    generation: &GenerationHandle,
+    rel: RelationId,
+    claimed: u64,
+    work: &crate::work::WorkContext,
+    scan: impl FnOnce(&mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()>,
+) -> Result<crate::image::ResidentAdmit<Arc<RelationImage>>> {
+    let relation = schema.relation(rel);
     let row_count = usize::try_from(claimed).expect("64-bit usize");
 
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
@@ -221,16 +237,11 @@ pub(crate) fn build_from_source(
     let column_count = spans
         .last()
         .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
-    let work = source.work();
     let _work_charge = work
         .reserve(ByteKind::Working, estimated as u64)
         .map_err(crate::api::prepared::source::work_error)?;
 
     let mut frame = allocate(&field_types, row_count)?;
-    let decode_span = crate::obs::span_args(
-        crate::obs::names::DECODE_BATCH,
-        crate::obs::TraceArgs::Pair(row_count as u64, column_count as u64),
-    );
     let mut interner = generation.lock_resolver();
     let mut text = TextWords::Intern {
         interner: &mut interner,
@@ -244,7 +255,7 @@ pub(crate) fn build_from_source(
         let columns = &frame.columns;
         let words = &mut frame.words;
         let bytes = &mut frame.bytes;
-        let scan = source.scan(schema, rel, &mut |row| {
+        let scan = scan(&mut |row| {
             if position >= row_count {
                 return Err(Error::Corruption(CorruptionError::RowCountMismatch {
                     relation: rel,
@@ -279,7 +290,6 @@ pub(crate) fn build_from_source(
         scan?;
     }
     drop(interner);
-    decode_span.end();
     if position != row_count {
         return Err(Error::Corruption(CorruptionError::RowCountMismatch {
             relation: rel,
@@ -287,11 +297,9 @@ pub(crate) fn build_from_source(
         }));
     }
 
-    let distincts = count_frame(row_count, &frame);
     Ok(crate::image::ResidentAdmit::Ready(seal(
         row_count,
         frame,
-        distincts,
         generation.clone(),
         Some(SlabCharge::Cache { _owner: charge }),
     )))
@@ -300,24 +308,24 @@ pub(crate) fn build_from_source(
 /// Reusable columnar storage for derived relations. A published image
 /// retains both its resolver generation and its working-byte charge;
 /// only uniquely owned images can be refilled in place.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum TransientImage {
-    Empty {
-        capacity: usize,
-    },
+    #[default]
+    Empty,
     Occupied {
         image: Arc<RelationImage>,
         capacity: usize,
     },
 }
 
-impl Default for TransientImage {
-    fn default() -> Self {
-        Self::Empty { capacity: 0 }
-    }
-}
-
 impl TransientImage {
+    pub(crate) fn is_uniquely_owned(&mut self) -> bool {
+        match self {
+            Self::Empty => true,
+            Self::Occupied { image, .. } => Arc::get_mut(image).is_some(),
+        }
+    }
+
     /// # Panics
     /// Only on programmer-invariant violations: a row narrower than the
     /// layout, or more rows than promised.
@@ -335,7 +343,6 @@ impl TransientImage {
         self.fill_drained(
             None,
             field_types,
-            0,
             row_count,
             generation,
             CapacityPolicy::Exact,
@@ -350,7 +357,7 @@ impl TransientImage {
     }
 
     /// Refill from a fallible drain (the spill-aware seen-set path):
-    /// `drain(base, write)` must feed rows `base..row_count` in order. A
+    /// `drain(0, write)` must feed all `row_count` rows in order. A
     /// `Some` work context reserves the slab bytes BEFORE any allocation
     /// (Q-BUDGET: growth is admitted, never discovered) — a transient
     /// admission charge, matching `build_from_source`.
@@ -370,7 +377,6 @@ impl TransientImage {
         self.fill_drained(
             work,
             field_types,
-            0,
             row_count,
             generation,
             CapacityPolicy::Exact,
@@ -392,7 +398,6 @@ impl TransientImage {
         self.fill_drained(
             Some(work),
             field_types,
-            0,
             row_bound,
             generation,
             CapacityPolicy::UpperBound,
@@ -400,63 +405,23 @@ impl TransientImage {
         )
     }
 
-    /// Append rows `filled..row_count` under a doubling capacity policy,
-    /// from a fallible drain with an optional slab admission charge (see
-    /// [`Self::refill_drained`]).
-    /// # Errors
-    /// As [`Self::refill_drained`].
-    /// # Panics
-    /// As [`Self::refill`]: programmer-invariant violations only.
-    pub fn append_drained(
-        &mut self,
-        work: Option<&crate::work::WorkContext>,
-        field_types: &[ValueType],
-        filled: usize,
-        row_count: usize,
-        generation: &GenerationHandle,
-        drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
-    ) -> crate::error::Result<Arc<RelationImage>> {
-        self.fill_drained(
-            work,
-            field_types,
-            filled,
-            row_count,
-            generation,
-            CapacityPolicy::Doubling,
-            drain,
-        )
-    }
-
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn fill_drained(
         &mut self,
         work: Option<&crate::work::WorkContext>,
         field_types: &[ValueType],
-        filled: usize,
         row_count: usize,
         generation: &GenerationHandle,
         policy: CapacityPolicy,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
     ) -> crate::error::Result<Arc<RelationImage>> {
-        debug_assert!(filled <= row_count, "seen-sets never shrink");
-        let framed = match self {
-            Self::Empty { capacity } | Self::Occupied { capacity, .. } => *capacity,
-        };
         let reusable = match self {
             Self::Occupied { image, capacity } if row_count <= *capacity => {
                 Arc::get_mut(image).is_some()
             }
-            Self::Empty { .. } | Self::Occupied { .. } => false,
+            Self::Empty | Self::Occupied { .. } => false,
         };
-        let base = if reusable { filled } else { 0 };
         if !reusable {
-            let capacity = match policy {
-                CapacityPolicy::Exact | CapacityPolicy::UpperBound => row_count,
-                CapacityPolicy::Doubling => framed.max(row_count.saturating_mul(2)),
-            };
+            let capacity = row_count;
             let slab_charge = match work {
                 Some(work) => {
                     let spans = column_spans(field_types);
@@ -479,12 +444,10 @@ impl TransientImage {
             let frame = allocate(field_types, capacity)
                 .expect("seen-set row counts sit far below the checked slab ceiling");
 
-            let distincts = super::distinct::uncounted_columns(&frame.columns);
             *self = Self::Occupied {
                 image: seal(
                     row_count,
                     frame,
-                    distincts,
                     generation.clone(),
                     slab_charge.map(|charge| SlabCharge::Working { _owner: charge }),
                 ),
@@ -497,11 +460,15 @@ impl TransientImage {
         let image_mut =
             Arc::get_mut(image).expect("a non-reusable slot was just replaced by a unique Arc");
         image_mut.generation = generation.clone();
+        // Invalidate before any write, including a drain that fails partway.
+        for count in &mut image_mut.distincts {
+            count.take();
+        }
         image_mut.row_count = row_count;
-        let filled_to = drain_encoded_rows(image_mut, base, drain)?;
+        let filled_to = drain_encoded_rows(image_mut, drain)?;
         match policy {
             CapacityPolicy::UpperBound => image_mut.row_count = filled_to,
-            CapacityPolicy::Exact | CapacityPolicy::Doubling => {
+            CapacityPolicy::Exact => {
                 assert_eq!(filled_to, row_count, "the caller counted its rows");
             }
         }
@@ -512,13 +479,11 @@ impl TransientImage {
 #[derive(Clone, Copy)]
 enum CapacityPolicy {
     Exact,
-    Doubling,
     UpperBound,
 }
 
 fn drain_encoded_rows(
     image: &mut RelationImage,
-    base: usize,
     drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
 ) -> crate::error::Result<usize> {
     let row_bound = image.row_count;
@@ -528,8 +493,8 @@ fn drain_encoded_rows(
         bytes,
         ..
     } = image;
-    let mut position = base;
-    drain(base, &mut |row| {
+    let mut position = 0;
+    drain(0, &mut |row| {
         assert!(
             position < row_bound,
             "drain exceeded its admitted row bound"
@@ -550,19 +515,13 @@ fn drain_encoded_rows(
     Ok(position)
 }
 
-/// Synthesizes a closed relation's image from its sealed extension — the
-/// fingerprint's preimage IS the storage
-/// . No LMDB
-/// transaction parameter exists because synthesis is pure: the sealed
-/// rows' canonical fact bytes (encoded ONCE, at validate) decode through
-/// exactly the plan a stored fact would, so the column layout, the
-/// implicit `id` column (`0..rows`, first — the synthetic field opens the
-/// sealed field list), stride padding, and the build-time distinct
-/// # Panics
-/// validated schema.
-/// Only on programmer-invariant violations: `relation` is ordinary, or a
+/// Synthesizes a closed relation's image from its sealed extension. Sealed
+/// canonical fact bytes use the same decoding and stride-padded columns as
+/// stored rows, including the leading implicit `id` column (`0..rows`).
 /// # Errors
 /// Cache admission refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
+/// # Panics
+/// Only if `relation` is ordinary or its sealed rows violate the validated schema.
 pub fn synthesize_closed(
     rel: RelationId,
     relation: &Relation,
@@ -584,10 +543,6 @@ pub fn synthesize_closed(
     let mut frame = allocate(&field_types, row_count)
         .expect("the extension-row cap keeps every slab size computation in range");
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
-    let decode_span = crate::obs::span_args(
-        crate::obs::names::DECODE_BATCH,
-        crate::obs::TraceArgs::Pair(row_count as u64, layout.fact_width() as u64),
-    );
     for (position, row) in extension.iter().enumerate() {
         decode_fact(
             rel,
@@ -600,13 +555,66 @@ pub fn synthesize_closed(
         )
         .expect("sealed rows hold canonical fact bytes, encoded at validate");
     }
-    decode_span.end();
-    let distincts = count_frame(row_count, &frame);
     Ok(crate::image::ResidentAdmit::Ready(seal(
         row_count,
         frame,
-        distincts,
         generation,
         Some(SlabCharge::Cache { _owner: charge }),
     )))
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    #[test]
+    fn slab_bound_covers_every_alignment_and_pitch_boundary() {
+        for element_size in [1, 8] {
+            let boundary = PAD_MIN_STRIDE / element_size;
+            for rows in [
+                0,
+                1,
+                LINE / element_size,
+                boundary - LINE / element_size - 1,
+                boundary - LINE / element_size,
+                boundary - 1,
+                boundary,
+                boundary + 1,
+                boundary + 384 / element_size,
+                boundary + SET_STRIDE / element_size - 1,
+                boundary + SET_STRIDE / element_size,
+            ] {
+                let (words, bytes) = slab_lengths(rows, 16, 16).unwrap();
+                let capacity = if element_size == 8 { words } else { bytes };
+                for base in (0..LINE).step_by(element_size) {
+                    for tolerance in [0, super::super::PAD_TOLERANCE, 2048] {
+                        let mut padder = StridePadder::with_tolerance(tolerance);
+                        let mut cursor = 0;
+                        for _ in 0..16 {
+                            let start = padder.place(base, element_size, cursor);
+                            assert_eq!((base + start * element_size) % LINE, 0);
+                            assert!(start >= cursor, "columns cannot overlap");
+                            cursor = start + rows;
+                            assert!(cursor <= capacity, "placement exceeds admitted capacity");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(slab_lengths(usize::MAX, 1, 1).is_err());
+        assert!(slab_lengths(usize::MAX / 8, 8, 0).is_err());
+    }
+
+    #[test]
+    fn tiny_image_retention_is_payload_plus_alignment_not_pitch_slack() {
+        let fields = [ValueType::U64; 6];
+        let expected = 6 * (32 * 8 + LINE);
+        assert_eq!(estimated_slab_bytes(&fields, 32).unwrap(), expected);
+        let image = image_with_tolerance(&fields, 32, super::super::PAD_TOLERANCE);
+        assert_eq!(image.byte_size(), expected);
+        for column in 0..6 {
+            assert_eq!(image.column_words(column).len(), 32);
+            assert_eq!(image.column_words(column).as_ptr().addr() % LINE, 0);
+        }
+    }
 }

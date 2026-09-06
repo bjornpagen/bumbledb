@@ -37,10 +37,6 @@ impl<S: Theory> Db<S> {
         }
         let (store, _fresh) =
             Store::create(path, &schema, MapPolicy::default()).map_err(Error::from_store)?;
-        crate::obs::event(
-            crate::obs::names::CREATE_DURABLE,
-            crate::obs::TraceArgs::Count(1),
-        );
         Ok(Admission::Accepted(Self::assemble(store, schema, work)?))
     }
 

@@ -258,6 +258,7 @@ impl Executor {
         let leaf = LeafPrecompute::of(plan, &precompute, &var_widths);
         Self {
             batch,
+            physical_distinct: None,
             cursors: Vec::new(),
             slot_map,
             precompute,
@@ -294,6 +295,13 @@ impl Executor {
         }
     }
 
+    pub(crate) fn set_physical_distinct(
+        &mut self,
+        witness: Option<crate::plan::fj::ScalarSetTraversal>,
+    ) {
+        self.physical_distinct = witness;
+    }
+
     pub(super) fn width_of(&self, var: crate::ir::VarId) -> usize {
         self.var_widths
             .iter()
@@ -317,21 +325,16 @@ impl Executor {
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.drive_state = super::DriveState::Running;
-        // Re-bind the current ledger (run_join already bound before
-        // force_root/select; harnesses that skip run_join bind here,
-        // still before start()/probe force).
-        if let Some(ledger) = &self.ledger {
-            let work = ledger.work.clone();
-            for colt in colts.iter_mut() {
-                colt.bind(Some(&work));
-            }
-        }
 
         self.overlap.reset();
         self.cursors.clear();
 
         self.cursors
             .extend(colts.iter().map(|colt| (colt.start(), 0usize)));
+
+        if matches!(self.leaf, LeafPrecompute::Fast { .. }) {
+            sink.prepare_scan(&self.slot_map[plan.nodes().len() - 1][0]);
+        }
 
         match &self.drive {
             Drive::Pipeline(_) => {

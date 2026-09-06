@@ -1,7 +1,7 @@
 //! One cross-parent probe pass.
 use super::anti_probe::anti_probe_pass;
 use super::{
-    Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, NodeScratch, PREFETCH_WIDTH_FLOOR,
+    Bindings, Colt, Counters, Cursor, Executor, Flow, NodeScratch, PREFETCH_WIDTH_FLOOR,
     PipeTables, Sink, Source, ValidatedPlan, grow_scratch,
 };
 
@@ -39,16 +39,13 @@ impl Executor {
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
 
-        counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.survivors.clear();
         scratch
             .survivors
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
-        counters.phase_end(node_idx, JoinPhase::Gather);
 
         // Residuals run BEFORE the sibling probes — the cost-class
 
-        counters.phase_start(node_idx, JoinPhase::Residual);
         for spec in &self.precompute[node_idx].residual_slots {
             let cover_vars = &node.subatoms[cover_sub].vars;
             let lhs_word = super::word_base(cover_vars, spec.lhs, |v| self.width_of(v));
@@ -139,7 +136,6 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        counters.phase_end(node_idx, JoinPhase::Residual);
 
         // extraction refusal is recorded at that loop's head).
 
@@ -152,7 +148,6 @@ impl Executor {
             let occ = usize::from(subatom.occ.0);
             let s_level = tables.entry_level[node_idx][occ];
             let cover_vars = &node.subatoms[cover_sub].vars;
-            counters.phase_start(node_idx, JoinPhase::Hash);
 
             scratch.sources[sub_idx].clear();
             let mut word = 0;
@@ -256,31 +251,20 @@ impl Executor {
                     }
                 }
             }
-            counters.phase_end(node_idx, JoinPhase::Hash);
             let carried = tables.carried_index(node_idx, occ);
             let start_cursor = colts[occ].start();
 
-            if carried.is_none() {
-                counters.phase_start(node_idx, JoinPhase::Force);
-                if self
+            if carried.is_none()
+                && self
                     .colt_ok(colts[occ].ensure_forced(start_cursor, s_level))
                     .is_none()
-                {
-                    scratch.parents.clear();
-                    scratch.element_origins.clear();
-                    return;
-                }
-                counters.phase_end(node_idx, JoinPhase::Force);
+            {
+                scratch.parents.clear();
+                scratch.element_origins.clear();
+                return;
             }
 
             if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
-                crate::obs::event(
-                    crate::obs::names::PREFETCH_PASS,
-                    crate::obs::TraceArgs::Pair(
-                        scratch.survivors.len() as u64,
-                        colts[occ].probe_footprint_bytes() as u64,
-                    ),
-                );
                 for (k, &e) in scratch.survivors.iter().enumerate() {
                     let parent = scratch.parents[e as usize] as usize;
                     let cursor = carried.map_or(start_cursor, |col| {
@@ -289,36 +273,70 @@ impl Executor {
                     colts[occ].prefetch_bucket(cursor, scratch.hashes[k]);
                 }
             }
-            counters.phase_start(node_idx, JoinPhase::Probe);
+            counters.probe_batch(node_idx, sub_idx, n);
             grow_scratch(&mut scratch.mask, n);
 
-            {
-                let survivors = &scratch.survivors[..n];
-                let parents = &scratch.parents[..];
-                let pending_cursors = &scratch.pending_cursors[..];
-                let probe_keys = &scratch.probe_keys[..n * sub_arity];
-                let hashes = &scratch.hashes[..n];
-                let sibling_children = &mut scratch.sibling_children[sub_idx][..];
-                let mask = &mut scratch.mask[..n];
-                let colt = &mut colts[occ];
-                for k in 0..n {
-                    let element = usize::try_from(survivors[k]).expect("batch fits usize");
-                    let parent = parents[element] as usize;
-                    let cursor = carried.map_or(start_cursor, |col| {
-                        pending_cursors[parent * carried_w + col]
-                    });
-                    let Some(hit) = self.colt_ok(colt.get_prehashed(
-                        cursor,
-                        s_level,
-                        &probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                        hashes[k],
-                    )) else {
-                        break;
-                    };
-                    counters.probe(node_idx, sub_idx, hit.is_some());
-                    sibling_children[element] = hit.unwrap_or(Cursor::Row(0));
-                    mask[k] = u8::from(hit.is_some());
-                }
+            match sub_arity {
+                1 => self.probe_sibling_batch::<1, C>(
+                    scratch,
+                    &mut colts[occ],
+                    node_idx,
+                    sub_idx,
+                    s_level,
+                    carried,
+                    carried_w,
+                    start_cursor,
+                    sub_arity,
+                    counters,
+                ),
+                2 => self.probe_sibling_batch::<2, C>(
+                    scratch,
+                    &mut colts[occ],
+                    node_idx,
+                    sub_idx,
+                    s_level,
+                    carried,
+                    carried_w,
+                    start_cursor,
+                    sub_arity,
+                    counters,
+                ),
+                3 => self.probe_sibling_batch::<3, C>(
+                    scratch,
+                    &mut colts[occ],
+                    node_idx,
+                    sub_idx,
+                    s_level,
+                    carried,
+                    carried_w,
+                    start_cursor,
+                    sub_arity,
+                    counters,
+                ),
+                4 => self.probe_sibling_batch::<4, C>(
+                    scratch,
+                    &mut colts[occ],
+                    node_idx,
+                    sub_idx,
+                    s_level,
+                    carried,
+                    carried_w,
+                    start_cursor,
+                    sub_arity,
+                    counters,
+                ),
+                _ => self.probe_sibling_batch::<0, C>(
+                    scratch,
+                    &mut colts[occ],
+                    node_idx,
+                    sub_idx,
+                    s_level,
+                    carried,
+                    carried_w,
+                    start_cursor,
+                    sub_arity,
+                    counters,
+                ),
             }
             if !matches!(self.drive_state, super::DriveState::Running) {
                 scratch.parents.clear();
@@ -326,10 +344,8 @@ impl Executor {
                 return;
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-            counters.phase_end(node_idx, JoinPhase::Probe);
         }
 
-        counters.phase_start(node_idx, JoinPhase::Gather);
         scratch.cursor_srcs.clear();
         for (occ, colt) in colts.iter().enumerate() {
             scratch.cursor_srcs.push(if occ == cover_occ {
@@ -348,13 +364,9 @@ impl Executor {
                 }
             });
         }
-        counters.phase_end(node_idx, JoinPhase::Gather);
 
         // sources. They stay AFTER the sibling probes (unlike the ALU
 
-        if !self.precompute[node_idx].point_probes.is_empty() {
-            counters.phase_start(node_idx, JoinPhase::Residual);
-        }
         for spec in &self.precompute[node_idx].point_probes {
             let cover_vars = &node.subatoms[cover_sub].vars;
             scratch.point_sources.clear();
@@ -448,9 +460,6 @@ impl Executor {
             }
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
-        if !self.precompute[node_idx].point_probes.is_empty() {
-            counters.phase_end(node_idx, JoinPhase::Residual);
-        }
 
         if let Err(error) = anti_probe_pass(
             &self.precompute[node_idx].anti_probes,
@@ -483,7 +492,8 @@ impl Executor {
         let child_carried = &tables.carried[node_idx + 1];
         let mints_origins = tables.absorb == super::SkipAbsorb::Node(node_idx);
 
-        // WRONG origin, and silently drop valid rows — beyond the scale
+        // Wrapping an origin could alias a cancelled subtree and drop valid
+        // rows. Refuse before minting any origins for this batch.
 
         if mints_origins
             && self
@@ -496,14 +506,7 @@ impl Executor {
             scratch.element_origins.clear();
             return;
         }
-        // The window opens AFTER the poison return above: every
-
-        // invariant), so the cold path may not return out of an open
-
-        counters.phase_start(node_idx, JoinPhase::Descend);
-
-        // above it must never match a minted id. Resolved once per pass,
-
+        // Only descendants of the absorbing node carry cancellable origins.
         let below_absorb = matches!(tables.absorb, super::SkipAbsorb::Node(a) if node_idx > a);
         for k in 0..scratch.survivors.len() {
             if !matches!(self.drive_state, super::DriveState::Running) {
@@ -588,7 +591,6 @@ impl Executor {
                 child.pending_len += 1;
             }
         }
-        counters.phase_end(node_idx, JoinPhase::Descend);
         scratch.parents.clear();
         scratch.element_origins.clear();
 
@@ -596,6 +598,56 @@ impl Executor {
 
         if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
             self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the existing batch routing and borrows stay explicit"
+    )]
+    #[inline(never)]
+    pub(super) fn probe_sibling_batch<const K: usize, C: Counters>(
+        &mut self,
+        scratch: &mut NodeScratch,
+        colt: &mut Colt,
+        node_idx: usize,
+        sub_idx: usize,
+        s_level: usize,
+        carried: Option<usize>,
+        carried_w: usize,
+        start_cursor: Cursor,
+        sub_arity: usize,
+        counters: &mut C,
+    ) {
+        debug_assert!(K == 0 || sub_arity == K);
+        let width = if K == 0 { sub_arity } else { K };
+        let n = scratch.survivors.len();
+        let survivors = &scratch.survivors[..n];
+        let parents = &scratch.parents[..];
+        let pending_cursors = &scratch.pending_cursors[..];
+        let probe_keys = &scratch.probe_keys[..n * width];
+        let hashes = &scratch.hashes[..n];
+        let sibling_children = &mut scratch.sibling_children[sub_idx][..];
+        let mask = &mut scratch.mask[..n];
+        for k in 0..n {
+            let element = usize::try_from(survivors[k]).expect("batch fits usize");
+            let parent = parents[element] as usize;
+            let cursor = carried.map_or(start_cursor, |col| {
+                pending_cursors[parent * carried_w + col]
+            });
+            // Each cursor may force a different node and reallocate COLT
+            // pools. No map or backing pointer survives this call.
+            let Some(hit) = self.colt_ok(colt.get_prehashed_width::<K>(
+                cursor,
+                s_level,
+                &probe_keys[k * width..(k + 1) * width],
+                hashes[k],
+            )) else {
+                break;
+            };
+            counters.probe(node_idx, sub_idx, hit.is_some());
+            sibling_children[element] = hit.unwrap_or(Cursor::Row(0));
+            mask[k] = u8::from(hit.is_some());
         }
     }
 }

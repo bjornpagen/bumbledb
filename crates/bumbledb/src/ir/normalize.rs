@@ -74,7 +74,6 @@ pub enum OccBind {
     Edb(RelationId),
     Finished(crate::ir::InteriorId),
     RecDelta(crate::ir::InteriorId),
-    RecAcc(crate::ir::InteriorId),
 }
 
 impl OccBind {
@@ -82,9 +81,7 @@ impl OccBind {
     pub const fn source(self) -> crate::ir::AtomSource {
         match self {
             Self::Edb(relation) => crate::ir::AtomSource::Edb(relation),
-            Self::Finished(id) | Self::RecDelta(id) | Self::RecAcc(id) => {
-                crate::ir::AtomSource::Interior(id)
-            }
+            Self::Finished(id) | Self::RecDelta(id) => crate::ir::AtomSource::Interior(id),
         }
     }
 
@@ -92,7 +89,7 @@ impl OccBind {
     pub const fn edb(self) -> Option<RelationId> {
         match self {
             Self::Edb(relation) => Some(relation),
-            Self::Finished(_) | Self::RecDelta(_) | Self::RecAcc(_) => None,
+            Self::Finished(_) | Self::RecDelta(_) => None,
         }
     }
 
@@ -100,7 +97,7 @@ impl OccBind {
     pub const fn interior(self) -> Option<crate::ir::InteriorId> {
         match self {
             Self::Edb(_) => None,
-            Self::Finished(id) | Self::RecDelta(id) | Self::RecAcc(id) => Some(id),
+            Self::Finished(id) | Self::RecDelta(id) => Some(id),
         }
     }
 

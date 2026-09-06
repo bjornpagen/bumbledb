@@ -5,34 +5,28 @@
 //!
 //! - **cold-open**: `Db::open` + first read, timed together — activation is
 //!   part of the per-user cost, not warmed away;
-//! - **warm**: repeated read over an open store (the warm read *families*
-//!   with verified oracles stay in the existing `bench`/`scenarios` lanes;
-//!   this cell is the regime scaffold that the merged report joins to them);
+//! - **warm**: prepared full-account projection over an open store;
 //! - **post-write**: a real mutation before every timed sample
 //!   (delete-commit and insert-commit alternate so same-command
 //!   normalization cannot cancel the delta), then the first read is timed —
 //!   the PERF-001 first-read rebuild measurement;
-//! - **large-result**: execution and owned delivery timed as separate
-//!   segments (never summed into one number);
+//! - **large-result**: prepared execution through `CompleteResult` and actual
+//!   cursor-page delivery, with separate segments and one measured total;
 //! - **tenant-churn**: many small tenant stores, skewed activation, close
-//!   after use, with file-descriptor high-water evidence that eviction
-//!   actually releases resources.
+//!   after use, with before/after file-descriptor counts (not a peak claim).
 //!
 //! Selective keyed probes (APP-FAST's direct-probe leg) run through the
 //! existing verified read families (`bench --families`); duplicating those
 //! queries here would create a second unverified path.
 //!
-//! F1 note: no function here runs before F3. The engine surface used is the
-//! preserved stable one (`Db::create/open/read/write/scan/insert_dyn/
-//! delete_dyn/disk_size`); when P02/P03 land the successor owner/snapshot
-//! API, this file follows in the same integration pass (recorded in the
-//! packet as a tracked seam, not silently).
+//! Protocol 2 replaces the old metadata-count/vector-length scaffolds.
+//! These are native API measurements, not TypeScript or hosted qualification.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use bumbledb::Db;
+use bumbledb::{Answers, Db, PreparedQuery, RelationId};
 
 use crate::cli::AppPerfArgs;
 use crate::corpus_gen::{GenConfig, relation_rows};
@@ -47,6 +41,107 @@ fn work() -> bumbledb::WorkContext {
     harness::bench_work()
 }
 
+fn projection(relation: RelationId) -> bumbledb::Query {
+    let fields = crate::schema::schema().relation(relation).fields();
+    let vars: Vec<_> = (0..fields.len())
+        .map(|index| bumbledb::VarId(u16::try_from(index).expect("sealed field count")))
+        .collect();
+    bumbledb::Query::single(bumbledb::Rule {
+        finds: vars.iter().copied().map(bumbledb::FindTerm::Var).collect(),
+        atoms: vec![bumbledb::Atom {
+            source: bumbledb::AtomSource::Edb(relation),
+            bindings: vars
+                .iter()
+                .map(|var| (bumbledb::FieldId(var.0), bumbledb::Term::Var(*var)))
+                .collect(),
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+fn scan_oracle(
+    db: &Db<Ledger>,
+    relation: RelationId,
+) -> Result<Vec<crate::compare::Answer>, String> {
+    db.read(work(), |snap| {
+        snap.scan(relation)?
+            .map(|row| row.map(|row| crate::compare::from_fact(&row)))
+            .collect()
+    })
+    .map_err(|e| format!("projection oracle scan: {e:?}"))
+}
+
+fn execute_projection(
+    db: &Db<Ledger>,
+    prepared: &mut PreparedQuery<Ledger>,
+    answers: &mut Answers,
+) -> Result<u64, String> {
+    db.read(work(), |snap| {
+        snap.execute(prepared, &[] as &[bumbledb::BindValue], answers)
+    })
+    .map_err(|e| format!("prepared projection: {e:?}"))?;
+    Ok(std::hint::black_box(answers).len() as u64)
+}
+
+fn gate_projection(
+    db: &Db<Ledger>,
+    relation: RelationId,
+    prepared: &mut PreparedQuery<Ledger>,
+) -> Result<u64, String> {
+    let expected = scan_oracle(db, relation)?;
+    let mut answers = Answers::new();
+    let count = execute_projection(db, prepared, &mut answers)?;
+    let types: Vec<_> = db
+        .schema()
+        .relation(relation)
+        .fields()
+        .iter()
+        .map(|field| field.value_type)
+        .collect();
+    crate::compare::multisets(crate::compare::from_answers(&answers, &types), expected)
+        .map_err(|e| format!("projection disagrees with canonical scan: {e}"))?;
+    Ok(count)
+}
+
+/// Consume the real result owner, including final framing and disposal.
+fn deliver_result(
+    result: bumbledb::CompleteResult,
+    mut visit: impl FnMut(&Answers),
+) -> Result<u64, String> {
+    let expected = result.len();
+    let mut cursor = result.into_cursor(1024);
+    let mut delivered = 0;
+    let mut terminal = false;
+    while let Some(page) = cursor
+        .next_page_with_work(&work(), 1 << 20)
+        .map_err(|e| format!("cursor delivery: {e:?}"))?
+    {
+        if terminal {
+            return Err("page after terminal result frame".to_owned());
+        }
+        terminal = page.terminal;
+        delivered += page.rows.len() as u64;
+        visit(&page.rows);
+    }
+    if !terminal || delivered != expected {
+        return Err(format!(
+            "incomplete cursor result: {delivered}/{expected}, terminal={terminal}"
+        ));
+    }
+    Ok(delivered)
+}
+
+fn complete(
+    db: &Db<Ledger>,
+    prepared: &mut PreparedQuery<Ledger>,
+) -> Result<bumbledb::CompleteResult, String> {
+    db.read(work(), |snap| {
+        snap.execute_complete(prepared, &[] as &[bumbledb::BindValue])
+    })
+    .map_err(|e| format!("complete projection: {e:?}"))
+}
+
 #[derive(Debug, Clone)]
 pub struct RegimeRow {
     pub regime: Regime,
@@ -57,55 +152,75 @@ pub struct RegimeRow {
     pub account: CostAccount,
 }
 
-/// Cold open: time `open + first scan + drop` per sample over an existing
+/// Cold open: time `open + prepare + first projection + drop` over an existing
 /// corpus directory.
 ///
 /// # Errors
-pub fn cold_open(dir: &Path) -> Result<RegimeRow, String> {
-    let m = harness::measure_batched(Protocol::COLD, Modes::default(), 1, || {
+pub fn cold_open(dir: &Path, samples: Option<u32>) -> Result<RegimeRow, String> {
+    let query = projection(ids::ACCOUNT);
+    let expected = {
+        let db = Db::open(dir, Ledger, work()).map_err(|e| format!("oracle open: {e:?}"))?;
+        let mut prepared = db
+            .prepare(&query, work())
+            .map_err(|e| format!("oracle prepare: {e:?}"))?;
+        gate_projection(&db, ids::ACCOUNT, &mut prepared)?
+    };
+    let proto = Protocol {
+        samples: samples.unwrap_or(Protocol::COLD.samples),
+        ..Protocol::COLD
+    };
+    let m = harness::measure_batched(proto, Modes::default(), 1, || {
         let db = Db::open(dir, Ledger, work()).map_err(|e| format!("cold open: {e:?}"))?;
-        let read_work = work();
-        let count = db
-            .read(read_work.clone(), |snap| snap.count(ids::ACCOUNT))
-            .map_err(|e| format!("cold first read: {e:?}"))?;
+        let mut prepared = db
+            .prepare(&query, work())
+            .map_err(|e| format!("cold prepare: {e:?}"))?;
+        let mut answers = Answers::new();
+        let count = execute_projection(&db, &mut prepared, &mut answers)?;
+        if count != expected {
+            return Err("cold projection cardinality changed".to_owned());
+        }
+        drop(answers);
+        drop(prepared);
         drop(db);
         Ok(count)
     })?;
     Ok(RegimeRow {
         regime: Regime::ColdOpen,
-        cell: "ledger/cold-open+first-read".to_owned(),
+        cell: "ledger/cold-open+prepare+account-projection".to_owned(),
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount {
-            source_visits: Some(m.work),
-            ..CostAccount::default()
-        },
+        account: CostAccount::default(),
     })
 }
 
-/// Warm read regime scaffold: repeated full-account scan on an open store.
+/// Prepared full-account projection, gated against canonical-row scanning.
 ///
 /// # Errors
 pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, String> {
+    let mut prepared = db
+        .prepare(&projection(ids::ACCOUNT), work())
+        .map_err(|e| format!("warm prepare: {e:?}"))?;
+    let expected = gate_projection(db, ids::ACCOUNT, &mut prepared)?;
+    let mut answers = Answers::new();
     let proto = Protocol {
         warmups: Protocol::WARM.warmups,
         samples: samples.unwrap_or(Protocol::WARM.samples),
     };
     let m = harness::measure_batched(proto, Modes::default(), 1, || {
-        db.read(work(), |snap| snap.count(ids::ACCOUNT))
-            .map_err(|e| format!("warm scan: {e:?}"))
+        let count = execute_projection(db, &mut prepared, &mut answers)?;
+        if count != expected {
+            return Err("warm projection cardinality changed".to_owned());
+        }
+        Ok(count)
     })?;
     Ok(RegimeRow {
         regime: Regime::Warm,
-        cell: "ledger/warm-scan".to_owned(),
+        cell: "ledger/warm-prepared-account-projection".to_owned(),
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount {
-            source_visits: Some(m.work),
-            ..CostAccount::default()
-        },
+        account: CostAccount::default(),
     })
 }
 
@@ -116,8 +231,6 @@ pub fn warm_scan(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, Str
 /// samples.
 ///
 /// # Errors
-/// # Panics
-/// When the generated corpus is empty — a corpus contract violation.
 pub fn post_write_first_read(
     db: &Db<Ledger>,
     cfg: GenConfig,
@@ -125,61 +238,114 @@ pub fn post_write_first_read(
 ) -> Result<RegimeRow, String> {
     let victim = relation_rows(cfg, ids::POSTING_TAG)
         .next()
-        .expect("the generated corpus has at least one posting tag");
-    let mut present = true;
+        .ok_or_else(|| "generated corpus has no posting tags".to_owned())?;
+    let present = std::cell::Cell::new(true);
+    let mut prepared = db
+        .prepare(&projection(ids::POSTING_TAG), work())
+        .map_err(|e| format!("post-write prepare: {e:?}"))?;
+    let expected = gate_projection(db, ids::POSTING_TAG, &mut prepared)?;
+    if expected == 0 {
+        return Err("post-write corpus has no posting tags".to_owned());
+    }
+    let mut answers = Answers::new();
     let proto = Protocol {
         warmups: 4,
         samples: samples.unwrap_or(64),
     };
-    let m = harness::measure_interleaved(
+    let m = harness::measure_cold(
         proto,
-        Modes::default(),
-        1,
         || {
             // The untimed mutation before each timed first read.
             let row = victim.clone();
-            let outcome = if present {
+            let outcome = if present.get() {
                 db.write(work(), |tx| {
-                    tx.delete_dyn(ids::POSTING_TAG, [row])?;
-                    Ok(())
+                    tx.delete_dyn(ids::POSTING_TAG, [row])
+                        .map(bumbledb::MutationReport::changed)
                 })
             } else {
                 db.write(work(), |tx| {
-                    tx.insert_dyn(ids::POSTING_TAG, [row])?;
-                    Ok(())
+                    tx.insert_dyn(ids::POSTING_TAG, [row])
+                        .map(bumbledb::MutationReport::changed)
                 })
             };
-            outcome
-                .expect("post-write mutation commits")
-                .expect("accepted");
-            present = !present;
+            let changed = match outcome.map_err(|e| format!("post-write mutation: {e:?}"))? {
+                bumbledb::Admission::Accepted(committed) => committed.value,
+                bumbledb::Admission::Rejected(violations) => {
+                    return Err(format!("post-write mutation rejected: {violations:?}"));
+                }
+            };
+            if changed != 1 {
+                return Err(format!(
+                    "post-write setup changed {changed} rows, expected one"
+                ));
+            }
+            present.set(!present.get());
+            Ok(())
         },
         || {
-            db.read(work(), |snap| snap.count(ids::POSTING_TAG))
-                .map_err(|e| format!("first read after mutation: {e:?}"))
+            let count = execute_projection(db, &mut prepared, &mut answers)?;
+            if count != expected - u64::from(!present.get()) {
+                return Err("post-write projection ignored the committed delta".to_owned());
+            }
+            Ok(count)
         },
     )?;
+    // Odd sample counts leave the final measured state deleted. Restore it
+    // outside timing so later regimes see the same canonical corpus.
+    if !present.get() {
+        let outcome = db
+            .write(work(), |tx| {
+                tx.insert_dyn(ids::POSTING_TAG, [victim])
+                    .map(bumbledb::MutationReport::changed)
+            })
+            .map_err(|e| format!("post-write restore: {e:?}"))?;
+        let changed = match outcome {
+            bumbledb::Admission::Accepted(committed) => committed.value,
+            bumbledb::Admission::Rejected(violations) => {
+                return Err(format!("post-write restore rejected: {violations:?}"));
+            }
+        };
+        if changed != 1 {
+            return Err("post-write restore did not insert the deleted row".to_owned());
+        }
+    }
+    gate_projection(db, ids::POSTING_TAG, &mut prepared)?;
     Ok(RegimeRow {
         regime: Regime::PostWrite,
-        cell: "ledger/first-read-after-delete-or-insert".to_owned(),
+        cell: "ledger/first-prepared-projection-after-delete-or-insert".to_owned(),
         stats: m.stats,
         work: m.work,
         phases: None,
-        account: CostAccount {
-            source_visits: Some(m.work),
-            ..CostAccount::default()
-        },
+        account: CostAccount::default(),
     })
 }
 
-/// Large-result delivery split: execute (materialize owned rows) and deliver
-/// (walk owned pages) timed as separate segments. `end_to_end` is measured
+/// Large-result delivery: execute and seal, then pull actual cursor pages
+/// and visit every typed value. `end_to_end` is measured
 /// around both; segments are attributed, never summed into the headline.
 ///
 /// # Errors
 pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, String> {
-    const PAGE_ROWS: usize = 1024;
     let count = samples.unwrap_or(16);
+    let mut prepared = db
+        .prepare(&projection(ids::POSTING), work())
+        .map_err(|e| format!("large-result prepare: {e:?}"))?;
+    let expected = {
+        let oracle = scan_oracle(db, ids::POSTING)?;
+        let types: Vec<_> = db
+            .schema()
+            .relation(ids::POSTING)
+            .fields()
+            .iter()
+            .map(|field| field.value_type)
+            .collect();
+        let mut delivered = Vec::new();
+        let count = deliver_result(complete(db, &mut prepared)?, |page| {
+            delivered.extend(crate::compare::from_answers(page, &types));
+        })?;
+        crate::compare::multisets(delivered, oracle).map_err(|e| format!("cursor oracle: {e}"))?;
+        count
+    };
     let mut execute_ns = Vec::with_capacity(count as usize);
     let mut deliver_ns = Vec::with_capacity(count as usize);
     let mut end_ns = Vec::with_capacity(count as usize);
@@ -187,26 +353,29 @@ pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, 
     for _ in 0..count {
         let whole = Instant::now();
         let start = Instant::now();
-        let owned = db
-            .read(work(), |snap| {
-                snap.scan(ids::POSTING)?.collect::<Result<Vec<_>, _>>()
-            })
-            .map_err(|e| format!("large-result execute: {e:?}"))?;
+        let owned = complete(db, &mut prepared)?;
         execute_ns.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
         let start = Instant::now();
-        for page in owned.chunks(PAGE_ROWS) {
-            rows_delivered += std::hint::black_box(page.len()) as u64;
-        }
+        let delivered = deliver_result(owned, |page| {
+            for answer in page.answers() {
+                for column in 0..page.arity() {
+                    std::hint::black_box(answer.get(column));
+                }
+            }
+        })?;
         deliver_ns.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
         end_ns.push(u64::try_from(whole.elapsed().as_nanos()).unwrap_or(u64::MAX));
-        drop(owned);
+        if delivered != expected {
+            return Err("large-result cardinality changed".to_owned());
+        }
+        rows_delivered += delivered;
     }
     let execute = harness::stats(&mut execute_ns);
     let deliver = harness::stats(&mut deliver_ns);
     let stats = harness::stats(&mut end_ns);
     Ok(RegimeRow {
         regime: Regime::LargeResult,
-        cell: "ledger/full-posting-materialize+page-walk".to_owned(),
+        cell: "ledger/posting-query+complete-result+cursor-values".to_owned(),
         stats,
         work: rows_delivered,
         phases: Some(PhaseSplit {
@@ -215,10 +384,7 @@ pub fn large_result(db: &Db<Ledger>, samples: Option<u32>) -> Result<RegimeRow, 
             deliver_ns: Some(deliver.p50),
             end_to_end_ns: stats.p50,
         }),
-        account: CostAccount {
-            source_visits: Some(rows_delivered),
-            ..CostAccount::default()
-        },
+        account: CostAccount::default(),
     })
 }
 
@@ -236,9 +402,8 @@ pub fn open_fd_count() -> Option<u64> {
 
 /// Tenant churn: `tenants` small stores under `base`, a skewed activation
 /// schedule (half the activations hit the two hottest tenants), each
-/// activation = open + keyed-scale read + close. Reports activation latency
-/// and file-descriptor high water against the baseline — eviction must
-/// actually release.
+/// activation = open + prepare + full-account projection + close. Reports
+/// latency and before/after descriptor growth, not a sampled resource peak.
 ///
 /// # Errors
 /// # Panics
@@ -254,6 +419,8 @@ pub fn tenant_churn(
         scale: crate::corpus_gen::Scale::Tiny,
     };
     let mut dirs = Vec::with_capacity(tenants as usize);
+    let mut expected = Vec::with_capacity(tenants as usize);
+    let query = projection(ids::ACCOUNT);
     for tenant in 0..tenants {
         let dir = base.join(format!("tenant-{tenant}"));
         let db = Db::create(&dir, Ledger, work())
@@ -261,6 +428,11 @@ pub fn tenant_churn(
             .expect("accepted");
         crate::corpus::load_bumbledb(&db, cfg)
             .map_err(|e| format!("tenant {tenant} load: {e:?}"))?;
+        let mut prepared = db
+            .prepare(&query, work())
+            .map_err(|e| format!("tenant prepare: {e:?}"))?;
+        expected.push(gate_projection(&db, ids::ACCOUNT, &mut prepared)?);
+        drop(prepared);
         drop(db);
         dirs.push(dir);
     }
@@ -275,7 +447,6 @@ pub fn tenant_churn(
     };
     let mut latencies = Vec::with_capacity(activations as usize);
     let mut rows_read = 0u64;
-    let mut fd_high_water = fd_baseline.unwrap_or(0);
     for _ in 0..activations {
         // Skew: 50% of activations land on the two hottest tenants.
         let tenant = if next() % 2 == 0 {
@@ -286,14 +457,19 @@ pub fn tenant_churn(
         let start = Instant::now();
         let db = Db::open(&dirs[tenant], Ledger, work())
             .map_err(|e| format!("tenant {tenant} open: {e:?}"))?;
-        rows_read += db
-            .read(work(), |snap| snap.count(ids::ACCOUNT))
-            .map_err(|e| format!("tenant {tenant} read: {e:?}"))?;
+        let mut prepared = db
+            .prepare(&query, work())
+            .map_err(|e| format!("tenant prepare: {e:?}"))?;
+        let mut answers = Answers::new();
+        let count = execute_projection(&db, &mut prepared, &mut answers)?;
+        if count != expected[tenant] {
+            return Err(format!("tenant {tenant} projection changed"));
+        }
+        rows_read += count;
+        drop(answers);
+        drop(prepared);
         drop(db);
         latencies.push(u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX));
-        if let Some(fds) = open_fd_count() {
-            fd_high_water = fd_high_water.max(fds);
-        }
     }
     let latency_stats = harness::stats(&mut latencies);
     let fd_after = open_fd_count();
@@ -378,9 +554,13 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
             report::timestamp_iso8601().replace(':', "-")
         ))
     });
+    if let Some(parent) = out_dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("output parent: {e}"))?;
+    }
+    std::fs::create_dir(&out_dir)
+        .map_err(|e| format!("app-perf needs a fresh output {}: {e}", out_dir.display()))?;
     let scratch = out_dir.join("scratch");
-    let _ = std::fs::remove_dir_all(&scratch);
-    std::fs::create_dir_all(&scratch).map_err(|e| format!("scratch {}: {e}", scratch.display()))?;
+    std::fs::create_dir(&scratch).map_err(|e| format!("scratch {}: {e}", scratch.display()))?;
     let cfg = GenConfig {
         seed: args.seed,
         scale: args.scale,
@@ -424,7 +604,7 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     }
     drop(db);
     if wanted("cold-open") {
-        rows.push(cold_open(&corpus_dir)?);
+        rows.push(cold_open(&corpus_dir, args.samples)?);
     }
     if wanted("tenant-churn") {
         rows.push(tenant_churn(
@@ -434,7 +614,10 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
             args.seed,
         )?);
     }
-    if let Some(row) = rows.first_mut() {
+    if let Some(row) = rows
+        .iter_mut()
+        .find(|row| row.regime != Regime::TenantChurn)
+    {
         row.account.virtual_map_bytes = Some(map.virtual_map_bytes);
         row.account.disk_bytes = Some(map.populated_file_bytes);
         row.account.allocated_disk_bytes = allocated;
@@ -442,7 +625,7 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
     }
 
     let mut out = String::new();
-    out.push_str("{\"provenance\":");
+    out.push_str("{\"protocol\":2,\"scope\":\"native-prepared-and-paged\",\"provenance\":");
     report::push_provenance(&mut out, &report::provenance(Path::new(".")));
     let _ = write!(out, ",\"seed\":{},\"rows\":[", args.seed);
     for (index, row) in rows.iter().enumerate() {
@@ -459,10 +642,9 @@ pub fn run(args: &AppPerfArgs) -> Result<i32, String> {
          {\"regime\":\"hosted-contention\",\"lane\":\"appperf::hosted driver over the successor log (F3)\"},\
          {\"regime\":\"maintenance\",\"lane\":\"log checkpoint/GC overlap lane (P05 harness, F3)\"}]}",
     );
-    std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
     std::fs::write(out_dir.join("app-perf.json"), &out).map_err(|e| format!("artifact: {e}"))?;
     let mut markdown = String::from(
-        "# App-perf regimes\n\n| regime | cell | p50 ns | p99 ns | work |\n|---|---|---:|---:|---:|\n",
+        "# App-perf regimes\n\nProtocol 2: native prepared queries and real cursor delivery.\n\nNot comparable to the retired metadata-count/vector-length scaffolds.\n\n| regime | cell | p50 ns | p99 ns | output rows |\n|---|---|---:|---:|---:|\n",
     );
     for row in &rows {
         let _ = writeln!(

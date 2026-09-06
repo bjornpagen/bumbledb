@@ -18,17 +18,6 @@ pub fn push_str_lit(out: &mut String, s: &str) {
     out.push('"');
 }
 
-/// Appends nanoseconds as microseconds with three decimals — the trace
-/// writer's timestamp/duration format.
-pub fn push_us(out: &mut String, ns: u64) {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "reporting accepts lossy integer-to-float conversion"
-    )] // ns fit f64 exactly for ~104 days
-    let us = ns as f64 / 1000.0;
-    let _ = write!(out, "{us:.3}");
-}
-
 /// A parsed JSON value — just enough structure to read `report.json`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -276,16 +265,6 @@ mod tests {
         assert_eq!(lit("\u{01}"), "\"\\u0001\"");
 
         assert_eq!(lit("héllo — uniq-42"), "\"héllo — uniq-42\"");
-    }
-
-    #[test]
-    fn microseconds_carry_three_decimals() {
-        let mut out = String::new();
-        push_us(&mut out, 1234);
-        assert_eq!(out, "1.234");
-        out.clear();
-        push_us(&mut out, 15_000);
-        assert_eq!(out, "15.000");
     }
 
     #[test]

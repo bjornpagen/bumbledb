@@ -6,6 +6,107 @@
 use super::*;
 use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
 
+#[test]
+fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
+    #[derive(Default)]
+    struct Probes(Vec<bool>);
+    impl Counters for Probes {
+        fn node_entry(&mut self, _: usize) {}
+        fn batch(&mut self, _: usize, _: usize) {}
+        fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
+        fn probe_hash(&mut self, _: usize, _: usize) {}
+        fn probe(&mut self, _: usize, _: usize, hit: bool) {
+            self.0.push(hit);
+        }
+        fn residual(&mut self, _: usize, _: bool) {}
+        fn anti_probe(&mut self, _: usize, _: bool) {}
+        fn emit(&mut self) {}
+        fn skip(&mut self, _: usize) {}
+    }
+
+    let schema = schema(1);
+    let normalized = normalized(vec![occurrence(0, 0, &[(0, 0)])], vec![]);
+    let plan = planned(&normalized, &schema, &[0]);
+    let images = views_of(&schema, &[vec![(7, 10), (8, 20)]]);
+    let first_key = images[0].column_words(0)[0];
+    for fixed in [false, true] {
+        for cancelled in [false, true] {
+            let work = bounded(if cancelled { u64::MAX } else { 0 });
+            if cancelled {
+                work.cancel();
+            }
+            let mut colt = colts_for(&plan, &images).pop().unwrap();
+            colt.bind(Some(&work));
+            let mut executor = Executor::new(&plan);
+            let sentinel = Cursor::Row(u32::MAX);
+            let mut scratch = NodeScratch {
+                // Survivors are deliberately not element-ordered.
+                survivors: vec![2, 0, 1, 3],
+                parents: vec![0, 1, 2, 3],
+                pending_cursors: vec![Cursor::Row(0), Colt::root(), Cursor::Row(0), Cursor::Row(0)],
+                probe_keys: vec![first_key, u64::MAX, first_key, first_key],
+                hashes: [first_key, u64::MAX, first_key, first_key]
+                    .map(|key| crate::exec::colt::hash_key(&[key]))
+                    .to_vec(),
+                sibling_children: vec![vec![sentinel; 4]],
+                mask: vec![9; 4],
+                ..NodeScratch::default()
+            };
+            let mut counters = Probes::default();
+            if fixed {
+                executor.probe_sibling_batch::<1, _>(
+                    &mut scratch,
+                    &mut colt,
+                    0,
+                    0,
+                    0,
+                    Some(0),
+                    1,
+                    Colt::root(),
+                    1,
+                    &mut counters,
+                );
+            } else {
+                executor.probe_sibling_batch::<0, _>(
+                    &mut scratch,
+                    &mut colt,
+                    0,
+                    0,
+                    0,
+                    Some(0),
+                    1,
+                    Colt::root(),
+                    1,
+                    &mut counters,
+                );
+            }
+            assert_eq!(counters.0, vec![true, false]);
+            assert_eq!(scratch.mask, vec![1, 0, 9, 9]);
+            assert_eq!(
+                scratch.sibling_children[0],
+                vec![Cursor::Row(0), sentinel, Cursor::Row(0), sentinel]
+            );
+            assert_eq!(scratch.survivors, vec![2, 0, 1, 3]);
+            assert!(colt.forced_capacity(Colt::root()).is_none());
+            let DriveState::Poisoned(Poison::Work(error)) = executor.drive_state else {
+                panic!("force refusal must poison the executor");
+            };
+            if cancelled {
+                assert_eq!(error, WorkError::Cancelled);
+            } else {
+                assert!(matches!(
+                    error,
+                    WorkError::Exhausted {
+                        resource: Resource::WorkingBytes,
+                        ..
+                    }
+                ));
+            }
+            assert_eq!(work.used(Resource::WorkingBytes), 0);
+        }
+    }
+}
+
 fn bounded(working_bytes: u64) -> WorkContext {
     ExecutionPolicy {
         input_bytes: u64::MAX,
@@ -55,6 +156,62 @@ fn is_work_refusal(error: &crate::error::Error, expected: &WorkError) -> bool {
     )
 }
 
+#[test]
+fn physical_terminal_force_charges_refuses_and_releases_its_work() {
+    let schema = schema(1);
+    let normalized = normalized(vec![occurrence(0, 0, &[(0, 0)])], vec![]);
+    let plan = planned(&normalized, &schema, &[0]);
+    let views = views_of(&schema, &[(0..64).map(|id| (id % 4, id)).collect()]);
+    for (bytes, cancelled) in [(0, false), (u64::MAX, true), (u64::MAX, false)] {
+        let work = bounded(bytes);
+        if cancelled {
+            work.cancel();
+        }
+        let mut executor = Executor::new(&plan);
+        executor.set_physical_distinct(plan.scalar_set_traversal());
+        let mut colts = colts_for(&plan, &views);
+        executor.begin_work(&work, &mut colts);
+        let mut bindings = Bindings::new(plan.slot_count());
+        let mut sink = CollectSink::default();
+        let result = executor.execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        );
+        if cancelled {
+            assert!(is_work_refusal(&result.unwrap_err(), &WorkError::Cancelled));
+            assert!(sink.rows.is_empty());
+        } else if bytes == 0 {
+            assert!(
+                matches!(result, Err(crate::error::Error::Store(store)) if matches!(&*store, crate::storage::store::StoreError::Work(WorkError::Exhausted { resource: Resource::WorkingBytes, .. })))
+            );
+            assert!(sink.rows.is_empty());
+        } else {
+            result.unwrap();
+            assert_eq!(
+                sink.rows,
+                BTreeSet::from([vec![0], vec![1], vec![2], vec![3]])
+            );
+            assert!(
+                work.used(Resource::WorkingBytes) > 0,
+                "new terminal map is charged"
+            );
+            assert!(
+                work.used(Resource::WorkUnits) >= 64,
+                "force polls and accounts for its input"
+            );
+        }
+        drop(colts);
+        assert_eq!(
+            work.used(Resource::WorkingBytes),
+            0,
+            "no reservation outlives its pools"
+        );
+    }
+}
+
 /// Cancellation fires INSIDE a selective join that emits nothing: every
 /// explored binding pair survives its probes and dies at the residual
 /// filter, so no row ever reaches the sink — the executor's own bounded
@@ -88,8 +245,8 @@ fn cancellation_fires_inside_a_selective_join_that_emits_nothing() {
         cancel_at: 4,
     };
     let mut executor = Executor::new(&plan);
-    executor.begin_work(&work);
     let mut colts = colts_for(&plan, &views);
+    executor.begin_work(&work, &mut colts);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let result = executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
@@ -130,8 +287,8 @@ fn a_tiny_working_budget_stops_colt_growth_with_the_typed_refusal() {
     let unpolled = run(&plan, &views);
     let work = bounded(u64::MAX);
     let mut executor = Executor::new(&plan);
-    executor.begin_work(&work);
     let mut colts = colts_for(&plan, &views);
+    executor.begin_work(&work, &mut colts);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     executor
@@ -157,8 +314,8 @@ fn a_tiny_working_budget_stops_colt_growth_with_the_typed_refusal() {
     // sibling force refuses the growth reservation, typed.
     let tiny = bounded(64 << 10);
     let mut executor = Executor::new(&plan);
-    executor.begin_work(&tiny);
     let mut colts = colts_for(&plan, &views);
+    executor.begin_work(&tiny, &mut colts);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
     let error = executor
@@ -214,8 +371,9 @@ fn bind_clears_prior_refusal_before_force() {
     let plan = planned(&normalized, &schema, &[0, 1]);
     let mut colts = colts_for(&plan, &views);
 
+    let mut executor = Executor::new(&plan);
     let prior = bounded(64);
-    colts[1].bind(Some(&prior));
+    executor.begin_work(&prior, &mut colts);
     let leftover = colts[1].force_root();
     assert!(
         matches!(
@@ -229,7 +387,7 @@ fn bind_clears_prior_refusal_before_force() {
     );
 
     let current = bounded(u64::MAX);
-    colts[1].bind(Some(&current));
+    executor.begin_work(&current, &mut colts);
     colts[1]
         .force_root()
         .expect("the new execution's force is not poisoned by the old ledger");
@@ -279,4 +437,78 @@ fn force_refusal_is_err_not_empty_success() {
         0,
         "failed admit refunds before any dependent clone/select"
     );
+}
+
+/// One entry operation owns binding before force and execution. A cancelled
+/// attempt that never executes, and a completed attempt cancelled afterward,
+/// must not leak their context into the next operation on the same COLTs.
+#[test]
+fn begin_work_rebinds_reused_colts_before_force_and_execute() {
+    let schema = schema(1);
+    let normalized = normalized(vec![occurrence(0, 0, &[(0, 0)])], vec![]);
+    let plan = planned(&normalized, &schema, &[0]);
+    let views = views_of(&schema, &[(0..32).map(|id| (id % 4, id)).collect()]);
+    let mut executor = Executor::new(&plan);
+    executor.set_physical_distinct(plan.scalar_set_traversal());
+    let mut colts = colts_for(&plan, &views);
+    let mut bindings = Bindings::new(plan.slot_count());
+
+    let cancelled = bounded(u64::MAX);
+    cancelled.cancel();
+    executor.begin_work(&cancelled, &mut colts);
+    assert_eq!(
+        colts[0].force_root(),
+        Err(WorkError::Cancelled),
+        "entry binds before any force, not only at execute"
+    );
+    assert_eq!(cancelled.used(Resource::WorkingBytes), 0);
+
+    let first = bounded(u64::MAX);
+    executor.begin_work(&first, &mut colts);
+    colts[0].force_root().expect("fresh operation can force");
+    let retained = first.used(Resource::WorkingBytes);
+    assert!(retained > 0);
+    let mut sink = CollectSink::default();
+    executor
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        )
+        .expect("direct executor shares the pre-force binding");
+    let expected = BTreeSet::from([vec![0], vec![1], vec![2], vec![3]]);
+    assert_eq!(sink.rows, expected);
+    assert!(executor.ledger.is_none(), "execution releases its ledger");
+    let first_units = first.used(Resource::WorkUnits);
+
+    first.cancel();
+    let next = bounded(u64::MAX);
+    executor.begin_work(&next, &mut colts);
+    sink.rows.clear();
+    executor
+        .execute(
+            &plan,
+            &mut colts,
+            &mut bindings,
+            &mut sink,
+            &mut NoopCounters,
+        )
+        .expect("completed prior context cannot poison reuse");
+    assert_eq!(sink.rows, expected);
+    assert!(next.used(Resource::WorkUnits) > 0);
+    assert_eq!(first.used(Resource::WorkUnits), first_units);
+    assert_eq!(
+        first.used(Resource::WorkingBytes),
+        retained,
+        "rebind does not transfer or refund retained pool reservations"
+    );
+    assert_eq!(
+        next.used(Resource::WorkingBytes),
+        0,
+        "warm pools do not grow"
+    );
+    drop(colts);
+    assert_eq!(first.used(Resource::WorkingBytes), 0);
 }

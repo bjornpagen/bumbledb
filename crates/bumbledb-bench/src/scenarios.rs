@@ -17,7 +17,6 @@ mod mix;
 mod render;
 mod run;
 mod run_query;
-mod trace;
 
 #[cfg(test)]
 mod tests;
@@ -33,6 +32,7 @@ pub use geomean::{dnf_count, geomean};
 pub use json_out::to_json;
 pub use mix::mix;
 pub use render::render;
+pub(crate) use run::profile;
 pub use run::{gate_scenario, run};
 
 pub use crate::sqlite_run::{CapMs, DEFAULT_CAP};
@@ -89,8 +89,6 @@ pub struct Scenario {
 
 #[derive(Debug, Clone, Default)]
 pub struct QueryModes {
-    pub trace_root: Option<std::path::PathBuf>,
-
     pub alloc: bool,
 }
 
@@ -103,8 +101,6 @@ pub struct QueryReport {
     pub ours: harness::Stats,
 
     pub lanes: Vec<LaneReport>,
-
-    pub flame: Option<String>,
 
     pub alloc: Option<crate::report::AllocReport>,
 }

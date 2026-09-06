@@ -2,24 +2,37 @@ use std::mem::MaybeUninit;
 
 use super::{WINDOW, WordMap, ctrl_tag, hash_core, hash_words};
 
+// Check representability before allocating or replacing any backing array.
+// Dense indices name slots, so a capacity of 2^32 is the final valid power
+// of two. The next growth must refuse before rehash mutates dense indices.
+pub(super) fn growth_layout(capacity: usize, arity: usize) -> (usize, usize) {
+    let capacity = capacity
+        .checked_mul(2)
+        .expect("WordMap capacity overflow")
+        .max(WINDOW);
+    u32::try_from(capacity - 1).expect("WordMap capacity exceeds dense slot indices");
+    let words = capacity
+        .checked_mul(arity)
+        .expect("WordMap key capacity overflow");
+    (capacity, words)
+}
+
 impl<V: Copy> WordMap<V> {
     pub(super) fn grow(&mut self) {
-        let new_capacity = (self.capacity() * 2).max(WINDOW);
+        let (new_capacity, key_words) = growth_layout(self.capacity(), self.arity);
 
-        crate::obs::event(
-            crate::obs::names::WORDMAP_GROW,
-            crate::obs::TraceArgs::Pair(new_capacity as u64, self.arity as u64),
-        );
-        let old_keys = std::mem::replace(&mut self.keys, vec![0; new_capacity * self.arity]);
-        let old_values = std::mem::replace(
-            &mut self.values,
-            std::iter::repeat_with(MaybeUninit::uninit)
-                .take(new_capacity)
-                .collect(),
-        );
-        self.ctrl = vec![0; new_capacity + WINDOW - 1];
-
-        self.stamps = vec![0; new_capacity];
+        // Vec capacity failures may unwind. Keep every old array intact
+        // until all replacement allocations have succeeded.
+        let keys = vec![0; key_words];
+        let values = std::iter::repeat_with(MaybeUninit::uninit)
+            .take(new_capacity)
+            .collect();
+        let ctrl = vec![0; new_capacity + WINDOW - 1];
+        let stamps = vec![0; new_capacity];
+        let old_keys = std::mem::replace(&mut self.keys, keys);
+        let old_values = std::mem::replace(&mut self.values, values);
+        self.ctrl = ctrl;
+        self.stamps = stamps;
         self.stale = 0;
 
         match self.arity {
@@ -45,8 +58,8 @@ impl<V: Copy> WordMap<V> {
             debug_assert!(!found, "rehashed keys are distinct");
             self.set_ctrl(new_idx, ctrl_tag(hash));
             self.keys[new_idx * K..new_idx * K + K].copy_from_slice(key);
-            // SAFETY: old_idx was occupied (dense-listed), so its value
-
+            // SAFETY: old_idx was dense-listed and therefore initialized.
+            // V: Copy has no drop state; the old array remains alive here.
             self.values[new_idx].write(unsafe { old_values[old_idx].assume_init_read() });
             self.dense[i] = u32::try_from(new_idx).expect("slot index fits u32");
         }
@@ -62,8 +75,8 @@ impl<V: Copy> WordMap<V> {
             self.set_ctrl(new_idx, ctrl_tag(hash));
             self.keys[new_idx * self.arity..(new_idx + 1) * self.arity]
                 .copy_from_slice(&old_keys[key_range]);
-            // SAFETY: old_idx was occupied (dense-listed), so its value
-
+            // SAFETY: old_idx was dense-listed and therefore initialized.
+            // V: Copy has no drop state; the old array remains alive here.
             self.values[new_idx].write(unsafe { old_values[old_idx].assume_init_read() });
             self.dense[i] = u32::try_from(new_idx).expect("slot index fits u32");
         }

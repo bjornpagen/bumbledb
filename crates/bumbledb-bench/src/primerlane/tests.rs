@@ -19,7 +19,6 @@ fn tiny_run_emits_the_phase_table() {
         relations: 4,
         seed: 1,
         dir: dir.clone(),
-        trace: false,
         alloc: false,
         out: Some(out.clone()),
     })

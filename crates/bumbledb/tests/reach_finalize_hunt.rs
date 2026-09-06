@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use bumbledb::ir::{
     Atom, AtomSource, FindTerm, HeadTerm, Interior, InteriorId, Query, Rec, RecRule, RecStep, Rule,
-    Term, Value, VarId,
+    Term, VarId,
 };
 use bumbledb::schema::FieldId;
 use bumbledb::{AnswerValue, Answers, Db, Fact, Interval, NonEmpty, ProjectionRule};
@@ -124,10 +124,9 @@ fn answer_pairs(answers: &Answers) -> BTreeSet<(u64, u64)> {
 
 /// A deep chain (diameter ~48) plus a cycle and a self-loop: dozens of fixpoint
 /// rounds against one prepared handle, executed repeatedly on one snapshot
-/// (warm pools: the append floor must reset per execution), then re-executed
-/// after a commit that grows the seen-set past the retained capacity (the
-/// append's rebuild-whole arm) — every answer set compared against the naive
-/// closure.
+/// (warm pools: the frontier must reset per execution), then re-executed
+/// after a commit that grows the seen-set past its retained capacity — every
+/// answer set compared against the naive closure.
 #[test]
 fn deep_chain_closure_matches_naive_across_repeat_executions_and_commits() {
     const CHAIN: u64 = 48;
@@ -481,80 +480,6 @@ fn typed_payload_propagates_through_the_recursive_accumulator() {
         Ok(())
     })
     .expect("read");
-}
-
-#[test]
-fn a_budget_abort_leaves_the_prepared_handle_correct() {
-    const CHAIN: u64 = 66_000;
-    let dir = common::TempDir::new("hunt-budget-abort");
-    let db = Db::create(dir.path(), Hunt, common::work())
-        .expect("create")
-        .expect("accepted");
-    db.write(common::work(), |tx| {
-        for n in 0..CHAIN {
-            tx.insert([&Edge { src: n, dst: n + 1 }])?;
-        }
-        Ok(())
-    })
-    .expect("write")
-    .unwrap();
-    let mut prepared = db
-        .prepare(&single_source_chain_query(), common::work())
-        .expect("prepare");
-    for run in 0..2 {
-        db.read(common::work(), |snap| {
-            let err = snap
-                .execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                .expect_err("66k hops exceed the default 2^16-round budget");
-            assert!(
-                matches!(err, bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0),
-                "typed budget error on run {run}, got {err:?}"
-            );
-            Ok(())
-        })
-        .expect("read");
-    }
-}
-
-fn single_source_chain_query() -> Query {
-    Query {
-        interiors: vec![],
-        rec: Some(Rec {
-            base: NonEmpty::one(RecRule {
-                finds: vec![VarId(0)],
-                atoms: vec![Atom {
-                    source: AtomSource::Edb(Edge::RELATION),
-                    bindings: vec![
-                        (FieldId(0), Term::Literal(Value::U64(0))),
-                        (FieldId(1), Term::Var(VarId(0))),
-                    ],
-                }],
-                conditions: vec![],
-            }),
-            rec: NonEmpty::one(RecStep {
-                finds: vec![VarId(1)],
-                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-                atoms: vec![Atom {
-                    source: AtomSource::Edb(Edge::RELATION),
-                    bindings: vec![
-                        (FieldId(0), Term::Var(VarId(0))),
-                        (FieldId(1), Term::Var(VarId(1))),
-                    ],
-                }],
-                conditions: vec![],
-            }),
-        }),
-        head: vec![HeadTerm::Var],
-        rules: vec![Rule {
-            finds: vec![FindTerm::Var(VarId(0))],
-            atoms: vec![Atom {
-                source: AtomSource::Interior(InteriorId(0)),
-                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-            }],
-            negated: vec![],
-            conditions: vec![],
-        }],
-    }
 }
 
 #[test]

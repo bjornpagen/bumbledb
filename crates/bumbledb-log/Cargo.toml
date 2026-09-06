@@ -24,7 +24,6 @@ required-features = ["store"]
 
 [dev-dependencies]
 bumbledb-bench = { path = "../bumbledb-bench" }
-bumbledb = { path = "../bumbledb", features = ["trace"] }
 serde_json = "1"
 
 [lints]

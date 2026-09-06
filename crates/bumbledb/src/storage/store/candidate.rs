@@ -35,8 +35,8 @@ use heed::RoTxn;
 
 use crate::schema::ProjectionId;
 
-use super::error::{HostKeyFault, StoreCorruption, StoreError, StoreResult};
-use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, RowId};
+use super::error::{HostKeyFault, StoreError, StoreResult};
+use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, RowId, RowLocator};
 use super::host::{AttachmentChange, HostChanges, HostRecordChange};
 use super::keys::HOST_KEY_MAX;
 use super::rows;
@@ -79,13 +79,15 @@ impl CommitKind {
 }
 
 /// C01/C03 seam: interned projections a stored row participates in, as
-/// (`ProjectionId`, routing bytes, optional interval tail). Shared physical
+/// (`ProjectionId`, routing bytes). Shared physical
 /// indexes emit once. The store fingerprints and maintains the entries;
 /// projection semantics stay with the schema owner.
-pub type ProjectionEmitter<'a> =
-    &'a mut (dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()> + 'a);
+pub type ProjectionEmitter<'a> = &'a mut (dyn FnMut(ProjectionId, &[u8]) -> StoreResult<()> + 'a);
 
 pub trait RowIndexer {
+    /// Emit only projections interned by this store's schema for `relation`.
+    /// Unknown or foreign-relation projections refuse the whole candidate
+    /// with `ForeignSchema`; this seam cannot install an undeclared index.
     /// # Errors
     /// Propagates work exhaustion or the emit sink's storage failure.
     fn index_row(
@@ -254,11 +256,12 @@ impl<'store> WriteOwner<'store> {
                     self.store.grow(&self.work, None)?;
                 }
                 Err(error) => return Err(error),
-                Ok((txn, report, application)) => {
+                Ok((txn, report, application, home_keys_preserved)) => {
                     let state = CandidateState {
                         store: self.store,
                         txn: &txn,
                         changes: Some(changes),
+                        home_keys_preserved,
                     };
                     match decide(&state, &self.work)? {
                         Judgment::Rejected(rejection) => {
@@ -296,7 +299,7 @@ impl<'store> WriteOwner<'store> {
                     self.store.grow(&self.work, None)?;
                 }
                 Err(error) => return Err(error),
-                Ok((txn, report, application)) => {
+                Ok((txn, report, application, _home_keys_preserved)) => {
                     return PreparedWrite {
                         owner: self,
                         txn,
@@ -345,9 +348,10 @@ impl<'store> WriteOwner<'store> {
         &self,
         changes: &ChangeSet,
         indexer: &I,
-    ) -> StoreResult<(GatedRwTxn<'store>, CommitKind, AppliedChanges)> {
+    ) -> StoreResult<(GatedRwTxn<'store>, CommitKind, AppliedChanges, bool)> {
         let inner = &self.store.inner;
-        let mut gated = self.store.gated_write_txn(&self.work)?;
+        let gated = self.store.gated_write_txn(&self.work)?;
+        let mut writer = rows::RowWriter::new(inner, gated, &self.work);
         let mut application = AppliedChanges::default();
         // The relations this candidate actually changed (a staged add of an
         // already-present row or a remove of an absent one changes nothing):
@@ -364,29 +368,13 @@ impl<'store> WriteOwner<'store> {
                 let relation = record.relation;
                 match kind {
                     ChangeKind::Remove => {
-                        if rows::remove_row(
-                            inner,
-                            &mut gated.txn,
-                            relation,
-                            record.row,
-                            indexer,
-                            &self.work,
-                        )? {
+                        if writer.remove(relation, record.row, indexer)? {
                             application.removed += 1;
                             changed_relations.insert(relation);
                         }
                     }
                     ChangeKind::Add => {
-                        if rows::insert_row(
-                            inner,
-                            &mut gated.txn,
-                            relation,
-                            record.row,
-                            indexer,
-                            &self.work,
-                        )?
-                        .is_some()
-                        {
+                        if writer.insert(relation, record.row, indexer)?.is_some() {
                             application.added += 1;
                             changed_relations.insert(relation);
                         }
@@ -394,6 +382,8 @@ impl<'store> WriteOwner<'store> {
                 }
             }
         }
+        let home_keys_preserved = writer.home_keys_preserved();
+        let mut gated = writer.finish()?;
         let parent = read_generation(inner, &gated.txn)?;
         let report = if application.added + application.removed > 0 {
             let new_generation = next_generation(parent)?;
@@ -426,7 +416,7 @@ impl<'store> WriteOwner<'store> {
         } else {
             CommitKind::Noop { generation: parent }
         };
-        Ok((gated, report, application))
+        Ok((gated, report, application, home_keys_preserved))
     }
 }
 
@@ -445,6 +435,7 @@ pub struct CandidateState<'a, 'store> {
     store: &'store Store,
     txn: &'a GatedRwTxn<'store>,
     changes: Option<&'a ChangeSet>,
+    home_keys_preserved: bool,
 }
 
 impl CandidateState<'_, '_> {
@@ -457,7 +448,29 @@ impl CandidateState<'_, '_> {
             store,
             txn,
             changes: None,
+            home_keys_preserved: false,
         }
+    }
+
+    /// Preservation, not final-state admission. Only an incremental view
+    /// holding `LawfulParent` may consume this transaction-local fact.
+    pub(crate) fn preserves_home_key(
+        &self,
+        schema: &crate::Schema,
+        statement: StatementId,
+    ) -> bool {
+        self.home_keys_preserved
+            && self.changes.is_some()
+            && crate::schema::fingerprint::fingerprint(schema) == self.store.inner.schema_fp
+            && self
+                .store
+                .inner
+                .det
+                .projection_of(statement)
+                .is_some_and(|projection| {
+                    projection.interval_field().is_none()
+                        && self.store.inner.det.is_home_compiled(projection)
+                })
     }
 
     fn read_txn(&self) -> &RoTxn<'_, heed::AnyTls> {
@@ -471,13 +484,14 @@ impl CandidateState<'_, '_> {
         self.changes
     }
 
-    /// Proposed final rows of one relation, in local row-id order.
+    /// Proposed final rows of one relation, in physical key order. Each
+    /// locator retains the stable ordinal used for logical witness ranking.
     /// # Errors
     /// Storage failure.
     pub fn rows(
         &self,
         relation: RelationId,
-    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowId, &[u8])>>> {
+    ) -> StoreResult<impl Iterator<Item = StoreResult<(RowLocator, &[u8])>>> {
         rows::scan_rows(&self.store.inner, self.read_txn(), relation)
     }
 
@@ -493,7 +507,7 @@ impl CandidateState<'_, '_> {
         Ok(rows::exact_lookup(&self.store.inner, self.read_txn(), relation, row, work)?.is_some())
     }
 
-    /// All candidate row ids sharing one determinant bucket (ids only).
+    /// All candidate physical locators sharing one determinant bucket.
     /// # Errors
     /// Storage failure or stopped work.
     pub fn determinant_candidates(
@@ -501,7 +515,7 @@ impl CandidateState<'_, '_> {
         projection: ProjectionId,
         projected: &[u8],
         work: &WorkContext,
-    ) -> StoreResult<Vec<RowId>> {
+    ) -> StoreResult<Vec<RowLocator>> {
         rows::determinant_bucket_ids(
             &self.store.inner,
             self.read_txn(),
@@ -524,21 +538,17 @@ impl CandidateState<'_, '_> {
         visit: &mut dyn FnMut(RowId, &[u8]) -> StoreResult<bool>,
     ) -> StoreResult<()> {
         let inner = &self.store.inner;
-        let Some(key) = inner.det.projection(projection) else {
+        let Some(compiled) = inner.det.projection(projection) else {
             return Ok(());
         };
-        let routing = rows::routing_for_projected(inner, projection, projected)?;
+        let routing = rows::routing_for_compiled(inner, compiled, projected);
         rows::visit_determinant_bucket(
             inner,
             self.read_txn(),
-            projection,
+            compiled,
             &routing,
             work,
-            &mut |id| {
-                let bytes = rows::fetch_row(inner, self.read_txn(), key.relation, id)?
-                    .ok_or(StoreError::Corruption(StoreCorruption::DanglingIndexEntry))?;
-                visit(id, bytes)
-            },
+            &mut |locator, bytes| visit(locator.id, bytes),
         )
     }
 
@@ -576,10 +586,10 @@ impl CandidateState<'_, '_> {
         Ok(Some(()))
     }
 
-    /// Fetch one proposed row's canonical bytes by local id.
+    /// Fetch one proposed row's canonical bytes by its physical locator.
     /// # Errors
     /// Storage failure.
-    pub fn fetch(&self, relation: RelationId, row: RowId) -> StoreResult<Option<&[u8]>> {
+    pub fn fetch(&self, relation: RelationId, row: RowLocator) -> StoreResult<Option<&[u8]>> {
         rows::fetch_row(&self.store.inner, self.read_txn(), relation, row)
     }
 
@@ -669,7 +679,6 @@ impl SealedWrite<'_, '_> {
         let report = self.report;
         let application = self.application;
         {
-            let _span = crate::obs::span(crate::obs::names::LMDB_COMMIT);
             self.txn.commit()?;
         }
         Ok(StoreCommit {

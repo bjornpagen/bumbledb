@@ -2,6 +2,86 @@ use std::collections::HashMap;
 
 use super::*;
 
+#[test]
+fn growth_layout_refuses_unrepresentable_slots_and_words_before_allocation() {
+    use crate::exec::wordmap::grow::growth_layout;
+
+    assert_eq!(growth_layout(0, 0), (WINDOW, 0));
+    assert_eq!(growth_layout(8, 3), (16, 48));
+    let final_capacity = usize::try_from(1_u64 << 32).expect("64-bit targets");
+    assert_eq!(
+        growth_layout(final_capacity / 2, 1),
+        (final_capacity, final_capacity)
+    );
+    for (capacity, arity) in [(final_capacity, 1), (usize::MAX, 1), (8, usize::MAX)] {
+        assert!(std::panic::catch_unwind(|| growth_layout(capacity, arity)).is_err());
+    }
+}
+
+#[test]
+fn panicking_constructor_never_publishes_a_fresh_or_stale_slot() {
+    use std::num::NonZeroU64;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    // Arity nine exercises the dynamic entry path; zero and eight bound
+    // the constant-arity dispatch. The hint keeps this about publication,
+    // not growth, so the entire pre-panic occupancy must remain identical.
+    for arity in [0, 1, 8, 9] {
+        for recycled in [false, true] {
+            let mut map = WordMap::<NonZeroU64>::with_capacity_hint(arity, 8);
+            let key = vec![7; arity];
+            if recycled {
+                map.get_or_insert_with(&key, || NonZeroU64::new(11).unwrap());
+                map.clear();
+                assert_eq!(map.stale, 1, "exercise a retained stale slot");
+            }
+            let before_ctrl = map.ctrl.clone();
+            let before_stamps = map.stamps.clone();
+            let before_dense = map.dense.clone();
+            let before_len = map.len;
+            let before_stale = map.stale;
+            let before_generation = map.generation;
+
+            let failure = catch_unwind(AssertUnwindSafe(|| {
+                let _ = map.get_or_insert_with(&key, || panic!("constructor failed"));
+            }));
+            assert!(failure.is_err());
+
+            // Check raw structure BEFORE lookup/iteration: on the broken
+            // implementation an occupied slot can contain uninitialized V.
+            // These assertions make that version fail without reading V.
+            assert_eq!(map.len, before_len);
+            assert_eq!(map.dense, before_dense);
+            assert_eq!(map.ctrl, before_ctrl);
+            assert_eq!(map.stamps, before_stamps);
+            assert_eq!(map.stale, before_stale);
+            assert_eq!(map.generation, before_generation);
+
+            let (value, inserted) = map.get_or_insert_with(&key, || NonZeroU64::new(37).unwrap());
+            assert!(inserted);
+            assert_eq!(value.get(), 37);
+            let (value, inserted) =
+                map.get_or_insert_with(&key, || panic!("duplicate must not construct"));
+            assert!(!inserted);
+            assert_eq!(value.get(), 37);
+            assert_eq!(map.len(), 1);
+            assert_eq!(map.stale, 0);
+            let entries: Vec<_> = map
+                .iter()
+                .map(|(key, value)| (key.to_vec(), value.get()))
+                .collect();
+            assert_eq!(entries, vec![(key.clone(), 37)]);
+
+            map.clear();
+            let (value, inserted) = map.get_or_insert_with(&key, || NonZeroU64::new(53).unwrap());
+            assert!(inserted);
+            assert_eq!(value.get(), 53);
+            assert_eq!(map.len(), 1);
+            assert_eq!(map.iter().count(), 1);
+        }
+    }
+}
+
 /// The dense rule: after a hot execution inflates capacity, iteration and
 /// clearing stay O(len) — pinned structurally by insertion-order iteration over
 /// a high-water map.
@@ -255,4 +335,75 @@ fn a_covering_hint_never_grows() {
         map.len() * LOAD_DEN <= capacity,
         "the covered hint keeps load at the shipped max"
     );
+}
+
+#[test]
+fn bulk_rows_preserve_exact_single_row_state_through_growth_and_reuse() {
+    fn assert_same(bulk: &WordMap<u64>, single: &WordMap<u64>) {
+        assert_eq!(bulk.arity, single.arity);
+        assert_eq!(bulk.ctrl, single.ctrl);
+        assert_eq!(bulk.stamps, single.stamps);
+        assert_eq!(bulk.dense, single.dense);
+        assert_eq!(bulk.keys, single.keys);
+        assert_eq!(bulk.len, single.len);
+        assert_eq!(bulk.stale, single.stale);
+        assert_eq!(bulk.generation, single.generation);
+        assert_eq!(bulk.capacity(), single.capacity());
+        assert_eq!(bulk.ctrl.capacity(), single.ctrl.capacity());
+        assert_eq!(bulk.keys.capacity(), single.keys.capacity());
+        assert_eq!(bulk.values.capacity(), single.values.capacity());
+        assert_eq!(bulk.stamps.capacity(), single.stamps.capacity());
+        assert_eq!(bulk.dense.capacity(), single.dense.capacity());
+        // Iteration reads only initialized values, in insertion order.
+        assert!(bulk.iter().eq(single.iter()));
+    }
+
+    // Miri exercises every kernel through growth and stale reuse with a
+    // smaller stream; native tests cover the full chunk-boundary matrix.
+    let chunk_sizes: &[usize] = if cfg!(miri) { &[7] } else { &[1, 2, 7, 31] };
+    let rounds: u64 = if cfg!(miri) { 2 } else { 4 };
+    let rows: u64 = if cfg!(miri) { 33 } else { 129 };
+    for arity in 1..=9 {
+        for &chunk_rows in chunk_sizes {
+            let mut bulk = WordMap::<u64>::new(arity);
+            let mut single = WordMap::<u64>::new(arity);
+            for round in 0..rounds {
+                let words: Vec<_> = (0..rows)
+                    .flat_map(|index| {
+                        (0..arity).map(move |column| {
+                            // Adjacent duplicates cross growth thresholds;
+                            // alternating universes also exercise stale slots.
+                            (index / 2 + (round % 2) * 1_000)
+                                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                                .rotate_left(u32::try_from(column).unwrap())
+                        })
+                    })
+                    .collect();
+                bulk.insert_rows(&[]);
+                assert_same(&bulk, &single);
+                for chunk in words.chunks(chunk_rows * arity) {
+                    bulk.insert_rows(chunk);
+                    for row in chunk.chunks_exact(arity) {
+                        single.insert(row);
+                    }
+                    assert_same(&bulk, &single);
+                }
+                bulk.clear();
+                single.clear();
+                assert_same(&bulk, &single);
+            }
+        }
+    }
+}
+
+#[test]
+#[should_panic(expected = "bulk insertion requires nonzero arity")]
+fn bulk_rows_refuse_zero_arity_even_for_empty_words() {
+    WordMap::<()>::new(0).insert_rows(&[]);
+}
+
+#[test]
+#[should_panic(expected = "incomplete bulk row")]
+fn bulk_rows_refuse_incomplete_rows() {
+    WordMap::<()>::new(2).insert_rows(&[1, 2, 3]);
 }

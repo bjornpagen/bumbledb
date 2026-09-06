@@ -1,5 +1,6 @@
 //! One immutable schema-bound final-state change, shared by core and history.
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::canonical::{CanonicalRow, RowError};
@@ -64,6 +65,53 @@ struct Payload {
 pub struct ChangeSet(Arc<Payload>);
 
 impl ChangeSet {
+    /// Seal the embedded writer's ordered net delta without serializing a
+    /// temporary wire payload and parsing it back. The map proves unique
+    /// canonical ordering, but its raw rows still cross strict shape
+    /// validation here; only checked bytes enter the sealed owner.
+    pub(crate) fn from_ordered_rows(
+        schema: &Schema,
+        pending: &BTreeMap<(RelationId, Box<[u8]>), ChangeKind>,
+        work: &WorkContext,
+    ) -> Result<Self, ChangeError> {
+        Self::from_ordered_records(
+            schema,
+            pending.iter().map(|((relation, row), kind)| ChangeRef {
+                relation: *relation,
+                kind: *kind,
+                row,
+            }),
+            work,
+        )
+    }
+
+    /// Callers supply a unique relation/full-row ordered traversal. Input
+    /// owners remain charged while the sealed payload is allocated/copied.
+    pub(crate) fn from_ordered_records<'a>(
+        schema: &Schema,
+        records: impl Iterator<Item = ChangeRef<'a>> + Clone,
+        work: &WorkContext,
+    ) -> Result<Self, ChangeError> {
+        let (count, size) = records
+            .clone()
+            .try_fold((0u64, HEADER), |(count, size), record| {
+                size.checked_add(RECORD)
+                    .and_then(|size| size.checked_add(record.row.len()))
+                    .map(|size| (count + 1, size))
+                    .ok_or(ChangeError::LengthOverflow)
+            })?;
+        work.input(size as u64)?;
+        for record in records.clone() {
+            work.rows(1)?;
+            crate::canonical::validate(
+                writable_fields(schema, record.relation)?,
+                record.row,
+                work,
+            )?;
+        }
+        seal_records(fingerprint(schema), count, size, records, work)
+    }
+
     #[must_use]
     pub fn builder(schema: &Schema, work: WorkContext) -> ChangeSetBuilder<'_> {
         ChangeSetBuilder {
@@ -307,29 +355,51 @@ impl ChangeSetBuilder<'_> {
                 .and_then(|n| n.checked_add(entry.row.as_bytes().len()))
                 .ok_or(ChangeError::LengthOverflow)
         })?;
-        let reservation = reserve_payload(&self.work, size)?;
-        let mut bytes = Vec::new();
-        bytes
-            .try_reserve_exact(size)
-            .map_err(|_| ChangeError::Allocation)?;
-        let identity = fingerprint(self.schema);
-        bytes.extend_from_slice(MAGIC);
-        bytes.extend_from_slice(&VERSION.to_be_bytes());
-        bytes.extend_from_slice(&identity.0);
-        bytes.extend_from_slice(&(unique as u64).to_be_bytes());
-        for entry in &pending {
-            self.work.step(1)?;
-            bytes.push(u8::from(entry.kind == ChangeKind::Add));
-            bytes.extend_from_slice(&entry.relation.0.to_be_bytes());
-            bytes.extend_from_slice(&(entry.row.as_bytes().len() as u64).to_be_bytes());
-            copy(&mut bytes, entry.row.as_bytes(), &self.work)?;
-        }
-        Ok(ChangeSet(Arc::new(Payload {
-            bytes,
-            schema: identity,
-            _reservation: reservation,
-        })))
+        seal_records(
+            fingerprint(self.schema),
+            unique as u64,
+            size,
+            pending.iter().map(|entry| ChangeRef {
+                relation: entry.relation,
+                kind: entry.kind,
+                row: entry.row.as_bytes(),
+            }),
+            &self.work,
+        )
     }
+}
+
+/// The only writer of the sealed header and record framing. Callers prove
+/// row validity, ordering, uniqueness and exact payload size before entry.
+fn seal_records<'a>(
+    identity: SchemaFingerprint,
+    count: u64,
+    size: usize,
+    records: impl Iterator<Item = ChangeRef<'a>>,
+    work: &WorkContext,
+) -> Result<ChangeSet, ChangeError> {
+    let reservation = reserve_payload(work, size)?;
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(size)
+        .map_err(|_| ChangeError::Allocation)?;
+    bytes.extend_from_slice(MAGIC);
+    bytes.extend_from_slice(&VERSION.to_be_bytes());
+    bytes.extend_from_slice(&identity.0);
+    bytes.extend_from_slice(&count.to_be_bytes());
+    for record in records {
+        work.step(1)?;
+        bytes.push(u8::from(record.kind == ChangeKind::Add));
+        bytes.extend_from_slice(&record.relation.0.to_be_bytes());
+        bytes.extend_from_slice(&(record.row.len() as u64).to_be_bytes());
+        copy(&mut bytes, record.row, work)?;
+    }
+    debug_assert_eq!(bytes.len(), size);
+    Ok(ChangeSet(Arc::new(Payload {
+        bytes,
+        schema: identity,
+        _reservation: reservation,
+    })))
 }
 
 fn reserve_payload(work: &WorkContext, bytes: usize) -> Result<ByteReservation, ChangeError> {

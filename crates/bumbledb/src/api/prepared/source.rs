@@ -9,12 +9,14 @@
 //! prepare. Store sources carry the store+environment identity
 //! ([`StoreIdentity`]); executing against any other environment's snapshot
 //! is `Error::ForeignPreparedQuery` before any work. Heap instances carry
-//! no durable identity, so a heap-prepared query never memoizes images
+//! their canonical schema identity, including its laws, but no durable row
+//! identity. A heap-prepared query never memoizes images
 //! across executions (the `ViewEpoch::Heap` tick) — correctness never
 //! rides on an address comparison.
 
 use crate::error::{Error, Result};
 use crate::image::ViewEpoch;
+use crate::schema::fingerprint::{SchemaFingerprint, fingerprint};
 use crate::schema::{
     CompiledProjection, CompiledTheory, DistinctnessWitness, Schema, VisitControl, VisitOutcome,
 };
@@ -71,12 +73,19 @@ pub(crate) fn store_error(error: StoreError) -> Error {
 /// Implemented for [`crate::api::db::OwnedInstance`] here (the query lane
 /// owns its consumption; the instance's file is not edited).
 pub(crate) trait HeapRows {
+    /// Cached canonical identity includes physical fields and admitted laws.
+    fn schema_identity(&self) -> SchemaFingerprint;
+
     /// Sorted canonical rows of one ordinary relation (empty for closed
     /// or unpopulated relations).
     fn rows(&self, relation: RelationId) -> &[Box<[u8]>];
 }
 
 impl<S> HeapRows for crate::api::db::OwnedInstance<S> {
+    fn schema_identity(&self) -> SchemaFingerprint {
+        fingerprint(self.schema())
+    }
+
     fn rows(&self, relation: RelationId) -> &[Box<[u8]>] {
         self.relation_rows(relation)
     }
@@ -87,9 +96,9 @@ impl<S> HeapRows for crate::api::db::OwnedInstance<S> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PinnedSource {
     Store(StoreIdentity),
-    /// Heap-prepared: no durable identity exists; every execution rebuilds
-    /// its images from the instance it was handed (never a memo hit).
-    Heap,
+    /// Heap-prepared: only instances admitted under the same canonical
+    /// schema can reuse its witnesses. Images still rebuild every execution.
+    Heap(SchemaFingerprint),
 }
 
 /// Resident image positions are `u32`. Crossing this bound on the same
@@ -166,7 +175,7 @@ impl<'a> QuerySource<'a> {
     pub(crate) fn pinned(&self) -> PinnedSource {
         match self {
             Self::Store { snapshot, .. } => PinnedSource::Store(snapshot.identity()),
-            Self::Heap { .. } => PinnedSource::Heap,
+            Self::Heap { rows, .. } => PinnedSource::Heap(rows.schema_identity()),
         }
     }
 
@@ -242,11 +251,11 @@ impl<'a> QuerySource<'a> {
         }
         match self {
             Self::Store { snapshot, .. } => {
-                let iterator = snapshot.rows(relation).map_err(store_error)?;
+                let iterator = snapshot.row_bytes(relation).map_err(store_error)?;
                 for entry in iterator {
                     work.step(1).map_err(work_error)?;
                     self.note_visits(1);
-                    let (_, bytes) = entry.map_err(store_error)?;
+                    let bytes = entry.map_err(store_error)?;
                     if !sink(bytes)? {
                         return Ok(());
                     }
@@ -285,7 +294,30 @@ impl<'a> QuerySource<'a> {
         }
     }
 
-    /// Key-bound or existence-only walk through the compiled witness.
+    /// Bounded index-entry count, without source row visits or body fetches.
+    /// None means no store projection or a bucket larger than the limit.
+    pub(crate) fn compiled_count_bounded(
+        &self,
+        compiled: &CompiledProjection,
+        words: &[u64],
+        limit: u64,
+    ) -> Result<Option<u64>> {
+        let Self::Store { snapshot, work, .. } = self else {
+            return Ok(None);
+        };
+        let Some(projection) = snapshot.projection(compiled.id) else {
+            return Ok(None);
+        };
+        let values = key_values_from_words(compiled, &compiled.projection, words)?;
+        let projected =
+            crate::storage::store::det_index::determinant_bytes(compiled, &values, work)
+                .map_err(store_error)?;
+        projection
+            .count_bounded(&projected, limit, work)
+            .map_err(store_error)
+    }
+
+    /// Projection-bound or existence-only walk through the compiled witness.
     /// Store sources seek [`OwnedSnapshot::visit_projection`] by
     /// [`crate::schema::ProjectionId`]; heap sources apply the same
     /// [`CompiledTheory::consume_visits`] control so visit counts and
@@ -302,12 +334,27 @@ impl<'a> QuerySource<'a> {
         visit: &mut dyn FnMut(&[u8]) -> Result<VisitControl>,
     ) -> Result<Option<VisitOutcome>> {
         let theory = schema.compiled_theory().map_err(compile_error)?;
-        let projection = compiled_key_projection(theory, relation, key_fields);
+        let projection = compiled_projection(theory, relation, key_fields);
         match self {
             Self::Store { snapshot, work, .. } => {
                 let Some(compiled) = projection else {
                     return Ok(None);
                 };
+                // This adapter has one word per scalar field and no text
+                // resolver. Unsupported shapes use the caller's complete
+                // row scan; never reinterpret a text token or byte span
+                // as a u64 key. Heap visits below do not encode keys.
+                if compiled.scalar_fields.iter().any(|field| {
+                    !matches!(
+                        field.value_type,
+                        crate::schema::ValueType::Bool
+                            | crate::schema::ValueType::U64
+                            | crate::schema::ValueType::I64
+                            | crate::schema::ValueType::F64
+                    )
+                }) {
+                    return Ok(None);
+                }
                 Ok(Some(self.visit_store_projection(
                     snapshot, work, compiled, key_fields, key_words, witness, visit,
                 )?))
@@ -404,15 +451,18 @@ impl<'a> QuerySource<'a> {
     }
 }
 
-fn compiled_key_projection<'a>(
+fn compiled_projection<'a>(
     theory: &'a CompiledTheory,
     relation: RelationId,
     key_fields: &[bumbledb_theory::schema::FieldId],
 ) -> Option<&'a CompiledProjection> {
-    theory.key_projections_of(relation).iter().find_map(|id| {
-        let projection = theory.projection(*id)?;
-        (projection.projection.as_ref() == key_fields).then_some(projection)
-    })
+    theory
+        .projections_of_relation(relation)
+        .iter()
+        .find_map(|id| {
+            let projection = theory.projection(*id)?;
+            (projection.projection.as_ref() == key_fields).then_some(projection)
+        })
 }
 
 fn key_values_from_words(
@@ -454,7 +504,12 @@ fn word_to_value(ty: bumbledb_theory::schema::ValueType, word: u64) -> Result<cr
                 ))
             })?)
         }
-        _ => crate::ir::Value::U64(word),
+        ValueType::U64 => crate::ir::Value::U64(word),
+        _ => {
+            return Err(Error::Corruption(
+                crate::error::CorruptionError::MalformedValue("unsupported one-word compiled key"),
+            ));
+        }
     })
 }
 

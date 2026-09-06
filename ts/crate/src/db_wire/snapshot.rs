@@ -5,10 +5,9 @@
 //! in the worker table (`SnapshotAccess::install`) so L12's execute-prepared
 //! path reuses the real object.
 //!
-//! Exact L07 adaptations: `OwnedRead::get_dyn` / `ReadFrame::get_dyn_into`
-//! and `ReadFrame::prepare` plus `PreparedQuery::execute_complete_with_work`
-//! on the frame (`ReadInstance` is now that frame). Hold the snapshot
-//! generation for the job; L07 request: `OwnedRead::generation_handle()`.
+//! Point reads decode canonical rows from `OwnedRead::get_dyn`. Prepared
+//! executions acquire their own cache resolver through the core query path;
+//! the worker-held LMDB snapshot does not retain obsolete text resolvers.
 //!
 //! No borrowed `ReadInstance` lease, no unsafe Send.
 //! Published snapshots are [`super::SnapshotHandle`] only — mint with
@@ -31,9 +30,6 @@ pub(crate) fn snapshot_get_work(
 ) -> SnapshotWork {
     Box::new(move |context, access| {
         context.checkpoint()?;
-        // C3: pin generation identity for the token-bearing read.
-        // L07 request: return/hold `GenerationHandle` from the owned cache.
-        let _generation = access.owned.generation();
         let hit = access
             .owned
             .get_dyn(relation, key, &row, context)
@@ -54,7 +50,6 @@ pub(crate) fn execute_complete_work(
 ) -> SnapshotWork {
     Box::new(move |context, access| {
         context.checkpoint()?;
-        let _generation = access.owned.generation();
         let result = owned_execute_complete(access, context, &query, &params)?;
         Ok(Output::CompleteResult(result))
     })

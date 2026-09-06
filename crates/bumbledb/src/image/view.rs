@@ -21,11 +21,10 @@ mod positions;
 /// The constant side of a lowered filter. `Word`/`Byte` are column form —
 /// the byte-order-normalized word for 8-byte columns, the raw byte for
 /// 1-byte columns. `Param` resolves at bind time through the evaluator's
-/// param slice; `PendingIntern` is a raw String/Bytes literal resolved to
-/// an intern-id word per execution (the 40-execution doc). Miss semantics
-/// are per-operator: an `Eq` miss empties the whole query on this
-/// snapshot (the evaluator never sees it); any other operator resolves
-/// to the never-minted sentinel id, which `Ne` matches everywhere —
+/// param slice; `PendingIntern` is immutable UTF-8 literal bytes resolved to
+/// a generation-owned intern word in a separate resolved slot. The
+/// template retains its bytes so rotation can resolve it again. Interning
+/// an unstored text still produces an exact word that matches no row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
     Word(u64),

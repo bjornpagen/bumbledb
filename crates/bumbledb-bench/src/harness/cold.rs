@@ -3,7 +3,8 @@ use std::time::Instant;
 use super::stats::stats;
 use super::{Measurement, Protocol};
 
-/// The cold protocol, defined exactly: per sample (warmups included),
+/// Each round invalidates through `touch`, warms the CPU clock, then times
+/// `f`. Warmup rounds execute identically but do not enter the statistics.
 /// # Errors
 pub fn measure_cold<T, F>(proto: Protocol, mut touch: T, mut f: F) -> Result<Measurement, String>
 where
@@ -29,7 +30,6 @@ where
         work,
         p50_norm: None,
         alloc: None,
-        trace: None,
     })
 }
 

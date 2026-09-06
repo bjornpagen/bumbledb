@@ -26,7 +26,8 @@ pub use encode::{append_field, encode_bool, encode_f64, encode_i64, encode_liter
 #[cfg(test)]
 pub use encode::{encode_fact, encode_uuid};
 
-pub(crate) use encode::{encode_interval_f64, encode_interval_i64, encode_interval_u64};
+#[cfg(test)]
+pub(crate) use encode::{encode_interval_f64, encode_interval_u64};
 
 pub use bumbledb_theory::schema::ValueType;
 

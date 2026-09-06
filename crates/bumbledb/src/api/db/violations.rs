@@ -28,6 +28,9 @@ pub(super) fn judge_refusal<E: Into<Error>>(error: crate::schema::judge::JudgeEr
             Error::from_store(crate::storage::store::StoreError::Work(work))
         }
         crate::schema::judge::JudgeError::State(error) => error.into(),
+        crate::schema::judge::JudgeError::Allocation => {
+            Error::from_store(crate::storage::store::StoreError::Allocation)
+        }
         crate::schema::judge::JudgeError::Compile(error) => {
             Error::from_store(crate::storage::store::StoreError::Compile(error))
         }

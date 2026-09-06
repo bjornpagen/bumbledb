@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+#[should_panic(expected = "iteration key buffer extent")]
+fn iteration_refuses_wrapping_caller_buffer_extents() {
+    let schema = schema();
+    let image = view_of(&schema, &[(1, 2)]);
+    let mut colt = Colt::new(all(&image), &[], vec![vec![0, 1]]);
+    let _ = colt.iter_batch(
+        Cursor::Row(0),
+        0,
+        BatchToken::default(),
+        &mut [],
+        &mut [],
+        usize::MAX,
+    );
+}
+
+#[test]
 fn skewed_maps_size_by_the_formula_and_iterate_densely() {
     let schema = schema();
 

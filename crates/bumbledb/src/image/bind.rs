@@ -23,6 +23,15 @@ pub(crate) trait ImageBind {
         relation: RelationId,
     ) -> Result<ResidentAdmit<Arc<RelationImage>>>;
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>>;
+    /// A query-local superset of the selected rows, or None when no supported
+    /// index is bound. Never publish this image as a full relation.
+    fn selection_image(
+        &self,
+        schema: &Schema,
+        relation: RelationId,
+        selections: &[crate::plan::fj::Selection],
+        keys: &[Vec<u64>],
+    ) -> Result<Option<ResidentAdmit<Arc<RelationImage>>>>;
 }
 
 /// One execution's image access: the prepared query's cache bound to the
@@ -36,10 +45,18 @@ pub(crate) struct SourceImages<'a> {
 
 impl<'a> SourceImages<'a> {
     pub(crate) fn bind(source: &'a QuerySource<'a>, cache: &'a ImageCache) -> Self {
+        Self::with_generation(source, cache, cache.acquire())
+    }
+
+    pub(crate) fn with_generation(
+        source: &'a QuerySource<'a>,
+        cache: &'a ImageCache,
+        generation: GenerationHandle,
+    ) -> Self {
         Self {
             source,
             cache,
-            generation: cache.acquire(),
+            generation,
         }
     }
 
@@ -79,6 +96,16 @@ impl ImageBind for SourceImages<'_> {
 
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>> {
         let epoch = self.epoch(schema, relation)?;
-        Ok(self.cache.peek_at(relation, epoch))
+        Ok(self.cache.peek_at(relation, epoch, &self.generation))
+    }
+
+    fn selection_image(
+        &self,
+        schema: &Schema,
+        relation: RelationId,
+        selections: &[crate::plan::fj::Selection],
+        keys: &[Vec<u64>],
+    ) -> Result<Option<ResidentAdmit<Arc<RelationImage>>>> {
+        super::selection::build(self, schema, relation, selections, keys)
     }
 }

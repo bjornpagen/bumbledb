@@ -1,6 +1,239 @@
 use super::*;
 
 #[test]
+fn packed_children_preserve_the_full_payload_without_a_second_cursor_type() {
+    for payload in [0, 1, 255, 65_535, 1 << 31, u32::MAX - 1, u32::MAX] {
+        for cursor in [Cursor::Row(payload), Cursor::Node(NodeRef(payload))] {
+            let word = pack_child(cursor);
+            assert_eq!(unpack_child(word), cursor);
+            assert_eq!(word & u64::from(u32::MAX), u64::from(payload));
+            assert_eq!(word & !(CHILD_NODE_TAG | u64::from(u32::MAX)), 0);
+            assert_eq!(
+                word & CHILD_NODE_TAG != 0,
+                matches!(cursor, Cursor::Node(_))
+            );
+        }
+    }
+}
+
+fn wide_iteration_image(width: usize) -> Arc<crate::image::RelationImage> {
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "R".into(),
+            fields: (0..=width)
+                .map(|column| FieldDescriptor {
+                    name: format!("c{column}").into(),
+                    value_type: ValueType::U64,
+                })
+                .collect(),
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .expect("valid fixture");
+    // Triples promote children into nodes; the final row stays a singleton.
+    // Nonempty keys force map growth and span multiple lookahead/batch windows.
+    let facts = (0..514u64)
+        .map(|row| {
+            (0..width)
+                .map(|column| Value::U64((row / 3).rotate_left(u32::try_from(column * 9).unwrap())))
+                .chain(std::iter::once(Value::U64(row)))
+                .collect()
+        })
+        .collect();
+    TestSource::new(&schema, &[(R, facts)])
+        .image_with_cache(R)
+        .1
+}
+
+fn drain_guarded_map(colt: &mut Colt, width: usize, size: usize) -> Vec<(Vec<u64>, Cursor)> {
+    let root = Colt::root();
+    let sentinel = Cursor::Row(u32::MAX);
+    let mut keys = vec![u64::MAX; width * size + 5];
+    let mut children = vec![sentinel; size + 3];
+    let (empty, mut token) = colt
+        .iter_batch(root, 0, BatchToken::default(), &mut keys, &mut children, 0)
+        .expect("zero-sized batch");
+    assert_eq!(empty, 0);
+    assert!(keys.iter().all(|&word| word == u64::MAX));
+    assert!(children.iter().all(|&child| child == sentinel));
+    let mut observed = Vec::new();
+    loop {
+        keys.fill(u64::MAX);
+        children.fill(sentinel);
+        let (n, next) = colt
+            .iter_batch(root, 0, token, &mut keys, &mut children, size)
+            .expect("forced-map batch");
+        assert!(n <= size);
+        assert!(keys[n * width..].iter().all(|&word| word == u64::MAX));
+        assert!(children[n..].iter().all(|&child| child == sentinel));
+        for (index, &child) in children[..n].iter().enumerate() {
+            let key = keys[index * width..(index + 1) * width].to_vec();
+            assert_eq!(colt.get(root, 0, &key), Some(child));
+            observed.push((key, child));
+        }
+        if n == 0 {
+            assert_eq!(next, token, "exhaustion remains stable");
+            break;
+        }
+        token = next;
+    }
+    observed
+}
+
+#[test]
+fn fixed_and_wide_map_iteration_preserves_keys_children_and_batch_boundaries() {
+    for width in [0, 1, 2, 3, 4, 5, 8] {
+        let image = wide_iteration_image(width);
+        let levels = vec![(0..width).collect::<Vec<_>>(), vec![width]];
+        let mut colt = Colt::new(all(&image), &[], levels.clone());
+        colt.ensure_forced(Colt::root(), 0).expect("force root");
+        let baseline = drain(&mut colt, Colt::root(), 0);
+        let mut model: HashMap<Vec<u64>, Vec<u64>> = HashMap::new();
+        for (position, &value) in image.column_words(width).iter().enumerate() {
+            let key = (0..width)
+                .map(|column| image.column_words(column)[position])
+                .collect();
+            model.entry(key).or_default().push(value);
+        }
+        assert_eq!(baseline.len(), model.len());
+        let mut actual = HashMap::new();
+        for (key, child) in &baseline {
+            let mut values: Vec<_> = drain(&mut colt, *child, 1)
+                .into_iter()
+                .map(|(row, _)| row[0])
+                .collect();
+            values.sort_unstable();
+            assert!(actual.insert(key.clone(), values).is_none(), "key repeated");
+        }
+        for values in model.values_mut() {
+            values.sort_unstable();
+        }
+        assert_eq!(actual, model);
+        if width > 0 {
+            assert!(
+                baseline
+                    .iter()
+                    .any(|(_, child)| matches!(child, Cursor::Row(_)))
+            );
+            assert!(
+                baseline
+                    .iter()
+                    .any(|(_, child)| matches!(child, Cursor::Node(_)))
+            );
+            assert!(
+                colt.forced_capacity(Colt::root()).unwrap()
+                    > super::super::force::force_nbuckets(514) * 8
+            );
+        }
+        let mut cloned = Colt::new(all(&image), &[], levels);
+        drop(
+            cloned
+                .clone_bound_from(&colt, Vec::new())
+                .expect("clone forced pools"),
+        );
+        for size in [1, 7, 8, 9, 127, 128, 129, 1024] {
+            assert_eq!(
+                drain_guarded_map(&mut colt, width, size),
+                baseline,
+                "width {width}, batch {size}"
+            );
+            assert_eq!(
+                drain_guarded_map(&mut cloned, width, size),
+                baseline,
+                "cloned width {width}, batch {size}"
+            );
+        }
+    }
+}
+
+#[test]
+fn batch_width_probes_match_dynamic_through_selection_force_and_pinned_rows() {
+    fn check<const K: usize>(width: usize) {
+        let schema = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                extension: None,
+                name: "R".into(),
+                fields: (0..width + 2)
+                    .map(|column| FieldDescriptor {
+                        name: format!("c{column}").into(),
+                        value_type: ValueType::U64,
+                    })
+                    .collect(),
+            }],
+            statements: vec![],
+        }
+        .validate()
+        .expect("valid fixture");
+        let tuple = |value: u64| -> Vec<u64> {
+            (0..width)
+                .map(|column| {
+                    value
+                        .wrapping_mul(31)
+                        .rotate_left(u32::try_from(column).unwrap())
+                })
+                .collect()
+        };
+        let facts: Vec<Vec<Value>> = (0..8u64)
+            .flat_map(|group| {
+                let tuple = &tuple;
+                (0..8u64).map(move |row| {
+                    std::iter::once(Value::U64(group))
+                        .chain(tuple(row / 2).into_iter().map(Value::U64))
+                        .chain(std::iter::once(Value::U64(row)))
+                        .collect()
+                })
+            })
+            .collect();
+        let source = TestSource::new(&schema, &[(R, facts)]);
+        let (_cache, image) = source.image_with_cache(R);
+        let columns: Vec<usize> = (1..=width).collect();
+        let mut fixed = Colt::new(all(&image), &scalars(&[0]), vec![columns.clone()]);
+        let mut dynamic = Colt::new(all(&image), &scalars(&[0]), vec![columns]);
+        for group in [0, 3, 1, 7, 3, 0] {
+            let selected = fixed.select(&[vec![group]]).unwrap().unwrap();
+            assert_eq!(dynamic.select(&[vec![group]]).unwrap(), Some(selected));
+            for value in [0, 1, 99, 2, 3, 0] {
+                let key = tuple(value);
+                let hash = hash_key(&key);
+                let got = fixed
+                    .get_prehashed_width::<K>(selected, 0, &key, hash)
+                    .unwrap();
+                let expected = dynamic.get_prehashed(selected, 0, &key, hash).unwrap();
+                assert_eq!(got, expected);
+                assert_eq!(fixed.ctrl, dynamic.ctrl);
+                assert_eq!(fixed.buckets, dynamic.buckets);
+                assert_eq!(fixed.dense, dynamic.dense);
+                assert_eq!(fixed.chunk_positions, dynamic.chunk_positions);
+                assert_eq!(fixed.watermark(), dynamic.watermark());
+            }
+        }
+        let key: Vec<_> = (1..=width)
+            .map(|column| image.column_words(column)[0])
+            .collect();
+        for key in [key, tuple(99)] {
+            let hash = hash_key(&key);
+            assert_eq!(
+                fixed
+                    .get_prehashed_width::<K>(Cursor::Row(0), 0, &key, hash)
+                    .unwrap(),
+                dynamic
+                    .get_prehashed(Cursor::Row(0), 0, &key, hash)
+                    .unwrap(),
+            );
+        }
+    }
+
+    check::<0>(0);
+    check::<1>(1);
+    check::<2>(2);
+    check::<3>(3);
+    check::<4>(4);
+    check::<0>(5);
+}
+
+#[test]
 fn bucket_probes_match_the_model_under_adversarial_keys() {
     let schema = schema();
 

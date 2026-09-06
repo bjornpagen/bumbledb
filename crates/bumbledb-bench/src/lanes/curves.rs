@@ -45,7 +45,8 @@ pub struct FamilyCurve {
 pub struct CurvePoint {
     pub scale: &'static str,
     pub facts: u64,
-    pub answers: u64,
+    /// Mean answer rows per measured call, including zero-row draws.
+    pub answers: f64,
     pub ours: Option<Stats>,
     pub theirs: Option<Stats>,
     pub theirs_hand: Option<Stats>,
@@ -473,7 +474,7 @@ fn curve_point<S>(
         return Ok(CurvePoint {
             scale: scale_label,
             facts: bundle.facts,
-            answers: 0,
+            answers: 0.0,
             ours: None,
             theirs: None,
             theirs_hand: None,
@@ -493,18 +494,18 @@ fn curve_point<S>(
             Ok(buffer.len() as u64)
         })
     })?;
-    let answers = ours.work / u64::from(proto.samples.max(1));
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "reporting a mean must retain fractional rows for hit/miss mixes"
+    )]
+    let answers = ours.work as f64 / f64::from(proto.samples.max(1));
 
     let theirs = time_lane(conn, cap, &bundle.canonical, &bundle.draws, &types, proto)?;
     let theirs = theirs.map(|(stats, stamp)| {
         ghz = ghz.merge(stamp);
         stats
     });
-    let mut cap_event = if theirs.is_none() {
-        Some(CapEvent { at: "timing" })
-    } else {
-        None
-    };
+    let mut cap_event = theirs.is_none().then_some(CapEvent { at: "timing" });
 
     // before it is timed; a cap here leaves the canonical results
 
@@ -927,7 +928,7 @@ fn render(report: &CurvesReport) -> String {
     );
     let _ = writeln!(
         out,
-        "| family | world | scale | facts | answers | ours p50 | sqlite p50 | hand p50 | cap |"
+        "| family | world | scale | facts | mean rows/call | ours p50 | sqlite p50 | hand p50 | cap |"
     );
     let _ = writeln!(out, "|---|---|---|---:|---:|---:|---:|---:|---|");
     let mut capped = 0usize;
@@ -956,9 +957,11 @@ fn render(report: &CurvesReport) -> String {
         let _ = writeln!(
             out,
             "\n## Warmth panel (cold/warm/memoized, p50 ns)\n\n\
-             Reopen-cold is process-fresh but OS-page-cache-warm — as close \
-             as the harness allows. The engine side prices the (relation, \
-             generation) image cache and the resolved-filter view slots.\n"
+             This panel uses the first requested scale (the first row of each \
+             family). Reopen-cold creates a fresh database handle and prepared \
+             query in the same process, with a warm OS page cache. Open and \
+             prepare are outside the timed first execution. The engine side \
+             prices the relation-image cache and resolved-filter view slots.\n"
         );
         let _ = writeln!(
             out,
@@ -1110,7 +1113,7 @@ mod tests {
                     CurvePoint {
                         scale: "S",
                         facts: 100_000,
-                        answers: 42,
+                        answers: 42.75,
                         ours: Some(stats(100)),
                         theirs: Some(stats(200)),
                         theirs_hand: None,
@@ -1125,7 +1128,7 @@ mod tests {
                     CurvePoint {
                         scale: "M",
                         facts: 1_000_000,
-                        answers: 420,
+                        answers: 420.0,
                         ours: Some(stats(300)),
                         theirs: None,
                         theirs_hand: None,
@@ -1175,7 +1178,7 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].get("scale").and_then(Json::as_str), Some("S"));
         assert_eq!(rows[0].get("facts").and_then(Json::as_f64), Some(100_000.0));
-        assert_eq!(rows[0].get("answers").and_then(Json::as_f64), Some(42.0));
+        assert_eq!(rows[0].get("answers").and_then(Json::as_f64), Some(42.75));
         let ours = rows[0].get("ours").expect("ours");
         assert_eq!(ours.get("p50").and_then(Json::as_f64), Some(101.0));
         let theirs = rows[0].get("theirs").expect("theirs");
@@ -1247,6 +1250,13 @@ mod tests {
                 "{name}: theirs timed"
             );
             assert_eq!(row.get("cap"), Some(&Json::Null), "{name}: no cap event");
+            if name == "point" {
+                assert_eq!(
+                    row.get("answers").and_then(Json::as_f64),
+                    Some(0.75),
+                    "three hits and one miss must not be truncated to zero rows"
+                );
+            }
             if name == "busy_scan" {
                 assert!(
                     row.get("theirs_hand")

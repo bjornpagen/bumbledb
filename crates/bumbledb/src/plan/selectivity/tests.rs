@@ -20,6 +20,7 @@ use bumbledb_theory::schema::{
     FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,
     StatementDescriptor, ValueType,
 };
+use std::collections::BTreeSet;
 
 const POSTING: RelationId = RelationId(0);
 const ACCOUNT: RelationId = RelationId(1);
@@ -156,7 +157,8 @@ fn the_cold_ladder_prices_keys_bounds_and_floors() {
     let rows = relation_rows_on(&source, &schema, POSTING).expect("rows");
 
     let occ = occurrence(&[(0, 0), (1, 1), (2, 2), (3, 3)], vec![]);
-    let stats = occurrence_stats_on(&images, &schema, &occ, rows).expect("stats");
+    let requested = occ.vars.iter().map(|(_, var)| *var).collect();
+    let stats = occurrence_stats_on(&images, &schema, &occ, rows, &requested).expect("stats");
     assert_eq!(stats.rows, 40, "no filters keep every row");
 
     // Rung 0: the declared key's distincts are the row count, exactly.
@@ -167,6 +169,50 @@ fn the_cold_ladder_prices_keys_bounds_and_floors() {
     // documented constant.
     assert_eq!(distinct_of_var(&stats, 2), 2);
     assert_eq!(distinct_of_var(&stats, 3), DEFAULT_EQ_DISTINCT);
+}
+
+#[test]
+fn resident_statistics_are_exact_cached_and_charged_only_when_needed() {
+    use crate::api::prepared::source::{QuerySource, UNBOUNDED_POLICY};
+    use crate::work::Resource;
+    let schema = schema();
+    let fixture = fixture(&schema);
+    let (_cache, image) = fixture.image_with_cache(POSTING);
+    let work = crate::work::ExecutionPolicy {
+        working_bytes: 0,
+        ..UNBOUNDED_POLICY
+    }
+    .start()
+    .unwrap();
+    let source = QuerySource::heap(&fixture, 0, work.clone());
+    assert_eq!(
+        super::distinct_of(&source, &schema, POSTING, FieldId(0), Some(&image), 40).unwrap(),
+        40,
+        "schema uniqueness needs no counting table even with a resident image"
+    );
+    assert!(
+        super::distinct_of(&source, &schema, POSTING, FieldId(3), Some(&image), 40).is_err(),
+        "resident statistics propagate scratch refusal instead of publishing a floor"
+    );
+    let source = fixture.source();
+    for (field, expected) in [(1, 3), (2, 2), (3, 7)] {
+        assert_eq!(
+            super::distinct_of(&source, &schema, POSTING, FieldId(field), Some(&image), 40)
+                .unwrap(),
+            expected
+        );
+    }
+    assert_eq!(source.work().used(Resource::WorkingBytes), 0);
+    let counted = source.work().used(Resource::WorkUnits);
+    assert!(counted >= 3 * 40);
+    for (field, expected) in [(1, 3), (2, 2), (3, 7)] {
+        assert_eq!(
+            super::distinct_of(&source, &schema, POSTING, FieldId(field), Some(&image), 40)
+                .unwrap(),
+            expected
+        );
+    }
+    assert_eq!(source.work().used(Resource::WorkUnits), counted);
 }
 
 #[test]
@@ -186,7 +232,7 @@ fn an_eq_selection_on_the_key_prices_a_point_lookup() {
             value: Const::Word(7),
         }],
     );
-    let stats = occurrence_stats_on(&images, &schema, &occ, rows).expect("stats");
+    let stats = occurrence_stats_on(&images, &schema, &occ, rows, &BTreeSet::new()).expect("stats");
     assert_eq!(stats.rows, 1, "rows / key-distincts = one row");
 }
 
@@ -207,7 +253,7 @@ fn a_bool_eq_selection_keeps_half_by_the_floor() {
             value: Const::Byte(1),
         }],
     );
-    let stats = occurrence_stats_on(&images, &schema, &occ, rows).expect("stats");
+    let stats = occurrence_stats_on(&images, &schema, &occ, rows, &BTreeSet::new()).expect("stats");
     assert_eq!(stats.rows, 20, "40 rows / 2 bool values");
 }
 
@@ -221,12 +267,40 @@ fn interior_occurrences_price_by_their_planning_floors() {
 
     let mut delta = occurrence(&[(0, 0)], vec![]);
     delta.bind = OccBind::RecDelta(crate::ir::InteriorId(0));
-    let stats = occurrence_stats_on(&images, &schema, &delta, 40).expect("stats");
+    let requested = BTreeSet::from([crate::ir::VarId(0)]);
+    let stats = occurrence_stats_on(&images, &schema, &delta, 40, &requested).expect("stats");
     assert_eq!(stats.rows, DELTA_PLANNING_ROWS.max(1));
     assert_eq!(distinct_of_var(&stats, 0), DELTA_PLANNING_ROWS.max(1));
 
     let mut finished = occurrence(&[(0, 0)], vec![]);
     finished.bind = OccBind::Finished(crate::ir::InteriorId(0));
-    let stats = occurrence_stats_on(&images, &schema, &finished, 40).expect("stats");
+    let stats = occurrence_stats_on(&images, &schema, &finished, 40, &requested).expect("stats");
     assert_eq!(stats.rows, ACCUMULATED_PLANNING_ROWS);
+}
+
+#[test]
+fn output_only_variables_do_not_request_statistics_but_filters_still_do() {
+    let schema = schema();
+    let fixture = fixture(&schema);
+    let source = fixture.source();
+    let cache = ImageCache::new(&schema);
+    let images = SourceImages::bind(&source, &cache);
+    let occ = occurrence(
+        &[(0, 0), (1, 1), (3, 3)],
+        vec![FilterPredicate::Compare {
+            field: FieldId(2).into(),
+            op: WordCmp::Eq,
+            value: Const::Byte(1),
+        }],
+    );
+    let requested = BTreeSet::from([crate::ir::VarId(1)]);
+    let stats = occurrence_stats_on(&images, &schema, &occ, 40, &requested).unwrap();
+    assert_eq!(stats.var_distincts, [(crate::ir::VarId(1), 3)]);
+    assert_eq!(
+        stats.rows, 20,
+        "filter selectivity is independent of join-statistics demand"
+    );
+    let no_joins = occurrence_stats_on(&images, &schema, &occ, 40, &BTreeSet::new()).unwrap();
+    assert!(no_joins.var_distincts.is_empty());
+    assert_eq!(no_joins.rows, stats.rows);
 }

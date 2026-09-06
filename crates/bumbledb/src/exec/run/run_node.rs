@@ -1,7 +1,7 @@
 //! The leaf pass over one node's cover batch (single-node and last-node).
 use super::anti_probe::anti_probe_pass;
 use super::{
-    BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, JoinPhase, KeyCount, LeafBatch,
+    BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, KeyCount, LeafBatch,
     PREFETCH_WIDTH_FLOOR, Sink, Source, ValidatedPlan, better_cover, grow_scratch,
 };
 
@@ -35,6 +35,14 @@ impl Executor {
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
         let (cover_cursor, cover_level) = self.cursors[cover_occ];
+        if S::may_use_distinct_traversal()
+            && self.physical_distinct.is_some()
+            && self
+                .colt_ok(colts[cover_occ].force_distinct_iteration(cover_cursor, cover_level))
+                .is_none()
+        {
+            return Flow::Error;
+        }
         counters.cover_choice(
             node_idx,
             cover_sub,
@@ -100,7 +108,6 @@ impl Executor {
             ));
         }
 
-        counters.phase_start(node_idx, JoinPhase::Iter);
         let overlap = self.overlap_enumerate(
             plan,
             node_idx,
@@ -111,14 +118,12 @@ impl Executor {
             bindings,
             &scratch.allen_sources,
         );
-        counters.phase_end(node_idx, JoinPhase::Iter);
         let mut overlap_drained = 0usize;
 
         let mut token = BatchToken::default();
         let mut flow = Flow::Continue;
 
         'outer: loop {
-            counters.phase_start(node_idx, JoinPhase::Iter);
             let (yielded, next_token) = if overlap {
                 let take = (self.overlap_hits.len() - overlap_drained).min(self.batch);
                 super::overlap_leaf::overlap_gather(
@@ -144,7 +149,6 @@ impl Executor {
                 };
                 batch
             };
-            counters.phase_end(node_idx, JoinPhase::Iter);
             if yielded == 0 {
                 break;
             }
@@ -163,7 +167,6 @@ impl Executor {
 
             // Residuals run BEFORE the sibling probes — the cost-class
 
-            counters.phase_start(node_idx, JoinPhase::Residual);
             for (r_idx, (lhs_src, rhs_src)) in scratch.residual_sources.iter().enumerate() {
                 let spec = &self.precompute[node_idx].residual_slots[r_idx];
                 let n = scratch.survivors.len();
@@ -278,7 +281,6 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
-            counters.phase_end(node_idx, JoinPhase::Residual);
 
             // there. Extracting the shared pass was refused: the bodies
 
@@ -298,17 +300,14 @@ impl Executor {
                 let sub_arity = self.slot_map[node_idx][sub_idx].len();
                 let occ = usize::from(subatom.occ.0);
                 let (s_cursor, s_level) = self.cursors[occ];
-                counters.phase_start(node_idx, JoinPhase::Force);
                 if self
                     .colt_ok(colts[occ].ensure_forced(s_cursor, s_level))
                     .is_none()
                 {
                     break 'outer;
                 }
-                counters.phase_end(node_idx, JoinPhase::Force);
 
                 let pinned = matches!(s_cursor, Cursor::Row(_));
-                counters.phase_start(node_idx, JoinPhase::Hash);
                 let n = scratch.survivors.len();
 
                 grow_scratch(&mut scratch.hashes, n);
@@ -333,22 +332,14 @@ impl Executor {
                         }
                     }
                 }
-                counters.phase_end(node_idx, JoinPhase::Hash);
 
                 if !pinned && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
-                    crate::obs::event(
-                        crate::obs::names::PREFETCH_PASS,
-                        crate::obs::TraceArgs::Pair(
-                            scratch.survivors.len() as u64,
-                            colts[occ].probe_footprint_bytes() as u64,
-                        ),
-                    );
                     for &hash in &scratch.hashes[..n] {
                         colts[occ].prefetch_bucket(s_cursor, hash);
                     }
                 }
 
-                counters.phase_start(node_idx, JoinPhase::Probe);
+                counters.probe_batch(node_idx, sub_idx, n);
                 grow_scratch(&mut scratch.mask, n);
                 {
                     let survivors = &scratch.survivors[..n];
@@ -373,14 +364,10 @@ impl Executor {
                     }
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-                counters.phase_end(node_idx, JoinPhase::Probe);
             }
 
             // stay AFTER the sibling probes (unlike the ALU residuals
 
-            if !self.precompute[node_idx].point_probes.is_empty() {
-                counters.phase_start(node_idx, JoinPhase::Residual);
-            }
             for spec in &self.precompute[node_idx].point_probes {
                 scratch.point_sources.clear();
                 for (start_col, end_col, var, slot, dense) in &spec.parts {
@@ -437,9 +424,6 @@ impl Executor {
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
-            if !self.precompute[node_idx].point_probes.is_empty() {
-                counters.phase_end(node_idx, JoinPhase::Residual);
-            }
 
             if let Err(error) = anti_probe_pass(
                 &self.precompute[node_idx].anti_probes,
@@ -469,7 +453,6 @@ impl Executor {
                 }
                 continue;
             }
-            counters.phase_start(node_idx, JoinPhase::Descend);
             let batch = LeafBatch {
                 keys: &scratch.entry_keys,
                 arity,
@@ -488,7 +471,6 @@ impl Executor {
             for _ in 0..emitted {
                 counters.emit();
             }
-            counters.phase_end(node_idx, JoinPhase::Descend);
             if batch_flow.is_terminal() {
                 self.poison(match batch_flow {
                     Flow::Stop => super::Poison::SinkStop,

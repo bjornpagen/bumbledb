@@ -20,6 +20,10 @@ pub(crate) struct TestSource {
 }
 
 impl HeapRows for TestSource {
+    fn schema_identity(&self) -> crate::schema::fingerprint::SchemaFingerprint {
+        crate::schema::fingerprint::fingerprint(&self.schema)
+    }
+
     fn rows(&self, relation: RelationId) -> &[Box<[u8]>] {
         self.rows.get(&relation).map_or(&[], |rows| rows.as_slice())
     }

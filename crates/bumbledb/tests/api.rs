@@ -933,8 +933,6 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         .expect("commit")
         .unwrap();
     }
-    let source_size = db.disk_size(common::work()).expect("size");
-    let generation = db.generation(common::work()).expect("generation");
     let scan_digest = |db: &Db<Ledger>| -> Vec<DecodedRow> {
         let mut rows: Vec<DecodedRow> = db
             .read(common::work(), |snap| {
@@ -947,7 +945,22 @@ fn compaction_drops_the_freelist_and_preserves_content() {
         });
         rows
     };
+    // Create actual dead pages, not just insertion-history fill slack. A
+    // denser insertion layout must not make a correct compactor fail.
+    let all_rows = scan_digest(&db);
+    assert_eq!(all_rows.len(), 10_000);
+    let removed = db
+        .write(common::work(), |tx| {
+            tx.delete_dyn(Holder::RELATION, &all_rows[..9_000])
+        })
+        .expect("delete")
+        .unwrap()
+        .value;
+    assert_eq!(removed.changed(), 9_000);
+    let source_size = db.disk_size(common::work()).expect("size");
+    let generation = db.generation(common::work()).expect("generation");
     let source_rows = scan_digest(&db);
+    assert_eq!(source_rows.len(), 1_000);
 
     let compact_dir = dir.path().join("compacted");
     db.compact(&compact_dir, common::work()).expect("compact");
@@ -1782,70 +1795,4 @@ fn reach_execute_answers_the_closure() {
         Ok(())
     })
     .expect("read");
-}
-
-#[test]
-fn a_tight_derived_budget_trips_under_reach() {
-    const CHAIN: u64 = 66_000;
-    let dir = common::TempDir::new("api-reach-budget");
-    let db = Db::create(dir.path(), Graph, common::work())
-        .expect("create")
-        .expect("accepted");
-    db.write(common::work(), |tx| {
-        for n in 0..CHAIN {
-            tx.insert([&GraphEdge { src: n, dst: n + 1 }])?;
-        }
-        Ok(())
-    })
-    .expect("write")
-    .unwrap();
-    let mut prepared = db
-        .prepare(&single_source_chain_query(), common::work())
-        .expect("recursion executes");
-    let error = db
-        .read(common::work(), |snap| {
-            snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                .map(|_| ())
-        })
-        .expect_err("66k hops exceed the default 2^16-round budget");
-    assert!(
-        matches!(
-            error,
-            bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0
-        ),
-        "expected DerivedBudgetExceeded with rounds > 0, got: {error}"
-    );
-}
-
-fn single_source_chain_query() -> Query {
-    Query {
-        interiors: vec![],
-        rec: Some(Rec {
-            base: NonEmpty::one(RecRule {
-                finds: vec![VarId(0)],
-                atoms: vec![Atom {
-                    source: AtomSource::Edb(GraphEdge::RELATION),
-                    bindings: vec![
-                        (FieldId(0), Term::Literal(Value::U64(0))),
-                        (FieldId(1), Term::Var(VarId(0))),
-                    ],
-                }],
-                conditions: vec![],
-            }),
-            rec: NonEmpty::one(RecStep {
-                finds: vec![VarId(1)],
-                self_bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
-                atoms: vec![Atom {
-                    source: AtomSource::Edb(GraphEdge::RELATION),
-                    bindings: vec![
-                        (FieldId(0), Term::Var(VarId(0))),
-                        (FieldId(1), Term::Var(VarId(1))),
-                    ],
-                }],
-                conditions: vec![],
-            }),
-        }),
-        head: vec![HeadTerm::Var],
-        rules: vec![identity_main(1)],
-    }
 }

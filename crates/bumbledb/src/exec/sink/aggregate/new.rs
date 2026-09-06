@@ -228,6 +228,7 @@ impl AggregateSink {
             terminal: crate::exec::sink::SinkProgress::Continue,
             pack_bytes: 0,
             dedup,
+            physical_distinct: None,
             groups,
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
@@ -305,8 +306,26 @@ impl AggregateSink {
     }
 
     #[must_use]
+    #[cfg(test)]
     pub fn distinct_seen(&self) -> Option<usize> {
-        self.dedup.seen_len()
+        self.dedup.seen().map(SpillSet::len)
+    }
+
+    /// Only the single resident scalar rule may enable this. Keep the
+    /// ordinary seen-set intact for a later fallback or execution.
+    pub(crate) fn set_physical_distinct(
+        &mut self,
+        witness: Option<crate::plan::fj::ScalarSetTraversal>,
+    ) -> Option<crate::plan::fj::ScalarSetTraversal> {
+        self.physical_distinct = witness.filter(|_| {
+            matches!(self.dedup, DedupState::Bindings { .. })
+                && matches!(self.group_state, GroupState::Folds { .. })
+        });
+        self.physical_distinct
+    }
+
+    pub(super) fn distinct_bindings(&self) -> bool {
+        self.physical_distinct.is_some() || matches!(self.dedup, DedupState::Elided { .. })
     }
 
     /// Install this execution's allowance on the dedup seen-set AND the
@@ -366,6 +385,7 @@ impl AggregateSink {
     }
 
     pub fn reset(&mut self) {
+        self.physical_distinct = None;
         self.groups.clear();
         self.float_accs.clear();
         self.group_counts.clear();

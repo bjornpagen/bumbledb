@@ -2,7 +2,7 @@
 //!
 //! Counts come from visitor returns and [`WorkContext::used`] snapshots —
 //! not default-build atomics on every tuple (L01/L03). Timing cells must
-//! not enable per-row atomics; `obs` alloc windows stay a separate pass.
+//! not enable per-row atomics; allocation windows stay a separate pass.
 
 use bumbledb::schema::{
     CompiledTheory, DistinctnessWitness, ProjectionId, VisitControl, VisitOutcome,
@@ -16,7 +16,8 @@ pub struct RosterEntry {
     pub relation: u32,
     pub scalar_fields: usize,
     pub routing_bytes: usize,
-    pub interval_tail_bytes: u8,
+    /// Key width if materialized as a separate determinant. A selected home
+    /// is instead part of the row key; this roster is not a physical census.
     pub complete_key_bytes: usize,
     pub encoding: &'static str,
 }
@@ -57,7 +58,11 @@ pub struct Instrument {
 
 impl Instrument {
     #[must_use]
-    pub fn roster_of(theory: &CompiledTheory, relation: bumbledb::RelationId) -> Vec<RosterEntry> {
+    pub fn roster_of(
+        theory: &CompiledTheory,
+        relation: bumbledb::RelationId,
+        widths: bumbledb::store::PhysicalKeyWidths,
+    ) -> Vec<RosterEntry> {
         theory
             .projections_of_relation(relation)
             .iter()
@@ -68,8 +73,8 @@ impl Instrument {
                     relation: relation.0,
                     scalar_fields: projection.scalar_fields.len(),
                     routing_bytes: projection.encoding.routing_width(),
-                    interval_tail_bytes: projection.interval_tail_width,
-                    complete_key_bytes: projection.complete_key_width(),
+                    complete_key_bytes: widths.determinant_overhead
+                        + projection.encoding.routing_width(),
                     encoding: match projection.encoding {
                         bumbledb::schema::KeyEncoding::ExactBounded { .. } => "exact-bounded",
                         bumbledb::schema::KeyEncoding::FingerprintBucket => "fingerprint",

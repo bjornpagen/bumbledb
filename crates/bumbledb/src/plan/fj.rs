@@ -27,7 +27,10 @@ pub(crate) use check_selections::check_selections;
 pub use factor::factor;
 pub use fold_split::fold_split;
 pub use gj_split::gj_split;
-pub(crate) use provably_distinct::{DistinctWitness, Distinctness, provably_distinct};
+pub(crate) use provably_distinct::{
+    DistinctWitness, Distinctness, ProjectionDistinctWitness, provably_distinct,
+    provably_distinct_projection,
+};
 
 pub(crate) use crate::ir::normalize::OccBind;
 
@@ -234,13 +237,30 @@ pub struct ValidatedPlan {
 }
 
 impl ValidatedPlan {
+    /// A physical traversal contract, not a schema multiplicity proof.
+    /// Every cover must enumerate distinct new-variable tuples, including
+    /// terminal COLT groups. One unique prefix then extends uniquely at
+    /// every node; sibling probes and residuals only remove bindings.
+    pub(crate) fn scalar_set_traversal(&self) -> Option<ScalarSetTraversal> {
+        (self.distinct_witness().is_none()
+            && self.slots.iter().all(|(_, width)| width.slots() == 1)
+            && self.occurrences.iter().all(|occurrence| {
+                occurrence.bind.edb().is_some()
+                    && occurrence.role != Role::Negated
+                    && occurrence.point_filters.is_empty()
+            })
+            && self.nodes.iter().all(|node| {
+                node.point_probes.is_empty()
+                    && node.anti_probes.is_empty()
+                    && node.allen_residuals.is_empty()
+                    && node.word_residuals.is_empty()
+            }))
+        .then_some(ScalarSetTraversal(()))
+    }
+
     #[must_use]
     pub fn occurrences(&self) -> &[PlanOccurrence] {
         &self.occurrences
-    }
-
-    pub(crate) fn occurrences_mut(&mut self) -> &mut [PlanOccurrence] {
-        &mut self.occurrences
     }
 
     #[must_use]
@@ -325,6 +345,12 @@ impl ValidatedPlan {
             .expect("validated plan covers its occurrences")
     }
 }
+
+/// Valid only while the resident executor forces distinct cover iteration.
+/// Unlike `DistinctWitness`, this cannot license raw source multiplicities,
+/// fallback execution, or unioning multiple rule traversals.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ScalarSetTraversal(());
 
 #[cfg(test)]
 mod tests;

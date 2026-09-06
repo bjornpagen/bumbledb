@@ -9,14 +9,13 @@
 //!
 //! ```text
 //! rows        key shape, schema knowledge, closed-relation intrusion,
-//!             canonical validity, membership backing with the exact
-//!             fingerprint, EVERY schema-derived determinant entry present
-//!             under its recomputed fingerprint, per-relation tallies and
-//!             the max row id
+//!             canonical validity, selected scalar home agreement, membership
+//!             for unclustered rows, EVERY non-home determinant entry present,
+//!             globally unique ordinals, per-relation tallies and max ordinal
 //! membership  resolves to a live row whose recomputed fingerprint is the
 //!             stored bucket
-//! determinant resolves to a live row of the statement's relation whose
-//!             recomputed determinant fingerprint is the stored bucket
+//! determinant home indexes absent; secondary locator resolves to a live row
+//!             with the expected home and recomputed determinant routing
 //! meta        family/layout/schema identity, generation presence, stored
 //!             row counts against the tallies, the next-row-id ratchet,
 //!             host-record key bounds
@@ -28,10 +27,9 @@ use bumbledb_theory::schema::RelationId;
 use crate::schema::ProjectionId;
 
 use super::error::{StoreError, StoreResult};
-use super::fingerprint::FP_LEN;
 use super::format::{
     self, FAMILY, K_FAMILY, K_GENERATION, K_HOST_RECORD_TAG, K_LAYOUT, K_NEXT_ROW_ID,
-    K_ROW_COUNT_TAG, K_SCHEMA, K_STORE_ID, LAYOUT, RowId,
+    K_ROW_COUNT_TAG, K_SCHEMA, K_STORE_ID, LAYOUT, RowId, RowLocator,
 };
 use super::keys;
 use super::rows;
@@ -40,7 +38,7 @@ use crate::canonical::RowError;
 use crate::schema::Schema;
 use crate::schema::judge::{
     CandidateFacts, JudgeBudget, JudgeError, JudgeScratch, JudgedViolation, Judgment,
-    judge_final_state_with_scratch, store_fault,
+    RankedRowVisitor, judge_final_state_with_scratch, store_fault,
 };
 use crate::work::WorkContext;
 
@@ -62,8 +60,15 @@ pub enum VerifyCorruption {
         row: RowId,
         error: RowError,
     },
+    /// A physical row route disagrees with its canonical selected scalar key.
+    ForeignRowHome { relation: RelationId, row: RowId },
+    /// The global ordinal allocator cannot assign one rank twice.
+    DuplicateRowId { relation: RelationId, row: RowId },
     /// A live row has no membership entry under its exact fingerprint.
     MissingMembership { relation: RelationId, row: RowId },
+    /// A relation uses its selected scalar index for exact membership, but
+    /// retains a redundant fingerprint membership entry.
+    UnexpectedMembership { relation: RelationId, row: RowId },
     /// A membership entry references a row that does not exist.
     DanglingMembership { relation: RelationId, row: RowId },
     /// A membership entry's bucket disagrees with the row's recomputed
@@ -83,6 +88,16 @@ pub enum VerifyCorruption {
     /// recomputed routing — keyed reads and judgment enumeration would not
     /// see this row for that projection.
     MissingDeterminant {
+        projection: ProjectionId,
+        row: RowId,
+    },
+    /// The selected home is the row tree itself, never a redundant index.
+    UnexpectedHomeDeterminant {
+        projection: ProjectionId,
+        row: RowId,
+    },
+    /// A secondary locator has the wrong width or disagrees with its row home.
+    ForeignDeterminantHome {
         projection: ProjectionId,
         row: RowId,
     },
@@ -133,11 +148,15 @@ pub(crate) fn sweep(
     let mut tallies: std::collections::BTreeMap<RelationId, u64> =
         std::collections::BTreeMap::new();
     let mut max_row_id = 0u64;
+    let mut judgment_safe = true;
+    let mut ordinals =
+        crate::exec::scratch::ScratchRelation::new(work, crate::exec::scratch::DEFAULT_RAM_BYTES);
     let inner = snapshot.store_inner();
     let txn = snapshot.read_txn();
 
     // Pass 1: rows.
     {
+        let mut decode = crate::canonical::DecodeScratch::new(work);
         let prefix = [keys::TAG_ROW];
         let range = inner
             .data
@@ -146,24 +165,33 @@ pub(crate) fn sweep(
         for entry in range {
             work.step(1)?;
             let (key, row_bytes) = entry.map_err(StoreError::from_heed)?;
-            if key.len() != keys::ROW_KEY_LEN {
+            let Ok((relation, locator)) = inner.keys.decode_row(key) else {
+                judgment_safe = false;
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
                     what: "row key width",
                 }));
                 continue;
-            }
-            let relation = RelationId(u32::from_be_bytes(
-                key[1..5].try_into().expect("checked width"),
-            ));
-            let row = RowId(u64::from_be_bytes(
-                key[5..13].try_into().expect("checked width"),
-            ));
+            };
+            let row = locator.id;
             max_row_id = max_row_id.max(row.0);
+            if !ordinals
+                .insert_if_absent(&row.0.to_be_bytes(), &[])
+                .map_err(scratch_error)?
+            {
+                judgment_safe = false;
+                findings.push(corrupt(VerifyCorruption::DuplicateRowId { relation, row }));
+            }
             *tallies.entry(relation).or_default() += 1;
             let Some(view) = schema.relation_checked(relation) else {
                 findings.push(corrupt(VerifyCorruption::UnknownRelation { relation }));
                 continue;
             };
+            if locator.home().len() != inner.det.home_width(relation) {
+                judgment_safe = false;
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "row home width",
+                }));
+            }
             if view.body().closed_rows().is_some() {
                 findings.push(corrupt(VerifyCorruption::ClosedRelationRow {
                     relation,
@@ -175,6 +203,7 @@ pub(crate) fn sweep(
                 match error {
                     RowError::Work(work_error) => return Err(StoreError::Work(work_error)),
                     other => {
+                        judgment_safe = false;
                         findings.push(corrupt(VerifyCorruption::MalformedRow {
                             relation,
                             row,
@@ -184,18 +213,20 @@ pub(crate) fn sweep(
                     }
                 }
             }
-            let fp = inner.fingerprinter.row(relation, row_bytes);
-            let membership = keys::membership_key(relation, &fp, row);
-            let present = inner
-                .data
-                .get(txn, membership.as_slice())
-                .map_err(StoreError::from_heed)?
-                .is_some();
-            if !present {
-                findings.push(corrupt(VerifyCorruption::MissingMembership {
-                    relation,
-                    row,
-                }));
+            if inner.det.membership_projection(relation).is_none() {
+                let fp = inner.fingerprinter.row(relation, row_bytes);
+                let membership = inner.keys.membership_key(relation, &fp, row)?;
+                let present = inner
+                    .data
+                    .get(txn, membership.as_slice())
+                    .map_err(StoreError::from_heed)?
+                    .is_some();
+                if !present {
+                    findings.push(corrupt(VerifyCorruption::MissingMembership {
+                        relation,
+                        row,
+                    }));
+                }
             }
             // Every schema-derived determinant entry, recomputed with the
             // engine's own projection convention and fingerprint, must be
@@ -204,26 +235,43 @@ pub(crate) fn sweep(
             inner.det.emit_row(
                 relation,
                 row_bytes,
-                work,
-                &mut |projection, projected, tail| {
+                &mut decode,
+                &mut |projection, projected| {
                     let routing = rows::routing_for_projected(inner, projection, projected)?;
-                    let entry = keys::determinant_key(projection, &routing, tail, row);
+                    if inner.det.is_home(projection) {
+                        if locator.home() != routing.as_slice() {
+                            findings
+                                .push(corrupt(VerifyCorruption::ForeignRowHome { relation, row }));
+                        }
+                        return Ok(());
+                    }
+                    let entry = inner.keys.determinant_key(projection, &routing, row)?;
                     let present = inner
                         .data
                         .get(txn, entry.as_slice())
-                        .map_err(StoreError::from_heed)?
-                        .is_some();
-                    if !present {
-                        findings.push(corrupt(VerifyCorruption::MissingDeterminant {
+                        .map_err(StoreError::from_heed)?;
+                    match present {
+                        None => findings.push(corrupt(VerifyCorruption::MissingDeterminant {
                             projection,
                             row,
-                        }));
+                        })),
+                        Some(home) if home != locator.home() => {
+                            findings.push(corrupt(VerifyCorruption::ForeignDeterminantHome {
+                                projection,
+                                row,
+                            }));
+                        }
+                        Some(_) => {}
                     }
                     Ok(())
                 },
             )?;
         }
     }
+
+    // Ordinal uniqueness is complete. Release its resident/spill ownership
+    // before index verification and full judgment consume the same budget.
+    drop(ordinals);
 
     // Pass 2: membership entries resolve back, fingerprint-verified.
     {
@@ -234,20 +282,26 @@ pub(crate) fn sweep(
             .map_err(StoreError::from_heed)?;
         for entry in range {
             work.step(1)?;
-            let (key, _) = entry.map_err(StoreError::from_heed)?;
-            if key.len() != keys::MEMBERSHIP_KEY_LEN {
+            let (key, value) = entry.map_err(StoreError::from_heed)?;
+            let Ok((relation, fp, row)) = inner.keys.decode_membership(key) else {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
                     what: "membership key width",
                 }));
                 continue;
+            };
+            if !value.is_empty() {
+                findings.push(corrupt(VerifyCorruption::MalformedKey {
+                    what: "membership value must be empty",
+                }));
             }
-            let relation = RelationId(u32::from_be_bytes(
-                key[1..5].try_into().expect("checked width"),
-            ));
-            let mut fp = [0u8; FP_LEN];
-            fp.copy_from_slice(&key[5..5 + FP_LEN]);
-            let row = keys::row_id_from_suffix(key, keys::MEMBERSHIP_KEY_LEN)?;
-            match rows::fetch_row(inner, txn, relation, row)? {
+            if inner.det.membership_projection(relation).is_some() {
+                findings.push(corrupt(VerifyCorruption::UnexpectedMembership {
+                    relation,
+                    row,
+                }));
+                continue;
+            }
+            match rows::fetch_row(inner, txn, relation, RowLocator::unclustered(row))? {
                 None => {
                     findings.push(corrupt(VerifyCorruption::DanglingMembership {
                         relation,
@@ -275,30 +329,10 @@ pub(crate) fn sweep(
             .map_err(StoreError::from_heed)?;
         for entry in range {
             work.step(1)?;
-            let (key, _) = entry.map_err(StoreError::from_heed)?;
-            if key.len() < keys::DETERMINANT_KEY_MIN_LEN
-                || key.first() != Some(&keys::TAG_DETERMINANT)
-            {
+            let (key, home) = entry.map_err(StoreError::from_heed)?;
+            let Ok((projection, stored_payload, row)) = inner.keys.decode_determinant(key) else {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
-                    what: "determinant key width",
-                }));
-                continue;
-            }
-            let Ok(projection) = keys::projection_of_determinant_key(key) else {
-                findings.push(corrupt(VerifyCorruption::MalformedKey {
-                    what: "determinant key width",
-                }));
-                continue;
-            };
-            let Ok(row) = keys::row_id_from_determinant_key(key) else {
-                findings.push(corrupt(VerifyCorruption::MalformedKey {
-                    what: "determinant key width",
-                }));
-                continue;
-            };
-            let Ok(stored_payload) = keys::payload_of_determinant_key(key) else {
-                findings.push(corrupt(VerifyCorruption::MalformedKey {
-                    what: "determinant routing",
+                    what: "determinant key shape",
                 }));
                 continue;
             };
@@ -308,7 +342,22 @@ pub(crate) fn sweep(
                 }));
                 continue;
             };
-            let Some(row_bytes) = rows::fetch_row(inner, txn, compiled.relation, row)? else {
+            if inner.det.is_home(projection) {
+                findings.push(corrupt(VerifyCorruption::UnexpectedHomeDeterminant {
+                    projection,
+                    row,
+                }));
+                continue;
+            }
+            if home.len() != inner.det.home_width(compiled.relation) {
+                findings.push(corrupt(VerifyCorruption::ForeignDeterminantHome {
+                    projection,
+                    row,
+                }));
+                continue;
+            }
+            let locator = RowLocator::new(row, home)?;
+            let Some(row_bytes) = rows::fetch_row(inner, txn, compiled.relation, locator)? else {
                 findings.push(corrupt(VerifyCorruption::DanglingDeterminant {
                     projection,
                     row,
@@ -329,15 +378,21 @@ pub(crate) fn sweep(
                     // The row pass already convicted the malformed row.
                 }
                 Ok(decoded) => {
+                    if let Some(selected) = inner.det.membership_projection(compiled.relation) {
+                        let values = selected.scalar_values(decoded.values());
+                        let expected_home =
+                            super::det_index::determinant_bytes(selected, &values, work)?;
+                        if home != expected_home.as_slice() {
+                            findings.push(corrupt(VerifyCorruption::ForeignDeterminantHome {
+                                projection,
+                                row,
+                            }));
+                        }
+                    }
                     let values = compiled.scalar_values(decoded.values());
                     let projected = super::det_index::determinant_bytes(compiled, &values, work)?;
                     let expected = rows::routing_for_projected(inner, projection, &projected)?;
-                    let tail = compiled.interval_tail_bytes(decoded.values());
-                    let mut expected_payload = expected;
-                    if let Some(tail) = tail {
-                        expected_payload.extend_from_slice(&tail);
-                    }
-                    if stored_payload != expected_payload.as_slice() {
+                    if stored_payload != expected.as_slice() {
                         findings.push(corrupt(VerifyCorruption::ForeignDeterminant {
                             projection,
                             row,
@@ -512,6 +567,12 @@ pub(crate) fn sweep(
         // The attachment key itself is fixed-width; presence is host policy.
     }
 
+    // Structural faults can make scans undefined (wrong route widths,
+    // malformed rows, duplicate logical ranks). Return those findings
+    // rather than losing them to a subsequent judgment decode error.
+    if !judgment_safe {
+        return Ok(findings);
+    }
     // Pass 5: the complete production judgment over the committed state.
     let facts = SnapshotFacts {
         snapshot,
@@ -536,6 +597,7 @@ pub(crate) fn sweep(
         }
         Err(JudgeError::Work(error)) => return Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => return Err(error),
+        Err(JudgeError::Allocation) => return Err(StoreError::Allocation),
         Err(JudgeError::Compile(error)) => return Err(StoreError::Compile(error)),
         Err(JudgeError::UndefinedDuration { statement }) => {
             return Err(StoreError::JudgeRefused {
@@ -558,6 +620,15 @@ const fn corrupt(finding: VerifyCorruption) -> VerifyFinding {
     VerifyFinding::Corruption(finding)
 }
 
+fn scratch_error(error: crate::error::Error) -> StoreError {
+    match error {
+        crate::error::Error::Store(error) => *error,
+        crate::error::Error::Io(error) => StoreError::Io(error),
+        crate::error::Error::Lmdb(error) => StoreError::Lmdb(error),
+        _ => StoreError::Lmdb(crate::error::LmdbFailure::Decoding),
+    }
+}
+
 /// The committed snapshot presented as candidate facts for the global
 /// re-judgment. Closed relations load from the schema inside the judge;
 /// this adapter is only asked for ordinary relations.
@@ -575,6 +646,14 @@ impl CandidateFacts for SnapshotFacts<'_> {
         relation: RelationId,
         visit: &mut dyn FnMut(&[crate::Value]) -> Result<bool, Self::Error>,
     ) -> Result<(), Self::Error> {
+        self.visit_ranked_rows(relation, &mut |_, row| visit(row))
+    }
+
+    fn visit_ranked_rows(
+        &self,
+        relation: RelationId,
+        visit: RankedRowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
         let Some(view) = self.schema.relation_checked(relation) else {
             // Unknown relations were already reported as corruption; the
             // judge only asks for sealed relations, so this is unreachable
@@ -585,12 +664,314 @@ impl CandidateFacts for SnapshotFacts<'_> {
         };
         let fields = view.fields();
         for entry in self.snapshot.rows(relation)? {
-            let (_, bytes) = entry?;
+            let (id, bytes) = entry?;
             let decoded = crate::canonical::decode(fields, bytes, self.work)?;
-            if !visit(decoded.values())? {
+            if !visit(id.id.0, decoded.values())? {
                 break;
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::schema::ValidateDescriptor as _;
+    use crate::storage::store::judge_bridge::UnindexedRows;
+    use crate::storage::store::tests::{
+        NOTE, change_set, create_default, note, schema, store_dir, work,
+    };
+
+    #[test]
+    fn scalar_home_refuses_redundant_indexes_without_requiring_them() {
+        let schema = schema();
+        let work = work();
+        let (_dir, path) = store_dir("verify-membership-elision");
+        let store = create_default(&path);
+        let changes = change_set(&schema, &[(NOTE, note(7, "seven"))], &[]);
+        store
+            .writer(&work)
+            .unwrap()
+            .ingest(&changes, &UnindexedRows)
+            .unwrap();
+        let (id, fingerprint, determinant) = {
+            let snapshot = store.snapshot(&work).unwrap();
+            assert!(sweep(&snapshot, &schema, &work).unwrap().is_empty());
+            let (id, bytes) = snapshot.rows(NOTE).unwrap().next().unwrap().unwrap();
+            let fingerprint = store.inner.fingerprinter.row(NOTE, bytes);
+            let projection = store.inner.det.membership_projection(NOTE).unwrap();
+            let mut key = None;
+            let mut scratch = crate::canonical::DecodeScratch::new(&work);
+            store
+                .inner
+                .det
+                .emit_row(NOTE, bytes, &mut scratch, &mut |p, route| {
+                    if p == projection.id {
+                        key = Some(store.inner.keys.determinant_key(p, route, id.id)?.to_vec());
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            (id, fingerprint, key.unwrap())
+        };
+        {
+            let mut txn = store.gated_write_txn(&work).unwrap();
+            assert!(
+                store
+                    .inner
+                    .data
+                    .get(&txn.txn, &determinant)
+                    .unwrap()
+                    .is_none()
+            );
+            store
+                .inner
+                .data
+                .put(&mut txn.txn, &determinant, id.home())
+                .unwrap();
+            let redundant = store
+                .inner
+                .keys
+                .membership_key(NOTE, &fingerprint, id.id)
+                .unwrap();
+            store
+                .inner
+                .data
+                .put(&mut txn.txn, &redundant, b"not-empty")
+                .unwrap();
+            txn.commit().unwrap();
+        }
+        let snapshot = store.snapshot(&work).unwrap();
+        let findings = sweep(&snapshot, &schema, &work).unwrap();
+        assert!(findings.contains(&corrupt(VerifyCorruption::MalformedKey {
+            what: "membership value must be empty",
+        })));
+        assert!(
+            findings.contains(&corrupt(VerifyCorruption::UnexpectedHomeDeterminant {
+                projection: store.inner.det.membership_projection(NOTE).unwrap().id,
+                row: id.id,
+            }))
+        );
+        assert!(
+            findings.contains(&corrupt(VerifyCorruption::UnexpectedMembership {
+                relation: NOTE,
+                row: id.id,
+            }))
+        );
+        assert!(!findings.iter().any(|finding| matches!(
+            finding,
+            VerifyFinding::Corruption(VerifyCorruption::MissingMembership { .. })
+        )));
+    }
+
+    #[test]
+    fn verifier_ranked_rows_keep_retained_row_ids_after_deletion() {
+        let schema = schema();
+        let work = work();
+        let (_dir, path) = store_dir("verifier-ranked-rows");
+        let store = create_default(&path);
+        let changes = change_set(
+            &schema,
+            &[
+                (NOTE, note(1, "one")),
+                (NOTE, note(2, "two")),
+                (NOTE, note(3, "three")),
+            ],
+            &[],
+        );
+        store
+            .writer(&work)
+            .unwrap()
+            .ingest(&changes, &UnindexedRows)
+            .unwrap();
+        let remove = change_set(&schema, &[], &[(NOTE, note(1, "one"))]);
+        store
+            .writer(&work)
+            .unwrap()
+            .ingest(&remove, &UnindexedRows)
+            .unwrap();
+        let snapshot = store.snapshot(&work).unwrap();
+        let expected: Vec<_> = snapshot
+            .rows(NOTE)
+            .unwrap()
+            .map(|entry| entry.unwrap().0.id.0)
+            .collect();
+        let facts = SnapshotFacts {
+            snapshot: &snapshot,
+            schema: &schema,
+            work: &work,
+        };
+        let mut ranks = Vec::new();
+        facts
+            .visit_ranked_rows(NOTE, &mut |rank, row| {
+                assert_ne!(row[0], crate::Value::U64(1));
+                ranks.push(rank);
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(ranks, expected);
+        assert_eq!(ranks.len(), 2);
+        let mut visited = 0;
+        facts
+            .visit_ranked_rows(NOTE, &mut |_, _| {
+                visited += 1;
+                Ok(false)
+            })
+            .unwrap();
+        assert_eq!(visited, 1);
+        assert_eq!(
+            facts.visit_ranked_rows(NOTE, &mut |_, _| Err(StoreError::ForeignSchema)),
+            Err(StoreError::ForeignSchema)
+        );
+    }
+
+    #[test]
+    fn row_home_corruption_and_duplicate_ordinals_are_independently_detected() {
+        for (case, home, keep_original) in [
+            ("wrong-home", 8u64.to_be_bytes().to_vec(), false),
+            ("wrong-width", vec![7], false),
+            ("duplicate-rank", 8u64.to_be_bytes().to_vec(), true),
+        ] {
+            let schema = schema();
+            let work = work();
+            let (_dir, path) = store_dir(case);
+            let store = create_default(&path);
+            store
+                .writer(&work)
+                .unwrap()
+                .ingest(
+                    &change_set(&schema, &[(NOTE, note(7, "seven"))], &[]),
+                    &UnindexedRows,
+                )
+                .unwrap();
+            let (locator, bytes) = {
+                let snapshot = store.snapshot(&work).unwrap();
+                assert!(sweep(&snapshot, &schema, &work).unwrap().is_empty());
+                let (locator, bytes) = snapshot.rows(NOTE).unwrap().next().unwrap().unwrap();
+                (locator, bytes.to_vec())
+            };
+            {
+                let mut txn = store.gated_write_txn(&work).unwrap();
+                if !keep_original {
+                    let old = store.inner.keys.row_key(NOTE, locator).unwrap();
+                    assert!(store.inner.data.delete(&mut txn.txn, &old).unwrap());
+                }
+                let altered = RowLocator::new(locator.id, &home).unwrap();
+                let key = store.inner.keys.row_key(NOTE, altered).unwrap();
+                store.inner.data.put(&mut txn.txn, &key, &bytes).unwrap();
+                txn.commit().unwrap();
+            }
+            let snapshot = store.snapshot(&work).unwrap();
+            let findings = sweep(&snapshot, &schema, &work).unwrap();
+            let expected = if keep_original {
+                VerifyCorruption::DuplicateRowId {
+                    relation: NOTE,
+                    row: locator.id,
+                }
+            } else if home.len() != 8 {
+                VerifyCorruption::MalformedKey {
+                    what: "row home width",
+                }
+            } else {
+                VerifyCorruption::ForeignRowHome {
+                    relation: NOTE,
+                    row: locator.id,
+                }
+            };
+            assert!(
+                findings.contains(&corrupt(expected)),
+                "{case}: {findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn secondary_home_and_index_completeness_are_independently_verified() {
+        use bumbledb_theory::schema::{
+            FieldDescriptor, FieldId, RelationDescriptor, SchemaDescriptor, StatementDescriptor,
+            ValueType,
+        };
+        let schema = SchemaDescriptor {
+            relations: vec![RelationDescriptor {
+                name: "entry".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                    },
+                    FieldDescriptor {
+                        name: "label".into(),
+                        value_type: ValueType::String,
+                    },
+                ],
+                extension: None,
+            }],
+            statements: vec![
+                StatementDescriptor::Functionality {
+                    relation: NOTE,
+                    projection: Box::from([FieldId(0)]),
+                },
+                StatementDescriptor::Functionality {
+                    relation: NOTE,
+                    projection: Box::from([FieldId(1)]),
+                },
+            ],
+        }
+        .validate()
+        .unwrap();
+        for home in [None, Some(vec![]), Some(8u64.to_be_bytes().to_vec())] {
+            let work = work();
+            let (_dir, path) = store_dir("verify-secondary-home");
+            let (store, _) =
+                super::super::Store::create(&path, &schema, super::super::MapPolicy::default())
+                    .unwrap();
+            store
+                .writer(&work)
+                .unwrap()
+                .ingest(
+                    &change_set(&schema, &[(NOTE, note(7, "seven"))], &[]),
+                    &UnindexedRows,
+                )
+                .unwrap();
+            let (projection, row, key) = {
+                let snapshot = store.snapshot(&work).unwrap();
+                assert!(sweep(&snapshot, &schema, &work).unwrap().is_empty());
+                let mut range = store
+                    .inner
+                    .data
+                    .prefix_iter(snapshot.read_txn(), &[keys::TAG_DETERMINANT])
+                    .unwrap();
+                let (key, value) = range.next().unwrap().unwrap();
+                assert_eq!(value, 7u64.to_be_bytes());
+                let (projection, _, row) = store.inner.keys.decode_determinant(key).unwrap();
+                (projection, row, key.to_vec())
+            };
+            {
+                let mut txn = store.gated_write_txn(&work).unwrap();
+                if let Some(home) = &home {
+                    store.inner.data.put(&mut txn.txn, &key, home).unwrap();
+                } else {
+                    store.inner.data.delete(&mut txn.txn, &key).unwrap();
+                }
+                txn.commit().unwrap();
+            }
+            let snapshot = store.snapshot(&work).unwrap();
+            let findings = sweep(&snapshot, &schema, &work).unwrap();
+            let expected = if home.is_none() {
+                VerifyCorruption::MissingDeterminant { projection, row }
+            } else {
+                VerifyCorruption::ForeignDeterminantHome { projection, row }
+            };
+            assert!(findings.contains(&corrupt(expected)), "{findings:?}");
+            if home.as_ref().is_some_and(|home| home.len() == 8) {
+                assert!(
+                    findings.contains(&corrupt(VerifyCorruption::DanglingDeterminant {
+                        projection,
+                        row
+                    }))
+                );
+            }
+        }
     }
 }

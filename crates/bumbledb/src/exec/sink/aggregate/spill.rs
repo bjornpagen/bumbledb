@@ -375,10 +375,6 @@ impl AggregateSink {
             .as_ref()
             .expect("group spill is reached only under a budget");
         if self.spill.is_none() {
-            crate::obs::event(
-                crate::obs::names::SCRATCH_SPILL,
-                crate::obs::TraceArgs::Count(self.groups.len() as u64),
-            );
             let mut table = ScratchRelation::new(&budget.work, 0);
             let pack_wide_mode = matches!(&self.group_state, GroupState::Pack { .. })
                 && pack_requires_wide(self.key_scratch.len());

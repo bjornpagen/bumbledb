@@ -9,13 +9,17 @@
 //! map membership and rotates the current generation; live owners keep
 //! exact old meanings and their charges.
 //!
-//! Invalidation is keyed by (relation, relation change version): the store
+//! Reuse requires both the requested resolver owner and
+//! (relation, relation change version): the store
 //! advances a relation's version exactly when a committed transaction
 //! changed that relation's rows, so a write to relation A never invalidates
 //! relation B's image, and a host-record/attachment-only generation bump
-//! invalidates nothing (PERF-001 / APP-MUTATE — audit-core #1).
+//! invalidates nothing (PERF-001 / APP-MUTATE — audit-core #1). Rotation
+//! detaches ordinary and closed images alike. Closed rows cannot contain
+//! text, but their shared generation handle must still match the execution
+//! owner and must not permanently retain a retired resolver allocation.
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use crate::image::RelationImage;
 #[cfg(test)]
@@ -51,14 +55,14 @@ struct VersionInner {
 }
 
 pub(crate) enum RelationSlot {
-    Closed(OnceLock<Arc<RelationImage>>),
+    Closed(Mutex<Option<Arc<RelationImage>>>),
     Ordinary(VersionCache),
 }
 
 impl RelationSlot {
     pub(crate) fn for_store(body: &RelationBody) -> Self {
         match body {
-            RelationBody::Closed { .. } => Self::Closed(OnceLock::new()),
+            RelationBody::Closed { .. } => Self::Closed(Mutex::new(None)),
             RelationBody::Ordinary => Self::Ordinary(VersionCache::new()),
         }
     }
@@ -99,6 +103,20 @@ impl ImageCache {
         &self.cache
     }
 
+    /// Direct test evidence of cache membership, without event recording.
+    #[cfg(test)]
+    pub(crate) fn image_count(&self) -> usize {
+        self.slots
+            .iter()
+            .map(|slot| match slot {
+                RelationSlot::Ordinary(cache) => cache.lock().map.len(),
+                RelationSlot::Closed(slot) => {
+                    usize::from(slot.lock().expect("cache mutex").is_some())
+                }
+            })
+            .sum()
+    }
+
     /// Acquire the current generation. Every token-bearing consumer holds
     /// this handle (directly or through its image) for the execution.
     #[must_use]
@@ -127,20 +145,25 @@ impl ImageCache {
         usize::try_from(self.cache.used()).unwrap_or(usize::MAX)
     }
 
-    /// Detach version-keyed map entries and rotate the current generation.
+    /// Rotate the current generation and detach all cached image entries.
     /// Live image / handle owners keep their resolver and slab charge.
     /// The cache's previous current handle is dropped here so idle
     /// generations are not preserved forever.
     pub fn trim(&self) {
-        self.detach_map_entries();
+        // Rotate first: a builder holding an old resolver cannot publish
+        // after detachment. Publication checks the current owner while
+        // holding its slot lock, which detachment must then acquire.
         let _ = self.protocol.rotate(&self.cache);
+        self.detach_map_entries();
     }
 
     fn detach_map_entries(&self) {
         for slot in &self.slots {
-            if let RelationSlot::Ordinary(cache) = slot {
-                let mut inner = cache.lock();
-                inner.map.clear();
+            match slot {
+                RelationSlot::Ordinary(cache) => cache.lock().map.clear(),
+                RelationSlot::Closed(slot) => {
+                    *slot.lock().expect("closed cache mutex") = None;
+                }
             }
         }
     }

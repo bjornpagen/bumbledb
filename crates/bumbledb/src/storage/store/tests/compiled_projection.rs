@@ -3,9 +3,69 @@
 use super::*;
 use crate::schema::compiled::{CompiledTheory, KeyEncoding};
 use crate::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, StatementDescriptor};
+use crate::storage::store::RowId;
 use crate::storage::store::det_index::determinant_bytes;
-use crate::storage::store::keys::{DETERMINANT_KEY_MIN_LEN, TAG_DETERMINANT};
+use crate::storage::store::keys::TAG_DETERMINANT;
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
+
+#[test]
+fn noninterned_or_foreign_relation_projection_refuses_and_rolls_back() {
+    struct InvalidSecond {
+        projection: ProjectionId,
+        calls: std::cell::Cell<usize>,
+    }
+    impl RowIndexer for InvalidSecond {
+        fn index_row(
+            &self,
+            _relation: RelationId,
+            _row: &[u8],
+            _work: &WorkContext,
+            emit: super::super::ProjectionEmitter<'_>,
+        ) -> StoreResult<()> {
+            self.calls.set(self.calls.get() + 1);
+            if self.calls.get() == 2 {
+                emit(self.projection, &0u64.to_be_bytes())?;
+            }
+            Ok(())
+        }
+    }
+    let (_dir, path) = store_dir("projection-refusal");
+    let store = create_default(&path);
+    for (projection, relation, second) in [
+        (ProjectionId(1), NOTE, note(2, "second")),
+        (ProjectionId(256), NOTE, note(2, "second")),
+        (ProjectionId(u16::MAX), NOTE, note(2, "second")),
+        (NOTE_KEY, TAG, vec![Value::String("tag".into())]),
+    ] {
+        let context = work();
+        let mut owner = store.writer(&context).expect("writer");
+        let changes = change_set(
+            &schema(),
+            &[(NOTE, note(1, "first")), (relation, second)],
+            &[],
+        );
+        let indexer = InvalidSecond {
+            projection,
+            calls: std::cell::Cell::new(0),
+        };
+        assert!(matches!(
+            owner.prepare(&changes, &indexer, &AdmitAll),
+            Err(StoreError::ForeignSchema)
+        ));
+        assert_eq!(indexer.calls.get(), 2, "a prior row was already applied");
+        drop(owner);
+        let snapshot = store.snapshot(&context).expect("snapshot");
+        assert_eq!(snapshot.row_count(NOTE).expect("count"), 0);
+        assert_eq!(snapshot.row_count(TAG).expect("count"), 0);
+        assert!(
+            store
+                .inner
+                .data
+                .is_empty(snapshot.read_txn())
+                .expect("all indexes rolled back")
+        );
+    }
+}
 
 #[test]
 fn u64_key_uses_exact_bounded_routing_bytes() {
@@ -43,8 +103,16 @@ fn u64_key_uses_exact_bounded_routing_bytes() {
     ));
     let projected = determinant_bytes(proj, &[Value::U64(42)], &work()).expect("project");
     assert_eq!(projected.len(), 8, "exact u64 routing is 8 bytes");
-    let key_len = 1 + 2 + projected.len() + 8;
-    assert_eq!(key_len, 19, "raw determinant key matches chapter 40 table");
+    let key = store
+        .inner
+        .keys
+        .determinant_key(proj.id, &projected, RowId(7))
+        .expect("key");
+    assert_eq!(
+        key.len(),
+        snapshot.physical_key_widths().determinant_overhead + 8
+    );
+    assert_eq!(key.len(), 18, "one-byte schema projection ordinal");
 }
 
 #[test]
@@ -92,8 +160,13 @@ fn text_key_uses_fingerprint_routing() {
     .expect("route");
     assert_eq!(routing.len(), 16, "16-byte fingerprint routing");
     assert_eq!(
-        1 + 2 + routing.len() + 8,
-        DETERMINANT_KEY_MIN_LEN + 16,
+        store
+            .inner
+            .keys
+            .determinant_key(proj.id, &routing, RowId(1))
+            .expect("key")
+            .len(),
+        store.inner.keys.widths().determinant_overhead + 16,
         "minimum key framing plus fingerprint routing"
     );
     assert_eq!(TAG_DETERMINANT, 0x03);
@@ -123,9 +196,9 @@ fn compiled_theory_table_matches_chapter_40() {
     let proj = theory
         .projection(crate::schema::ProjectionId(0))
         .expect("one");
-    // Row 13 + membership 29 + determinant exact u64 19 = 61 raw key bytes
-    // (one fact, one key) per chapter 40 worked example structure.
-    let det_key = 1 + 2 + proj.encoding.routing_width() + 8;
+    // The compiled schema retains a conservative framing bound; the store
+    // codec chooses the actual schema-fixed ordinal width at open.
+    let det_key = proj.complete_key_width();
     assert_eq!(det_key, 19);
 }
 

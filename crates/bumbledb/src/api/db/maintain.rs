@@ -5,14 +5,15 @@ use std::path::Path;
 use super::Db;
 use crate::error::{Error, Result};
 use crate::storage::GenerationId;
-use crate::storage::store::{CloseReport, MapPolicy, Store, UnindexedRows};
+use crate::storage::store::{CloseReport, MapPolicy, Store};
 use crate::work::WorkContext;
 
 impl<S> Db<S> {
     /// Compact into a fresh store at `dest` (which must not exist) under an
     /// explicit operation allowance: one coherent source snapshot supplies
-    /// rows, host records, attachment and generation together (ENG-003 by
-    /// construction), and the destination adopts them in one durable
+    /// rows, indexes, host records, attachment and generation together. The
+    /// destination packs the existing physical entries in key order, without
+    /// decoding rows or rebuilding indexes, in one durable
     /// transaction — a crash leaves `dest` absent, empty-staged, or complete.
     /// # Errors
     /// `DestinationExists`, storage failure, or stopped work.
@@ -26,13 +27,9 @@ impl<S> Db<S> {
         let (target, fresh) =
             Store::create(dest, self.schema.as_ref(), policy).map_err(Error::from_store)?;
         target
-            .adopt_snapshot(&snapshot, fresh, &UnindexedRows, &work)
+            .compact_snapshot(&snapshot, fresh, &work)
             .map_err(Error::from_store)?;
         drop(target);
-        crate::obs::event(
-            crate::obs::names::COMPACT_DURABLE,
-            crate::obs::TraceArgs::Count(1),
-        );
         Ok(())
     }
 

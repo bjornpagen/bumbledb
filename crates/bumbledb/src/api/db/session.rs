@@ -221,13 +221,10 @@ impl<S> ReadFrame<'_, S> {
     /// The bytes and application rows borrow the same committed snapshot.
     #[doc(hidden)]
     pub fn integration_host_record(&self, key: &[u8]) -> Result<Option<&[u8]>, HostSealError> {
-        self.owner
-            .snapshot
-            .host_record(key)
-            .map_err(|error| match error {
-                StoreError::HostKey(fault) => crate::storage::store::host::seal_error_of(fault),
-                other => HostSealError::Storage(Error::from_store(other)),
-            })
+        self.snapshot.host_record(key).map_err(|error| match error {
+            StoreError::HostKey(fault) => crate::storage::store::host::seal_error_of(fault),
+            other => HostSealError::Storage(Error::from_store(other)),
+        })
     }
 
     /// Visit every committed host record whose key starts with `prefix`, in
@@ -249,13 +246,13 @@ impl<S> ReadFrame<'_, S> {
         prefix: &[u8],
         visit: &mut dyn FnMut(&[u8], &[u8]) -> Result<(), HostSealError>,
     ) -> Result<(), HostSealError> {
-        self.owner.snapshot.host_scan(prefix, self.work, visit)
+        self.snapshot.host_scan(prefix, self.work, visit)
     }
 
     /// # Errors
     /// Returns opaque host attachment bytes from this exact read snapshot.
     #[doc(hidden)]
     pub fn integration_host_attachment(&self) -> crate::Result<Option<&[u8]>> {
-        self.owner.snapshot.attachment().map_err(Error::from_store)
+        self.snapshot.attachment().map_err(Error::from_store)
     }
 }

@@ -65,15 +65,6 @@ pub fn markdown(seed: u64, rows: &[LawRow]) -> String {
          post-state fold certifies it).\n",
     );
 
-    if rows.iter().any(|row| row.flame.is_some()) {
-        let _ = writeln!(out, "\n## Flame summaries (per family, --trace)\n");
-        for row in rows {
-            if let Some(flame) = &row.flame {
-                let _ = writeln!(out, "### {} / {}\n", row.lane, row.family);
-                let _ = writeln!(out, "```text\n{flame}```\n");
-            }
-        }
-    }
     out
 }
 
@@ -94,10 +85,6 @@ fn push_row(out: &mut String, row: &LawRow) {
         row.ratio_p50, row.work
     );
     crate::lanes::push_ghz(out, Some(row.ghz));
-    if let Some(flame) = &row.flame {
-        out.push_str(",\"flame\":");
-        push_str_lit(out, flame);
-    }
     out.push('}');
 }
 

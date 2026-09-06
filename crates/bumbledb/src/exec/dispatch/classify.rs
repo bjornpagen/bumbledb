@@ -1,4 +1,4 @@
-use super::{KeyProbePlan, KeyProbeVar};
+use super::{KeyProbePart, KeyProbePlan, KeyProbeVar};
 use crate::image::view::{Const, FilterPredicate};
 use crate::ir::WordCmp;
 use crate::ir::normalize::NormalizedQuery;
@@ -67,7 +67,7 @@ pub fn classify(normalized: &NormalizedQuery, schema: &Schema) -> Option<KeyProb
         return None;
     }
     let kind = key_probe_candidate(relation_id, relation, schema, &value_of)?;
-    let key_fields: Vec<FieldId> = kind.key().iter().map(|(f, _)| *f).collect();
+    let key_fields: Vec<FieldId> = kind.key().iter().map(|part| part.field).collect();
 
     let mut slot = 0usize;
     let vars: Vec<KeyProbeVar> = occurrence
@@ -111,16 +111,15 @@ fn key_probe_candidate(
                 if compiled.projection.iter().all(|f| value_of(*f).is_some()) {
                     return Some(super::KeyProbeKind::Uniqueness {
                         statement: key.id,
-                        key: compiled
-                            .projection
-                            .iter()
-                            .map(|f| (*f, value_of(*f).expect("checked above")))
-                            .collect(),
+                        projection,
+                        key: key_parts(&compiled.projection, relation, value_of),
                     });
                 }
             }
             Some(
-                DistinctnessWitness::FullRowEquality | DistinctnessWitness::ExistenceOnly { .. },
+                DistinctnessWitness::FullRowEquality
+                | DistinctnessWitness::IntervalKeyUnique { .. }
+                | DistinctnessWitness::ExistenceOnly { .. },
             )
             | None => {}
         }
@@ -132,11 +131,33 @@ fn key_probe_candidate(
     all.iter()
         .all(|f| value_of(*f).is_some())
         .then(|| super::KeyProbeKind::Membership {
-            key: all
-                .iter()
-                .map(|f| (*f, value_of(*f).expect("checked above")))
-                .collect(),
+            key: key_parts(&all, relation, value_of),
         })
+}
+
+fn key_parts(
+    fields: &[FieldId],
+    relation: &Relation,
+    value_of: &impl Fn(FieldId) -> Option<Const>,
+) -> Vec<KeyProbePart> {
+    let mut end = 0u16;
+    fields
+        .iter()
+        .map(|&field| {
+            let start = end;
+            let width =
+                crate::ir::normalize::SlotWidth::of(&relation.field(field).value_type).slots();
+            end = end
+                .checked_add(u16::try_from(width).expect("field word width fits u16"))
+                .expect("schema word count fits u16");
+            KeyProbePart {
+                field,
+                start,
+                end,
+                value: value_of(field).expect("all key fields bound"),
+            }
+        })
+        .collect()
 }
 
 fn unconsumed_filters(

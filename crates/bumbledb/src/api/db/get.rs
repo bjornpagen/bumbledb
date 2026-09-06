@@ -115,22 +115,17 @@ pub(super) fn find_snapshot_row<'s>(
     let fields = schema.relation(relation).fields();
     let mut hit = None;
     snapshot
-        .visit_projection(key.id, &projected, work, &mut |id, bytes| {
+        .visit_projection(key.id, &projected, work, &mut |_id, bytes| {
             work.step(1)?;
             let decoded = crate::canonical::decode(fields, bytes, work)?;
             if projection_matches(decoded.values(), projection, key_values) {
-                hit = Some(id);
+                hit = Some(bytes);
                 return Ok(false);
             }
             Ok(true)
         })
         .map_err(crate::error::Error::from_store)?;
-    match hit {
-        Some(id) => snapshot
-            .fetch(relation, id)
-            .map_err(crate::error::Error::from_store),
-        None => Ok(None),
-    }
+    Ok(hit)
 }
 
 /// The bounded reference walk — the exact oracle for [`find_snapshot_row`]

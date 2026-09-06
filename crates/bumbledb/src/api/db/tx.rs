@@ -16,13 +16,13 @@ use std::collections::btree_map::Entry;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::canonical::CanonicalRow;
+use crate::canonical::{CanonicalRow, RowError};
 use crate::changes::ChangeKind;
 use crate::error::{DynIdError, Error, FactShapeError, Mismatch, Result};
 use crate::ir::Value;
 use crate::schema::Schema;
 use crate::storage::store::{OwnedSnapshot, StoreError};
-use crate::work::WorkContext;
+use crate::work::{ByteKind, ByteReservation, WorkContext};
 use bumbledb_theory::schema::{FieldId, RelationId, StatementId};
 
 use super::closed::ClosedRows;
@@ -37,6 +37,156 @@ pub(super) enum TxPhase {
     Poisoned(Box<Error>),
 }
 
+struct PendingRelation {
+    rows: BTreeMap<Box<[u8]>, ChangeKind>,
+    metadata: ByteReservation,
+    payload: ByteReservation,
+}
+
+impl PendingRelation {
+    fn apply(
+        &mut self,
+        row: CanonicalRow,
+        want: ChangeKind,
+        parent_contains: impl FnOnce(&[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        let count = self.rows.len();
+        let retained = self.payload.bytes();
+        let incoming = row.len() as u64;
+        // Adopt before publishing a key. Every branch below drops rejected
+        // or removed keys before refunding their aggregate payload charge.
+        let row = row.transfer_to(&mut self.payload);
+        let mut final_payload = retained;
+        let outcome = (|| match self.rows.entry(row) {
+            Entry::Occupied(entry) => {
+                if *entry.get() == want {
+                    Ok(false)
+                } else {
+                    let (removed, _) = entry.remove_entry();
+                    final_payload -= removed.len() as u64;
+                    Ok(true)
+                }
+            }
+            Entry::Vacant(entry) => {
+                if parent_contains(entry.key())? == (want == ChangeKind::Add) {
+                    Ok(false)
+                } else {
+                    self.metadata
+                        .resize(tree_bytes::<Box<[u8]>, ChangeKind>(count + 1)?)
+                        .map_err(store_work)?;
+                    entry.insert(want);
+                    final_payload += incoming;
+                    Ok(true)
+                }
+            }
+        })();
+        // No early error return may skip this refund. Entry and any rejected
+        // input have already dropped; only retained map keys remain charged.
+        self.payload.resize(final_payload).map_err(store_work)?;
+        if !self.rows.is_empty() {
+            self.metadata
+                .resize(tree_bytes::<Box<[u8]>, ChangeKind>(self.rows.len())?)
+                .map_err(store_work)?;
+        }
+        outcome
+    }
+}
+
+/// Rows and tree ownership travel together through transaction sealing.
+#[derive(Default)]
+pub(super) struct PendingDelta {
+    relations: BTreeMap<RelationId, PendingRelation>,
+    metadata: Option<ByteReservation>,
+}
+
+impl PendingDelta {
+    pub(super) fn seal(self, schema: &Schema, work: &WorkContext) -> Result<crate::ChangeSet> {
+        crate::ChangeSet::from_ordered_records(
+            schema,
+            self.relations.iter().flat_map(|(relation, pending)| {
+                pending
+                    .rows
+                    .iter()
+                    .map(move |(row, change)| crate::changes::ChangeRef {
+                        relation: *relation,
+                        kind: *change,
+                        row,
+                    })
+            }),
+            work,
+        )
+        .map_err(|error| Error::from_store(StoreError::Changes(error)))
+    }
+}
+
+/// Pinned Rust's `BTree` has eleven entries and twelve edges per node.
+/// The root holds at least one key; every other node at least five.
+/// Therefore a nonempty n-key tree has at most 1+(n-1)/5 nodes. Sixteen
+/// pointer words cover each internal node's edges, header and alignment.
+/// Charge this occupancy-derived bound before insertion and release only
+/// after deletion/rebalancing (an empty map must be dropped before zero).
+/// Recheck the constants when changing the pinned toolchain's `BTree`.
+fn tree_bytes<K, V>(entries: usize) -> Result<u64> {
+    let nodes = if entries == 0 {
+        0
+    } else {
+        1 + (entries - 1) / 5
+    };
+    let node = 11 * (std::mem::size_of::<K>() + std::mem::size_of::<V>())
+        + 16 * std::mem::size_of::<usize>();
+    nodes
+        .checked_mul(node)
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .ok_or_else(|| row_error(crate::canonical::RowError::LengthOverflow))
+}
+
+fn resize_tree_charge<K, V>(
+    charge: &mut Option<ByteReservation>,
+    entries: usize,
+    work: &WorkContext,
+) -> Result<()> {
+    let bytes = tree_bytes::<K, V>(entries)?;
+    if bytes == 0 {
+        *charge = None;
+    } else if let Some(charge) = charge {
+        charge.resize(bytes).map_err(store_work)?;
+    } else {
+        *charge = Some(work.reserve(ByteKind::Working, bytes).map_err(store_work)?);
+    }
+    Ok(())
+}
+
+#[derive(Default)]
+struct RowBatch {
+    rows: Vec<CanonicalRow>,
+    capacity_charge: Option<ByteReservation>,
+}
+
+impl RowBatch {
+    fn push(&mut self, row: CanonicalRow, work: &WorkContext) -> Result<()> {
+        if self.rows.len() == self.rows.capacity() {
+            let capacity = self
+                .rows
+                .capacity()
+                .max(1)
+                .checked_mul(2)
+                .ok_or_else(|| row_error(crate::canonical::RowError::LengthOverflow))?;
+            let bytes = capacity
+                .checked_mul(std::mem::size_of::<CanonicalRow>())
+                .ok_or_else(|| row_error(crate::canonical::RowError::LengthOverflow))?;
+            let charge = work
+                .reserve(ByteKind::Working, bytes as u64)
+                .map_err(store_work)?;
+            self.rows
+                .try_reserve_exact(capacity - self.rows.len())
+                .map_err(|_| row_error(crate::canonical::RowError::Allocation))?;
+            self.capacity_charge = Some(charge);
+        }
+        self.rows.push(row);
+        Ok(())
+    }
+}
+
 /// One write transaction over the committed parent. `!Send`/`!Sync`
 /// (borrows the parent snapshot, which is `!Sync`); carries the handle's
 /// schema typestate `S`. No prepared-query or [`super::ReadFrame`] is
@@ -46,7 +196,7 @@ pub struct WriteTx<'a, S> {
     closed: &'a ClosedRows,
     parent: &'a OwnedSnapshot,
     work: &'a WorkContext,
-    pending: BTreeMap<(RelationId, Box<[u8]>), ChangeKind>,
+    pending: PendingDelta,
     phase: TxPhase,
     marker: PhantomData<fn() -> S>,
 }
@@ -63,11 +213,45 @@ pub(super) fn encode_values(
     values: &[Value],
     work: &WorkContext,
 ) -> Result<Vec<u8>> {
+    Ok(encode_owned_values(schema, relation, values, work)?
+        .as_bytes()
+        .to_vec())
+}
+
+fn encode_owned_values(
+    schema: &Schema,
+    relation: RelationId,
+    values: &[Value],
+    work: &WorkContext,
+) -> Result<CanonicalRow> {
     let Some(view) = schema.relation_checked(relation) else {
         return Err(DynIdError::UnknownRelation { relation }.into());
     };
-    let row = CanonicalRow::encode(view.fields(), values, work).map_err(row_error)?;
-    Ok(row.as_bytes().to_vec())
+    CanonicalRow::encode(view.fields(), values, work).map_err(row_error)
+}
+
+fn dynamic_row_error(
+    relation: RelationId,
+    witnessed: usize,
+    required: usize,
+    error: RowError,
+) -> Error {
+    match error {
+        RowError::Arity => FactShapeError::ArityMismatch {
+            relation,
+            mismatch: Mismatch {
+                witnessed,
+                required,
+            },
+        }
+        .into(),
+        RowError::Type { field } => FactShapeError::TypeMismatch {
+            relation,
+            field: FieldId(u16::try_from(field).expect("sealed schema fields fit u16")),
+        }
+        .into(),
+        error => row_error(error),
+    }
 }
 
 impl<'a, S> WriteTx<'a, S> {
@@ -82,7 +266,7 @@ impl<'a, S> WriteTx<'a, S> {
             closed,
             parent,
             work,
-            pending: BTreeMap::new(),
+            pending: PendingDelta::default(),
             phase: TxPhase::Clean,
             marker: PhantomData,
         }
@@ -98,7 +282,7 @@ impl<'a, S> WriteTx<'a, S> {
     /// The net normalized final-set effect this transaction proposes:
     /// exactly the rows whose presence differs from the parent, canonical
     /// order, at most one action per row.
-    pub(super) fn into_pending(self) -> BTreeMap<(RelationId, Box<[u8]>), ChangeKind> {
+    pub(super) fn into_pending(self) -> PendingDelta {
         self.pending
     }
 
@@ -141,54 +325,76 @@ impl<'a, S> WriteTx<'a, S> {
 
     /// Final-state presence of one canonical row.
     fn present(&self, relation: RelationId, row: &[u8]) -> Result<bool> {
-        // A borrowed (RelationId, Box<[u8]>) lookup needs an owned key with
-        // BTreeMap's default borrowing; range over the exact key instead.
-        if let Some((_, kind)) = self
+        if let Some(change) = self
             .pending
-            .range((relation, row_key(row))..=(relation, row_key(row)))
-            .next()
+            .relations
+            .get(&relation)
+            .and_then(|pending| pending.rows.get(row))
         {
-            return Ok(*kind == ChangeKind::Add);
+            return Ok(*change == ChangeKind::Add);
         }
         self.parent_contains(relation, row)
     }
 
     /// Apply one net disposition. `true` exactly when the final-state view
     /// changed (recorded or cancelled a net disposition).
-    fn apply(&mut self, relation: RelationId, row: Vec<u8>, want: ChangeKind) -> Result<bool> {
+    fn apply(&mut self, relation: RelationId, row: CanonicalRow, want: ChangeKind) -> Result<bool> {
         self.work.step(1).map_err(store_work)?;
-        let in_parent = self.parent_contains(relation, &row)?;
-        let key = (relation, row.into_boxed_slice());
-        let changed = match self.pending.entry(key) {
-            Entry::Occupied(entry) => {
-                if *entry.get() == want {
+        let relation_count = self.pending.relations.len();
+        let changed = match self.pending.relations.entry(relation) {
+            Entry::Occupied(mut relation_entry) => {
+                let pending = relation_entry.get_mut();
+                let changed = pending.apply(row, want, |bytes| {
+                    self.parent
+                        .contains(relation, bytes, self.work)
+                        .map_err(Error::from_store)
+                })?;
+                if pending.rows.is_empty() {
+                    relation_entry.remove();
+                }
+                changed
+            }
+            Entry::Vacant(entry) => {
+                let in_parent = self
+                    .parent
+                    .contains(relation, row.as_bytes(), self.work)
+                    .map_err(Error::from_store)?;
+                if in_parent == (want == ChangeKind::Add) {
                     false
                 } else {
-                    // The opposite disposition exists; the requested action
-                    // returns the row to its parent state.
-                    entry.remove();
+                    let metadata = self
+                        .work
+                        .reserve(ByteKind::Working, tree_bytes::<Box<[u8]>, ChangeKind>(1)?)
+                        .map_err(store_work)?;
+                    let mut payload = self
+                        .work
+                        .reserve(ByteKind::Working, 0)
+                        .map_err(store_work)?;
+                    resize_tree_charge::<RelationId, PendingRelation>(
+                        &mut self.pending.metadata,
+                        relation_count + 1,
+                        self.work,
+                    )?;
+                    let mut rows = BTreeMap::new();
+                    rows.insert(row.transfer_to(&mut payload), want);
+                    entry.insert(PendingRelation {
+                        rows,
+                        metadata,
+                        payload,
+                    });
                     true
                 }
             }
-            Entry::Vacant(entry) => match want {
-                ChangeKind::Add => {
-                    if in_parent {
-                        false
-                    } else {
-                        entry.insert(ChangeKind::Add);
-                        true
-                    }
-                }
-                ChangeKind::Remove => {
-                    if in_parent {
-                        entry.insert(ChangeKind::Remove);
-                        true
-                    } else {
-                        false
-                    }
-                }
-            },
         };
+        if self.pending.relations.is_empty() {
+            // BTreeMap may retain its empty root until the map is dropped.
+            self.pending.relations = BTreeMap::new();
+        }
+        resize_tree_charge::<RelationId, PendingRelation>(
+            &mut self.pending.metadata,
+            self.pending.relations.len(),
+            self.work,
+        )?;
         if changed {
             self.note_entered();
         }
@@ -200,12 +406,12 @@ impl<'a, S> WriteTx<'a, S> {
     fn apply_rows(
         &mut self,
         relation: RelationId,
-        rows: Vec<Vec<u8>>,
+        rows: RowBatch,
         want: ChangeKind,
     ) -> Result<MutationReport> {
-        let submitted = rows.len() as u64;
+        let submitted = rows.rows.len() as u64;
         let mut changed = 0u64;
-        for row in rows {
+        for row in rows.rows {
             match self.apply(relation, row, want) {
                 Ok(true) => changed += 1,
                 Ok(false) => {}
@@ -219,15 +425,15 @@ impl<'a, S> WriteTx<'a, S> {
         &mut self,
         relation: RelationId,
         facts: impl IntoIterator<Item = T>,
-        mut encode: impl FnMut(&Self, T, &mut Vec<Value>) -> Result<Vec<u8>>,
-    ) -> Result<Vec<Vec<u8>>> {
+        mut encode: impl FnMut(&Self, T, &mut Vec<Value>) -> Result<CanonicalRow>,
+    ) -> Result<RowBatch> {
         self.refuse_poisoned()?;
         self.refuse_closed(relation)?;
         let mut values = Vec::new();
-        let mut rows = Vec::new();
+        let mut rows = RowBatch::default();
         for fact in facts {
-            match encode(self, fact, &mut values) {
-                Ok(row) => rows.push(row),
+            match encode(self, fact, &mut values).and_then(|row| rows.push(row, self.work)) {
+                Ok(()) => {}
                 Err(error) => return Err(self.poison(error)),
             }
         }
@@ -244,7 +450,7 @@ impl<'a, S> WriteTx<'a, S> {
         let rows = self.encode_collection(F::RELATION, facts, |tx, fact, values| {
             values.clear();
             fact.append_values(values)?;
-            encode_values(tx.schema.as_ref(), F::RELATION, values, tx.work)
+            encode_owned_values(tx.schema.as_ref(), F::RELATION, values, tx.work)
         })?;
         self.apply_rows(F::RELATION, rows, ChangeKind::Add)
     }
@@ -258,12 +464,15 @@ impl<'a, S> WriteTx<'a, S> {
         let rows = self.encode_collection(F::RELATION, facts, |tx, fact, values| {
             values.clear();
             fact.append_values(values)?;
-            encode_values(tx.schema.as_ref(), F::RELATION, values, tx.work)
+            encode_owned_values(tx.schema.as_ref(), F::RELATION, values, tx.work)
         })?;
         self.apply_rows(F::RELATION, rows, ChangeKind::Remove)
     }
 
     /// The whole collection is parsed before any row enters the delta.
+    /// Parsing consumes the operation's row/input allowance as it proceeds,
+    /// just like typed writes. A resource refusal may precede a later shape
+    /// refusal; either discards the whole collection without staging a prefix.
     /// # Errors
     /// As [`WriteTx::insert`], plus unknown-relation/arity/type refusals.
     pub fn insert_dyn(
@@ -273,13 +482,13 @@ impl<'a, S> WriteTx<'a, S> {
     ) -> Result<MutationReport> {
         // A shape refusal after an applied prefix poisons the transaction:
         // the collection boundary is part of the apply, not a free pre-check.
-        let Some(coll) = self
-            .accept_dyn(rel, facts)
+        let Some(rows) = self
+            .encode_dyn_collection(rel, facts)
             .map_err(|error| self.poison(error))?
         else {
             return Ok(MutationReport::EMPTY);
         };
-        self.apply_accepted(&coll, ChangeKind::Add)
+        self.apply_rows(rel, rows, ChangeKind::Add)
     }
 
     /// # Errors
@@ -289,13 +498,13 @@ impl<'a, S> WriteTx<'a, S> {
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
     ) -> Result<MutationReport> {
-        let Some(coll) = self
-            .accept_dyn(rel, facts)
+        let Some(rows) = self
+            .encode_dyn_collection(rel, facts)
             .map_err(|error| self.poison(error))?
         else {
             return Ok(MutationReport::EMPTY);
         };
-        self.apply_accepted(&coll, ChangeKind::Remove)
+        self.apply_rows(rel, rows, ChangeKind::Remove)
     }
 
     /// # Errors
@@ -312,25 +521,28 @@ impl<'a, S> WriteTx<'a, S> {
         self.apply_accepted(collection, ChangeKind::Remove)
     }
 
-    fn accept_dyn(
-        &self,
+    fn encode_dyn_collection(
+        &mut self,
         rel: RelationId,
         facts: impl IntoIterator<Item = impl AsRef<[Value]>>,
-    ) -> Result<Option<AcceptedCollection>> {
+    ) -> Result<Option<RowBatch>> {
         let mut rows = facts.into_iter().peekable();
         if rows.peek().is_none() {
             return Ok(None);
         }
         self.refuse_poisoned()?;
         self.refuse_closed(rel)?;
-        let Some(relation) = self.schema.relation_checked(rel) else {
+        let schema = Arc::clone(self.schema);
+        let Some(relation) = schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
-        Ok(Some(AcceptedCollection::from_value_rows(
-            rel,
-            relation.fields(),
-            rows,
-        )?))
+        let fields = relation.fields();
+        self.encode_collection(rel, rows, |tx, row, _values| {
+            let values = row.as_ref();
+            CanonicalRow::encode(fields, values, tx.work)
+                .map_err(|error| dynamic_row_error(rel, values.len(), fields.len(), error))
+        })
+        .map(Some)
     }
 
     fn apply_accepted(
@@ -380,11 +592,13 @@ impl<'a, S> WriteTx<'a, S> {
             }
         }
         let mut values = Vec::new();
-        let mut rows = Vec::with_capacity(usize::try_from(coll.rows()).unwrap_or(0));
+        let mut rows = RowBatch::default();
         for row in 0..coll.rows() {
             coll.row_values_into(row, &mut values);
-            match encode_values(schema.as_ref(), rel, &values, self.work) {
-                Ok(bytes) => rows.push(bytes),
+            match encode_owned_values(schema.as_ref(), rel, &values, self.work)
+                .and_then(|row| rows.push(row, self.work))
+            {
+                Ok(()) => {}
                 Err(error) => return Err(self.poison(error)),
             }
         }
@@ -412,7 +626,7 @@ impl<'a, S> WriteTx<'a, S> {
         if let Some(rows) = self.closed.get(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
-        let bytes = encode_values(self.schema.as_ref(), relation, values, self.work)?;
+        let bytes = encode_owned_values(self.schema.as_ref(), relation, values, self.work)?;
         self.present(relation, &bytes)
     }
 
@@ -557,12 +771,14 @@ impl<'a, S> WriteTx<'a, S> {
         work: &WorkContext,
     ) -> Result<Option<&[u8]>> {
         let fields = self.schema.relation(relation).fields();
-        let lower = (relation, row_key(&[][..]));
-        for ((rel, row), kind) in self.pending.range(lower..) {
-            if *rel != relation {
-                break;
-            }
-            if *kind != ChangeKind::Add {
+        for (row, change) in self
+            .pending
+            .relations
+            .get(&relation)
+            .into_iter()
+            .flat_map(|pending| pending.rows.iter())
+        {
+            if *change != ChangeKind::Add {
                 continue;
             }
             work.step(1).map_err(store_work)?;
@@ -587,11 +803,12 @@ impl<'a, S> WriteTx<'a, S> {
         else {
             return Ok(None);
         };
-        if let Some((_, kind)) = self
+        if let Some(change) = self
             .pending
-            .range((relation, row_key(row))..=(relation, row_key(row)))
-            .next()
-            && *kind == ChangeKind::Remove
+            .relations
+            .get(&relation)
+            .and_then(|pending| pending.rows.get(row))
+            && *change == ChangeKind::Remove
         {
             return Ok(None);
         }
@@ -603,32 +820,13 @@ fn store_work(error: crate::work::WorkError) -> Error {
     Error::from_store(StoreError::Work(error))
 }
 
-fn row_key(row: &[u8]) -> Box<[u8]> {
-    Box::from(row)
-}
-
-/// Serialize one net pending delta as the sealed `ChangeSet` wire and parse
-/// it back through the strict boundary — one normalization implementation,
-/// no second writer of the format.
+/// Seal the ordered net pending delta directly through the change set's
+/// checked writer, without allocating and re-parsing a temporary wire image.
 pub(super) fn change_set_of_pending(
     schema: &Schema,
     pending: &BTreeMap<(RelationId, Box<[u8]>), ChangeKind>,
     work: &WorkContext,
 ) -> Result<crate::ChangeSet> {
-    const MAGIC: &[u8; 8] = b"BDBCSET\0";
-    const VERSION: u16 = 1;
-    let identity = crate::schema::fingerprint::fingerprint(schema);
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(MAGIC);
-    bytes.extend_from_slice(&VERSION.to_be_bytes());
-    bytes.extend_from_slice(&identity.0);
-    bytes.extend_from_slice(&(pending.len() as u64).to_be_bytes());
-    for ((relation, row), kind) in pending {
-        bytes.push(u8::from(*kind == ChangeKind::Add));
-        bytes.extend_from_slice(&relation.0.to_be_bytes());
-        bytes.extend_from_slice(&(row.len() as u64).to_be_bytes());
-        bytes.extend_from_slice(row);
-    }
-    crate::ChangeSet::parse(schema, &bytes, work)
+    crate::ChangeSet::from_ordered_rows(schema, pending, work)
         .map_err(|error| Error::from_store(StoreError::Changes(error)))
 }

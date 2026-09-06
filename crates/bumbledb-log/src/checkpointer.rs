@@ -187,7 +187,8 @@ fn store_failure(error: bumbledb::store::StoreError) -> CheckpointError {
 
 /// Export one coherent logical stream from ONE owned store snapshot into
 /// `sink`: the store's canonical logical export of the facts (relation
-/// ascending, then tuple fingerprint, then full canonical bytes within a
+/// ascending, then its schema-selected scalar route or tuple fingerprint,
+/// then full canonical bytes within a
 /// collision bucket — a deterministic function of the logical state, in
 /// bounded memory; `OwnedSnapshot::export`), then keyed system records
 /// (`m` history, then `r` receipts, ascending — excluding rows at or below

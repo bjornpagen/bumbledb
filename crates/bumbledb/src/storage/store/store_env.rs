@@ -30,7 +30,7 @@ use super::format::{
     self, CoreStoreId, DATA_DB, EnvironmentId, FAMILY, K_FAMILY, K_GENERATION, K_LAYOUT,
     K_NEXT_ROW_ID, K_SCHEMA, K_STORE_ID, LAYOUT, META_DB, StoreIdentity,
 };
-use super::gate::{GatePass, TransactionGate};
+use super::gate::{CachedRead, GatePass, TransactionGate};
 use super::judge_bridge::SchemaJudge;
 use super::map::{MapPolicy, MapReport};
 use super::snapshot::OwnedSnapshot;
@@ -48,7 +48,8 @@ pub(crate) struct StoreInner {
     // lock releases, and the lock releases last.
     pub(crate) env: heed::Env<WithoutTls>,
     pub(crate) meta: Database<Bytes, Bytes>,
-    pub(crate) data: Database<Bytes, Bytes>,
+    pub(crate) data: super::keys::DataTree,
+    pub(crate) keys: super::keys::KeyLayout,
     pub(crate) gate: TransactionGate,
     writer: Mutex<()>,
     writer_thread: AtomicU64,
@@ -65,7 +66,7 @@ pub(crate) struct StoreInner {
     pub(crate) fail_host_after: Mutex<Option<usize>>,
     /// Kernel-held directory ownership; held through native close, released
     /// last by field order.
-    _lock: std::fs::File,
+    _lock: DirectoryLock,
 }
 
 #[derive(Debug)]
@@ -154,14 +155,31 @@ fn open_env(path: &Path, map_bytes: u64) -> StoreResult<heed::Env<WithoutTls>> {
     unsafe { options.open(path) }.map_err(StoreError::from_heed)
 }
 
-fn acquire_lock(path: &Path) -> StoreResult<std::fs::File> {
+/// Owns the lock, not merely one reference to its file description. A
+/// concurrent subprocess can inherit that description until exec closes
+/// it; closing only our File would leave the old flock held in that window.
+/// This guard must drop after every native environment/transaction owner.
+struct DirectoryLock {
+    file: std::fs::File,
+}
+
+impl Drop for DirectoryLock {
+    fn drop(&mut self) {
+        // Drop cannot propagate an I/O refusal or panic during unwinding.
+        // On unlock failure, File still closes normally: inherited handles
+        // may prolong exclusion, but we never reopen before native close.
+        let _ = self.file.unlock();
+    }
+}
+
+fn acquire_lock(path: &Path) -> StoreResult<DirectoryLock> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .write(true)
         .open(path.join(LOCK_FILE))?;
     match file.try_lock() {
-        Ok(()) => Ok(file),
+        Ok(()) => Ok(DirectoryLock { file }),
         Err(std::fs::TryLockError::WouldBlock) => Err(StoreError::StoreLocked {
             path: path.to_path_buf(),
         }),
@@ -275,12 +293,14 @@ impl Store {
     }
 
     /// HASH-02 probe constructor (P14): create with the production protocol,
-    /// then reopen with the forced-collision bucket function so a bench
+    /// then select the forced-collision bucket function before publication so a bench
     /// probe can drive insert/contains/delete/judgment/export through real
     /// collision buckets. Bench/test builds only; a store written this way
     /// is refused by production reopen (its membership keys do not match).
     /// # Errors
-    /// As [`Store::create`] / [`Store::open`].
+    /// As [`Store::create`].
+    /// # Panics
+    /// If the production constructor no longer returns an exclusively owned store.
     #[cfg(any(test, feature = "collision-probe"))]
     pub fn create_forced_fingerprint(
         path: &Path,
@@ -288,10 +308,14 @@ impl Store {
         policy: MapPolicy,
         fp: [u8; super::fingerprint::FP_LEN],
     ) -> StoreResult<Self> {
-        // Create durable meta with the production protocol, then open with
-        // the forced bucket function for in-process collision tests.
-        drop(Self::create(path, schema, policy)?.0);
-        Self::open_with(path, schema, policy, Fingerprinter::Constant(fp))
+        // The production constructor returns an empty store with one owner.
+        // Select the test fingerprinter before publishing it; no row/index
+        // was written, so there is no reason to close and reopen the store.
+        let (mut store, _) = Self::create(path, schema, policy)?;
+        Arc::get_mut(&mut store.inner)
+            .expect("freshly created store has one owner")
+            .fingerprinter = Fingerprinter::Constant(fp);
+        Ok(store)
     }
 
     fn open_with(
@@ -301,6 +325,7 @@ impl Store {
         fingerprinter: Fingerprinter,
     ) -> StoreResult<Self> {
         let det = DeterminantTable::compile(schema)?;
+        let keys = super::keys::KeyLayout::for_schema(schema)?;
         let lock = acquire_lock(path)?;
         let map_bytes = policy.open_map_bytes(populated_file_bytes(path))?;
         let env = open_env(path, map_bytes)?;
@@ -316,8 +341,12 @@ impl Store {
                 });
             };
             let store_id = format::verify_meta(&meta, &rtxn, path, &schema_fp)?;
-            let data: Option<Database<Bytes, Bytes>> = env
-                .open_database(&rtxn, Some(DATA_DB))
+            let data = env
+                .database_options()
+                .types::<Bytes, Bytes>()
+                .key_comparator::<super::keys::PhysicalComparator>()
+                .name(DATA_DB)
+                .open(&rtxn)
                 .map_err(StoreError::from_heed)?;
             let Some(data) = data else {
                 return Err(StoreError::Corruption(
@@ -326,13 +355,14 @@ impl Store {
             };
             // heed: commit the read transaction used for database opening.
             rtxn.commit().map_err(StoreError::from_heed)?;
-            (meta, data, store_id)
+            (meta, super::keys::DataTree(data), store_id)
         };
         Ok(Self {
             inner: Arc::new(StoreInner {
                 env,
                 meta,
                 data,
+                keys,
                 gate: TransactionGate::default(),
                 writer: Mutex::new(()),
                 writer_thread: AtomicU64::new(0),
@@ -385,14 +415,24 @@ impl Store {
     /// # Errors
     /// Refuses a closing store, exhausted reader slots, or stopped work.
     pub fn snapshot(&self, work: &WorkContext) -> StoreResult<OwnedSnapshot> {
-        let pass = self.inner.gate.enter(work)?;
-        let txn = self
-            .inner
-            .env
-            .clone()
-            .static_read_txn()
-            .map_err(StoreError::from_heed)?;
-        OwnedSnapshot::capture(Arc::clone(&self.inner), pass, txn)
+        let (pass, cached) = self.inner.gate.enter_read(work)?;
+        let reader = if let Some(reader) = cached {
+            reader
+        } else {
+            let txn = self
+                .inner
+                .env
+                .clone()
+                .static_read_txn()
+                .map_err(StoreError::from_heed)?;
+            let generation = read_generation(&self.inner, &txn)?;
+            CachedRead::new(txn, generation)
+        };
+        Ok(OwnedSnapshot::capture(
+            Arc::clone(&self.inner),
+            pass,
+            reader,
+        ))
     }
 
     /// The single writer capability. One per store; reentrant acquisition
@@ -425,7 +465,7 @@ impl Store {
     /// Begin one gated write transaction (writer mutex already held by the
     /// calling owner).
     pub(crate) fn gated_write_txn(&self, work: &WorkContext) -> StoreResult<GatedRwTxn<'_>> {
-        let pass = self.inner.gate.enter(work)?;
+        let pass = self.inner.gate.enter_write(work)?;
         let txn = self.inner.env.write_txn().map_err(map_txn_error)?;
         Ok(GatedRwTxn { txn, _pass: pass })
     }
@@ -610,8 +650,12 @@ pub(crate) fn init_staging_directory(
     let meta: Database<Bytes, Bytes> = env
         .create_database(&mut wtxn, Some(META_DB))
         .map_err(StoreError::from_heed)?;
-    let _data: Database<Bytes, Bytes> = env
-        .create_database(&mut wtxn, Some(DATA_DB))
+    let _data = env
+        .database_options()
+        .types::<Bytes, Bytes>()
+        .key_comparator::<super::keys::PhysicalComparator>()
+        .name(DATA_DB)
+        .create(&mut wtxn)
         .map_err(StoreError::from_heed)?;
     let put = |wtxn: &mut RwTxn<'_>, key: &[u8], value: &[u8]| {
         meta.put(wtxn, key, value).map_err(StoreError::from_heed)
@@ -722,33 +766,51 @@ pub(crate) fn staging_path(dest: &Path) -> StoreResult<PathBuf> {
 /// the fixture refuse or misbehave in the exact way under test.
 #[cfg(test)]
 impl Store {
+    #[expect(
+        clippy::used_underscore_binding,
+        reason = "the regression retains a duplicate of the exact directory-lock description"
+    )]
+    pub(crate) fn duplicate_lock_for_tests(&self) -> std::fs::File {
+        self.inner
+            ._lock
+            .file
+            .try_clone()
+            .expect("duplicate lock description")
+    }
+
     pub(crate) fn flags_for_tests(&self) -> u32 {
         self.inner.env.get_flags().expect("env flags")
     }
 
     pub(crate) fn force_layout_for_tests(&self, layout: u32) {
-        let mut wtxn = self.inner.env.write_txn().expect("layout fixture txn");
+        let mut wtxn = self
+            .gated_write_txn(&super::tests::work())
+            .expect("layout fixture txn");
         self.inner
             .meta
-            .put(&mut wtxn, K_LAYOUT, &layout.to_be_bytes())
+            .put(&mut wtxn.txn, K_LAYOUT, &layout.to_be_bytes())
             .expect("layout fixture put");
         wtxn.commit().expect("layout fixture commit");
     }
 
     pub(crate) fn corrupt_family_for_tests(&self) {
-        let mut wtxn = self.inner.env.write_txn().expect("family fixture txn");
+        let mut wtxn = self
+            .gated_write_txn(&super::tests::work())
+            .expect("family fixture txn");
         self.inner
             .meta
-            .put(&mut wtxn, K_FAMILY, b"WRONGFAM")
+            .put(&mut wtxn.txn, K_FAMILY, b"WRONGFAM")
             .expect("family fixture put");
         wtxn.commit().expect("family fixture commit");
     }
 
     pub(crate) fn force_next_row_id_for_tests(&self, next: u64) {
-        let mut wtxn = self.inner.env.write_txn().expect("row id fixture txn");
+        let mut wtxn = self
+            .gated_write_txn(&super::tests::work())
+            .expect("row id fixture txn");
         self.inner
             .meta
-            .put(&mut wtxn, K_NEXT_ROW_ID, &next.to_be_bytes())
+            .put(&mut wtxn.txn, K_NEXT_ROW_ID, &next.to_be_bytes())
             .expect("row id fixture put");
         wtxn.commit().expect("row id fixture commit");
     }

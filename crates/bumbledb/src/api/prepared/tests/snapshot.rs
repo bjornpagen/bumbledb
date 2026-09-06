@@ -49,33 +49,32 @@ fn trim_releases_cached_images_and_answers_stay_identical() {
     assert_eq!(before, after, "a trim changes cost, never answers");
 }
 
-#[cfg(feature = "trace")]
 #[test]
-fn prepare_emits_no_image_events() {
-    use crate::obs;
+fn sibling_trim_invalidates_warm_text_views_before_finalization() {
+    let fix = posting_store(
+        "prepared-sibling-text-generation",
+        &[(1, 7, "alpha", 10), (2, 7, "beta", 20)],
+    );
+    let mut reader = fix.prepare(&by_account_query()).expect("reader");
+    let mut sibling = fix.prepare(&by_memo_query()).expect("sibling");
+    let params = [BindValue::U64(7), BindValue::I64(-100)];
+    let before = answers_of(&fix.execute(&mut reader, &params).expect("warm reader"));
+    sibling.trim();
+    fix.execute(&mut sibling, &memo_param("beta"))
+        .expect("new token order");
+    let after = answers_of(
+        &fix.execute(&mut reader, &params)
+            .expect("reader after trim"),
+    );
+    assert_eq!(before, after, "old image tokens cannot use a new resolver");
+}
 
+#[test]
+fn prepare_leaves_the_image_cache_empty_until_execution() {
     let fix = posting_store("prepared-snapshot-noimage", &[(1, 7, "a", 10)]);
-
-    obs::start_capture();
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
-    let events = obs::finish_capture();
-    let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
-    assert!(
-        !names.contains(&obs::names::IMAGE_BUILD),
-        "prepare built an image: {names:?}"
-    );
-    assert!(
-        !names.contains(&obs::names::CACHE_HIT),
-        "prepare touched the image cache: {names:?}"
-    );
-
-    obs::start_capture();
+    assert_eq!(prepared.cache.image_count(), 0);
     fix.execute(&mut prepared, &[BindValue::U64(7), BindValue::I64(-100)])
         .expect("execute");
-    let events = obs::finish_capture();
-    let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
-    assert!(
-        names.contains(&obs::names::IMAGE_BUILD),
-        "the first execution pays the build: {names:?}"
-    );
+    assert_eq!(prepared.cache.image_count(), 1);
 }

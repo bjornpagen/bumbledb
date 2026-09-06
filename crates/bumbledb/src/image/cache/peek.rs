@@ -3,18 +3,30 @@ use std::sync::Arc;
 
 use crate::image::RelationImage;
 use crate::image::ViewEpoch;
+use crate::work::GenerationHandle;
 use bumbledb_theory::schema::RelationId;
 
 use super::{ImageCache, RelationSlot};
 
 impl ImageCache {
-    pub(crate) fn peek_at(&self, rel: RelationId, epoch: ViewEpoch) -> Option<Arc<RelationImage>> {
+    pub(crate) fn peek_at(
+        &self,
+        rel: RelationId,
+        epoch: ViewEpoch,
+        generation: &GenerationHandle,
+    ) -> Option<Arc<RelationImage>> {
         match (self.slot(rel), epoch) {
-            (RelationSlot::Closed(slot), ViewEpoch::Closed) => slot.get().map(Arc::clone),
+            (RelationSlot::Closed(slot), ViewEpoch::Closed) => slot
+                .lock()
+                .expect("closed cache mutex")
+                .as_ref()
+                .filter(|image| image.generation().ptr_eq(generation))
+                .map(Arc::clone),
             (RelationSlot::Ordinary(cache), ViewEpoch::Store(version)) => cache
                 .lock()
                 .map
                 .get(&version)
+                .filter(|cached| cached.image.generation().ptr_eq(generation))
                 .map(|cached| Arc::clone(&cached.image)),
             (RelationSlot::Ordinary(_), ViewEpoch::Heap(_)) => None,
             (RelationSlot::Closed(_), _) => {

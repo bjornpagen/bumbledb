@@ -8,6 +8,8 @@ use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
 use crate::image::ColumnView;
 use crate::interval::overlap::Probe;
+use std::convert::Infallible;
+use std::ops::ControlFlow;
 
 pub(super) const OVERLAP_CROSSOVER: u64 = 16;
 
@@ -51,16 +53,14 @@ impl Executor {
                 continue;
             }
 
-            let meets = mask.bits() & crate::allen::AllenMask::MEETS.bits() != 0;
-            let met_by = mask.bits() & crate::allen::AllenMask::MET_BY.bits() != 0;
             let q_start = bindings.get(slot);
-            let q_start = if meets {
+            let q_start = if mask.bits() & crate::allen::AllenMask::MEETS.bits() != 0 {
                 q_start.saturating_sub(1)
             } else {
                 q_start
             };
             let q_end = bindings.get(slot + 1);
-            let q_end = if met_by {
+            let q_end = if mask.bits() & crate::allen::AllenMask::MET_BY.bits() != 0 {
                 q_end.saturating_add(1)
             } else {
                 q_end
@@ -103,28 +103,31 @@ impl Executor {
         }
 
         let Probe::Ready(dir) = self.overlap.probe(&self.overlap_key, |triples| {
-            let walked = colt.for_each_suffix_run(cover_cursor, |run| match run {
-                SuffixRun::Identity { start, len } => {
-                    for position in start..start + len {
-                        let position = u32::try_from(position).expect("positions fit u32");
-                        triples.push((
-                            start_words[position as usize],
-                            end_words[position as usize],
-                            position,
-                        ));
+            let walked = colt.for_each_suffix_run(cover_cursor, |run| {
+                match run {
+                    SuffixRun::Identity { start, len } => {
+                        for position in start..start + len {
+                            let position = u32::try_from(position).expect("positions fit u32");
+                            triples.push((
+                                start_words[position as usize],
+                                end_words[position as usize],
+                                position,
+                            ));
+                        }
+                    }
+                    SuffixRun::Positions(positions) => {
+                        for &position in positions {
+                            triples.push((
+                                start_words[position as usize],
+                                end_words[position as usize],
+                                position,
+                            ));
+                        }
                     }
                 }
-                SuffixRun::Positions(positions) => {
-                    for &position in positions {
-                        triples.push((
-                            start_words[position as usize],
-                            end_words[position as usize],
-                            position,
-                        ));
-                    }
-                }
+                ControlFlow::<Infallible>::Continue(())
             });
-            debug_assert!(walked, "suffix_scannable gated the walk");
+            debug_assert_eq!(walked, ControlFlow::Continue(true));
         }) else {
             return false;
         };

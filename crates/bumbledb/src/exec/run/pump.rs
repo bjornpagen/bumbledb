@@ -1,7 +1,7 @@
 //! The single in-order pass over a middle node's pending entries.
 use super::{
-    BatchToken, Bindings, Colt, Counters, Executor, JoinPhase, KeyCount, PipeTables, Sink,
-    ValidatedPlan, better_cover,
+    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink, ValidatedPlan,
+    better_cover,
 };
 
 impl Executor {
@@ -37,7 +37,6 @@ impl Executor {
 
         let mut group: Option<(usize, usize, usize, usize)> = None;
 
-        counters.phase_start(node_idx, JoinPhase::Gather);
         for entry in 0..scratch.pending_len {
             if !matches!(self.drive_state, super::DriveState::Running) {
                 break;
@@ -76,7 +75,6 @@ impl Executor {
                 && open_sub != cover_sub
                 && fill > 0
             {
-                counters.phase_end(node_idx, JoinPhase::Gather);
                 self.probe_pass(
                     tables,
                     plan,
@@ -90,7 +88,6 @@ impl Executor {
                     sink,
                     counters,
                 );
-                counters.phase_start(node_idx, JoinPhase::Gather);
                 fill = 0;
             }
             group = Some((cover_sub, cur_arity, cover_occ, cover_level));
@@ -100,6 +97,15 @@ impl Executor {
             };
 
             let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
+
+            if S::may_use_distinct_traversal()
+                && self.physical_distinct.is_some()
+                && self
+                    .colt_ok(colts[cover_occ].force_distinct_iteration(cover_cursor, cover_level))
+                    .is_none()
+            {
+                break;
+            }
 
             let entry_u32 = u32::try_from(entry).expect("pending fits u32");
             let entry_origin = scratch.pending_origins[entry];
@@ -141,7 +147,6 @@ impl Executor {
                     break;
                 }
                 if fill == self.batch {
-                    counters.phase_end(node_idx, JoinPhase::Gather);
                     self.probe_pass(
                         tables,
                         plan,
@@ -155,7 +160,6 @@ impl Executor {
                         sink,
                         counters,
                     );
-                    counters.phase_start(node_idx, JoinPhase::Gather);
                     fill = 0;
                     if !gate_cover && yielded == want {
                         continue;
@@ -166,7 +170,6 @@ impl Executor {
                 }
             }
         }
-        counters.phase_end(node_idx, JoinPhase::Gather);
         if fill > 0
             && let Some((open_sub, open_arity, _, _)) = group
         {

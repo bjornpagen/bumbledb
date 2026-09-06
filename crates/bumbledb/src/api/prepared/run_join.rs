@@ -4,7 +4,6 @@ use crate::error::Result;
 use crate::image::ImageBind;
 use crate::image::ViewEpoch;
 use crate::image::view::apply;
-use crate::obs;
 
 #[expect(
     clippy::too_many_arguments,
@@ -35,16 +34,12 @@ where
     C: crate::exec::run::Counters,
     I: ImageBind,
 {
-    let views_span = obs::span(obs::names::VIEWS);
     memo.tick += 1;
 
     // Bind the current operation on every COLT before any view reset,
     // force_root, select, or execute. Rebind installs this ledger so a
     // prior execution's refusal cannot poison this one.
-    executor.begin_work(work);
-    for colt in &mut memo.colts {
-        colt.bind(Some(work));
-    }
+    executor.begin_work(work, &mut memo.colts);
     let mut pending_steps = 0u32;
 
     debug_assert!(
@@ -76,10 +71,6 @@ where
         // so join/negation walks the sealed stage instead of rematerializing.
         if occurrence.bind.edb().is_none() {
             let image = derived_images.image(occ_idx);
-            let mut build_span = obs::span_args(
-                obs::names::VIEW_BUILD,
-                obs::TraceArgs::Count(occ_idx as u64),
-            );
             let mut buffer = std::mem::take(memo.spare_mut(occ_idx));
             if buffer.capacity() == 0
                 && let Some(pooled) = derived_retired.pop()
@@ -88,7 +79,6 @@ where
             }
             let eq = image.generation().text_eq(nonresident.as_ref());
             let view = apply(image, &resolved_filters[occ_idx], &[], buffer, eq)?;
-            build_span.set_pair(occ_idx as u64, view.len() as u64);
             let old = memo.colts[occ_idx].reset(view);
             *memo.spare_mut(occ_idx) = old.recycle();
             debug_assert!(
@@ -107,11 +97,12 @@ where
 
         let epoch = images.epoch(schema, relation)?;
 
-        if memo.bind(occ_idx, epoch, &resolved_filters[occ_idx]) {
-            obs::event(
-                obs::names::VIEW_MEMO_HIT,
-                obs::TraceArgs::Count(occ_idx as u64),
-            );
+        if memo.bind(
+            occ_idx,
+            epoch,
+            &resolved_filters[occ_idx],
+            &resolved_selections[occ_idx],
+        ) {
             checkpoint_join_work(work, &mut pending_steps)?;
             continue;
         }
@@ -128,20 +119,29 @@ where
             let old = colt
                 .clone_bound_from(canon_colt, buffer)
                 .map_err(crate::api::prepared::source::work_error)?;
-            obs::event(
-                obs::names::VIEW_DEDUP,
-                obs::TraceArgs::Pair(occ_idx as u64, canon as u64),
-            );
             *memo.spare_mut(occ_idx) = old.recycle();
-            memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
+            memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx], None);
             checkpoint_join_work(work, &mut pending_steps)?;
             continue;
         }
-        let mut build_span = obs::span_args(
-            obs::names::VIEW_BUILD,
-            obs::TraceArgs::Count(occ_idx as u64),
-        );
-        let image = match images.image(schema, relation)? {
+        // Prefer an already shared full image. Otherwise an indexed bucket
+        // can feed the same COLT, but its coverage belongs to this query's
+        // selection-keyed memo, never the relation cache or source dedup.
+        let (admitted, selected) = if let Some(image) = images.peek(schema, relation)? {
+            (crate::image::ResidentAdmit::Ready(image), false)
+        } else if memo.partial_capacity_exhausted(occ_idx, epoch) {
+            (images.image(schema, relation)?, false)
+        } else if let Some(image) = images.selection_image(
+            schema,
+            relation,
+            &occurrence.selections,
+            &resolved_selections[occ_idx],
+        )? {
+            (image, true)
+        } else {
+            (images.image(schema, relation)?, false)
+        };
+        let image = match admitted {
             crate::image::ResidentAdmit::Ready(image) => image,
             crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
                 super::text::install(nonresident, &exhausted, work)?;
@@ -151,16 +151,17 @@ where
         let buffer = std::mem::take(memo.spare_mut(occ_idx));
         let eq = image.generation().text_eq(nonresident.as_ref());
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer, eq)?;
-        build_span.set_pair(occ_idx as u64, view.len() as u64);
         let old = memo.colts[occ_idx].reset(view);
         *memo.spare_mut(occ_idx) = old.recycle();
-        memo.set_bound(occ_idx, epoch, &resolved_filters[occ_idx]);
+        memo.set_bound(
+            occ_idx,
+            epoch,
+            &resolved_filters[occ_idx],
+            selected.then_some(&resolved_selections[occ_idx]),
+        );
         checkpoint_join_work(work, &mut pending_steps)?;
     }
-    views_span.end();
 
-    let mut selections_span = obs::span(obs::names::SELECTIONS);
-    let mut probed = 0u64;
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
         if plan.occurrences()[occ_idx].role.discharged() {
             debug_assert!(
@@ -174,20 +175,11 @@ where
             .select(keys)
             .map_err(crate::api::prepared::source::work_error)?;
         let hit = selected.is_some();
-        probed += 1;
-        obs::event(
-            obs::names::SELECT_PROBE,
-            obs::TraceArgs::Pair(occ_idx as u64, u64::from(hit)),
-        );
         if !hit {
-            selections_span.set_count(probed);
             return Ok(true);
         }
     }
-    selections_span.set_pair(probed, 1);
-    selections_span.end();
     flush_join_work(work, &mut pending_steps)?;
-    let _join = obs::span(obs::names::JOIN);
 
     executor.execute(plan, &mut memo.colts, bindings, sink, counters)?;
     flush_join_work(work, &mut pending_steps)?;

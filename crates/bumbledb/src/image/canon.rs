@@ -110,7 +110,7 @@ impl<'a> Reader<'a> {
         let (head, rest) = self
             .bytes
             .split_at_checked(len)
-            .ok_or(corrupt("canonical row truncated"))?;
+            .ok_or_else(|| corrupt("canonical row truncated"))?;
         self.bytes = rest;
         Ok(head)
     }
@@ -242,9 +242,44 @@ pub(crate) struct RowWords {
     spans: Box<[super::ColumnSpan]>,
     strings: Box<[bool]>,
     words: Vec<u64>,
+    has_text: bool,
 }
 
 impl RowWords {
+    /// A prepared key probe owns one fixed-schema row buffer. Reserve its
+    /// complete retained capacity before allocating; decoding cannot grow
+    /// this buffer because each validated field has a fixed word width.
+    pub(crate) fn prepared(
+        field_types: &[ValueType],
+        work: &WorkContext,
+    ) -> Result<(Self, crate::work::ByteReservation)> {
+        let words: usize = field_types
+            .iter()
+            .map(|ty| crate::ir::normalize::SlotWidth::of(ty).slots())
+            .sum();
+        let shape_bytes = field_types.len()
+            * (std::mem::size_of::<super::ColumnSpan>() + std::mem::size_of::<bool>());
+        let requested = shape_bytes + words * std::mem::size_of::<u64>();
+        let mut charge = work
+            .reserve(crate::work::ByteKind::Working, requested as u64)
+            .map_err(crate::api::prepared::source::work_error)?;
+        let mut row = Self::new(field_types);
+        row.words
+            .try_reserve_exact(words)
+            .map_err(|_| Error::from_store(crate::storage::store::StoreError::Allocation))?;
+        let retained = shape_bytes + row.words.capacity() * std::mem::size_of::<u64>();
+        if retained > requested {
+            charge.join(
+                work.reserve(
+                    crate::work::ByteKind::Working,
+                    (retained - requested) as u64,
+                )
+                .map_err(crate::api::prepared::source::work_error)?,
+            );
+        }
+        Ok((row, charge))
+    }
+
     pub(crate) fn new(field_types: &[ValueType]) -> Self {
         Self {
             spans: super::column_spans(field_types),
@@ -253,7 +288,13 @@ impl RowWords {
                 .map(|ty| matches!(ty, ValueType::String))
                 .collect(),
             words: Vec::new(),
+            has_text: field_types.iter().any(|ty| matches!(ty, ValueType::String)),
         }
+    }
+
+    /// Full decoded-row shape, including fields the query does not project.
+    pub(crate) const fn has_text(&self) -> bool {
+        self.has_text
     }
 
     /// True when this field's column word is an intern/scratch text token.
@@ -372,15 +413,50 @@ mod string_field_tests {
     use crate::image::view::{OperandAddr, Operands};
     use bumbledb_theory::schema::FieldId;
 
+    #[test]
+    fn prepared_row_reserves_full_capacity_until_owner_drop() {
+        use crate::work::{ExecutionPolicy, Resource};
+        let types = [ValueType::U64, ValueType::Uuid, ValueType::String];
+        let work = crate::api::db::test_operation().expect("work");
+        let (row, charge) = RowWords::prepared(&types, &work).expect("prepared row");
+        assert!(row.has_text());
+        let bytes = std::mem::size_of_val(&*row.spans)
+            + std::mem::size_of_val(&*row.strings)
+            + row.words.capacity() * std::mem::size_of::<u64>();
+        assert_eq!(row.words.capacity(), 4);
+        assert_eq!(charge.bytes(), bytes as u64);
+        assert_eq!(work.used(Resource::WorkingBytes), bytes as u64);
+        drop((row, charge));
+        assert_eq!(work.used(Resource::WorkingBytes), 0);
+        let tight = ExecutionPolicy {
+            working_bytes: (bytes - 1) as u64,
+            ..crate::api::prepared::source::UNBOUNDED_POLICY
+        }
+        .start()
+        .expect("work");
+        assert!(RowWords::prepared(&types, &tight).is_err());
+        assert_eq!(
+            tight.used(Resource::WorkingBytes),
+            0,
+            "refused prepare must not retain any charge"
+        );
+    }
+
     /// Probe/fallback `RowWords` must mark String columns so `holds` uses
     /// [`crate::image::TextEq`] instead of raw word identity.
     #[test]
     fn d02_row_words_string_field_marks_string_columns() {
         let row = RowWords::new(&[ValueType::U64, ValueType::String, ValueType::I64]);
+        assert!(
+            row.has_text(),
+            "the full row shape owns text even when projected fields do not"
+        );
         assert!(!Operands::string_field(&row, OperandAddr::from(FieldId(0))));
         assert!(Operands::string_field(&row, OperandAddr::from(FieldId(1))));
         assert!(!Operands::string_field(&row, OperandAddr::from(FieldId(2))));
         assert!(row.field_is_string(FieldId(1)));
         assert!(!row.field_is_string(FieldId(0)));
+        assert!(!RowWords::new(&[ValueType::U64, ValueType::Uuid, ValueType::F64]).has_text());
+        assert!(!RowWords::new(&[]).has_text());
     }
 }

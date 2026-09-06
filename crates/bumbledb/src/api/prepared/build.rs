@@ -14,7 +14,6 @@ use crate::image::view::View;
 use crate::ir::normalize::{NormalizedQuery, normalize_rules};
 use crate::ir::validate::{RuleWitness, validate};
 use crate::ir::{FindTerm, Query};
-use crate::obs;
 use crate::plan::fj::{
     DistinctWitness, binary2fj, factor, fold_split, gj_split, provably_distinct,
 };
@@ -60,7 +59,7 @@ impl<S> PreparedQuery<S> {
 }
 
 /// Prepare against one admitted heap instance. The prepared query pins
-/// `PinnedSource::Heap` and rebuilds its images per execution.
+/// the canonical schema identity and rebuilds its images per execution.
 /// # Errors
 /// As [`prepare_on`].
 pub(crate) fn prepare_owned<S>(
@@ -79,11 +78,7 @@ fn prepare_source<S>(
 ) -> Result<PreparedQuery<S>> {
     let schema = Arc::clone(schema);
     let images = SourceImages::bind(source, cache);
-    let _prepare = obs::span(obs::names::PREPARE);
-    let witness = {
-        let _s = obs::span(obs::names::VALIDATE);
-        validate(&schema, query)?
-    };
+    let witness = { validate(&schema, query)? };
     let mut signatures: Vec<&crate::ir::validate::Signature> = Vec::new();
     let mut interiors = Vec::with_capacity(witness.interiors().len());
     for i in 0..witness.interiors().len() {
@@ -158,10 +153,7 @@ fn prepare_witnessed<S>(
     reach: PreparedReach,
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedQuery<S>> {
-    let normalized = {
-        let _s = obs::span(obs::names::NORMALIZE);
-        normalize_rules(&schema, signatures, witness.rules())
-    };
+    let normalized = { normalize_rules(&schema, signatures, witness.rules()) };
 
     let survivors = ground_main(normalized, witness, &schema);
 
@@ -170,11 +162,17 @@ fn prepare_witnessed<S>(
 
     let mut written = Vec::with_capacity(survivors.len());
     let mut first_rule_idx = None;
+    let mut projection_distinct = None;
     for (rule_idx, normalized_rule) in survivors {
         if normalized_rule.dead.is_some() {
             continue;
         }
         let rule = witness.rule(rule_idx);
+        projection_distinct = crate::plan::fj::provably_distinct_projection(
+            &normalized_rule,
+            &schema,
+            &rule.rule().finds,
+        );
         written.push(rule.written());
         first_rule_idx.get_or_insert(rule_idx);
         rules.push(prepare_rule(
@@ -198,7 +196,7 @@ fn prepare_witnessed<S>(
     } else {
         Vec::new()
     };
-    let sink = rules.first().map_or_else(
+    let mut sink = rules.first().map_or_else(
         || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
         |first| {
             let regime = if rules.len() > 1 {
@@ -219,6 +217,20 @@ fn prepare_witnessed<S>(
             )
         },
     );
+    // The initial experiment licenses only a store-pinned singleton head,
+    // evaluated once. Heap execution deliberately remains outside this
+    // initial scope, even though its runtime schema identity is checked.
+    // Union/DNF, interiors, reach and computed sinks keep ordinary sets.
+    // A main singleton never retargets its sink with aim.
+    if rules.len() == 1
+        && matches!(pinned_source, PinnedSource::Store(_))
+        && interiors.is_empty()
+        && matches!(reach, PreparedReach::Cq)
+        && let Some(witness) = projection_distinct
+        && let EitherSink::Projection(projection) = &mut sink
+    {
+        projection.elide_output_hashing(witness);
+    }
     let interior_slots = interiors
         .iter()
         .flat_map(|interior| interior.rules.iter().map(PreparedRule::slot_count));
@@ -228,7 +240,7 @@ fn prepare_witnessed<S>(
             .base
             .iter()
             .map(PreparedRule::slot_count)
-            .chain(driver.rec.iter().map(|arm| arm.rule.plan.slot_count()))
+            .chain(driver.rec.iter().map(|rule| rule.plan.slot_count()))
             .max()
             .unwrap_or(0),
     };
@@ -242,22 +254,6 @@ fn prepare_witnessed<S>(
             .max(rec_max),
     );
 
-    let unresolved_literals = rules.iter().map(pending_literals).sum::<u32>()
-        + interiors
-            .iter()
-            .flat_map(|interior| interior.rules.iter().map(pending_literals))
-            .sum::<u32>()
-        + match &reach {
-            PreparedReach::Cq => 0,
-            PreparedReach::Reach { driver, .. } => {
-                driver.base.iter().map(pending_literals).sum::<u32>()
-                    + driver
-                        .rec
-                        .iter()
-                        .map(|arm| plan_pending_literals(&arm.rule.plan))
-                        .sum::<u32>()
-            }
-        };
     let numeric_outputs = {
         let first_compute = |finds: &[FindSpec]| {
             finds.iter().find_map(|spec| match spec {
@@ -279,7 +275,7 @@ fn prepare_witnessed<S>(
                     .base
                     .iter()
                     .map(PreparedRule::finds)
-                    .chain(driver.rec.iter().map(|arm| arm.rule.finds.as_slice()))
+                    .chain(driver.rec.iter().map(|rule| rule.finds.as_slice()))
                     .collect(),
             })
             .find_map(first_compute)
@@ -299,6 +295,7 @@ fn prepare_witnessed<S>(
             derived_count,
         },
     };
+    let no_text_probe = seal_no_text_probe(&pipeline, &schema, &params);
     Ok(PreparedQuery {
         schema,
         pinned: pinned_source,
@@ -312,7 +309,7 @@ fn prepare_witnessed<S>(
         signature,
         params,
         resolved_params: Vec::new(),
-        latch: super::Latch::from_count(unresolved_literals),
+        text_generation: None,
         param_word_memo: Vec::new(),
         missed_params: Vec::new(),
         sink,
@@ -321,6 +318,7 @@ fn prepare_witnessed<S>(
         resolve_memo: ResolveMemo::new(),
         key_scratch: Vec::new(),
         numeric_outputs,
+        no_text_probe,
         rendered,
         nonresident: None,
         #[cfg(test)]
@@ -329,6 +327,32 @@ fn prepare_witnessed<S>(
         used_nonresident_text: false,
         marker: std::marker::PhantomData,
     })
+}
+
+/// Validation anchors every probe literal/predicate to its row field and
+/// every find to a variable in that row. Check the COMPLETE row, not just
+/// projected fields: the shared canonical decoder visits unprojected fields
+/// too. Check every declared parameter, even one normalization eliminated.
+/// Other pipeline kinds retain the ordinary eager generation protocol.
+pub(super) fn seal_no_text_probe(
+    pipeline: &PreparedPipeline,
+    schema: &Schema,
+    params: &[super::ParamSpec],
+) -> bool {
+    let PreparedPipeline::PointProbe { rule, finds } = pipeline else {
+        return false;
+    };
+    !rule.row.has_text()
+        && schema
+            .relation(rule.plan.relation)
+            .fields()
+            .iter()
+            .all(|field| field.value_type != ValueType::String)
+        && finds.iter().all(|(_, ty)| *ty != ValueType::String)
+        && params.iter().all(|param| match param {
+            super::ParamSpec::Scalar { ty, .. } => *ty != ValueType::String,
+            super::ParamSpec::Set { elem, .. } => *elem != ValueType::String,
+        })
 }
 
 fn prepare_interior(
@@ -448,20 +472,15 @@ fn prepare_reach(
         )?);
     }
     let units = base.len() + rec_rules.len();
-    let hint = output_hint(&base)
-        + rec_rules
-            .iter()
-            .map(|arm| free_join_hint(&arm.rule))
-            .max()
-            .unwrap_or(0);
+    let hint = output_hint(&base) + rec_rules.iter().map(free_join_hint).max().unwrap_or(0);
     let sink = base.first().map_or_else(
         || {
             rec_rules.first().map_or_else(
                 || crate::exec::sink::ProjectionSink::with_capacity_hint(&[], 0, 0),
                 |first| {
                     crate::exec::sink::ProjectionSink::with_capacity_hint(
-                        &first.rule.finds,
-                        first.rule.plan.slot_count(),
+                        &first.finds,
+                        first.plan.slot_count(),
                         hint,
                     )
                 },
@@ -481,7 +500,7 @@ fn prepare_reach(
         field_types: columns.iter().map(|c| *c.ty()).collect(),
         sink,
         units,
-        scratch: super::reach::RecPingPong::default(),
+        frontier: crate::image::TransientImage::default(),
     })
 }
 
@@ -529,42 +548,6 @@ fn free_join_hint(rule: &super::FreeJoinRule) -> usize {
             .min(1 << 21),
     )
     .expect("clamped")
-}
-
-/// Discharged occurrences count nothing: an eliminated one carries no
-/// conditions, and a folded one's retained filters are plan-constant by the
-/// fold's own conditions (`plan/ground/evaluate.rs`) and never resolved — a
-/// fold must not block the fully-latched fast path.
-fn pending_literals(rule: &PreparedRule) -> u32 {
-    match rule {
-        PreparedRule::FreeJoin(rule) => plan_pending_literals(&rule.plan),
-        PreparedRule::KeyProbe(_) => 0,
-    }
-}
-
-fn plan_pending_literals(plan: &crate::plan::fj::ValidatedPlan) -> u32 {
-    let pending = |value: &crate::image::view::Const| {
-        matches!(value, crate::image::view::Const::PendingIntern { .. })
-    };
-    plan.occurrences()
-        .iter()
-        .filter(|occurrence| !occurrence.role.discharged())
-        .map(|occurrence| {
-            let filters = occurrence
-                .filters
-                .iter()
-                .filter(|filter| {
-                    matches!(filter, crate::image::view::FilterPredicate::Compare { value, .. } if pending(value))
-                })
-                .count();
-            let selections = occurrence
-                .selections
-                .iter()
-                .filter(|selection| pending(&selection.value))
-                .count();
-            u32::try_from(filters + selections).expect("occurrence literal count fits u32")
-        })
-        .sum()
 }
 
 fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::ParamSpec> {
@@ -632,8 +615,8 @@ fn prepare_rule(
     prepare_rule_variant(images, schema, rule, normalized, columns, signatures)
 }
 
-/// Prepare one rec arm: stamp the unique self-occurrence as `RecDelta` and
-/// every other self-read as `RecAcc` before statistics run.
+/// Stamp the validated unique self-occurrence for the planner's frontier
+/// estimate. At execution it uses the same stage environment as interiors.
 #[expect(
     clippy::too_many_arguments,
     reason = "the rec-arm pipeline's inputs are clearer unpacked"
@@ -647,7 +630,7 @@ fn prepare_rec_arm(
     signatures: &[&crate::ir::validate::Signature],
     rec_id: crate::ir::InteriorId,
     delta: crate::ir::normalize::OccId,
-) -> Result<super::RecArm> {
+) -> Result<super::FreeJoinRule> {
     let mut normalized = normalized.clone();
     stamp_rec_bind(&mut normalized, rec_id, delta);
     debug_assert!(
@@ -661,7 +644,7 @@ fn prepare_rec_arm(
     let PreparedRule::FreeJoin(fj) = prepared else {
         unreachable!("an Interior-reading rec arm never classifies as a key probe")
     };
-    Ok(super::RecArm { delta, rule: fj })
+    Ok(fj)
 }
 
 fn stamp_rec_bind(
@@ -676,12 +659,35 @@ fn stamp_rec_bind(
         if id != rec_id {
             continue;
         }
-        occ.bind = if occ.occ_id == delta {
-            crate::ir::normalize::OccBind::RecDelta(id)
-        } else {
-            crate::ir::normalize::OccBind::RecAcc(id)
-        };
+        assert_eq!(occ.occ_id, delta, "validation admits one self-read");
+        occ.bind = crate::ir::normalize::OccBind::RecDelta(id);
     }
+}
+
+fn prepare_key_rule(
+    images: &SourceImages<'_>,
+    schema: &Schema,
+    rule: &RuleWitness<'_>,
+    plan: crate::exec::dispatch::KeyProbePlan,
+    distinct_witness: Option<crate::plan::fj::DistinctWitness>,
+) -> Result<KeyProbeRule> {
+    let finds = find_specs(rule, &plan);
+    let field_types: Vec<_> = schema
+        .relation(plan.relation)
+        .fields()
+        .iter()
+        .map(|field| field.value_type)
+        .collect();
+    let (row, row_charge) =
+        crate::image::canon::RowWords::prepared(&field_types, images.source().work())?;
+    Ok(KeyProbeRule {
+        plan,
+        row,
+        _row_charge: row_charge,
+        distinct_witness,
+        finds,
+        dedup_spans: Box::default(),
+    })
 }
 
 fn prepare_rule_variant(
@@ -694,25 +700,16 @@ fn prepare_rule_variant(
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
 
-    let classified = {
-        let _s = obs::span(obs::names::CLASSIFY);
-        classify(normalized, schema)
-    };
+    let classified = { classify(normalized, schema) };
     if let Some(plan) = classified {
-        let finds = find_specs(rule, &plan);
-        return Ok(PreparedRule::KeyProbe(KeyProbeRule {
-            plan,
-            distinct_witness,
-            finds,
-
-            dedup_spans: Box::default(),
-        }));
+        return prepare_key_rule(images, schema, rule, plan, distinct_witness)
+            .map(PreparedRule::KeyProbe);
     }
 
     let mut pins = Vec::new();
 
-    let mut stats_span = obs::span(obs::names::STATS);
     let mut stats = Vec::with_capacity(normalized.occurrences.len());
+    let join_variables = crate::plan::selectivity::join_variables(normalized);
     for occurrence in normalized
         .occurrences
         .iter()
@@ -720,7 +717,11 @@ fn prepare_rule_variant(
     {
         if occurrence.bind.edb().is_none() {
             stats.push(crate::plan::selectivity::occurrence_stats_on(
-                images, schema, occurrence, 0,
+                images,
+                schema,
+                occurrence,
+                0,
+                &join_variables,
             )?);
             continue;
         }
@@ -729,8 +730,13 @@ fn prepare_rule_variant(
             .edb()
             .expect("EDB bind is a stored relation");
         let rows = crate::plan::selectivity::relation_rows_on(images.source(), schema, relation)?;
-        let occ_stats =
-            crate::plan::selectivity::occurrence_stats_on(images, schema, occurrence, rows)?;
+        let occ_stats = crate::plan::selectivity::occurrence_stats_on(
+            images,
+            schema,
+            occurrence,
+            rows,
+            &join_variables,
+        )?;
         pins.push(OccurrencePin {
             occ_id: occurrence.occ_id,
             relation,
@@ -739,13 +745,7 @@ fn prepare_rule_variant(
         });
         stats.push(occ_stats);
     }
-    stats_span.set_count(stats.len() as u64);
-    stats_span.end();
-    let order = {
-        let _s = obs::span(obs::names::PLAN_DP);
-        plan_order(normalized, schema, &stats)
-    };
-    let lower_span = obs::span(obs::names::LOWER);
+    let order = { plan_order(normalized, schema, &stats) };
     let mut fj = binary2fj(normalized, &order);
     factor(&mut fj);
 
@@ -779,16 +779,12 @@ fn prepare_rule_variant(
     let plan =
         crate::plan::fj::validate_with_signatures(&fj, normalized, schema, signatures, &sink_vars)
             .expect("binary2fj + factor + fold_split + gj_split construct valid plans");
-    lower_span.end();
 
     let finds = find_specs(rule, &plan);
     let executor = Executor::new(&plan);
     let occurrence_count = plan.occurrences().len();
 
-    let memo = {
-        let _s = obs::span(obs::names::BUILD_COLTS);
-        build_view_memo(&plan)
-    };
+    let memo = { build_view_memo(&plan) };
     let fallback = crate::api::prepared::fallback::FallbackRule::seal(normalized, &plan, |var| {
         *rule.var_type(var)
     });

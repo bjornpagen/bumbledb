@@ -40,8 +40,6 @@ pub mod sqlmap;
 pub mod storemode;
 #[cfg(test)]
 mod stress;
-pub mod sweep;
-pub mod trace_out;
 pub mod translate;
 pub mod tripwires;
 pub mod verify;

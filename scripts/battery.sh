@@ -42,8 +42,8 @@ echo "==> cargo nextest run --workspace"
 cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
 cargo nextest run --workspace
 
-# Feature-gated core/bench lanes. L20 owns flame.py; this is a renderer
-# golden, not a G15 timing cell.
+# Feature-gated core/bench lanes and native-profile exporter checks.
+# Renderer checks do not establish measured performance.
 echo "==> scripts/check.sh"
 scripts/check.sh
 

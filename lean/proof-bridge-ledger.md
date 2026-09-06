@@ -2,14 +2,15 @@
 
 Companion to `Bumbledb/Bridge.lean` (term-level theorem references)
 and `lean/correspondence.md` (expected independent results).
-Verification **NotRun**. Lean does not prove LMDB, S3, native
+Execution evidence comes from `scripts/lean.sh` and the workspace tests,
+not this ledger. Lean does not prove LMDB, S3, native
 lifetimes, or host FP control by naming a file.
 
 ## Retired premises (removed, not relabeled)
 
 | Retired | Disposition |
 | --- | --- |
-| `Txn/Fresh.lean` | Deleted with the mint machine. Identity is application-owned `Bytes<16>`. |
+| `Txn/Fresh.lean` | Deleted with the mint machine. Identity is an application-owned structural UUID (16 bytes). |
 | `Txn/Braids.lean` (`ComponentClosed`, L9/L10) | Deleted. ASS-001: the premise spanned closed targets the runtime never consulted, and the theorems were cited as publication evidence they never established. Successor: `Txn/Support.lean` — scoped admission only. Current log authority is the independent history model, not braid locality. |
 
 ## Premise → constructor map (C4 / G03)
@@ -81,7 +82,7 @@ gates. Lean braid theorems cannot certify this machine.
 ## Handoffs
 
 See `lean/correspondence.md` for case ids `C-D26-*`, `C-D04-*`,
-`C-D05-*`, `C-D19-*`, `C-G04-*`, `C-G07-*`. L21 permanent scope:
-this ledger, Bridge, correspondence catalog, `scripts/lean.sh`,
-`scripts/spec-census.sh`. Qualification runs those scripts; L19
-verification is **NotRun**.
+`C-D05-*`, `C-D19-*`, `C-G04-*`, `C-G07-*`. Keep this ledger, `Bridge`,
+the correspondence catalog, and `scripts/spec-census.sh` aligned with
+current constructors. Passing these checks does not close the explicitly
+unmodeled substrate gaps.

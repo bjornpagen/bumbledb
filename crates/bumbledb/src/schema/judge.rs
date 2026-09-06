@@ -26,8 +26,9 @@
 //! statement; resource failure is not a rejection.
 use crate::schema::compiled::{CompiledProjection, CompiledTheory, ProjectionBinding};
 use crate::schema::{
-    CapacityStatement, CompileError, ContainmentStatement, KeyStatement, RelationId, Schema,
-    SealedBound, SealedWeight, Side, StatementId, StatementKind, StatementView,
+    AxiomIndex, CapacityStatement, CompileError, ContainmentStatement, Enforcement, KeyStatement,
+    MemberSet, RelationId, Schema, SealedBound, SealedWeight, Side, StatementId, StatementKind,
+    StatementView,
 };
 use crate::work::ByteReservation;
 use crate::{Value, WorkContext, WorkError};
@@ -38,10 +39,15 @@ mod grouped;
 pub use grouped::{JudgeScratch, ScratchFault, store_fault};
 
 use citation::CitationTopK;
-use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, encode_value};
+use grouped::{FLAG_OVERFLOW, FLAG_RAY, GroupedMap, ScalarKeyScratch, encode_value};
 
 /// Borrowed row visitation; false stops the walk without becoming an error.
 pub type RowVisitor<'a, E> = &'a mut (dyn FnMut(&[Value]) -> Result<bool, E> + 'a);
+
+/// Borrowed row with its stable position in the state's logical row order.
+/// Ranks are unique within a relation, may be sparse, and must agree between
+/// full and indexed visits. Encounter order need not equal rank order.
+pub type RankedRowVisitor<'a, E> = &'a mut (dyn FnMut(u64, &[Value]) -> Result<bool, E> + 'a);
 
 /// One proposed final-state view: for every ORDINARY relation, the judge
 /// can visit each distinct proposed row (committed minus removed plus
@@ -69,6 +75,37 @@ pub trait CandidateFacts {
         relation: RelationId,
         visit: RowVisitor<'_, Self::Error>,
     ) -> Result<(), Self::Error>;
+
+    /// Visit rows with their logical-order ranks, preserving the same rank
+    /// for each row throughout this final-state view. A provider may reorder
+    /// physical traversal, but rank comparisons must preserve its established
+    /// logical row order. Ranks need not be dense or start at zero.
+    ///
+    /// The default ranks the existing deterministic stream. Providers with
+    /// indexed ranked visits must use these same relation-wide ranks, never
+    /// enumerate an individual bucket. At most `u64::MAX` rows are supported;
+    /// the judge's finite work allowance refuses before that can be exceeded.
+    /// # Errors
+    /// The state's own failure channel. Returning false stops the visit.
+    /// # Panics
+    /// If a provider violates the supported row-count bound while its
+    /// visitor continues; the judge's charged visitor stops before this.
+    fn visit_ranked_rows(
+        &self,
+        relation: RelationId,
+        visit: RankedRowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
+        let mut rank = 0u64;
+        self.visit_rows(relation, &mut |row| {
+            let keep = visit(rank, row)?;
+            if keep {
+                rank = rank
+                    .checked_add(1)
+                    .expect("a ranked row stream has at most u64::MAX rows");
+            }
+            Ok(keep)
+        })
+    }
 }
 
 /// The candidate delta's net shape over one relation — the affected-relation
@@ -93,6 +130,15 @@ impl DeltaShape {
 /// the committed parent and can enumerate one sealed key statement's
 /// determinant group from an index instead of a relation stream.
 pub trait DeltaFacts: CandidateFacts {
+    /// Whether this candidate's mutations preserve a scalar key already
+    /// satisfied by the lawful parent. This is not a claim about an
+    /// arbitrary base or an interval key. False merely requests judgment.
+    /// A true answer must cover every mutation in this candidate; complete
+    /// judgment never consults it. Providers without such evidence use false.
+    fn scalar_key_preserved(&self, _statement: StatementId) -> bool {
+        false
+    }
+
     /// The delta's net shape over `relation` (`DeltaShape::default()` for an
     /// untouched relation). Over-reporting a touch is sound (more judged);
     /// under-reporting is NOT — a touched relation reported untouched breaks
@@ -148,6 +194,23 @@ pub trait DeltaFacts: CandidateFacts {
         _projection: &CompiledProjection,
         _determinant: &[Value],
         _visit: RowVisitor<'_, Self::Error>,
+    ) -> Result<Option<()>, Self::Error> {
+        Ok(None)
+    }
+
+    /// Indexed group visitation carrying the exact ranks supplied by
+    /// [`CandidateFacts::visit_ranked_rows`]. Bucket-local numbering is not
+    /// a rank: different groups must remain comparable in the state's
+    /// logical row order. False stops; `None` means this ranked access path
+    /// is unavailable, so the judge discards provisional indexed evidence
+    /// and falls back to a full ranked visit.
+    /// # Errors
+    /// The state's own failure channel.
+    fn visit_ranked_compiled_group(
+        &self,
+        _projection: &CompiledProjection,
+        _determinant: &[Value],
+        _visit: RankedRowVisitor<'_, Self::Error>,
     ) -> Result<Option<()>, Self::Error> {
         Ok(None)
     }
@@ -223,7 +286,7 @@ pub struct JudgedViolation {
     /// widened total, never narrowed or wrapped. One violation row exists
     /// per statement; when several groups violate the same statement, the
     /// recorded witness is the LAST violating group in the deterministic
-    /// target iteration order (a labeled example witness, not a claim of
+    /// logical target order (a labeled example witness, not a claim of
     /// uniqueness) — a confirmed P00 decision, load-bearing for byte-exact
     /// evidence replay.
     pub measure: Option<u128>,
@@ -247,11 +310,15 @@ pub enum Judgment {
 /// [`JudgeScratch`] conversion); `UndefinedDuration` is the explicit
 /// refusal of a ray in a duration-measured position; `MeasureOverflow`
 /// reports a group total past the widened accumulator instead of wrapping
-/// a witness; `Compile` is interned-projection exhaustion.
+/// a witness; `Compile` is interned-projection exhaustion. `Allocation`
+/// reports host allocation failure when no state scratch channel exists;
+/// a configured channel receives [`ScratchFault::Allocation`] instead.
 #[derive(Debug, PartialEq, Eq)]
 pub enum JudgeError<E> {
     Work(WorkError),
     State(E),
+    /// Host allocation failed independently of the operation's allowance.
+    Allocation,
     UndefinedDuration {
         statement: StatementId,
     },
@@ -396,11 +463,6 @@ pub fn judge_final_state_with_scratch<S: CandidateFacts>(
             // candidate state can change it.
             continue;
         }
-        let _span = crate::obs::span(match view {
-            StatementView::Key(..) => crate::obs::names::JUDGMENT_KEYS,
-            StatementView::Containment(..) => crate::obs::names::JUDGMENT_SOURCE,
-            StatementView::Capacity(..) => crate::obs::names::JUDGMENT_CAPACITIES,
-        });
         match view {
             StatementView::Key(_, statement) => judge.key(state, statement)?,
             StatementView::Containment(_, statement) => judge.containment(state, statement)?,
@@ -456,11 +518,6 @@ pub fn judge_final_state_delta_local<S: DeltaFacts>(
     delta.sort_by_key(|&(id, _)| id);
     for view in theory.delta_local_statements(schema, &delta) {
         work.step(1)?;
-        let _span = crate::obs::span(match view {
-            StatementView::Key(..) => crate::obs::names::JUDGMENT_KEYS,
-            StatementView::Containment(..) => crate::obs::names::JUDGMENT_SOURCE,
-            StatementView::Capacity(..) => crate::obs::names::JUDGMENT_CAPACITIES,
-        });
         match view {
             StatementView::Key(_, statement) => {
                 if !judge.key_delta_local(state, statement)? {
@@ -505,11 +562,10 @@ impl<E> Judge<'_, '_, E> {
         PendingViolation::new(statement, kind, self.budget.examples_per_statement)
     }
 
-    /// Stream one relation's proposed final rows in the state's
-    /// deterministic order — from the sealed extension for closed
-    /// relations, from the state otherwise — charging one work step per
-    /// row. The visitor returns `false` to stop the walk. Charged decoded
-    /// rows stay borrowed for the visit.
+    /// Stream proposed rows with their stable logical-order rank — from
+    /// the sealed extension for closed relations, from the state otherwise.
+    /// Physical encounter order may differ. Charge one work step per row;
+    /// false stops the walk and charged decoded rows stay borrowed.
     fn for_each_row<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -531,18 +587,14 @@ impl<E> Judge<'_, '_, E> {
             }
             return Ok(());
         }
-        let mut seq = 0u64;
         let mut smuggled = None;
-        let walked = state.visit_rows(relation, &mut |row| {
+        let walked = state.visit_ranked_rows(relation, &mut |rank, row| {
             if let Err(error) = self.work.step(1) {
                 smuggled = Some(JudgeError::Work(error));
                 return Ok(false);
             }
-            match visit(self, seq, row) {
-                Ok(keep) => {
-                    seq += 1;
-                    Ok(keep)
-                }
+            match visit(self, rank, row) {
+                Ok(keep) => Ok(keep),
                 Err(error) => {
                     smuggled = Some(error);
                     Ok(false)
@@ -603,6 +655,39 @@ impl<E> Judge<'_, '_, E> {
         self.for_each_compiled_group(state, compiled, &physical, visit)
     }
 
+    /// Capacity target visits need relation-wide ranks, not bucket encounter
+    /// order, to preserve the last logical target's witnessed measure.
+    fn visit_ranked_indexed_group<S: DeltaFacts<Error = E>>(
+        &mut self,
+        state: &S,
+        compiled: &CompiledProjection,
+        binding: &ProjectionBinding,
+        logical: &[Value],
+        mut visit: impl FnMut(&mut Self, u64, &[Value]) -> Result<bool, JudgeError<E>>,
+    ) -> Result<Option<()>, JudgeError<E>> {
+        let Some(physical) = CompiledTheory::index_key(binding, logical) else {
+            return Ok(None);
+        };
+        let mut smuggled = None;
+        let indexed = state.visit_ranked_compiled_group(compiled, &physical, &mut |rank, row| {
+            if let Err(error) = self.work.step(1) {
+                smuggled = Some(JudgeError::Work(error));
+                return Ok(false);
+            }
+            match visit(self, rank, row) {
+                Ok(keep) => Ok(keep),
+                Err(error) => {
+                    smuggled = Some(error);
+                    Ok(false)
+                }
+            }
+        });
+        if let Some(error) = smuggled {
+            return Err(error);
+        }
+        indexed.map_err(JudgeError::State)
+    }
+
     fn offer(
         &mut self,
         pending: &mut PendingViolation,
@@ -614,9 +699,11 @@ impl<E> Judge<'_, '_, E> {
             .offer(self.schema, self.work, relation, values)
     }
 
-    /// Delta-local key judgment over the state's group index: enumerate the
-    /// full FINAL membership of every determinant group a delta-added row
-    /// touches, and judge only those. Returns `false` when the state
+    /// Delta-local key judgment over the state's group index. Scalar keys
+    /// need at most two final competitors to establish a violation; only
+    /// bad groups are retained and fully enumerated for citations. Interval
+    /// keys still deduplicate all touched groups before their span sweep.
+    /// Returns `false` when the state
     /// exposes no group index; the caller then runs the complete streaming
     /// pass. Competitors stay in ordered scratch; citations are selected
     /// by canonical bytes before the budget truncates.
@@ -637,6 +724,9 @@ impl<E> Judge<'_, '_, E> {
                 scalar_fields.push(idx);
             }
         }
+        let Some(tail) = interval_field else {
+            return self.key_scalar_delta_local(state, statement, &scalar_fields);
+        };
         let mut seen = self.grouped();
         let mut groups: Vec<Vec<Value>> = Vec::new();
         let mut det = Vec::new();
@@ -669,19 +759,14 @@ impl<E> Judge<'_, '_, E> {
         }
         let mut pending = self.pending(statement.id, StatementKind::Functionality);
         for determinant in &groups {
-            let indexed = match interval_field {
-                None => {
-                    self.key_group_scalar(state, statement, relation, determinant, &mut pending)?
-                }
-                Some(tail) => self.key_group_pointwise(
-                    state,
-                    statement,
-                    relation,
-                    determinant,
-                    tail,
-                    &mut pending,
-                )?,
-            };
+            let indexed = self.key_group_pointwise(
+                state,
+                statement,
+                relation,
+                determinant,
+                tail,
+                &mut pending,
+            )?;
             if !indexed {
                 return Ok(false);
             }
@@ -690,28 +775,102 @@ impl<E> Judge<'_, '_, E> {
         Ok(true)
     }
 
-    fn key_group_scalar<S: DeltaFacts<Error = E>>(
+    fn key_scalar_delta_local<S: DeltaFacts<Error = E>>(
         &mut self,
         state: &S,
         statement: &KeyStatement,
-        relation: RelationId,
-        determinant: &[Value],
-        pending: &mut PendingViolation,
+        scalar_fields: &[usize],
     ) -> Result<bool, JudgeError<E>> {
-        let mut count = 0u64;
-        match state.visit_key_competitors(statement.id, determinant, &mut |_| {
-            count += 1;
-            Ok(true)
-        }) {
-            Ok(Some(())) => {}
-            Ok(None) => return Ok(false),
-            Err(error) => return Err(JudgeError::State(error)),
-        }
-        if count < 2 {
+        if state.scalar_key_preserved(statement.id) {
             return Ok(true);
         }
-        pending.violated = true;
-        self.offer_key_group(state, statement.id, relation, determinant, pending, None)
+        let mut determinant = ScalarKeyScratch::new(self.work, scalar_fields.len(), self.channel)?;
+        let mut offending = self.grouped();
+        let mut pending = self.pending(statement.id, StatementKind::Functionality);
+        let mut indexed = true;
+        let mut walk_error = None;
+        state
+            .visit_added_rows(statement.relation, &mut |row| {
+                let inspected = (|| {
+                    self.work.step(1)?;
+                    determinant.project(row, scalar_fields)?;
+                    // A lawful scalar group has at most one row. Reprobing
+                    // good groups is bounded; remembering them is unnecessary.
+                    // Check known BAD groups before probing: many additions to
+                    // one violation must not repeat its entire citation scan.
+                    let have_bad_groups = offending.len() != 0;
+                    if have_bad_groups && offending.contains(determinant.encode()?)? {
+                        return Ok(true);
+                    }
+                    let Some(violated) =
+                        self.scalar_key_conflict(state, statement.id, determinant.values())?
+                    else {
+                        return Ok(false);
+                    };
+                    if !violated {
+                        return Ok(true);
+                    }
+                    if !have_bad_groups {
+                        determinant.encode()?;
+                    }
+                    offending.insert_if_absent(determinant.key())?;
+                    pending.violated = true;
+                    self.offer_key_group(
+                        state,
+                        statement.id,
+                        statement.relation,
+                        determinant.values(),
+                        &mut pending,
+                        None,
+                    )
+                })();
+                match inspected {
+                    Ok(available) => {
+                        indexed = available;
+                        Ok(available)
+                    }
+                    Err(error) => {
+                        walk_error = Some(error);
+                        Ok(false)
+                    }
+                }
+            })
+            .map_err(JudgeError::State)?;
+        if let Some(error) = walk_error {
+            return Err(error);
+        }
+        if indexed {
+            self.finish(pending);
+        }
+        // A late unavailable index discards provisional citations and all
+        // local scratch before the caller performs complete judgment.
+        Ok(indexed)
+    }
+
+    fn scalar_key_conflict<S: DeltaFacts<Error = E>>(
+        &self,
+        state: &S,
+        statement: StatementId,
+        determinant: &[Value],
+    ) -> Result<Option<bool>, JudgeError<E>> {
+        let mut count = 0u8;
+        let mut work_error = None;
+        match state.visit_key_competitors(statement, determinant, &mut |_| {
+            if let Err(error) = self.work.checkpoint() {
+                work_error = Some(error);
+                return Ok(false);
+            }
+            count += 1;
+            Ok(count < 2)
+        }) {
+            Ok(Some(())) => {}
+            Ok(None) => return Ok(None),
+            Err(error) => return Err(JudgeError::State(error)),
+        }
+        if let Some(error) = work_error {
+            return Err(JudgeError::Work(error));
+        }
+        Ok(Some(count == 2))
     }
 
     fn key_group_pointwise<S: DeltaFacts<Error = E>>(
@@ -952,23 +1111,90 @@ impl<E> Judge<'_, '_, E> {
         state: &S,
         statement: &ContainmentStatement,
     ) -> Result<(), JudgeError<E>> {
-        let target_fields = self.schema.relation(statement.target.relation).fields();
-        // At most one trailing interval position (validation's rule); its
-        // presence selects pointwise coverage instead of tuple existence.
-        let coverage_position = statement
-            .target
-            .projection
-            .iter()
-            .position(|field| target_fields[usize::from(field.0)].value_type.is_interval());
         let mut pending = self
             .pending(statement.id, StatementKind::Containment)
             .with_direction(JudgedDirection::SourceUnsatisfied);
-        match coverage_position {
-            None => self.containment_scalar(state, statement, &mut pending)?,
-            Some(position) => {
-                self.containment_pointwise(state, statement, position, &mut pending)?;
+        if let Enforcement::Closed { members } = &statement.enforcement {
+            self.for_each_row(state, statement.source.relation, |judge, _rank, row| {
+                judge.containment_closed_row(statement, members, row, &mut pending)?;
+                Ok(true)
+            })?;
+        } else {
+            let target_fields = self.schema.relation(statement.target.relation).fields();
+            // At most one trailing interval position (validation's rule);
+            // its presence selects coverage instead of tuple existence.
+            let coverage_position = statement
+                .target
+                .projection
+                .iter()
+                .position(|field| target_fields[usize::from(field.0)].value_type.is_interval());
+            match coverage_position {
+                None => self.containment_scalar(state, statement, &mut pending)?,
+                Some(position) => {
+                    self.containment_pointwise(state, statement, position, &mut pending)?;
+                }
             }
         }
+        self.finish(pending);
+        Ok(())
+    }
+
+    /// The sealed bitset already includes the target's selection. Closed
+    /// targets accept only their synthetic U64 handle projection, so neither
+    /// target row decoding nor a temporary witness set is necessary.
+    fn containment_closed_row(
+        &mut self,
+        statement: &ContainmentStatement,
+        members: &MemberSet,
+        row: &[Value],
+        pending: &mut PendingViolation,
+    ) -> Result<(), JudgeError<E>> {
+        if !satisfies(&statement.source, row) {
+            return Ok(());
+        }
+        let handle = &row[usize::from(statement.source.projection[0].0)];
+        let witnessed = matches!(handle, Value::U64(word)
+            if AxiomIndex::try_from(*word).is_ok_and(|index| members.contains(index)));
+        if !witnessed {
+            pending.violated = true;
+            self.offer(pending, statement.source.relation, row)?;
+        }
+        Ok(())
+    }
+
+    /// A lawful parent already satisfies the immutable closed target.
+    /// Removing source rows cannot create a violation; all new offenders
+    /// must be selected additions. Check each one, including every citation.
+    fn containment_closed_delta<S: DeltaFacts<Error = E>>(
+        &mut self,
+        state: &S,
+        statement: &ContainmentStatement,
+        members: &MemberSet,
+    ) -> Result<(), JudgeError<E>> {
+        let mut pending = self
+            .pending(statement.id, StatementKind::Containment)
+            .with_direction(JudgedDirection::SourceUnsatisfied);
+        let mut walk_error = None;
+        let walked = state.visit_added_rows(statement.source.relation, &mut |row| {
+            if walk_error.is_some() {
+                return Ok(false);
+            }
+            let checked =
+                self.work.step(1).map_err(JudgeError::Work).and_then(|()| {
+                    self.containment_closed_row(statement, members, row, &mut pending)
+                });
+            match checked {
+                Ok(()) => Ok(true),
+                Err(error) => {
+                    walk_error = Some(error);
+                    Ok(false)
+                }
+            }
+        });
+        if let Some(error) = walk_error {
+            return Err(error);
+        }
+        walked.map_err(JudgeError::State)?;
         self.finish(pending);
         Ok(())
     }
@@ -1105,6 +1331,11 @@ impl<E> Judge<'_, '_, E> {
         // and only surfaces if a target row references the group — exactly
         // the reference semantics, where unreferenced groups are never
         // measured.
+        // Every finite weight is at most u64::MAX; a finite u64 work
+        // allowance admits at most u64::MAX source visits. Thus finite
+        // totals fit u128 in every traversal order. The only reachable
+        // semantic source failure is an undefined duration (identical for
+        // every ray). Keep checked overflow defensively, not a narrowed sum.
         self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
             source_rows += 1;
             if !satisfies(&statement.source, row) {
@@ -1140,7 +1371,7 @@ impl<E> Judge<'_, '_, E> {
         // Violating group keys go into ordered scratch; citations are
         // selected by canonical bytes after both sides are offered.
         let mut violating = self.grouped();
-        self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+        self.for_each_row(state, statement.target.relation, |judge, rank, row| {
             if !satisfies(&statement.target, row) {
                 return Ok(true);
             }
@@ -1175,8 +1406,8 @@ impl<E> Judge<'_, '_, E> {
                 pending.violated = true;
                 // One violation per statement; the witnessed measure is the
                 // last violating group's exact total in this deterministic
-                // target order (P00-confirmed witness rule).
-                pending.measure = Some(total);
+                // logical target order (P00-confirmed witness rule).
+                pending.record_measure_at(rank, total);
                 violating.put(&group, &[u8::from(above)])?;
                 judge.offer(&mut pending, statement.target.relation, row)?;
             }
@@ -1207,6 +1438,17 @@ impl<E> Judge<'_, '_, E> {
         state: &S,
         statement: &ContainmentStatement,
     ) -> Result<(), JudgeError<E>> {
+        if let Enforcement::Closed { members } = &statement.enforcement {
+            return self.containment_closed_delta(state, statement, members);
+        }
+        self.containment_open_delta(state, statement)
+    }
+
+    fn containment_open_delta<S: DeltaFacts<Error = E>>(
+        &mut self,
+        state: &S,
+        statement: &ContainmentStatement,
+    ) -> Result<(), JudgeError<E>> {
         let theory = self.schema.compiled_theory().map_err(JudgeError::Compile)?;
         let target_fields = self.schema.relation(statement.target.relation).fields();
         let coverage_position = statement
@@ -1224,8 +1466,7 @@ impl<E> Judge<'_, '_, E> {
         let source_compiled = theory.source_projection(statement.id);
         let target_compiled = theory.target_projection(statement.id);
         let mut affected = self.grouped();
-        let mut determinants = Vec::new();
-        Self::mark_delta_groups(
+        self.mark_delta_groups(
             state,
             statement.source.relation,
             &statement.source,
@@ -1233,9 +1474,8 @@ impl<E> Judge<'_, '_, E> {
             true,
             false,
             &mut affected,
-            &mut determinants,
         )?;
-        Self::mark_delta_groups(
+        self.mark_delta_groups(
             state,
             statement.target.relation,
             &statement.target,
@@ -1243,7 +1483,6 @@ impl<E> Judge<'_, '_, E> {
             false,
             true,
             &mut affected,
-            &mut determinants,
         )?;
         if affected.len() == 0 {
             return Ok(());
@@ -1260,7 +1499,7 @@ impl<E> Judge<'_, '_, E> {
                 target_compiled,
                 source_binding,
                 target_binding,
-                &determinants,
+                &mut affected,
                 &mut pending,
             )?,
             Some(position) => self.containment_pointwise_compiled(
@@ -1272,11 +1511,17 @@ impl<E> Judge<'_, '_, E> {
                 target_compiled,
                 source_binding,
                 target_binding,
-                &determinants,
+                &mut affected,
                 &mut pending,
             )?,
         };
-        if !compiled && !pending.violated {
+        if !compiled {
+            // Indexed availability is independent of the verdict. A later
+            // declined group invalidates all provisional evidence and its
+            // reservations before the complete affected-group scan starts.
+            pending = self
+                .pending(statement.id, StatementKind::Containment)
+                .with_direction(JudgedDirection::SourceUnsatisfied);
             match coverage_position {
                 None => {
                     self.containment_scalar_affected(
@@ -1318,79 +1563,95 @@ impl<E> Judge<'_, '_, E> {
         target_compiled: Option<&CompiledProjection>,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        determinants: &[Vec<Value>],
+        affected: &mut GroupedMap<E>,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
-        if let Some(sample) = determinants.first()
-            && !Self::compiled_indexes_live(state, theory, source_binding, target_binding, sample)?
-        {
-            return Ok(false);
-        }
-        let mut witnesses = self.grouped();
-        let mut key = Vec::new();
-        for det in determinants {
-            key.clear();
-            encode_values(det, &mut key);
-            if let Some(compiled) = target_compiled {
-                match self.visit_indexed_group(
-                    state,
-                    compiled,
-                    target_binding,
-                    det,
-                    |_judge, row| {
-                        if satisfies(&statement.target, row) {
-                            witnesses.put(&key, &[])?;
-                        }
-                        Ok(true)
-                    },
-                )? {
-                    Some(()) => {}
-                    None => return Ok(false),
+        let fields = self.schema.relation(statement.source.relation).fields();
+        let mut first = true;
+        let mut available = true;
+        // Keep evidence provisional until every indexed group completes.
+        affected.for_each_determinant(
+            fields,
+            &source_binding.logical_scalars,
+            self.work,
+            |_group, det| {
+                if first {
+                    first = false;
+                    if !Self::compiled_indexes_live(
+                        state,
+                        theory,
+                        source_binding,
+                        target_binding,
+                        det,
+                    )? {
+                        available = false;
+                        return Ok(false);
+                    }
                 }
-            } else if self.unindexed_matches(
-                state,
-                statement.target.relation,
-                &statement.target,
-                target_binding,
-                det,
-            )? {
-                witnesses.put(&key, &[])?;
-            }
-        }
-        for det in determinants {
-            key.clear();
-            encode_values(det, &mut key);
-            let missing = !witnesses.contains(&key)?;
-            if let Some(compiled) = source_compiled {
-                match self.visit_indexed_group(
-                    state,
-                    compiled,
-                    source_binding,
-                    det,
-                    |judge, row| {
-                        if missing && satisfies(&statement.source, row) {
-                            pending.violated = true;
-                            judge.offer(pending, statement.source.relation, row)?;
-                        }
-                        Ok(true)
-                    },
-                )? {
-                    Some(()) => {}
-                    None => return Ok(false),
+                let mut witnessed = false;
+                if let Some(compiled) = target_compiled {
+                    if self
+                        .visit_indexed_group(
+                            state,
+                            compiled,
+                            target_binding,
+                            det,
+                            |_judge, row| {
+                                if satisfies(&statement.target, row) {
+                                    witnessed = true;
+                                    return Ok(false);
+                                }
+                                Ok(true)
+                            },
+                        )?
+                        .is_none()
+                    {
+                        available = false;
+                        return Ok(false);
+                    }
+                } else {
+                    witnessed = self.unindexed_matches(
+                        state,
+                        statement.target.relation,
+                        &statement.target,
+                        target_binding,
+                        det,
+                    )?;
                 }
-            } else {
-                self.offer_unindexed_unsatisfied(
-                    state,
-                    statement.source.relation,
-                    &statement.source,
-                    source_binding,
-                    det,
-                    missing,
-                    pending,
-                )?;
-            }
-        }
-        Ok(true)
+                // Scalar containment is existential. One selected final target
+                // witnesses every source in this group; enumerating those sources
+                // would make an admitted insertion scale with existing fan-out.
+                if witnessed {
+                    return Ok(true);
+                }
+                if let Some(compiled) = source_compiled {
+                    if self
+                        .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
+                            if satisfies(&statement.source, row) {
+                                pending.violated = true;
+                                judge.offer(pending, statement.source.relation, row)?;
+                            }
+                            Ok(true)
+                        })?
+                        .is_none()
+                    {
+                        available = false;
+                        return Ok(false);
+                    }
+                } else {
+                    self.offer_unindexed_unsatisfied(
+                        state,
+                        statement.source.relation,
+                        &statement.source,
+                        source_binding,
+                        det,
+                        pending,
+                    )?;
+                }
+                Ok(true)
+            },
+        )?;
+        Ok(available)
     }
 
     #[expect(
@@ -1407,61 +1668,72 @@ impl<E> Judge<'_, '_, E> {
         target_compiled: Option<&CompiledProjection>,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        determinants: &[Vec<Value>],
+        affected: &mut GroupedMap<E>,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
-        if let Some(sample) = determinants.first()
-            && !Self::compiled_indexes_live(state, theory, source_binding, target_binding, sample)?
-        {
-            return Ok(false);
-        }
-        for det in determinants {
-            let mut spans = self.grouped();
-            if let Some(compiled) = target_compiled {
-                match self.visit_indexed_group(
+        let fields = self.schema.relation(statement.source.relation).fields();
+        let mut first = true;
+        let mut available = true;
+        affected.for_each_determinant(
+            fields,
+            &source_binding.logical_scalars,
+            self.work,
+            |_group, det| {
+                if first {
+                    first = false;
+                    if !Self::compiled_indexes_live(
+                        state,
+                        theory,
+                        source_binding,
+                        target_binding,
+                        det,
+                    )? {
+                        available = false;
+                        return Ok(false);
+                    }
+                }
+                let Some(mut runs) = self.target_coverage(
                     state,
-                    compiled,
+                    statement,
+                    position,
+                    target_compiled,
                     target_binding,
                     det,
-                    |_judge, row| {
-                        if satisfies(&statement.target, row) {
-                            let span_value =
-                                &row[usize::from(statement.target.projection[position].0)];
-                            let (start, end) = interval_order_words(span_value)
-                                .expect("positional typing pairs interval positions");
-                            spans.put(&span_key(0, start, end, 0), &[])?;
-                        }
-                        Ok(true)
-                    },
-                )? {
-                    Some(()) => {}
-                    None => return Ok(false),
-                }
-            } else {
-                self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
-                    if satisfies(&statement.target, row)
-                        && CompiledTheory::group_key(target_binding, row).as_slice() == det
+                )?
+                else {
+                    available = false;
+                    return Ok(false);
+                };
+                let mut found_key = Vec::new();
+                let mut found_value = Vec::new();
+                if let Some(compiled) = source_compiled {
+                    if self
+                        .visit_indexed_group(state, compiled, source_binding, det, |judge, row| {
+                            if !satisfies(&statement.source, row) {
+                                return Ok(true);
+                            }
+                            if !run_covers(
+                                0,
+                                &row[usize::from(statement.source.projection[position].0)],
+                                &mut runs,
+                                &mut found_key,
+                                &mut found_value,
+                            )? {
+                                pending.violated = true;
+                                judge.offer(pending, statement.source.relation, row)?;
+                            }
+                            Ok(true)
+                        })?
+                        .is_none()
                     {
-                        let span_value = &row[usize::from(statement.target.projection[position].0)];
-                        let (start, end) = interval_order_words(span_value)
-                            .expect("positional typing pairs interval positions");
-                        spans.put(&span_key(0, start, end, 0), &[])?;
+                        available = false;
+                        return Ok(false);
                     }
-                    Ok(true)
-                })?;
-            }
-            let mut runs = self.grouped();
-            merge_coverage_runs(&mut spans, &mut runs, self.work)?;
-            let mut found_key = Vec::new();
-            let mut found_value = Vec::new();
-            if let Some(compiled) = source_compiled {
-                match self.visit_indexed_group(
-                    state,
-                    compiled,
-                    source_binding,
-                    det,
-                    |judge, row| {
-                        if !satisfies(&statement.source, row) {
+                } else {
+                    self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
+                        if !satisfies(&statement.source, row)
+                            || CompiledTheory::group_key(source_binding, row).as_slice() != det
+                        {
                             return Ok(true);
                         }
                         if !run_covers(
@@ -1475,33 +1747,57 @@ impl<E> Judge<'_, '_, E> {
                             judge.offer(pending, statement.source.relation, row)?;
                         }
                         Ok(true)
-                    },
-                )? {
-                    Some(()) => {}
-                    None => return Ok(false),
+                    })?;
                 }
-            } else {
-                self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                    if !satisfies(&statement.source, row)
-                        || CompiledTheory::group_key(source_binding, row).as_slice() != det
-                    {
-                        return Ok(true);
-                    }
-                    if !run_covers(
-                        0,
-                        &row[usize::from(statement.source.projection[position].0)],
-                        &mut runs,
-                        &mut found_key,
-                        &mut found_value,
-                    )? {
-                        pending.violated = true;
-                        judge.offer(pending, statement.source.relation, row)?;
-                    }
-                    Ok(true)
-                })?;
+                Ok(true)
+            },
+        )?;
+        Ok(available)
+    }
+
+    /// Build coverage for one target determinant. An unavailable physical
+    /// index declines the whole provisional indexed pass, not this group alone.
+    fn target_coverage<S: DeltaFacts<Error = E>>(
+        &mut self,
+        state: &S,
+        statement: &ContainmentStatement,
+        position: usize,
+        compiled: Option<&CompiledProjection>,
+        binding: &ProjectionBinding,
+        determinant: &[Value],
+    ) -> Result<Option<GroupedMap<E>>, JudgeError<E>> {
+        let mut spans = self.grouped();
+        let mut add_span = |row: &[Value]| {
+            if satisfies(&statement.target, row) {
+                let span = &row[usize::from(statement.target.projection[position].0)];
+                let (start, end) =
+                    interval_order_words(span).expect("positional typing pairs interval positions");
+                spans.put(&span_key(0, start, end, 0), &[])?;
             }
+            Ok(true)
+        };
+        if let Some(compiled) = compiled {
+            if self
+                .visit_indexed_group(state, compiled, binding, determinant, |_judge, row| {
+                    add_span(row)
+                })?
+                .is_none()
+            {
+                return Ok(None);
+            }
+        } else {
+            self.for_each_row(state, statement.target.relation, |_judge, _seq, row| {
+                if satisfies(&statement.target, row)
+                    && CompiledTheory::group_key(binding, row).as_slice() == determinant
+                {
+                    add_span(row)?;
+                }
+                Ok(true)
+            })?;
         }
-        Ok(true)
+        let mut runs = self.grouped();
+        merge_coverage_runs(&mut spans, &mut runs, self.work)?;
+        Ok(Some(runs))
     }
 
     fn containment_scalar_affected<S: DeltaFacts<Error = E>>(
@@ -1623,8 +1919,7 @@ impl<E> Judge<'_, '_, E> {
         let source_compiled = theory.source_projection(statement.id);
         let target_compiled = theory.target_projection(statement.id);
         let mut affected = self.grouped();
-        let mut determinants = Vec::new();
-        Self::mark_delta_groups(
+        self.mark_delta_groups(
             state,
             statement.source.relation,
             &statement.source,
@@ -1632,9 +1927,8 @@ impl<E> Judge<'_, '_, E> {
             true,
             true,
             &mut affected,
-            &mut determinants,
         )?;
-        Self::mark_delta_groups(
+        self.mark_delta_groups(
             state,
             statement.target.relation,
             &statement.target,
@@ -1642,7 +1936,6 @@ impl<E> Judge<'_, '_, E> {
             true,
             false,
             &mut affected,
-            &mut determinants,
         )?;
         if affected.len() == 0 {
             return Ok(());
@@ -1656,10 +1949,12 @@ impl<E> Judge<'_, '_, E> {
             target_compiled,
             source_binding,
             target_binding,
-            &determinants,
+            &mut affected,
             &mut pending,
-        )? && !pending.violated
-        {
+        )? {
+            // Unavailable indexed/ranked access invalidates the provisional
+            // pass. Drop its evidence and reservations before the full walk.
+            pending = self.pending(statement.id, StatementKind::Capacity);
             self.capacity_affected(
                 state,
                 statement,
@@ -1687,127 +1982,163 @@ impl<E> Judge<'_, '_, E> {
         target_compiled: Option<&CompiledProjection>,
         source_binding: &ProjectionBinding,
         target_binding: &ProjectionBinding,
-        determinants: &[Vec<Value>],
+        affected: &mut GroupedMap<E>,
         pending: &mut PendingViolation,
     ) -> Result<bool, JudgeError<E>> {
-        if let Some(sample) = determinants.first()
-            && !Self::compiled_indexes_live(state, theory, source_binding, target_binding, sample)?
-        {
-            return Ok(false);
-        }
+        let fields = self.schema.relation(statement.source.relation).fields();
+        let mut first = true;
+        let mut available = true;
         let mut totals = self.grouped();
-        let mut group = Vec::new();
-        for det in determinants {
-            group.clear();
-            encode_values(det, &mut group);
-            if let Some(compiled) = source_compiled {
-                match self.visit_indexed_group(
-                    state,
-                    compiled,
-                    source_binding,
-                    det,
-                    |_judge, row| {
-                        if satisfies(&statement.source, row) {
-                            accumulate_capacity(&mut totals, statement, row, &group)?;
+        affected.for_each_determinant(
+            fields,
+            &source_binding.logical_scalars,
+            self.work,
+            |group, det| {
+                if first {
+                    first = false;
+                    if !Self::compiled_indexes_live(
+                        state,
+                        theory,
+                        source_binding,
+                        target_binding,
+                        det,
+                    )? {
+                        available = false;
+                        return Ok(false);
+                    }
+                }
+                if let Some(compiled) = source_compiled {
+                    if self
+                        .visit_indexed_group(
+                            state,
+                            compiled,
+                            source_binding,
+                            det,
+                            |_judge, row| {
+                                if satisfies(&statement.source, row) {
+                                    accumulate_capacity(&mut totals, statement, row, group)?;
+                                }
+                                Ok(true)
+                            },
+                        )?
+                        .is_none()
+                    {
+                        available = false;
+                        return Ok(false);
+                    }
+                } else {
+                    self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
+                        if satisfies(&statement.source, row)
+                            && CompiledTheory::group_key(source_binding, row).as_slice() == det
+                        {
+                            accumulate_capacity(&mut totals, statement, row, group)?;
                         }
                         Ok(true)
-                    },
-                )? {
-                    Some(()) => {}
-                    None => return Ok(false),
+                    })?;
                 }
-            } else {
-                self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-                    if satisfies(&statement.source, row)
-                        && CompiledTheory::group_key(source_binding, row).as_slice() == det
-                    {
-                        accumulate_capacity(&mut totals, statement, row, &group)?;
-                    }
-                    Ok(true)
-                })?;
-            }
+                Ok(true)
+            },
+        )?;
+        if !available {
+            return Ok(false);
         }
         let mut violating = self.grouped();
-        for det in determinants {
-            group.clear();
-            encode_values(det, &mut group);
-            if let Some(compiled) = target_compiled {
-                match self.visit_indexed_group(
-                    state,
-                    compiled,
-                    target_binding,
-                    det,
-                    |judge, row| {
-                        if satisfies(&statement.target, row) {
+        affected.for_each_determinant(
+            fields,
+            &source_binding.logical_scalars,
+            self.work,
+            |group, det| {
+                if let Some(compiled) = target_compiled {
+                    if self
+                        .visit_ranked_indexed_group(
+                            state,
+                            compiled,
+                            target_binding,
+                            det,
+                            |judge, rank, row| {
+                                if satisfies(&statement.target, row) {
+                                    judge.note_capacity_target(
+                                        statement,
+                                        (rank, row),
+                                        group,
+                                        &mut totals,
+                                        &mut violating,
+                                        pending,
+                                    )?;
+                                }
+                                Ok(true)
+                            },
+                        )?
+                        .is_none()
+                    {
+                        available = false;
+                        return Ok(false);
+                    }
+                } else {
+                    self.for_each_row(state, statement.target.relation, |judge, rank, row| {
+                        if satisfies(&statement.target, row)
+                            && CompiledTheory::group_key(target_binding, row).as_slice() == det
+                        {
                             judge.note_capacity_target(
                                 statement,
-                                row,
-                                &group,
+                                (rank, row),
+                                group,
                                 &mut totals,
                                 &mut violating,
                                 pending,
                             )?;
                         }
                         Ok(true)
-                    },
-                )? {
-                    Some(()) => {}
-                    None => return Ok(false),
+                    })?;
                 }
-            } else {
-                self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
-                    if satisfies(&statement.target, row)
-                        && CompiledTheory::group_key(target_binding, row).as_slice() == det
-                    {
-                        judge.note_capacity_target(
-                            statement,
-                            row,
-                            &group,
-                            &mut totals,
-                            &mut violating,
-                            pending,
-                        )?;
-                    }
-                    Ok(true)
-                })?;
-            }
+                Ok(true)
+            },
+        )?;
+        if !available {
+            return Ok(false);
         }
         if pending.violated {
-            for det in determinants {
-                group.clear();
-                encode_values(det, &mut group);
-                if !violating.contains(&group)? {
-                    continue;
-                }
-                if let Some(compiled) = source_compiled {
-                    match self.visit_indexed_group(
-                        state,
-                        compiled,
-                        source_binding,
-                        det,
-                        |judge, row| {
-                            if satisfies(&statement.source, row) {
+            // This exact-key subset is already the complete set of groups
+            // requiring source citations. No need to decode or probe the rest.
+            violating.for_each_determinant(
+                fields,
+                &source_binding.logical_scalars,
+                self.work,
+                |_group, det| {
+                    if let Some(compiled) = source_compiled {
+                        if self
+                            .visit_indexed_group(
+                                state,
+                                compiled,
+                                source_binding,
+                                det,
+                                |judge, row| {
+                                    if satisfies(&statement.source, row) {
+                                        judge.offer(pending, statement.source.relation, row)?;
+                                    }
+                                    Ok(true)
+                                },
+                            )?
+                            .is_none()
+                        {
+                            available = false;
+                            return Ok(false);
+                        }
+                    } else {
+                        self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
+                            if satisfies(&statement.source, row)
+                                && CompiledTheory::group_key(source_binding, row).as_slice() == det
+                            {
                                 judge.offer(pending, statement.source.relation, row)?;
                             }
                             Ok(true)
-                        },
-                    )? {
-                        Some(()) => {}
-                        None => return Ok(false),
+                        })?;
                     }
-                } else {
-                    self.for_each_row(state, statement.source.relation, |judge, _seq, row| {
-                        if satisfies(&statement.source, row)
-                            && CompiledTheory::group_key(source_binding, row).as_slice() == det
-                        {
-                            judge.offer(pending, statement.source.relation, row)?;
-                        }
-                        Ok(true)
-                    })?;
-                }
-            }
+                    Ok(true)
+                },
+            )?;
         }
-        Ok(true)
+        Ok(available)
     }
 
     fn capacity_affected<S: DeltaFacts<Error = E>>(
@@ -1834,7 +2165,7 @@ impl<E> Judge<'_, '_, E> {
             Ok(true)
         })?;
         let mut violating = self.grouped();
-        self.for_each_row(state, statement.target.relation, |judge, _seq, row| {
+        self.for_each_row(state, statement.target.relation, |judge, rank, row| {
             if !satisfies(&statement.target, row) {
                 return Ok(true);
             }
@@ -1845,7 +2176,7 @@ impl<E> Judge<'_, '_, E> {
             }
             judge.note_capacity_target(
                 statement,
-                row,
+                (rank, row),
                 &group,
                 &mut totals,
                 &mut violating,
@@ -1872,7 +2203,7 @@ impl<E> Judge<'_, '_, E> {
     fn note_capacity_target(
         &mut self,
         statement: &CapacityStatement,
-        row: &[Value],
+        (rank, row): (u64, &[Value]),
         group: &[u8],
         totals: &mut GroupedMap<E>,
         violating: &mut GroupedMap<E>,
@@ -1905,7 +2236,7 @@ impl<E> Judge<'_, '_, E> {
         let above = ceiling.is_some_and(|hi| total > hi);
         if below || above {
             pending.violated = true;
-            pending.measure = Some(total);
+            pending.record_measure_at(rank, total);
             violating.put(group, &[])?;
             self.offer(pending, statement.target.relation, row)?;
         }
@@ -1951,15 +2282,11 @@ impl<E> Judge<'_, '_, E> {
             if satisfies(side, row) && CompiledTheory::group_key(binding, row).as_slice() == det {
                 found = true;
             }
-            Ok(true)
+            Ok(!found)
         })?;
         Ok(found)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn offer_unindexed_unsatisfied<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1967,12 +2294,8 @@ impl<E> Judge<'_, '_, E> {
         side: &Side,
         binding: &ProjectionBinding,
         det: &[Value],
-        missing: bool,
         pending: &mut PendingViolation,
     ) -> Result<(), JudgeError<E>> {
-        if !missing {
-            return Ok(());
-        }
         self.for_each_row(state, relation, |judge, _seq, row| {
             if satisfies(side, row) && CompiledTheory::group_key(binding, row).as_slice() == det {
                 pending.violated = true;
@@ -1987,6 +2310,7 @@ impl<E> Judge<'_, '_, E> {
         reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
     )]
     fn mark_delta_groups<S: DeltaFacts<Error = E>>(
+        &self,
         state: &S,
         relation: RelationId,
         side: &Side,
@@ -1994,25 +2318,22 @@ impl<E> Judge<'_, '_, E> {
         adds: bool,
         removes: bool,
         affected: &mut GroupedMap<E>,
-        determinants: &mut Vec<Vec<Value>>,
     ) -> Result<(), JudgeError<E>> {
-        let mut key = Vec::new();
+        let mut key = ScalarKeyScratch::new(self.work, 0, self.channel)?;
         let mut walk_error = None;
         let mut mark = |row: &[Value]| -> Result<bool, S::Error> {
             if walk_error.is_some() {
                 return Ok(false);
             }
             if satisfies(side, row) {
-                let det = CompiledTheory::group_key(binding, row);
-                key.clear();
-                encode_values(&det, &mut key);
-                match affected.insert_if_absent(&key) {
-                    Ok(true) => determinants.push(det),
-                    Ok(false) => {}
-                    Err(error) => {
-                        walk_error = Some(error);
-                        return Ok(false);
-                    }
+                // Exact keys are the only retained group representation.
+                // The reusable borrowed encoding buffer remains charged.
+                let marked = key
+                    .encode_projection(row, &binding.logical_scalars)
+                    .and_then(|key| affected.insert_if_absent(key));
+                if let Err(error) = marked {
+                    walk_error = Some(error);
+                    return Ok(false);
                 }
             }
             Ok(true)
@@ -2051,6 +2372,7 @@ struct PendingViolation {
     kind: StatementKind,
     direction: Option<JudgedDirection>,
     measure: Option<u128>,
+    measure_rank: Option<u64>,
     citations: CitationTopK,
     violated: bool,
 }
@@ -2062,6 +2384,7 @@ impl PendingViolation {
             kind,
             direction: None,
             measure: None,
+            measure_rank: None,
             citations: CitationTopK::new(budget),
             violated: false,
         }
@@ -2070,6 +2393,13 @@ impl PendingViolation {
     fn with_direction(mut self, direction: JudgedDirection) -> Self {
         self.direction = Some(direction);
         self
+    }
+
+    fn record_measure_at(&mut self, rank: u64, measure: u128) {
+        if self.measure_rank.is_none_or(|previous| rank > previous) {
+            self.measure_rank = Some(rank);
+            self.measure = Some(measure);
+        }
     }
 }
 

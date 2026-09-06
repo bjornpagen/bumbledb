@@ -1,5 +1,5 @@
 use super::{
-    Colt, Map, NodeRef, NodeState, Positions, Slot, ctrl_tag, hash_core, hash_words, pack_child,
+    Colt, Cursor, Map, NodeRef, NodeState, Positions, ctrl_tag, hash_core, hash_words, pack_child,
     reserve_pool,
 };
 use crate::image::view::View;
@@ -15,10 +15,19 @@ pub(super) fn force_nbuckets(count: usize) -> usize {
 impl Colt {
     /// Force an unforced node into a map. Admission refusal is returned
     /// before any caller can index the map pool.
+    #[inline]
     pub(crate) fn force(&mut self, node: NodeRef, level: usize) -> Result<u32, WorkError> {
         if let NodeState::Forced { map } = self.nodes[node.0 as usize] {
             return Ok(map);
         }
+        self.force_unforced(node, level)
+    }
+
+    // Keep construction's rollback frame out of every already-forced
+    // probe. Construction itself remains normally optimized: fresh
+    // queries legitimately spend substantial time in this path.
+    #[inline(never)]
+    fn force_unforced(&mut self, node: NodeRef, level: usize) -> Result<u32, WorkError> {
         let mark = self.pool_mark();
         match self.force_fresh(node, level) {
             Ok(map) => Ok(map),
@@ -81,10 +90,6 @@ impl Colt {
             &mut self.charges,
         )?;
         let map_idx = u32::try_from(self.maps.len()).expect("map count fits u32");
-        crate::obs::event(
-            crate::obs::names::COLT_FORCE,
-            crate::obs::TraceArgs::Pair(count, u64::from(m.len)),
-        );
         self.maps.push(m);
         self.nodes[node.0 as usize] = NodeState::Forced { map: map_idx };
         Ok(map_idx)
@@ -310,7 +315,7 @@ impl Colt {
             for (i, w) in key.iter().enumerate() {
                 self.buckets[m.key_word_at(idx, i)] = *w;
             }
-            self.buckets[m.child_at(idx)] = pack_child(Slot::Single(position));
+            self.buckets[m.child_at(idx)] = pack_child(Cursor::Row(position));
             self.dense
                 .push(u32::try_from(idx).expect("slot index fits u32"));
             m.len += 1;

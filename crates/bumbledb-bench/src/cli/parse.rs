@@ -6,7 +6,7 @@ use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
     AppPerfArgs, BenchArgs, ChurnArgs, Cmd, CorpusArgs, CorpusFloatArgs, CurvesArgs, HashProbeArgs,
-    HeapArgs, PrimerlaneArgs, ScenarioArgs, StorageArgs, SweepArgs, WritesArgs,
+    HeapArgs, PrimerlaneArgs, ProfileArgs, ScenarioArgs, StorageArgs, StorageProfile, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -121,7 +121,7 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         corpus: CorpusArgs::default(),
         families: None,
         samples: None,
-        trace: false,
+        read_batch: None,
         alloc: false,
         proxy_per_rep: false,
         out: None,
@@ -137,7 +137,16 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
                 args.families = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
-            "--trace" => args.trace = true,
+            "--read-batch" => {
+                let batch = parse_u32(&flag, tokens.value(&flag)?)?;
+                if !(1..=crate::harness::MAX_READ_BATCH).contains(&batch) {
+                    return Err(format!(
+                        "`{flag}` must be between 1 and {}",
+                        crate::harness::MAX_READ_BATCH
+                    ));
+                }
+                args.read_batch = std::num::NonZeroU32::new(batch);
+            }
             "--alloc" => args.alloc = true,
             "--ephemeral" | "--nosync" => {
                 return Err(format!(
@@ -155,9 +164,11 @@ fn parse_bench(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Bench(args))
 }
 
-fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
+fn parse_profile(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut corpus = CorpusArgs::default();
     let mut family = None;
+    let mut seconds = 10;
+    let mut out = None;
     while let Some(flag) = tokens.next() {
         let flag = flag.to_owned();
         if corpus_flag(&mut corpus, &flag, tokens)? {
@@ -165,11 +176,25 @@ fn parse_trace(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
         }
         match flag.as_str() {
             "--family" => family = Some(tokens.value(&flag)?.to_owned()),
-            _ => return Err(unknown("trace", &flag)),
+            "--seconds" => {
+                seconds = parse_u32(&flag, tokens.value(&flag)?)?;
+                if !(1..=3600).contains(&seconds) {
+                    return Err("`--seconds` must be between 1 and 3600".to_owned());
+                }
+            }
+            "--out" => out = Some(PathBuf::from(tokens.value(&flag)?)),
+            _ => return Err(unknown("profile", &flag)),
         }
     }
-    let family = family.ok_or_else(|| "`trace` needs `--family NAME`".to_owned())?;
-    Ok(Cmd::Trace { corpus, family })
+    let family = family
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| "`profile` needs `--family NAME`".to_owned())?;
+    Ok(Cmd::Profile(ProfileArgs {
+        corpus,
+        family,
+        seconds,
+        out,
+    }))
 }
 
 fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, String> {
@@ -183,22 +208,15 @@ fn parse_world(cmd: &str, tokens: &mut Tokens<'_>) -> Result<ScenarioArgs, Strin
                 args.only = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
             }
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
-            "--trace" => args.trace = true,
             "--alloc" if cmd == "scenarios" => args.alloc = true,
             "--alloc" => {
                 return Err(format!(
-                    "`{cmd}` has no alloc pass — `--alloc` is a `scenarios` mode; \
-                     the write worlds take `--trace`"
+                    "`{cmd}` has no alloc pass — `--alloc` is a `scenarios` mode"
                 ));
             }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown(cmd, &flag)),
         }
-    }
-    if args.trace && args.alloc {
-        return Err(format!(
-            "`{cmd}` rejects `--trace` with `--alloc` — they are mutually exclusive passes (the obs doctrine)"
-        ));
     }
     Ok(args)
 }
@@ -215,41 +233,51 @@ fn parse_lawful(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Lawful(parse_world("lawful", tokens)?))
 }
 
-fn parse_sweep_commit(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
-    let mut args = SweepArgs::default();
-    while let Some(flag) = tokens.next() {
-        let flag = flag.to_owned();
-        match flag.as_str() {
-            "--sizes" => {
-                args.sizes = Some(
-                    tokens
-                        .value(&flag)?
-                        .split(',')
-                        .map(|raw| parse_u64(&flag, raw))
-                        .collect::<Result<_, _>>()?,
-                );
-            }
-            "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
-            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
-            _ => return Err(unknown("sweep-commit", &flag)),
-        }
-    }
-    Ok(Cmd::SweepCommit(args))
-}
-
 fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     let mut args = StorageArgs::default();
+    let mut home_options = false;
+    let mut corpus_options = false;
     while let Some(flag) = tokens.next() {
         let flag = flag.to_owned();
         match flag.as_str() {
-            "--scales" => args.scales = parse_scale_list(&flag, tokens.value(&flag)?)?,
+            "--profile" => {
+                args.profile = match tokens.value(&flag)? {
+                    "corpus" => StorageProfile::Corpus,
+                    "home-costs" => StorageProfile::HomeCosts,
+                    other => return Err(format!("unknown storage profile `{other}`")),
+                };
+            }
+            "--rows" => {
+                home_options = true;
+                args.rows = parse_u64(&flag, tokens.value(&flag)?)?;
+            }
+            "--samples" => {
+                home_options = true;
+                args.samples = parse_u32(&flag, tokens.value(&flag)?)?;
+            }
+            "--scales" => {
+                corpus_options = true;
+                args.scales = parse_scale_list(&flag, tokens.value(&flag)?)?;
+            }
             "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
             "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
-            "--churn-dir" => args.churn_dir = Some(PathBuf::from(tokens.value(&flag)?)),
+            "--churn-dir" => {
+                corpus_options = true;
+                args.churn_dir = Some(PathBuf::from(tokens.value(&flag)?));
+            }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("storage", &flag)),
         }
+    }
+    match args.profile {
+        StorageProfile::Corpus if home_options => {
+            return Err("--rows/--samples require storage --profile home-costs".into());
+        }
+        StorageProfile::HomeCosts if corpus_options => {
+            return Err("home-costs cannot use --scales or --churn-dir".into());
+        }
+        StorageProfile::HomeCosts => crate::space::variants::validate_home_args(&args)?,
+        StorageProfile::Corpus => {}
     }
     Ok(Cmd::Storage(args))
 }
@@ -299,7 +327,6 @@ fn parse_writes(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             "--lanes" => args.lanes = parse_lane_list(&flag, tokens.value(&flag)?)?,
             "--batches" => args.batches = parse_batch_list(&flag, tokens.value(&flag)?)?,
             "--samples" => args.samples = Some(parse_u32(&flag, tokens.value(&flag)?)?),
-            "--trace" => args.trace = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("writes", &flag)),
         }
@@ -382,17 +409,10 @@ fn parse_primerlane(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             }
             "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
             "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
-            "--trace" => args.trace = true,
             "--alloc" => args.alloc = true,
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("primerlane", &flag)),
         }
-    }
-    if args.trace && args.alloc {
-        return Err(
-            "`primerlane` rejects `--trace` with `--alloc` — they are mutually exclusive passes (the obs doctrine)"
-                .to_owned(),
-        );
     }
     Ok(Cmd::Primerlane(args))
 }
@@ -529,11 +549,10 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "verify" => parse_verify(&mut tokens),
         "verify-store" => parse_verify_store(&mut tokens),
         "bench" => parse_bench(&mut tokens),
-        "trace" => parse_trace(&mut tokens),
+        "profile" => parse_profile(&mut tokens),
         "scenarios" => parse_scenarios(&mut tokens),
         "crud" => parse_crud(&mut tokens),
         "lawful" => parse_lawful(&mut tokens),
-        "sweep-commit" => parse_sweep_commit(&mut tokens),
         "storage" => parse_storage(&mut tokens),
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),

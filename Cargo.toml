@@ -32,3 +32,11 @@ assert_is_empty = "allow"
 lto = "fat"
 codegen-units = 1
 opt-level = 3
+
+# Native sampling needs inline frames and source locations, not debug-mode
+# execution. Keep the release optimizer and unwind information unchanged.
+[profile.profiling]
+inherits = "release"
+debug = true
+split-debuginfo = "packed"
+strip = "none"

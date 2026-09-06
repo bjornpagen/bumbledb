@@ -5,7 +5,7 @@ use crate::families::{Draw, Kind, param_args, set_bindings};
 use crate::harness::{self, Modes, Rotation};
 use crate::schema::schema;
 use crate::translate::{Translated, translate};
-use crate::{clockproxy, families, report, sqlite_run, trace_out};
+use crate::{clockproxy, families, report, sqlite_run};
 
 use super::BenchRun;
 
@@ -52,7 +52,8 @@ impl BenchRun<'_> {
         self.measure_read(db, conn, &spec)
     }
 
-    /// protocol, frequency-checked, traced and profiled where the modes
+    /// Time the registered parameter stream, with frequency and optional
+    /// allocation diagnostics kept outside the ordinary timing windows.
     fn measure_read<S>(
         &mut self,
         db: &Db<S>,
@@ -83,7 +84,6 @@ impl BenchRun<'_> {
         };
         let modes = Modes {
             alloc_window: self.alloc,
-            trace: false,
             proxy_per_rep: self.proxy_per_rep,
         };
         let proto = self.proto;
@@ -94,16 +94,17 @@ impl BenchRun<'_> {
             }
             self.first_family_warmed = true;
         }
+        let initial_batch = self.read_batch.map_or(1, std::num::NonZeroU32::get);
         let (ours, ghz_ours) = clockproxy::frequency_checked(|| {
-            harness::measure_batched(proto, modes, 1, || run_ours(&mut prepared))
+            harness::measure_batched(proto, modes, initial_batch, || run_ours(&mut prepared))
         })?;
 
-        let batch = if ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
-            16
+        let batch = if self.read_batch.is_none() && ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
+            harness::MAX_READ_BATCH
         } else {
-            1
+            initial_batch
         };
-        let (ours, ghz_ours) = if batch > 1 {
+        let (ours, ghz_ours) = if self.read_batch.is_none() && batch > 1 {
             eprintln!(
                 "bench: {} p50 under the {} ns quantum floor — re-measuring at batch {batch}",
                 spec.name,
@@ -115,16 +116,6 @@ impl BenchRun<'_> {
         } else {
             (ours, ghz_ours)
         };
-        if self.trace {
-            let (_, events) = harness::traced_sample(&mut || run_ours(&mut prepared))?;
-            let table =
-                trace_out::emit_pair(&self.trace_dir, &format!("{}.warm", spec.name), events)?;
-            self.flames.push(report::FlameEmbed {
-                name: spec.name.to_owned(),
-                table,
-            });
-        }
-        let exec = None;
 
         let mut sqlite_families = Vec::with_capacity(sets.len());
         for draw in &sets {
@@ -149,17 +140,18 @@ impl BenchRun<'_> {
             reason = "reporting accepts lossy integer-to-float conversion"
         )]
         let ratio_p50 = ours.stats.p50 as f64 / theirs.stats.p50.max(1) as f64;
-        let alloc = ours.alloc.map(report::AllocReport::from);
         Ok(report::ReadFamilyReport {
             name: spec.name.to_owned(),
+            batch,
             verdict: report::verdict(spec.kind, ours.stats.p50, theirs.stats.p50),
             p99_within_budget: report::within_budget(ours.stats.p99),
             ours: ours.stats,
             theirs: theirs.stats,
             ratio_p50,
-            alloc,
-            exec,
+            alloc: ours.alloc.map(report::AllocReport::from),
             ghz: Some(ghz_ours.merge(ghz_theirs).into()),
+            ghz_ours: Some(ghz_ours.into()),
+            ghz_theirs: Some(ghz_theirs.into()),
             p50_norm: ours.p50_norm,
         })
     }

@@ -481,6 +481,9 @@ fn render(report: &StorageReport) -> String {
 
 /// # Errors
 pub fn run(args: &StorageArgs) -> Result<i32, String> {
+    if args.profile == crate::cli::StorageProfile::HomeCosts {
+        return crate::space::variants::run_home_costs(args);
+    }
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
             "{}-storage",
@@ -671,6 +674,7 @@ mod tests {
             dir: dir.clone(),
             churn_dir: None,
             out: Some(out.clone()),
+            ..StorageArgs::default()
         })
         .expect("the lane runs");
         assert_eq!(code, 0);
@@ -826,6 +830,7 @@ mod tests {
             dir: dir.clone(),
             churn_dir: Some(churn),
             out: Some(out.clone()),
+            ..StorageArgs::default()
         })
         .expect("the lane runs");
         assert_eq!(code, 0);

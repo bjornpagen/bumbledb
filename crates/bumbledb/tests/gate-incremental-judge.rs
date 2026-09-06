@@ -183,11 +183,19 @@ impl CandidateFacts for ReferenceFacts<'_, '_, '_> {
         relation: RelationId,
         visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
     ) -> Result<(), Self::Error> {
+        self.visit_ranked_rows(relation, &mut |_rank, values| visit(values))
+    }
+
+    fn visit_ranked_rows(
+        &self,
+        relation: RelationId,
+        visit: bumbledb::schema::judge::RankedRowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
         let fields = self.schema.relation(relation).fields();
         for entry in self.candidate.rows(relation)? {
-            let (_, bytes) = entry?;
+            let (row_id, bytes) = entry?;
             let decoded = bumbledb::canonical::decode(fields, bytes, self.work)?;
-            if !visit(decoded.values())? {
+            if !visit(row_id.id.0, decoded.values())? {
                 break;
             }
         }

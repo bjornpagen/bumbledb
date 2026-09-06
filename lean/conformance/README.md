@@ -1,422 +1,74 @@
-# The conformance corpus (PRD 13; judgment + recursive arms) — the interchange format
+# Executable conformance corpus
 
-One JSON document per case, designed for hand-reading: a case file is
-the debugging surface when the three oracles disagree. The Rust
-serializer and corpus builder live in
-`crates/bumbledb-bench/src/conformance.rs`; the Lean decoder/evaluator
-in `Bumbledb/Conformance.lean` (`lake exe conformance cases/`, driver
-in `Main.lean`). The evaluation is the DENOTATION: plain projections run the join plus
-the **surface anti-join** (`surfaceMatchesB` / AntiProbe) so negated
-membership and param-set membership are in the fragment; `eval_sound`
-still names membership-free negation. Aggregate heads run the recorded
-glue over PRD 05's proved computable folds
-(`Bumbledb/Conformance.lean`, module doc).
+The JSON files in `cases/` connect independent Rust evaluators, the production
+engine, and Lean's executable denotation. They are semantic test inputs and
+expected results, not benchmark measurements.
 
-Four case kinds share the directory, dispatched by FILE NAME
-(which evaluator, not the Query constructor):
-`judgment-*.json` is a **judgment case** (the incremental write-side
-arm, below); `complete-*.json` is a **complete-admission case**
-(instance-lifetime L5 — `judgeB` over the candidate, fences lift);
-`reach-*.json` is a **reach case** (interiors / rec evaluator, below);
-everything else is a **query case** (aggregate-head `cq` evaluator).
-A judgment case also carries `"kind":"judgment"` for self-description;
-a complete-admission case carries `"kind":"complete"`.
-The Query document is one tagged encoding: `{ "cq": { interiors, head,
-rules } } | { "reach": { interiors, rec, head, rules } }`. CQ does not
-carry rec. Reach carries `rec` by value. Atoms spell `edb` / `interior`.
+The Rust serializer and comparator live in
+`crates/bumbledb-bench/src/conformance.rs` and its submodules. Lean's
+decoder and dispatcher live in `lean/Main.lean`, using
+`Bumbledb/Conformance.lean`, `Bumbledb/Decide.lean`, and the query model.
 
-## Values (the tagged form)
+## Case families
 
-| tag | example | notes |
-|---|---|---|
-| `bool` | `{"bool":true}` | |
-| `u64` | `{"u64":18446744073709551615}` | full range, exact |
-| `i64` | `{"i64":-3}` | |
-| `f64` | `{"f64":"3ff0000000000000"}` | canonical binary64 payload: exactly 16 lowercase hex digits; negative zero and all noncanonical NaNs refuse |
-| `str` | `{"str":2}` | a per-case intern id (see `strings`) |
-| `bytes` | `{"bytes":[7,0,255]}` | `bytes<N>`, N = the array length |
-| `interval_u64` | `{"interval_u64":[3,10]}` | half-open `[start, end)` |
-| `interval_i64` | `{"interval_i64":[0,9223372036854775807]}` | `end = MAX_END` IS the ray `[0, ∞)` |
-| `interval_u64_fixed` | `{"interval_u64_fixed":[3,5]}` | `[start, width]` — the width is the TYPE'S (`interval_u64_fixed<5>` in the field list); the decoder re-checks the Q2 bound `start + w < MAX_END` and `w ≥ 1`, refusing at-bound/past-bound starts and `w = 0` (`Conformance.lean`'s ceiling `#guard`s) |
-| `interval_i64_fixed` | `{"interval_i64_fixed":[3,5]}` | the i64 twin — never a ray, by the same bound |
+| Filename | Comparison |
+|---|---|
+| `judgment-*.json` | Apply a delta to a lawful parent and compare the final-state verdict. |
+| `complete-*.json` | Judge a populated candidate without borrowing a lawful-parent premise. |
+| `reach-*.json` | Evaluate the tagged query with derived stages and restricted recursion. |
+| Other `*.json` | Compare query answers in the supported interchange subset. |
 
-Rays need no special spelling: an interval whose `end` is the element
-domain's ceiling (`2^64−1` for u64, `2^63−1` for i64) is the ray, on
-both sides of the lane (`Interval.isRay`).
+Query documents distinguish `cq` and `reach`. Values have explicit tags;
+canonical floats use hexadecimal payload bits, integers preserve their full
+range, and string values use a per-case dictionary. This is a test interchange
+format, not the public SDK API or persistent store format. Inspect a nearby
+case and its decoder when extending it rather than maintaining a second
+copy of the grammar in prose.
 
-The conformance-only `f64` tag is not the external command JSON wrapper
-`$f64`. Float comparison independently interprets exponent/significand as
-exact integer multiples of 2^-1074, with `-Infinity < finite < +Infinity < NaN`.
-`Bumbledb/Float64/Order.lean` proves agreement with physical key order.
-`Bumbledb/Float64/Conformance.lean` adds literal full-query boundary checks
-beside the generated cases; it does not create a second corpus family.
+Expected answers are compared as canonical sets. Judgment cases compare the
+complete sorted violation set. The historical `phase` JSON field describes
+the violations; it does not license skipping other statements.
 
-## One annotated example
+## Run
 
-```jsonc
-{
-"case":"hand-closed-join",                  // the file's identity
-"provenance":{"hand":"hand-closed-join",    // how to regenerate it:
-              "world_seed":12603137},       //   a named hand case, or
-                                            //   {world_seed, case_seed,
-                                            //    draw} replayed through
-                                            //   Rng::new(case_seed)
-"strings":[],                               // the used slice of the
-                                            // intern dictionary:
-                                            // [id, "text"] pairs —
-                                            // hand-readability only;
-                                            // Lean compares ids
-"theory":{
-  "relations":[                             // mentioned relations only
-    {"id":1,"name":"Account","closed":false,
-     "fields":["u64","u64","u64"]},         // positional field types
-    {"id":13,"name":"Currency","closed":true,
-     "fields":["u64","u64"]}],              // field 0 = the synthetic id
-  "ground_axioms":[                         // closed relations' sealed
-    {"relation":13,"facts":[                // extensions — ordinary
-      [{"u64":0},{"u64":2}],                // facts to the matching
-      [{"u64":1},{"u64":2}],                // equation
-      [{"u64":2},{"u64":0}]]}]},
-"instance":[                                // the open relations the
-  {"relation":1,"facts":[                   // query mentions (and no
-    [{"u64":0},{"u64":0},{"u64":0}],        // more: snapshot_single —
-    [{"u64":1},{"u64":0},{"u64":2}],        // the denotation reads
-    [{"u64":2},{"u64":0},{"u64":2}],        // nothing else)
-    [{"u64":3},{"u64":0},{"u64":2}],
-    [{"u64":4},{"u64":0},{"u64":1}]]}],
-"query":{"cq":{                             // tagged Query: cq | reach
-  "interiors":[],                           // empty-prefix CQ
-  "head":[{"kind":"var"},{"kind":"var"},{"kind":"var"}],
-  "rules":[                                 // the IR, serialized
-  {"finds":[{"var":0},{"var":1},{"var":2}], // head positions: {"var"},
-                                            // {"measure"}, {"agg":{…}},
-                                            // {"agg_measure":{…}}
-   "atoms":[                                // [field, term] bindings;
-     {"edb":1,"bindings":[[0,{"var":0}],[2,{"var":1}]]},
-     {"edb":13,"bindings":[[0,{"var":1}],[1,{"var":2}]]}],
-   "negated":[],                            // anti-join atoms
-   "conditions":[]}]}},                     // {"cmp":{op,lhs,rhs}} |
-                                            // {"and":[…]} | {"or":[…]};
-                                            // allen carries a literal "mask"
-                                            // beside "op"
-"params":[],                                // positional: {"scalar":v} |
-                                            // {"set":[v…]}
-"answers":[                                 // the ENGINE's answers,
-  [{"u64":0},{"u64":0},{"u64":2}],          // canonically sorted (below)
-  [{"u64":1},{"u64":2},{"u64":0}],
-  [{"u64":2},{"u64":2},{"u64":0}],
-  [{"u64":3},{"u64":2},{"u64":0}],
-  [{"u64":4},{"u64":1},{"u64":2}]]
-}
+From the repository root:
+
+```sh
+scripts/lean.sh
+cargo test -p bumbledb-bench the_corpus_replays_byte_identical
+cargo test -p bumbledb-bench three_way_conformance -- --ignored --nocapture
 ```
 
-## Canonical answer order
+The first command includes Lean replay and the constructor census. The second
+replays the Rust/file side. The third includes the three-way comparison and
+requires `lake`. These are correctness checks, not timed performance lanes.
 
-Each row renders to its compact tagged form (exactly as above, no
-whitespace); rows sort by lexicographic byte order of that rendering;
-duplicates cannot exist (set semantics). The serializer writes the
-`answers` block in this order, and the Lean side re-renders BOTH its
-own answers and the decoded `answers` block with its own renderer
-before comparing — the comparison is value-level, so a cross-language
-byte-format drift cannot silently pass or fail a case.
+Intentional regeneration uses:
 
-## The membership lowering (why a query file can differ from the IR)
-
-The engine's membership BINDING is a typing rule, not a syntax node:
-an element-typed term on an interval field means point membership,
-resolved by the validator (`ir/validate/context.rs::resolve_bivalents`).
-The serializer lowers POSITIVE membership to a fresh interval variable
-plus a `PointIn` condition — the predicate form the typing rule
-licenses. NEGATED membership is left in surface form: Lean's third
-oracle rejects those atoms by AntiProbe (`surfaceMatchesB`,
-`Atom.lowerNegated` / `membership_lowering_preserves_negated`), matching
-`normalize.rs::AntiProbe`. The engine executes the original query; Lean
-evaluates that mixed lowering; their agreement is part of what the lane
-checks.
-
-## The fold-domain keys: `width` and `dnf`
-
-Two optional query-side keys carry what the aggregate fold domains
-need (absent, each defaults to the reading a file without it always
-had):
-
-* Each rule may carry `"width"`: the WRITTEN rule's variable count.
-  The serializer's membership lowering mints its fresh interval
-  variables at ids ≥ width, and the Lean fold domain reads its
-  binding rows at exactly this width — a mint is fold-invisible
-  precisely as it is answer-invisible
-  (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`,
-  the 2026-07-23 audit's finding 087). Absent: the decoded rule's own
-  variable ceiling, correct whenever no lowering fired.
-* The query object may carry `"dnf": true` beside the `cq` payload:
-  the rule list is ONE written rule's DNF lowering (the serializer's
-  derivation mark). Aggregate
-  and measure heads then fold the deduplicated union of the
-  disjuncts' binding rows over the shared width — the written rule's
-  own fold domain (ruled 2026-07-23, R2: surface `or` is
-  fold-transparent; `lean/Bumbledb/Exec/Dedup.lean:
-  dnf_rekey_transparent`) — never the hand-written multi-rule
-  head-projection fold.
-
-## Scope fences (recorded exclusions — counted, never silent)
-
-The query corpus is Tiny-scale, valid-arm only. Per-build coverage is
-logged by the builder and the comparator (`Report::coverage_line`);
-the checked-in corpus was built at **219/325 expressible** (200 seeded
-+ 19 hand cases), plus the hand judgment cases outside the report
-(they have no expressibility gate; their roster is
-`judgment.rs::fixtures`, held byte-identical to the checked-in files by
-`conformance.rs::the_corpus_replays_byte_identical_from_its_provenance`,
-so no count is pinned here):
-
-* **hostile arm** — not drawn at all: structurally-free IR types
-  nothing and belonged to the validation-totality fuzz lane (deleted
-  with the fuzzing apparatus).
-* **unresolved string literals** (31) — the model has no intern
-  dictionary; a query/param string outside the world's vocabulary is
-  the engine's dictionary-miss latch, excluded on principle.
-* **negated-atom membership** — LIFTED (2026-08-13): Lean evaluates
-  negated atoms with `surfaceMatchesB` (AntiProbe). The class enters
-  the corpus at the next regeneration; replay of the checked-in files
-  is unchanged.
-* **element-typed param-set membership** — LIFTED (2026-08-13):
-  positive set membership lowers to `PointIn` with a param-set rhs
-  (`condHoldsB`); negated set membership is AntiProbe
-  `selectsAt_paramSet_membership`. Same regeneration note as above.
-* **membership under an additive fold** — LIFTED (2026-07-23 audit,
-  finding 087; 0 in this build's corpus): the fold domain now reads
-  the surface width (the `width` key, above), so the fresh interval
-  variable is projected away before the dedup — exactly what
-  `lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`
-  licenses. The `AggregateMembership` exclusion dies bench-side and
-  the class enters the corpus at the next regeneration, so the third
-  oracle adjudicates it instead of excluding it.
-* **measure-keyed Arg** — KILLED (ArgMax/ArgMin cull; tickets 201/211
-  obsolete). Not a fence: the operator is gone.
-* **engine runtime errors** (0 this build) — `Overflow` /
-  `MeasureOfRay`: the lane compares answer sets on error-free
-  executions only (the model reads a ray's measure as `none`; the
-  engine raises — the recorded Level-0 narrowing).
-* **slow** (61) and **wide** (9) — naive wall time over 25 ms or
-  answers over 512 rows: per-push CI budget; shrink the case, never
-  the model.
-
-## Judgment cases — the write-side third oracle
-
-A judgment case compares incremental verdicts instead of answer sets:
-the Lean side decodes `(theory, instance, delta)`, applies the delta
-by row-set arithmetic (deletes removed, inserts added, no-ops
-cancelling — `NaiveDb::staged`'s arithmetic), and runs the PROVED
-executable judge `Txn.judgeB` (`Bumbledb/Decide.lean`), which agrees
-with the model's `Txn.judge` verdict and violation sets phase for
-phase (`Txn.judgeB_agrees`). That Lean judge is the streaming
-reference for a **green parent**; it is not the production planner.
-The current Rust incremental constructor is
-`judge_incremental(LawfulParent, …)` — the parent must already
-model the theory. The serializer
-(`crates/bumbledb-bench/src/conformance/judgment.rs`) writes each
-document only after the ENGINE and the NAIVE MODEL agreed on the
-verdict, so the corpus run is the full three-way comparison. Every
-fixture is hand-authored (judgment cases are theorem-shaped, not
-distribution-shaped); replay rebuilds each by its provenance name.
-
-The document shape (values, facts, and the `relations` block exactly
-as in query cases; a closed relation's sealed field list opens with
-the synthetic id, and its ground-axiom facts carry the row id at
-position 0):
-
-```jsonc
-{
-"case":"judgment-capacity-floor-childless",
-"kind":"judgment",
-"provenance":{"hand":"judgment-capacity-floor-childless"},
-"theory":{
-  "relations":[…],                          // as in query cases
-  "ground_axioms":[…],                      // as in query cases
-  "statements":[                            // the MATERIALIZED list —
-                                            // indices ARE the engine's
-                                            // statement ids
-    {"functionality":{"relation":0,"projection":[0]}},
-    {"containment":{"source":SIDE,"target":SIDE}},
-    {"capacity":{"target":SIDE,             // the C2 operator order:
-                 "weight":"unit",           //   target, weight,
-                                            //   window, source.
-                                            // weight = "unit" |
-                                            //   {"field":N} |
-                                            //   {"duration":N} —
-                                            //   unit crosses EXPLICITLY
-                 "window":{"lo":1,"hi":2},  // "hi" absent = *;
-                                            // hi = int | {"field":N} |
-                                            //   {"duration":N} — the
-                                            //   dependent-bound forms
-                                            //   read the TARGET row
-                 "source":SIDE}}]},
-                                            // SIDE = {"relation","projection",
-                                            //   "selection":[[field,[lit…]]…]}
-                                            // — a literal SET reads
-                                            // disjunctively
-"instance":[…],                             // the committed pre-state
-                                            // (green by construction)
-"delta":{"deletes":[…],"inserts":[…]},      // {relation, facts} blocks
-"verdict":"accept"                          // or:
-// "verdict":{"reject":{"phase":"key","violations":[0]}}
-// "verdict":{"reject":{"phase":"statement","violations":[2,3]}}
-}
+```sh
+cargo test -p bumbledb-bench regenerate_the_conformance_corpus -- --ignored --nocapture
 ```
 
-The verdict compares the WHOLE complete violation set in ascending
-statement order (`Bumbledb/Txn.lean: rejection_is_complete`). The historical
-JSON field `phase` is descriptive only: `key` means every violation is a
-functionality statement; `statement` includes non-key or mixed failures.
-It does not select or truncate the checked statements. The
-containment `Direction` is a Rust-side refinement below the Lean
-altitude (the Lean violation sets are per-statement), so a statement
-cited in both directions appears once. Closed-relation writes are
-outside this lane (a typed refusal before any judgment, not a
-verdict); judgment fixtures carry no strings and no masks — the two
-value tags that would need a per-case context. Closed-SOURCE
-containments (domain quantification) are also outside **this
-incremental** lane, and deliberately: the engine's verdict is
-delta-restricted
-(`Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`,
-sound only under its holds-before premise) while `Txn.judgeB` reads
-the whole final state — a store whose targets have not landed accepts
-every untouching commit yet judges reject in full state
-(`Bumbledb/Countermodels.lean: incremental_verdict_needs_holds`; the
-offline sweeper owns the class), so such a fixture would be a
-guaranteed mismatch on a
-correct engine verdict. No incremental fixture declares a closed
-source; the Rust half is pinned by
-`domain_quantification_judgments_are_outside_the_lane`. The
-complete-admission lane (L5, `complete-*.json` below) lifts that
-fence: the complete verdict is not delta-restricted, so closed-source
-containments run through `judgeB` on the candidate.
+Review the coverage report and every changed expectation. Generation has a
+wall-time exclusion, so do not assume a noisy machine necessarily regenerates
+the identical selected case roster. Never regenerate solely to silence a
+disagreement.
 
-## Complete-admission cases — instance-lifetime L5
+## Coverage boundaries
 
-A complete-admission case compares the same complete `Txn.judgeB`
-verdict, but `instance` **is the candidate** — no green pre-state,
-no incremental shortcut. The document reuses the judgment shape
-(`kind` is `"complete"`; `delta` is empty). `finalWorld` is the
-candidate, and `completeAdmissionB` is `judgeB` over it
-(`Txn.completeAdmissionB_eq_judgeB`). Current Rust constructor:
-`judge_complete` / `judge_final_state` over the populated candidate.
-`UnreadyStore` cannot mint `LawfulParent`; empty-delta incremental
-is not complete validation (`lean/correspondence.md` C-D26-*). The
-incremental lane's recorded scope fences exclude fixture classes —
-closed-source containments among them — because a whole-state
-oracle would mismatch a correct delta-restricted engine. Those
-fences **lift** here: generated worlds including closed-source
-containment fixtures run through complete admission against
-`judgeB`. One of the instance-lifetime proposal's four motivating
-shapes lives in that formerly fenced class
-(`complete-closed-source-missing-target`).
+The Rust generator explicitly counts unresolved literals, engine errors,
+slow cases, wide answer sets, computed heads, and values not expressible in
+this interchange grammar. Its current slow-case budget is 25 ms and its
+answer bound is 512 rows. UUID and dense float-interval values are excluded
+from this serializer even though the engine supports them. A Lean value model
+and an executable case decoder are different coverage boundaries.
 
-The Rust half (`crates/bumbledb-bench/src/conformance/complete.rs`)
-records the verdict both Rust oracles agreed on:
-`InstanceBuilder` complete admission (packed freeze, complete roster) and the
-naive full-state `judge_complete`. A disagreement is a trophy —
-this builder refuses to check in a disputed case. Replay is
-fixture re-serialization through both oracles; the Lean run is
-`judgeB` / `completeAdmissionB` over the candidate.
+Complete admission checks all statements on a candidate. Incremental
+admission requires a parent already satisfying the theory
+(`LawfulParent` in Rust). An unready populated store cannot use an empty
+incremental delta as a substitute for complete validation.
 
-The starter roster covers: both classical forms (scalar key;
-containment — scalar, coverage, and the closed member set, plain and
-ψ-narrowed), the
-extension form (unit-weight capacity at
-floor/ceiling/`n..n`/`0..*`/empty-parent, and the weighted roster:
-column weights under both polarities with the zero-weight floor
-footgun as data, dependent bounds through the target-update seam,
-and the calendar Duration pair — the closed-pair sum refutation and
-the R16 fresh-keyed interplay live outside the lane by its own
-fences, as validation-refusal and engine-side unit coverage
-respectively),
-mixed key and non-key failures,
-set-selections deciding a verdict, the delete-then-reinsert
-touched-group seam, and the permuted-interval lock — a statement
-written `Claim(span, id) <= Slot(span, id)` against the pointwise key
-DECLARED `(id, span)`: accepted through the set-canonical key
-resolution (`Bumbledb/Schema.lean: Header.intervalSplit`), judged as
-coverage, three-way agreed. The whole-list comparison surface is
-exercised beyond singletons: a statement phase citing containment AND
-capacity as the ascending pair (`judgment-statement-mixed-citations`,
-`[1,2]`), one containment cited in both directions and collapsed to one
-id (`judgment-containment-both-directions` — the dedup rule above,
-pinned pre-dedup by a unit test), and a two-key rejection
-(`judgment-multi-key-collisions`, `[0,1]`).
-
-## Reach cases — the recursive third oracle
-
-Every case carries one tagged `Query`. Interiors-only files are the
-`cq` arm (interiors, no rec key). Recursive files are the `reach` arm
-(`rec` by value). One type, one decoder — the tag is the constructor,
-not the filename and not `rec: null`. The Lean side decodes it and
-runs `evalQueryList` (`Bumbledb/Exec/Reach.lean`; `evalQuery_sound` is
-its agreement with `evalQuery`) against the recorded answers. Atoms
-are `edb` / `interior`. `FieldId` on an interior atom addresses a
-derived head position. Empty `rules` denotes `∅`. A `.reach` rec's id
-is `interiors.length` (0 when interiors are empty). Rec payload is
-`{ head, base, step }` — `step` is the step list (Lean `LinearRec.step`);
-JSON `arity` is unrepresentable.
-
-Filename: `reach-hand-closure.json`, `reach-seeded-0001.json`, …
-Gaps in numbering (`0000`, `0003`, `0010`, `0021`) are the dropped
-mutual cases — provenance stays 1:1, do not renumber. Dispatch by
-prefix `reach-` selects the evaluator. Do not name them `query-*.json`.
-
-```jsonc
-{
-"case":"reach-hand-closure",
-"provenance":{"hand":"reach-hand-closure","world_seed":12603137},
-"strings":[],
-"theory":{…},
-"instance":[…],
-"query":{
-  "reach":{
-    "interiors":[],
-    "rec":{
-      "head":[{"kind":"var"},{"kind":"var"}],
-      "base":[{ "finds":[0,1], "atoms":[{ "edb":7, "bindings":… }],
-                "negated":[], "conditions":[] }],
-      "step": [{ "finds":[0,2], "atoms":[
-                  { "edb":7, "bindings":… },
-                  { "interior":0, "bindings":… }
-                ], "negated":[], "conditions":[] }]
-    },
-    "head":[{"kind":"var"},{"kind":"var"}],
-    "rules":[{ "finds":[0,1], "atoms":[{ "interior":0, "bindings":… }],
-               "negated":[], "conditions":[] }]
-  }
-},
-"params":[],
-"answers":[…]
-}
-```
-
-## Regeneration and the three-way comparator
-
-* Regenerate: `cargo test -p bumbledb-bench
-  regenerate_the_conformance_corpus -- --ignored --nocapture`
-  (deterministic: identical bytes from identical seeds, forever).
-  Corpus bytes move once onto the tagged encoding. The case count is
-  pinned by the lane — `lake exe conformance` prints the live
-  directory length (`lean/Main.lean`'s summary line), currently 277
-  cases including 9 `complete-*` — and 0 Lean disagreements.
-* Compare (engine · naive · file bytes): `cargo test -p bumbledb-bench
-  the_corpus_replays_byte_identical` — runs in the plain workspace
-  suite.
-* Compare three ways (adds the Lean run): `cargo test -p
-  bumbledb-bench three_way_conformance -- --ignored --nocapture`
-  (needs `lake` on PATH; the CI lean lane runs it).
-* Lean alone: `lake exe conformance conformance/cases` from `lean/`
-  (wired into `scripts/lean.sh`). Complete-admission cases
-  (`complete-*.json`) ride the same driver — `judgeB` over the
-  candidate.
-* Complete-admission only: `cargo test -p bumbledb-bench
-  regenerate_the_complete_admission_corpus -- --ignored --nocapture`
-  — verdicts from agreed `InstanceBuilder` admission and naive
-  `judge_complete`; Lean compares `judgeB` / `completeAdmissionB`.
-
-A DISAGREEMENT IS A FINDING — engine bug, naive-model bug, or spec bug
-all count; triage it before anything else merges. Report prominently;
-never "fix" the corpus to make a disagreement go away.
+This corpus does not qualify LMDB, S3, crash recovery, native resource
+lifetimes, or host floating-point controls. See
+[the bridge ledger](../proof-bridge-ledger.md) for the proof boundary and
+[correspondence cases](../correspondence.md) for independent discriminators.

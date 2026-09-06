@@ -12,7 +12,7 @@ fn us(ns: u64) -> f64 {
 #[must_use]
 #[expect(
     clippy::too_many_lines,
-    reason = "one linear report: the lane table then the optional alloc/flame sections"
+    reason = "one linear report: the lane table then the optional allocation section"
 )]
 pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
     use std::fmt::Write as _;
@@ -130,14 +130,5 @@ pub fn render(reports: &[QueryReport], proto: Protocol) -> String {
         }
     }
 
-    if reports.iter().any(|r| r.flame.is_some()) {
-        let _ = writeln!(out, "\n## Flame summaries (per query, --trace)\n");
-        for r in reports {
-            if let Some(flame) = &r.flame {
-                let _ = writeln!(out, "### {} / {}\n", r.scenario, r.name);
-                let _ = writeln!(out, "```text\n{flame}```\n");
-            }
-        }
-    }
     out
 }

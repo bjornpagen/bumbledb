@@ -1,4 +1,4 @@
-use super::bench::{obs_missing, stamp_refusal};
+use super::bench::{alloc_missing, stamp_refusal};
 use super::*;
 use crate::cli::{BenchArgs, CorpusArgs};
 use crate::corpus_gen::Scale;
@@ -54,14 +54,13 @@ fn the_refusal_messages_substitute_the_flags() {
     };
     assert_eq!(
         stamp_refusal(&corpus),
-        "bench refuses: no fresh verify stamp for this corpus.\n\
-         run first: bumbledb-bench verify --scale M --seed 9 --dir /tmp/corpora\n\
-         (or pass --i-am-lying to run unverified — the report will say so)"
+        "no fresh verify stamp for this corpus.\n\
+         run first: bumbledb-bench verify --scale M --seed 9 --dir /tmp/corpora"
     );
     assert_eq!(
-        obs_missing("--alloc"),
-        "--alloc needs an obs build; run:\n\
-         cargo run -p bumbledb-bench --features obs --release -- …"
+        alloc_missing("--alloc"),
+        "--alloc needs an alloc-counter build; run:\n\
+         cargo run -p bumbledb-bench --features alloc-counter --release -- …"
     );
 }
 
@@ -76,7 +75,7 @@ fn bench_refuses_without_a_stamp() {
         },
         families: Some(vec!["point".to_owned()]),
         samples: Some(8),
-        trace: false,
+        read_batch: None,
         alloc: false,
 
         proxy_per_rep: false,
@@ -88,14 +87,14 @@ fn bench_refuses_without_a_stamp() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(not(feature = "obs"))]
+#[cfg(not(feature = "alloc-counter"))]
 #[test]
-fn alloc_without_obs_names_the_cargo_invocation() {
+fn alloc_without_counter_names_the_cargo_invocation() {
     let args = BenchArgs {
         corpus: CorpusArgs::default(),
         families: None,
         samples: None,
-        trace: false,
+        read_batch: None,
         alloc: true,
 
         proxy_per_rep: false,
@@ -104,41 +103,9 @@ fn alloc_without_obs_names_the_cargo_invocation() {
     };
     let err = cmd_bench(&args).unwrap_err();
     assert!(
-        err.contains("cargo run -p bumbledb-bench --features obs --release"),
+        err.contains("cargo run -p bumbledb-bench --features alloc-counter --release"),
         "{err}"
     );
-}
-
-#[cfg(not(feature = "obs"))]
-#[test]
-fn trace_without_obs_refuses_on_every_traced_command() {
-    let bench = BenchArgs {
-        corpus: CorpusArgs::default(),
-        families: None,
-        samples: None,
-        trace: true,
-        alloc: false,
-
-        proxy_per_rep: false,
-        out: None,
-        i_am_lying: false,
-    };
-    let world = crate::cli::ScenarioArgs {
-        trace: true,
-        ..crate::cli::ScenarioArgs::default()
-    };
-    for err in [
-        cmd_bench(&bench).unwrap_err(),
-        cmd_trace(&CorpusArgs::default(), "point").unwrap_err(),
-        cmd_scenarios(&world).unwrap_err(),
-        cmd_crud(&world).unwrap_err(),
-        cmd_lawful(&world).unwrap_err(),
-    ] {
-        assert!(
-            err.contains("cargo run -p bumbledb-bench --features obs --release"),
-            "{err}"
-        );
-    }
 }
 
 #[test]
@@ -189,7 +156,7 @@ fn the_full_sequence_runs_at_tiny() {
         corpus: corpus.clone(),
         families: Some(vec!["point".to_owned()]),
         samples: Some(8),
-        trace: false,
+        read_batch: None,
         alloc: false,
 
         proxy_per_rep: false,

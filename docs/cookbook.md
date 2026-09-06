@@ -40,7 +40,7 @@ bumbledb::schema! {
 }
 ```
 
-The queries (the notation — `20-query-ir.md` § the query notation). Down at
+The Rust query notation constructs an AST directly. Down at
 instant `t` — point membership (`in`) is a typing rule:
 
 ```rust
@@ -67,8 +67,7 @@ gives unique source/target correspondence (`lean/Bumbledb/Dependencies.lean:
 keyed_eq_unique_correspondence`); both projections must resolve to declared keys.
 
 Sum-typed entities: a closed-relation discriminator plus per-arm child
-relations, glued by bidirectional conditional containments
-(`30-dependencies.md` § the derivations).
+relations, connected by bidirectional conditional containments.
 
 ```rust
 bumbledb::schema! {
@@ -150,7 +149,7 @@ bumbledb::schema! {
 
 Multi-currency totals: currency is a group key, never summed across — `Sum`
 folds in i128 with one final range check, so totals cannot wrap silently.
-Bind the fresh id: set semantics would collapse two equal
+Bind the application-owned id: set semantics would collapse two equal
 (account, currency, minor) postings without it.
 
 ```rust
@@ -164,8 +163,9 @@ let totals = query!(Money {
 Guarantee: validator/runtime premises + host discipline — the payload key and
 containments enforce identity/reference shape; hashing and blob durability stay external.
 
-The decision rule for byte-shaped data: **intern what repeats (`str`); inline
-what identifies (`bytes<N>`)** — `10-data-model.md` § the type layer.
+Use `str` for text and `bytes<N>` for a fixed-width binary identifier or
+digest. Text values are not an application-visible persistent intern table;
+choose the type for its meaning, not an assumed storage compression ratio.
 
 ```rust
 bumbledb::schema! {
@@ -206,9 +206,8 @@ declared priority handles.
 
 The enum idiom's replacement, first-class: a vocabulary is a **closed
 relation** — its ground axioms are declared in the schema, sealed at
-validate, frozen by the fingerprint, virtual in storage
-(`10-data-model.md` § closed relations). The store holds zero vocabulary
-bytes, and handles are the literals on every surface: statements, queries,
+validate, and included in schema identity. Closed facts come from the schema,
+not an ordinary mutable relation. Handles are literals in statements, queries,
 Plan introspection, errors.
 
 ```rust
@@ -230,8 +229,7 @@ bumbledb::schema! {
 
 Handles are literals in queries exactly as in statements, and the renderer
 prints them back — the round trip runs on names. A query atom over the
-vocabulary itself folds at prepare; the join has zero runtime existence
-(`40-execution.md` § the grounding):
+vocabulary can be resolved during preparation:
 
 ```rust
 let urgent = query!(Tickets {
@@ -295,8 +293,7 @@ exact paging member set; a nonmember write is commit-rejected.
 The ψ-selected containment: a reference constrained to the facts of a
 vocabulary that satisfy a payload selection. Because the target is closed,
 the enforcement plan is not a probe strategy — it is **the answer set
-itself**, compiled at validate (`30-dependencies.md` § enforcement, whose
-worked example this recipe rot-proofs).
+itself**, compiled during schema validation.
 
 ```rust
 bumbledb::schema! {
@@ -823,7 +820,7 @@ bumbledb::schema! {
 }
 ```
 
-Balances — bind the fresh id, or set semantics collapses duplicates:
+Balances — bind the application-owned id, or set semantics collapses duplicates:
 
 ```rust
 let balances = query!(Ledger {
@@ -847,7 +844,7 @@ discipline — instance-derived writes detect movement
 (`lean/Bumbledb/Txn.lean: writeFrom_moved`, `witness_conflict_distinct`);
 final-state point reads need no earlier witness.
 
-The generation witness (`70-api.md` § conditional writes): read the model,
+The generation witness: read the model,
 propose a delta, commit iff the model you read is still the model.
 
 ```rust
@@ -896,7 +893,7 @@ discipline for completeness — containment rejects unsupported facts but never 
 
 The materialized view as a relation under statements — unsoundness the schema
 can name is uncommittable; incompleteness remains representable until the host
-refreshes it (`10-data-model.md` § derived relations owns this).
+refreshes it.
 
 ```rust
 bumbledb::schema! {
@@ -963,9 +960,8 @@ bumbledb::schema! {
 
 One query, two rules (set union). The exclusivity theorem (recipe 2) is
 spent a third time here: rules selecting different `kind` values are
-provably disjoint. Execution still probes one seen-set spanning both
-rules — the measured refutation deleted the elision
-(`40-execution.md` § set semantics):
+disjoint. The union still has set semantics; do not depend on bag-like
+duplicates when composing rules:
 
 ```rust
 let methods = query!(Payments {
@@ -1013,12 +1009,12 @@ under the linear reach driver, budget-bounded
 Reachability, in two dialects. The host-loop idiom remains the
 depth-bounded answer: the censused hierarchies are **depth-bounded**, so
 the loop runs depth-many rounds and each round is one ∈-set query — a
-`ParamSet` probe, microsecond-class — against the engine as it stands. The
+`ParamSet` probe—against the engine. Measure the actual workload. The
 frontier discipline below *is* semi-naive evaluation's Δ, spent where a loop
 is a loop: the host. The engine-native form (below) is the same closure as
-one linear rec (`20-query-ir.md` § engine recursion): `rec` declares
+one linear rec: `rec` declares
 the rec, the bare rule is the required main, and the driver runs the rounds
-inside one plan (`40-execution.md` § the linear reach driver). Primer-shaped
+inside one plan. Primer-shaped
 `reach(x, x)` is the same family — linear rec plus a main join of the
 finished table, not a second rec.
 
@@ -1076,8 +1072,7 @@ let native = query!(Closure {
 (the compiled copy runs beside the loop in `cookbook.rs`, both dialects
 asserting the same reachable sets, root for root). What stays host-side is
 the **chain-window class** — interval intersection along paths — which the
-recursion surface fences out (`20-query-ir.md` § engine recursion, the
-chain-window fence): the idiom carries the window in the host's frontier,
+recursion surface excludes: the idiom carries the window in the host's frontier,
 one intersection per hop, and that composition has no engine form.
 
 ## 25. The chart of accounts
@@ -1085,8 +1080,8 @@ one intersection per hop, and that composition has no engine form.
 Guarantee: host discipline + runtime aggregate semantics — the host computes
 closure, then one checked `Sum` (`lean/Bumbledb/Query/Aggregates.lean:
 checkedSum_sound`); the engine-native form folds over a *finished* rec, the
-ordinary main-over-finished-table shape (`20-query-ir.md` § engine recursion;
-`lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
+ordinary main-over-finished-table shape
+(`lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
 
 The ledger workload's real recursion case, in the same two dialects: a
 hierarchical chart of accounts and a subtree rollup. The host composition —
@@ -1138,7 +1133,7 @@ let children = query!(Accounts {
 });
 ```
 
-The rollup over the accumulated subtree (bind the fresh id — recipe 19's
+The rollup over the accumulated subtree (bind the application-owned id — recipe 19's
 discipline, spent again):
 
 ```rust
@@ -1150,7 +1145,7 @@ let rollup = query!(Accounts {
 The rollup is two prepared queries with the recipe-24 loop between them;
 the test drives a three-level hierarchy with postings and asserts the
 hand-computed subtree sum — equal postings to one account both count,
-because the fresh id keeps their bindings distinct.
+because the application-owned id keeps their bindings distinct.
 
 ## 26. Exact partition
 
@@ -1166,7 +1161,7 @@ it is the five ordinary statements witnessing
 `exactTiling_iff_exactPointPartition`.
 
 The explicit `Policy(id, live) -> Policy` is load-bearing. Containment targets
-resolve by their exact projected field set, so the fresh `{id}` key cannot serve
+resolve by their exact projected field set, so a declared `{id}` key cannot serve
 the `{id, live}` target and the engine infers no key closure.
 
 ```rust
@@ -1257,7 +1252,7 @@ fingerprints refuse reinterpretation, final-state judgments validate each load
 (`lean/Bumbledb/Txn.lean: etl_lands_valid`), and the host owns
 the semantic transform and dependency-safe load order.
 
-There is no in-place migration and never will be: a schema is a theory,
+Core storage does not reinterpret an existing store under a new schema:
 the store records the theory's fingerprint, and `Db::open` under a changed
 theory is a hard `SchemaMismatch` — the engine refuses to reinterpret facts
 it judged under different laws. The host possesses both theories. There is
@@ -1267,16 +1262,17 @@ Migration is extract, transform, load:
 `scan` exports every fact of a relation as typed values under one `ReadInstance`
 (one generation — the export is a consistent instant), the host transforms,
 and `insert_dyn` inside `write` imports into a store created under the new theory. The
-engine owns both ends; the host owns exactly the middle, because the
-semantic transform is the part that cannot be generic.
+engine owns both ends. This recipe demonstrates a host-authored transform;
+the TypeScript log layer also supplies generated migration plans and a
+local-history runner. Migration orchestration belongs above the core.
 
 Three laws make the loop honest. **Load containment targets first** — every
 `write` commits through the ordinary final-state judgment, so a `Salary` fact
 whose `Employee` has not landed yet is a rejection (with the complete
-violation set cited), not a deferral. **Fresh identity survives** —
-`insert_dyn` takes explicit values for every field, `fresh` ones included,
-so facts keep their ids across the move, and the mint sequence catches up
-past the imported high water: the next `reserve(1)` cannot collide. **The new
+violation set cited), not a deferral. **Application identity survives** —
+`insert_dyn` takes explicit values for every field, so facts retain their
+ids across the move. The application chooses an unused id for later inserts;
+the database has no allocator, reservation API, or catch-up counter. **The new
 theory judges the old data** — every dependency of the new schema holds of
 every migrated fact, or that `write` aborts whole. A migration that lands is
 already valid; there is no "migrate now, validate later."
@@ -1290,9 +1286,10 @@ amount, still in force."
 ```text
 pub PayrollV1;                     // the old theory, judged and fingerprinted
 
-relation Employee { id: u64 as EmployeeId, fresh, name: str }
+relation Employee { id: u64 as EmployeeId, name: str }
 relation Salary   { employee: u64 as EmployeeId, amount: i64 }
 
+Employee(id) -> Employee;
 Salary(employee) <= Employee(id);
 ```
 
@@ -1326,9 +1323,9 @@ The compiled test drives the whole loop: seed a v1 store, export both
 relations under one `ReadInstance`, drop the v1 handle and prove the
 fingerprint refusal (`Db::open` of the v1 store under `Payroll` is
 `SchemaMismatch`), append the ray to each salary, then `insert_dyn`
-inside `write` — employees before salaries — then `reserve(1)` to prove
-the three laws — identity (the v1 ids answer the v2 query), catch-up
-(the next minted id clears the imported high water), and judgment (the
+inside `write` — employees before salaries — then insert with a new
+application-owned id. It verifies identity (the v1 ids answer the v2 query),
+coexistence with subsequent application IDs, and judgment (the
 migrated store answers under the new theory's guarantees).
 
 ## Composition
@@ -1422,9 +1419,9 @@ with its statement id computed at expansion. The point read is that struct
 handed to `get` on either scope: `instance.get(CourseByGrp { grp })` inside
 `db.read`, and `tx.get(CourseByGrp { grp })` inside `db.write`, where the
 transaction side answers the FINAL state (base plus pending delta:
-read-your-writes, a pending delete answers `None`). The fresh newtype is
+read-your-writes, a pending delete answers `None`). The declared ID newtype is
 the primary key made callable the same way: `instance.get(id)` / `tx.get(id)`
-through a `CourseId` value reads the one `Course` fact that minted it.
+through a `CourseId` value reads the `Course` fact carrying that key.
 A wrong column, wrong newtype, or wrong relation is a compile error, never
 a runtime shape check.
 
@@ -1472,8 +1469,7 @@ bumbledb::schema! {
 ```
 
 The path spelling `[model.watts]` is a typed refusal whose diagnostic names
-exactly this pair (`30-dependencies.md` § the extension form — the weight
-vocabulary is closed at the row, ruled 2026-07-24, ruling 6): a weight read
+the local-field alternative: the weight vocabulary is closed at the row. A weight read
 through a reference would be a maintained copy of another relation's field,
 and a catalog edit would silently re-weigh deployed fleets. Pinned, the
 inconsistent commit refuses at the device site and the migration is
@@ -1521,7 +1517,7 @@ Mind the weighted `{0}` and the weighted floor: on a weighted statement
 `{0}` says "the group's total is zero" (zero-measure rows may exist — the
 weaker law than the unit exclusion), and `<=[w]{1..*}` ("positive total")
 is not "at least one booking" — that intent is the bare containment. Choose
-by what you mean (`70-api.md` § the ban table, per-aggregate).
+by the intended constraint, not by a superficially similar count expression.
 
 The booked time per room is host arithmetic on the `booked` endpoints
 every answer row already carries (`end − start`).

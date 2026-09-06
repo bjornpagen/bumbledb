@@ -24,14 +24,15 @@ those values are used.
 The TypeScript package ships native binaries for **darwin-arm64**
 (macOS on Apple Silicon), **linux-arm64**, and **linux-x64**.
 The matching `@bjornpagen/bumbledb-<platform>` package is selected
-automatically during installation. On another platform, importing the
-package returns an error that identifies the running platform and the
-available binaries.
+automatically during installation. Schema and query authoring do not load
+the addon. Attempting native database work on an unsupported platform fails
+with a diagnostic identifying the running platform and available binaries.
+Node 24 or newer is required; Edge and browser runtimes are unsupported.
 
 ## Install
 
 ```sh
-pnpm add @bjornpagen/bumbledb effect
+pnpm add @bjornpagen/bumbledb@0.20.3 effect@4.0.0-rc.112
 ```
 
 ## Quick start
@@ -107,7 +108,8 @@ const attemptsFor = query(Learning).rule((r) => {
 
 const program = Effect.scoped(
 	Effect.gen(function* () {
-		const db = yield* Db.open(localPath, Learning, work)
+		// First use: create explicitly. Use Db.open for an existing store.
+		const db = yield* Db.create(localPath, Learning, work)
 		const studentId = yield* Effect.sync(() => crypto.randomUUID())
 		const attemptId = yield* Effect.sync(() => crypto.randomUUID())
 
@@ -151,7 +153,8 @@ and query representations.
   checked interval values. `relation()` declares stored records, while
   `closed()` declares a fixed enum-like set whose values may carry typed
   columns. `Infer` exposes the resulting TypeScript value type. `Uuid` is
-  the ordinary application-owned 128-bit identity: canonical UUID,
+  a structural template-literal string, not a nominal brand or a cast helper.
+  It represents all 128-bit UUID payloads in canonical text,
   generated with the effectful `Effect.sync(() => crypto.randomUUID())`, parsed with the pure
   `Uuid.parse` returning `Result`.
 - `schema()` accepts `key`, `contained`, `mirrors`, and `capacity`
@@ -193,7 +196,7 @@ and query representations.
 
 ## Cookbook
 
-Successor modeling recipes are translated to the TypeScript API in
+Modeling recipes are translated to the TypeScript API in
 [COOKBOOK.md](./COOKBOOK.md). `test/cookbook-doc.test.ts` extracts and
 type-checks the document's TypeScript examples.
 

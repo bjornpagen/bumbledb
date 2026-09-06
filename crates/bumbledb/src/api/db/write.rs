@@ -11,7 +11,6 @@
 //! rejection, or panic — never wrote a fact: the pending delta is plain
 //! memory and the candidate transaction drops whole.
 
-use super::tx::change_set_of_pending;
 use super::{Db, OwnedRead, ReadFrame, WriteTx};
 use crate::error::{Committed, ConditionalWrite, Error, Result};
 use crate::schema::judge::LawfulParent;
@@ -78,11 +77,7 @@ pub enum ApplyOutcome {
 
 impl<S> OwnedRead<S> {
     pub fn witness(&self) -> Witness<S> {
-        Witness {
-            environment: self.snapshot.identity().environment,
-            generation: self.snapshot.generation(),
-            marker: std::marker::PhantomData,
-        }
+        snapshot_witness(&self.snapshot)
     }
 }
 
@@ -91,7 +86,15 @@ impl<S> ReadFrame<'_, S> {
     /// # Errors
     /// No current failure; matches the fallible read-frame operations.
     pub fn witness(&self) -> Result<Witness<S>> {
-        Ok(self.owner.witness())
+        Ok(snapshot_witness(self.snapshot))
+    }
+}
+
+fn snapshot_witness<S>(snapshot: &crate::storage::store::OwnedSnapshot) -> Witness<S> {
+    Witness {
+        environment: snapshot.identity().environment,
+        generation: snapshot.generation(),
+        marker: std::marker::PhantomData,
     }
 }
 
@@ -210,7 +213,6 @@ impl<S> Db<S> {
                 return Ok(ConditionalWrite::Moved { witnessed, current });
             }
         }
-        let mut txn_span = crate::obs::span(crate::obs::names::WRITE_TXN);
         let parent = self.store.snapshot(&work).map_err(Error::from_store)?;
         let mut tx = WriteTx::new(&self.schema, self.closed.as_ref(), &parent, &work);
         let value = f(&mut tx)?;
@@ -221,7 +223,7 @@ impl<S> Db<S> {
         }
         let pending = tx.into_pending();
         drop(parent);
-        let changes = change_set_of_pending(self.schema.as_ref(), &pending, &work)?;
+        let changes = pending.seal(self.schema.as_ref(), &work)?;
         let judge = SchemaJudge::new(self.schema.as_ref());
         match owner
             .prepare_incremental(admitted_parent(), &changes, &UnindexedRows, &judge)
@@ -238,8 +240,6 @@ impl<S> Db<S> {
                     })
                     .map_err(Error::from_store)?;
                 let commit = sealed.commit().map_err(Error::from_store)?;
-                txn_span.set_flag(true);
-                txn_span.end();
                 Ok(ConditionalWrite::Accepted(Committed {
                     value,
                     generation: commit.generation,

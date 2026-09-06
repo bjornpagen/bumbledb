@@ -1,9 +1,7 @@
-//! Statistics and the DP planner: real
-//! statistics in, one left-deep atom order out.
-//! Statistics are exact row counts (or measured filtered-view survivor
-//! counts) plus schema statement knowledge — nothing else exists: no NDV
-//! fields, no histograms, no magic selectivity constants (the post-mortem's
-//! central engine finding, §30).
+//! Subset-DP join ordering from per-occurrence row estimates, schema key
+//! proofs, and distinct counts for shared variables. The selectivity ladder
+//! supplies exact resident-column counts, schema bounds, or documented floors;
+//! these are cost estimates, not answer cardinality proofs.
 use crate::ir::VarId;
 use crate::ir::normalize::OccId;
 
@@ -25,11 +23,9 @@ pub const MAX_OCCURRENCES: usize = 20;
 
 pub(crate) const MAX_DISTINCT_VARS: usize = 128;
 
-/// The planner's per-occurrence statistics: the
-/// selectivity-shaped row-count estimate, plus the base-relation
-/// distinct count of every bound variable's field (from the same
-/// ladder — key-exact, image-exact, schema bounds, floor). The
-/// distincts drive the join-step fanout model.
+/// Selectivity-shaped rows and base-relation distinct estimates for shared
+/// variables only. Unshared output variables cannot affect join fanout and
+/// do not request statistics. Own-condition selectivity is included in rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OccStats {
     pub occ_id: OccId,

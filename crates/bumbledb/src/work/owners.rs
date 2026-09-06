@@ -6,12 +6,12 @@
 
 use super::{ByteKind, ByteReservation, WorkContext, WorkError};
 
+// Counts this test thread's synchronous backing-store growth attempts.
+// Other tests must not perturb a before/after allocation-refusal assertion.
 #[cfg(test)]
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Counts backing-store growth attempts. D01 refuses before this increments.
-#[cfg(test)]
-pub(crate) static GROWTH_ALLOCS: AtomicU64 = AtomicU64::new(0);
+thread_local! {
+    static GROWTH_ALLOCS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
 
 fn exhausted(work: &WorkContext, kind: ByteKind, used: u64, requested: u64) -> WorkError {
     WorkError::Exhausted {
@@ -28,13 +28,13 @@ fn conservative_capacity(needed: usize) -> usize {
 
 fn try_reserve_vec(buf: &mut Vec<u8>, additional: usize) -> Result<(), ()> {
     #[cfg(test)]
-    GROWTH_ALLOCS.fetch_add(1, Ordering::Relaxed);
+    GROWTH_ALLOCS.set(GROWTH_ALLOCS.get() + 1);
     buf.try_reserve(additional).map_err(|_| ())
 }
 
 fn try_reserve_exact_vec(buf: &mut Vec<u8>, additional: usize) -> Result<(), ()> {
     #[cfg(test)]
-    GROWTH_ALLOCS.fetch_add(1, Ordering::Relaxed);
+    GROWTH_ALLOCS.set(GROWTH_ALLOCS.get() + 1);
     buf.try_reserve_exact(additional).map_err(|_| ())
 }
 
@@ -411,13 +411,13 @@ mod tests {
 
     #[test]
     fn d01_zero_capacity_growth_refuses_before_allocation() {
-        let before = GROWTH_ALLOCS.load(Ordering::Relaxed);
+        let before = GROWTH_ALLOCS.get();
         let ctx = work(0);
         assert!(ChargedBytes::with_capacity(&ctx, ByteKind::Working, 1).is_err());
         assert!(ChargedBuffer::with_capacity(&ctx, ByteKind::Working, 64).is_err());
         assert_eq!(ctx.used(Resource::WorkingBytes), 0);
         assert_eq!(
-            GROWTH_ALLOCS.load(Ordering::Relaxed),
+            GROWTH_ALLOCS.get(),
             before,
             "D01: refusal must precede the instrumented allocation"
         );
@@ -432,13 +432,13 @@ mod tests {
         buffer.try_extend_from_slice(&[0u8; 128]).expect("extend");
         assert_eq!(buffer.len(), 128);
         let used = ctx.used(Resource::WorkingBytes);
-        let before = GROWTH_ALLOCS.load(Ordering::Relaxed);
+        let before = GROWTH_ALLOCS.get();
         buffer
             .try_extend_from_slice(&[0u8; 8000])
             .expect_err("refused");
         assert_eq!(ctx.used(Resource::WorkingBytes), used);
         assert_eq!(
-            GROWTH_ALLOCS.load(Ordering::Relaxed),
+            GROWTH_ALLOCS.get(),
             before,
             "D01: refused growth does not allocate"
         );

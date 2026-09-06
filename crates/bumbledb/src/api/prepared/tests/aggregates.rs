@@ -31,6 +31,96 @@ fn interval_descriptor() -> SchemaDescriptor {
 
 const PAYROLL: RelationId = RelationId(0);
 
+fn scalar_set_folds(set_selection: bool) -> Query {
+    let mut bindings = vec![(FieldId(3), Term::Var(VarId(1)))];
+    if set_selection {
+        bindings.push((FieldId(1), Term::ParamSet(crate::ir::ParamId(0))));
+    } else {
+        bindings.push((FieldId(1), Term::Var(VarId(0))));
+    }
+    let mut finds = vec![
+        FindTerm::Aggregate {
+            op: FoldOp::Sum,
+            over: VarId(1),
+        },
+        FindTerm::Count,
+    ];
+    if !set_selection {
+        finds.insert(0, FindTerm::Var(VarId(0)));
+    }
+    Query::single(Rule {
+        finds,
+        atoms: vec![Atom {
+            source: AtomSource::Edb(POSTING),
+            bindings,
+        }],
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+#[test]
+fn physical_scalar_folds_drop_hidden_fact_multiplicity_but_fallback_keeps_dedup() {
+    let fix = postings(&[
+        (1, 10, "a", 5),
+        (2, 10, "b", 5),
+        (3, 20, "a", 5),
+        (4, 20, "b", 7),
+    ]);
+    let mut prepared = fix.prepare(&scalar_set_folds(false)).unwrap();
+    let PreparedRule::FreeJoin(rule) = &prepared.pipeline.main_rules()[0] else {
+        panic!("free join")
+    };
+    assert!(rule.plan.distinct_witness().is_none());
+    assert!(rule.plan.scalar_set_traversal().is_some());
+    for fallback in [false, true, false] {
+        prepared.force_cursor_fallback(fallback);
+        let out = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
+        let mut rows: Vec<_> = (0..out.len())
+            .map(|row| {
+                let (AnswerValue::U64(group), AnswerValue::I64(sum), AnswerValue::U64(count)) =
+                    (out.get(row, 0), out.get(row, 1), out.get(row, 2))
+                else {
+                    panic!("typed aggregates")
+                };
+                (group, sum, count)
+            })
+            .collect();
+        rows.sort_unstable();
+        assert_eq!(rows, vec![(10, 5, 1), (20, 12, 2)]);
+        let EitherSink::Aggregate(sink) = &prepared.sink else {
+            panic!("aggregate sink")
+        };
+        assert!(!sink.seen_elided(), "the semantic witness was never forged");
+        assert_eq!(sink.distinct_seen(), Some(if fallback { 3 } else { 0 }));
+    }
+}
+
+#[test]
+fn physical_scalar_folds_deduplicate_across_set_selection_values_and_rebinds() {
+    let fix = postings(&[
+        (1, 10, "a", 5),
+        (2, 10, "b", 5),
+        (3, 20, "a", 5),
+        (4, 20, "b", 7),
+    ]);
+    let mut prepared = fix.prepare(&scalar_set_folds(true)).unwrap();
+    for fallback in [false, true, false] {
+        prepared.force_cursor_fallback(fallback);
+        for (elements, sum, count) in [
+            (vec![Value::U64(10), Value::U64(20), Value::U64(10)], 12, 2),
+            (vec![Value::U64(10)], 5, 1),
+        ] {
+            let out = fix
+                .execute(&mut prepared, &[ParamArg::Set(&elements)])
+                .unwrap();
+            assert_eq!(out.len(), 1);
+            assert!(matches!(out.get(0, 0), AnswerValue::I64(value) if value == sum));
+            assert!(matches!(out.get(0, 1), AnswerValue::U64(value) if value == count));
+        }
+    }
+}
+
 fn payroll(rows: &[(u64, u64, (i64, i64))]) -> Fix {
     let facts: Vec<Vec<Value>> = rows
         .iter()

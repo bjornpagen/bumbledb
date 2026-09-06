@@ -1,5 +1,6 @@
-use super::{BoundView, Colt, Cursor, NodeState, Positions, Slot, SuffixRun, View, unpack_child};
+use super::{BoundView, Colt, Cursor, NodeState, Positions, SuffixRun, View, unpack_child};
 use crate::image::ColumnView;
+use std::ops::ControlFlow;
 
 impl Colt {
     #[must_use]
@@ -49,8 +50,8 @@ impl Colt {
                     .any(|slot_idx| {
                         let idx = usize::try_from(*slot_idx).expect("64-bit usize");
                         match unpack_child(self.buckets[m.child_at(idx)]) {
-                            Slot::Single(position) => check(position),
-                            Slot::Node(child) => self.any_position(Cursor::Node(child), check),
+                            Cursor::Row(position) => check(position),
+                            Cursor::Node(child) => self.any_position(Cursor::Node(child), check),
                         }
                     })
             }
@@ -113,26 +114,32 @@ impl Colt {
         )
     }
 
-    pub fn for_each_suffix_run(&self, cursor: Cursor, mut f: impl FnMut(SuffixRun<'_>)) -> bool {
+    /// Continue(false) means the cursor is not an unforced suffix; Break
+    /// carries the visitor's stop reason without visiting any later run.
+    pub fn for_each_suffix_run<B>(
+        &self,
+        cursor: Cursor,
+        mut f: impl FnMut(SuffixRun<'_>) -> ControlFlow<B>,
+    ) -> ControlFlow<B, bool> {
         let Cursor::Node(node) = cursor else {
-            return false;
+            return ControlFlow::Continue(false);
         };
         match self.nodes[node.0 as usize] {
-            NodeState::Forced { .. } => false,
+            NodeState::Forced { .. } => ControlFlow::Continue(false),
             NodeState::Unforced(Positions::Root) => {
                 if self.view.is_empty() {
-                    return true;
+                    return ControlFlow::Continue(true);
                 }
                 match &self.view {
                     View::Bound(BoundView::Survivors { positions, .. }) => {
-                        f(SuffixRun::Positions(positions));
+                        f(SuffixRun::Positions(positions))?;
                     }
                     _ => f(SuffixRun::Identity {
                         start: 0,
                         len: self.view.len(),
-                    }),
+                    })?,
                 }
-                true
+                ControlFlow::Continue(true)
             }
             NodeState::Unforced(Positions::Chunks { first, .. }) => {
                 let mut chunk = first;
@@ -143,10 +150,10 @@ impl Colt {
                     }
                     f(SuffixRun::Positions(
                         &self.chunk_positions[c.start as usize..][..usize::from(c.len)],
-                    ));
+                    ))?;
                     chunk = c.next;
                 }
-                true
+                ControlFlow::Continue(true)
             }
         }
     }

@@ -124,6 +124,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter, MaxNLocator
 
+FIGURE_NOTE = ""
+
+
+def save_chart(fig, out):
+    """Keep a supplied measurement caveat on every exported figure."""
+    if FIGURE_NOTE:
+        fig.text(0.01, -0.035, FIGURE_NOTE, fontsize=8, color=DIM,
+                 family="monospace")
+    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+
+
 READ_ORDER = [
     "point", "mandate_at_instant", "string", "entries_for_account_set",
     "balance", "containment_walk", "postings_without_tag", "mandate_overlap",
@@ -455,6 +466,10 @@ def derive_pools(inputs):
             inputs["reads"], inputs["writes"] = merge_runs(pool)
             inputs["store_kind"] = kind
             inputs["rep_count"] = len(pool)
+            inputs["contaminated_blocks"] = sum(
+                bool((family.get("ghz") or {}).get("contaminated"))
+                for run in pool for table in ("reads", "writes")
+                for family in run.get(table, []))
             provenance = pool[0].get("provenance") or {}
             inputs["host"] = provenance.get("host", "unknown host")
             inputs["shared_machine"] = any(
@@ -474,7 +489,10 @@ def prov_note(payload):
 def pool_note(inputs):
     """The merged-pool caption tail: min-of-N, store kind, exclusions,
     and the shared-machine caveat."""
-    note = f"min-of-{inputs['rep_count']}, {inputs['store_kind']} store"
+    count = inputs['rep_count']
+    note = f"{'single run' if count == 1 else f'min-of-{count}'}, {inputs['store_kind']} store"
+    if inputs.get("contaminated_blocks"):
+        note += f" · {inputs['contaminated_blocks']} clock-flagged blocks; see raw report"
     if inputs.get("contaminated_runs"):
         n = inputs["contaminated_runs"]
         note += f" · {n} contaminated run{'s' if n != 1 else ''} excluded and counted"
@@ -1672,6 +1690,7 @@ CHARTS = [
 ]
 
 def main():
+    global FIGURE_NOTE
     ap = argparse.ArgumentParser(
         description="Render the README benchmark charts from committed report pins.")
     ap.add_argument("run_dirs", nargs="*", metavar="run-dir",
@@ -1685,6 +1704,8 @@ def main():
                          "lane discriminant, plus */scenarios.md")
     ap.add_argument('--out', '--out-dir', dest="out", default="assets", metavar="DIR",
                     help="output directory (default: assets — the owner's ceremony path)")
+    ap.add_argument("--note", default="", metavar="TEXT",
+                    help="measurement caveat printed on every chart")
     ap.add_argument("--storage-report", metavar="PATH",
                     help="a committed storage-report.json (fills the storage_report "
                          "artifact behind bench-storage.svg)")
@@ -1694,6 +1715,7 @@ def main():
                     help="a committed curves-report.json (fills the curves_report "
                          "artifact behind bench-curves.svg / bench-warmth.svg)")
     args = ap.parse_args()
+    FIGURE_NOTE = args.note
 
     if args.run_dirs and args.night:
         ap.error("pass run dirs or --night, not both")

@@ -54,7 +54,6 @@ fn measure_calls_exactly_warmups_plus_samples_and_sums_work() {
     .expect("measures");
     assert_eq!(calls, 8, "3 warmups + 5 samples");
     assert_eq!(m.work, 10, "work sums the samples only");
-    assert!(m.trace.is_none());
 }
 
 #[test]
@@ -90,7 +89,6 @@ fn per_rep_proxy_mode_populates_the_normalized_p50() {
         proto,
         Modes {
             alloc_window: false,
-            trace: false,
             proxy_per_rep: true,
         },
         1,
@@ -124,50 +122,7 @@ fn batched_measurement_divides_time_and_sums_all_work() {
     assert_eq!(m.work, 4 * 8 * 3, "work sums every batched call");
 }
 
-#[test]
-fn the_modes_are_mutually_exclusive() {
-    let err = measure_batched(
-        Protocol::COLD,
-        Modes {
-            alloc_window: true,
-            trace: true,
-            proxy_per_rep: false,
-        },
-        1,
-        || Ok(0),
-    )
-    .expect_err("must refuse");
-    assert!(err.contains("mutually exclusive"), "{err}");
-}
-
-#[test]
-fn trace_mode_adds_one_post_measurement_sample() {
-    let proto = Protocol {
-        warmups: 1,
-        samples: 2,
-    };
-    let mut calls = 0u64;
-    let m = measure_batched(
-        proto,
-        Modes {
-            alloc_window: false,
-            trace: true,
-            proxy_per_rep: false,
-        },
-        1,
-        || {
-            calls += 1;
-            Ok(1)
-        },
-    )
-    .expect("measures");
-    assert_eq!(calls, 4, "warmup + samples + the traced sample");
-    assert_eq!(m.work, 2, "the traced sample's work is not summed");
-    let (traced_work, _) = m.trace.expect("traced");
-    assert_eq!(traced_work, 1);
-}
-
-#[cfg(feature = "obs")]
+#[cfg(feature = "alloc-counter")]
 #[test]
 fn the_alloc_window_returns_a_snapshot() {
     let proto = Protocol {
@@ -178,7 +133,6 @@ fn the_alloc_window_returns_a_snapshot() {
         proto,
         Modes {
             alloc_window: true,
-            trace: false,
             proxy_per_rep: false,
         },
         1,
@@ -190,21 +144,20 @@ fn the_alloc_window_returns_a_snapshot() {
     assert!(alloc.window.alloc_bytes >= 4 * 4096);
 }
 
-#[cfg(not(feature = "obs"))]
+#[cfg(not(feature = "alloc-counter"))]
 #[test]
 fn the_alloc_window_refuses_without_the_feature() {
     let err = measure_batched(
         Protocol::COLD,
         Modes {
             alloc_window: true,
-            trace: false,
             proxy_per_rep: false,
         },
         1,
         || Ok(0),
     )
     .expect_err("must refuse");
-    assert!(err.contains("obs feature"), "{err}");
+    assert!(err.contains("alloc-counter feature"), "{err}");
 }
 
 /// The touch runs before every sample (warmups included), and generations

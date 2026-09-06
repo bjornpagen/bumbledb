@@ -14,21 +14,24 @@
 //! (scratch I/O, allocation, its own environment). Those failures travel
 //! through the state's OWN error channel — [`JudgeScratch`] names the
 //! conversion. A judgment without a channel keeps grouped state in the
-//! charged RAM tier only: it never spills, so the only failures it can
-//! produce are the typed work refusals every caller already handles.
+//! charged RAM tier only: it never spills, but allocation can still fail
+//! independently of its budget. Without a channel, that host failure is
+//! [`JudgeError::Allocation`], never fabricated working-byte exhaustion.
 //! Budget refusals are never silently converted into disk usage the caller
 //! did not permit — the scratch tier charges the scratch allowance.
 
+use crate::canonical::{DecodeScratch, RowError};
 use crate::error::{Error, IoFailure, LmdbFailure};
 use crate::exec::scratch::ScratchRelation;
 use crate::ir::Value;
+use crate::schema::{FieldDescriptor, FieldId};
 use crate::storage::store::StoreError;
-use crate::work::{Resource, WorkContext, WorkError};
+use crate::work::{ByteKind, ByteReservation, Resource, WorkContext, WorkError};
 
 use super::JudgeError;
 
-/// A grouped-state scratch failure that is not a work refusal: the spilled
-/// tier's own I/O, allocation, or environment fault. Distinct physical
+/// A grouped-state scratch failure that is not a work refusal: allocation
+/// in either tier, or the spilled tier's I/O/environment fault. Distinct physical
 /// conditions stay distinct; a work refusal is never represented here (it
 /// surfaces as [`JudgeError::Work`] for every state).
 #[derive(Debug)]
@@ -49,6 +52,7 @@ pub enum ScratchFault {
 /// [`JudgeScratch::disabled`] (what states without a channel get) keeps
 /// grouped state in charged RAM only — beyond-budget judgments refuse with
 /// the typed working-byte exhaustion instead of unaccounted growth.
+/// A host allocator refusal remains [`JudgeError::Allocation`].
 /// [`JudgeScratch::channel`] opts the judgment into the disk tier.
 #[derive(Debug)]
 pub struct JudgeScratch<E> {
@@ -108,6 +112,12 @@ fn split_fault(error: Error) -> Result<WorkError, ScratchFault> {
     }
 }
 
+fn allocation_error<E>(channel: Option<fn(ScratchFault) -> E>) -> JudgeError<E> {
+    channel.map_or(JudgeError::Allocation, |channel| {
+        JudgeError::State(channel(ScratchFault::Allocation))
+    })
+}
+
 fn is_working_refusal(error: &Error) -> bool {
     matches!(
         error,
@@ -137,6 +147,136 @@ const FLAG_OK: u8 = 0;
 pub(super) const FLAG_RAY: u8 = 1;
 pub(super) const FLAG_OVERFLOW: u8 = 2;
 
+/// One scalar projection workspace, not a collection of visited groups.
+/// Slots, text clones, and encoded-key capacity remain charged together.
+/// Payload reservations retain a high-water mark so repeated equal-sized
+/// projections need no ledger growth; allocation owners drop before charge.
+pub(super) struct ScalarKeyScratch<E> {
+    values: Vec<Value>,
+    encoded: Vec<u8>,
+    charge: ByteReservation,
+    payload_capacity: u64,
+    channel: Option<fn(ScratchFault) -> E>,
+}
+
+impl<E> ScalarKeyScratch<E> {
+    pub(super) fn new(
+        work: &WorkContext,
+        fields: usize,
+        channel: Option<fn(ScratchFault) -> E>,
+    ) -> Result<Self, JudgeError<E>> {
+        let bytes = (fields as u64).saturating_mul(size_of::<Value>() as u64);
+        let charge = work.reserve(ByteKind::Working, bytes)?;
+        let mut scratch = Self {
+            values: Vec::new(),
+            encoded: Vec::new(),
+            charge,
+            payload_capacity: 0,
+            channel,
+        };
+        scratch
+            .values
+            .try_reserve_exact(fields)
+            .map_err(|_| allocation_error(channel))?;
+        scratch.charge.resize(scratch.footprint(0))?;
+        Ok(scratch)
+    }
+
+    pub(super) fn project(&mut self, row: &[Value], fields: &[usize]) -> Result<(), JudgeError<E>> {
+        // Destroy old payloads before allocating their replacements: the
+        // reservation covers one projection, never two overlapping clones.
+        self.values.clear();
+        let payload = fields.iter().fold(0u64, |bytes, &at| {
+            bytes.saturating_add(Self::payload_bytes(&row[at]))
+        });
+        self.payload_capacity = self.payload_capacity.max(payload);
+        self.charge
+            .resize(self.footprint(self.encoded.capacity()))?;
+        self.values.extend(fields.iter().map(|&at| row[at].clone()));
+        Ok(())
+    }
+
+    pub(super) fn values(&self) -> &[Value] {
+        &self.values
+    }
+
+    pub(super) fn key(&self) -> &[u8] {
+        &self.encoded
+    }
+
+    pub(super) fn encode(&mut self) -> Result<&[u8], JudgeError<E>> {
+        self.encoded.clear();
+        // Every fixed Value image is at most 17 bytes. Variable payloads
+        // add their length to a nine-byte tag/length prefix. This bound
+        // reserves before the shared encoder writes, without another codec.
+        let bound = self.values.iter().fold(0u64, |bytes, value| {
+            bytes
+                .saturating_add(17)
+                .saturating_add(Self::payload_bytes(value))
+        });
+        self.reserve_encoding(bound)?;
+        for value in &self.values {
+            encode_value(value, &mut self.encoded);
+        }
+        Ok(&self.encoded)
+    }
+
+    /// Encode borrowed logical fields without cloning their payloads.
+    /// The same owner/reservation covers the reusable mark-key buffer.
+    pub(super) fn encode_projection(
+        &mut self,
+        row: &[Value],
+        fields: &[FieldId],
+    ) -> Result<&[u8], JudgeError<E>> {
+        self.encoded.clear();
+        let bound = fields.iter().fold(0u64, |bytes, field| {
+            bytes
+                .saturating_add(17)
+                .saturating_add(Self::payload_bytes(&row[usize::from(field.0)]))
+        });
+        self.reserve_encoding(bound)?;
+        for field in fields {
+            encode_value(&row[usize::from(field.0)], &mut self.encoded);
+        }
+        Ok(&self.encoded)
+    }
+
+    fn reserve_encoding(&mut self, bound: u64) -> Result<(), JudgeError<E>> {
+        let needed = usize::try_from(bound).map_err(|_| allocation_error(self.channel))?;
+        if needed > self.encoded.capacity() {
+            self.charge.resize(self.footprint(needed))?;
+            self.encoded
+                .try_reserve_exact(needed)
+                .map_err(|_| allocation_error(self.channel))?;
+            if let Err(error) = self.charge.resize(self.footprint(self.encoded.capacity())) {
+                // An allocator may return excess capacity. If its charge
+                // is refused, destroy that allocation before returning.
+                self.encoded = Vec::new();
+                self.charge
+                    .resize(self.footprint(0))
+                    .expect("dropping the encoded buffer only shrinks its charge");
+                return Err(JudgeError::Work(error));
+            }
+        }
+        Ok(())
+    }
+
+    fn footprint(&self, encoded_capacity: usize) -> u64 {
+        (self.values.capacity() as u64)
+            .saturating_mul(size_of::<Value>() as u64)
+            .saturating_add(self.payload_capacity)
+            .saturating_add(encoded_capacity as u64)
+    }
+
+    fn payload_bytes(value: &Value) -> u64 {
+        match value {
+            Value::String(text) => text.len() as u64,
+            Value::FixedBytes(bytes) => bytes.len() as u64,
+            _ => 0,
+        }
+    }
+}
+
 /// One charged grouped map for a single statement's judgment, dropped with
 /// the statement. Keys are exact encoded value tuples or fixed-width words;
 /// no hash verdict participates (forced fingerprint collisions can slow the
@@ -163,6 +303,7 @@ impl<E> GroupedMap<E> {
     fn convert(&self, error: Error) -> JudgeError<E> {
         match split_fault(error) {
             Ok(work) => JudgeError::Work(work),
+            Err(ScratchFault::Allocation) => allocation_error(self.channel),
             Err(fault) => match self.channel {
                 Some(channel) => JudgeError::State(channel(fault)),
                 None => unreachable!(
@@ -305,6 +446,39 @@ impl<E> GroupedMap<E> {
             return Err(error);
         }
         walked.map_err(|error| self.convert(error))
+    }
+
+    /// Walk exact determinant keys with one charged decode workspace.
+    /// Logical coordinates come from the statement binding, not the
+    /// interned index order. Spilled iteration lends reconstructed exact
+    /// keys; the callback may operate on other independently owned maps.
+    pub(super) fn for_each_determinant(
+        &mut self,
+        fields: &[FieldDescriptor],
+        projection: &[FieldId],
+        work: &WorkContext,
+        mut visit: impl FnMut(&[u8], &[Value]) -> Result<bool, JudgeError<E>>,
+    ) -> Result<(), JudgeError<E>> {
+        let channel = self.channel;
+        let mut decoded = DecodeScratch::new(work);
+        self.for_each(|key, _| {
+            decoded
+                .with_decoded_payload(
+                    projection.iter().map(|field| &fields[usize::from(field.0)]),
+                    key,
+                    |values| Ok::<_, RowError>(visit(key, values)),
+                )
+                .map_err(|error| match error {
+                    RowError::Work(work) => JudgeError::Work(work),
+                    RowError::Allocation | RowError::LengthOverflow => allocation_error(channel),
+                    _ => match channel {
+                        Some(channel) => JudgeError::State(channel(ScratchFault::Internal(
+                            "scratch determinant payload",
+                        ))),
+                        None => unreachable!("in-memory determinant keys follow the typed encoder"),
+                    },
+                })?
+        })
     }
 
     /// Predecessor query over fixed-width keys (coverage-run probes): the

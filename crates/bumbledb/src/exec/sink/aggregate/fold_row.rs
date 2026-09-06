@@ -8,9 +8,10 @@ impl AggregateSink {
         self.maybe_spill_groups();
         if self.error.is_some()
             || self.cardinality_overflow
-            || !self
-                .dedup
-                .consider(&self.binding_scratch, &mut self.union_scratch)
+            || (!self.distinct_bindings()
+                && !self
+                    .dedup
+                    .consider(&self.binding_scratch, &mut self.union_scratch))
         {
             return;
         }

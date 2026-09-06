@@ -45,7 +45,7 @@ The surface is small:
 ## Install
 
 ```sh
-pnpm add @bjornpagen/bumbledb-log @bjornpagen/bumbledb effect
+pnpm add @bjornpagen/bumbledb-log@0.20.3 @bjornpagen/bumbledb@0.20.3 effect@4.0.0-rc.112
 ```
 
 ## Quick start: one durable round trip
@@ -55,7 +55,7 @@ insert command, submit it to a decided receipt, then reopen the directory
 and resolve the retained ref to the exact recorded outcome.
 
 ```ts
-import * as fs from "node:fs"
+import * as fs from "node:fs/promises"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
 import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { Command, DatabaseId, IncarnationId, LocalHistory, OperationId, ReceiptEpoch, RequestId } from "@bjornpagen/bumbledb-log"
@@ -98,7 +98,9 @@ const program = Effect.gen(function* () {
 	// The checked initialization artifact: the canonical schema snapshot the
 	// migration generator wrote to your checked-in repository. Its native
 	// fingerprint IS the identity's schemaId — creation re-judges both.
-	const artifact: Uint8Array = fs.readFileSync("bumbledb/migrations/meta/0000.schema.json")
+	const artifact: Uint8Array = yield* Effect.tryPromise(() =>
+		fs.readFile("bumbledb/migrations/meta/0000.schema.json")
+	)
 	const identity: DatabaseIdentity = {
 		databaseId: unwrap(DatabaseId.parse("abababab-abab-abab-abab-abababababab")),
 		incarnationId: unwrap(IncarnationId.parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")),
@@ -134,7 +136,7 @@ const program = Effect.gen(function* () {
 				},
 				work
 			)
-			// submit NEVER throws or fails: certainty is data.
+			// Submission certainty is data; interruption remains interruption.
 			const outcome = yield* history.submit(command, submitOptions)
 			if (outcome.kind !== "decided") {
 				return yield* Effect.die("expected a decided submit in this example")
@@ -257,7 +259,8 @@ runtime:
   triple — snapshots are the empty-base schema plus one target per entry.
   `checkMigrations` is the same judgment without writes. Ordinary onboarding
   is generated `initialize`,
-  then `LocalHistory.open` / `HostedHistory.open`. `LocalHistory.create`
+  then `LocalHistory.open`. `HostedHistory.open` requires an already
+  initialized hosted authority. `LocalHistory.create`
   remains the explicit constructor when a checked artifact is already in
   hand — it is not the Notes/Alchemy path. The runner verbs —
   `migrationStatus`, `initialize`, `migrate`, `activateMigration`,

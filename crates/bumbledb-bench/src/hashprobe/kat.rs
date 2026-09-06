@@ -91,6 +91,9 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Validates ONLY the plain `blake3-full-32` primitive candidate. A Passed
+/// result does not certify row-prefix framing, derive-key, or AEGIS vectors.
+///
 /// Vector file format (authored by hand from the pinned upstream sources):
 /// `{"blake3":[{"input_len":N,"hash":"<hex, >= 32 bytes>"}, ...]}`. The input
 /// is regenerated from the official byte-cycle rule; only expected output hex

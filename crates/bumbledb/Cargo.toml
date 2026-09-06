@@ -5,8 +5,6 @@ edition = "2024"
 publish = false
 
 [features]
-trace = []
-
 alloc-counter = []
 
 ground-off = []

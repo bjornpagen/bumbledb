@@ -28,16 +28,40 @@ fn amounts(out: &Answers) -> Vec<i64> {
 }
 
 #[test]
+fn literal_bytes_survive_trim_and_switches_between_resident_and_fallback() {
+    let fix = posting_store(
+        "prepared-literal-generation",
+        &[(1, 7, "alpha", 10), (2, 7, "beta", 20)],
+    );
+    let mut alpha = fix.prepare(&literal_query("alpha")).expect("alpha plan");
+    let mut beta = fix.prepare(&literal_query("beta")).expect("beta plan");
+    assert!(
+        !alpha.no_text_probe && !beta.no_text_probe,
+        "Free Join retains eager text generation binding"
+    );
+    for fallback in [false, true, false, true] {
+        alpha.force_cursor_fallback(fallback);
+        let out = fix.execute(&mut alpha, &[] as &[BindValue]).expect("alpha");
+        assert_eq!(amounts(&out), vec![10], "fallback={fallback}");
+        alpha.trim();
+        let out = fix.execute(&mut beta, &[] as &[BindValue]).expect("beta");
+        assert_eq!(amounts(&out), vec![20]);
+        let out = fix
+            .execute(&mut alpha, &[] as &[BindValue])
+            .expect("alpha rebound");
+        assert_eq!(amounts(&out), vec![10], "rebound fallback={fallback}");
+    }
+}
+
+#[test]
 fn a_str_literal_latches_on_first_execution() {
     let fix = postings(&[(1, 7, "alice", 10), (2, 7, "bob", 20)]);
     let mut prepared = fix.prepare(&literal_query("alice")).expect("prepare");
-    assert_eq!(prepared.latch.remaining(), 1, "counted at prepare");
 
     let mut out = Answers::new();
     fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert_eq!(amounts(&out), vec![10]);
-    assert_eq!(prepared.latch.remaining(), 0, "the latch is final");
     let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
         panic!("free join fixture");
     };
@@ -59,7 +83,7 @@ fn a_str_literal_latches_on_first_execution() {
                 )
             })
     });
-    assert!(!pending, "the template slot was rewritten in place");
+    assert!(pending, "immutable literal bytes survive resolver rotation");
 
     fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("re-execute");
@@ -78,11 +102,6 @@ fn an_unmatched_literal_latches_finally_and_matches_later_rows() {
     fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
         .expect("execute");
     assert!(out.is_empty(), "no stored row carries the literal yet");
-    assert_eq!(
-        prepared.latch.remaining(),
-        0,
-        "interning latched the literal on its first resolution"
-    );
     assert!(
         matches!(
             prepared.pipeline.main_rules(),
@@ -109,53 +128,5 @@ fn an_unmatched_literal_latches_finally_and_matches_later_rows() {
         amounts(&out),
         vec![30],
         "the latched token identifies the newly stored text"
-    );
-}
-
-#[cfg(feature = "trace")]
-#[test]
-fn the_latch_fires_once_and_the_fast_path_skips_resolution() {
-    use crate::obs;
-
-    let fix = postings(&[(1, 7, "alice", 10), (2, 7, "bob", 20)]);
-    let mut prepared = fix.prepare(&literal_query("alice")).expect("prepare");
-    let mut out = Answers::new();
-
-    obs::start_capture();
-    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
-        .expect("execute");
-    let events = obs::finish_capture();
-    let slow = amounts(&out);
-    assert_eq!(
-        events
-            .iter()
-            .filter(|e| e.point() == obs::names::LITERAL_LATCH)
-            .count(),
-        1,
-        "one latch per distinct literal"
-    );
-    assert!(
-        events
-            .iter()
-            .any(|e| e.point() == obs::names::RESOLVE_FILTERS),
-        "the first execution resolves"
-    );
-
-    obs::start_capture();
-    fix.execute_into(&mut prepared, &[] as &[BindValue], &mut out)
-        .expect("execute");
-    let events = obs::finish_capture();
-    assert_eq!(amounts(&out), slow, "fast path, identical results");
-    assert!(
-        !events
-            .iter()
-            .any(|e| e.point() == obs::names::LITERAL_LATCH),
-        "a latch fires once, ever"
-    );
-    assert!(
-        !events
-            .iter()
-            .any(|e| e.point() == obs::names::RESOLVE_FILTERS),
-        "resolve_filters provably skipped"
     );
 }

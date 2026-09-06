@@ -1,7 +1,9 @@
 //! Columnar relation images, the image cache, and filtered views.
-//! A relation image is **all columns** of a relation, decoded once from one
-//! sequential `F`-prefix scan into structure-of-arrays vectors — the bridge
-//! to paper-faithful execution. Immutable once built; `Arc` is the sharing unit.
+//! Images retain **all columns** in structure-of-arrays vectors. A full image
+//! comes from one sequential row scan and may enter the shared relation cache;
+//! an indexed bucket image is query-local and reused only with matching
+//! selections. Both feed the same Free Join machine. Immutable once built;
+//! `Arc` is the sharing unit, and the image pins its text generation.
 pub mod cache;
 pub mod view;
 
@@ -15,6 +17,7 @@ mod distinct;
 mod epoch;
 pub(crate) mod intern;
 mod nonresident;
+mod selection;
 mod stride;
 #[cfg(test)]
 pub(crate) mod testsupport;
@@ -34,8 +37,11 @@ pub use build::{TransientImage, synthesize_closed};
 pub use intern::{ResidentAdmit, ResidentTextExhausted, is_resident_token, is_scratch_token};
 pub use nonresident::{NonresidentTextStore, TextEq, TextStoreEpoch};
 
+// M2 Max's measured stream-tracker pitch period. Small nonzero residues
+// near its multiples are the harmful band; exact multiples are allowed.
 const SET_STRIDE: usize = 16_384;
 
+// Outer memory-transfer alignment, NOT L1D line size (64 B on M2 Max).
 const LINE: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
@@ -145,8 +151,8 @@ pub enum ColumnView<'a> {
 pub struct RelationImage {
     row_count: usize,
 
-    /// paid by every cold prepare and again by every re-prepare after a
-    distincts: Box<[distinct::DistinctState]>,
+    /// Exact scalar statistics, initialized only for columns the planner asks for.
+    distincts: Box<[std::sync::OnceLock<u64>]>,
 
     spans: Box<[ColumnSpan]>,
     columns: Box<[Column]>,
@@ -172,6 +178,8 @@ enum SlabCharge {
 }
 
 impl RelationImage {
+    /// Retained word/byte slab capacity, excluding fixed metadata and text.
+    #[cfg(test)]
     #[must_use]
     pub fn byte_size(&self) -> usize {
         self.words.capacity() * std::mem::size_of::<u64>() + self.bytes.capacity()

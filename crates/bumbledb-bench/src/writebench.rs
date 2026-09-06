@@ -180,7 +180,9 @@ pub fn insert_stream_bumbledb(
     })
 }
 
-/// the identical protocol (`sqlite_run::cold_containment_walk`): it keeps no
+/// First read after an unrelated Org insert, excluded from the timed window.
+/// The historical "cold" name does not imply image invalidation: relation
+/// versions let this query keep its Posting/Account/Holder images warm.
 /// # Errors
 /// # Panics
 pub fn cold_containment_walk(db: &Db<Ledger>, cfg: GenConfig) -> Result<Measurement, String> {
@@ -257,7 +259,8 @@ pub(crate) fn posting_swap_seed(
     .map(|admission| admission.unwrap().value)
 }
 
-/// before that run.
+/// First read after replacing one Posting, with the swap outside the timer.
+/// Every round changes the relation this query reads, invalidating its image.
 /// # Errors
 /// # Panics
 pub fn cold_containment_walk_delete(
@@ -295,50 +298,9 @@ pub fn cold_containment_walk_delete(
     )
 }
 
-/// # Errors
-/// # Panics
-pub fn trace_cold_containment_walk_delete(
-    db: &Db<Ledger>,
-    cfg: GenConfig,
-    dir: Option<&Path>,
-) -> Result<Option<String>, String> {
-    let family = families::all()
-        .iter()
-        .find(|f| f.name == "containment_walk")
-        .expect("containment_walk is registered");
-    let query = (family.query)();
-    let mut prepared = db
-        .prepare(&query, crate::harness::bench_work())
-        .map_err(|e| format!("prepare: {e:?}"))?;
-    let mut rotation = Rotation::new((family.params)(&cfg));
-    let mut buffer = Answers::new();
-    let sizes = Sizes::of(cfg.scale);
-    let mut rng = Rng::new(cfg.seed ^ 0x0115_0005);
-    let mut mint = PostingMint::probe(db)?;
-    let mut prev = posting_swap_seed(db, &mut rng, &sizes, &mut mint)?;
-    crate::trace_out::traced_cold_solo(
-        dir,
-        "cold_containment_walk_delete",
-        &mut || {
-            prev = posting_swap(db, &mut rng, &sizes, &mut mint, &prev)?;
-            Ok(())
-        },
-        &mut || {
-            let args = param_args(rotation.next_set());
-            db.read(crate::harness::bench_work(), |snap| {
-                snap.execute(&mut prepared, &args, &mut buffer)
-            })
-            .map_err(|e| format!("cold execute: {e:?}"))?;
-            Ok(buffer.len() as u64)
-        },
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "obs")]
-    use crate::corpus;
     use crate::corpus_gen::Scale;
 
     const CFG: GenConfig = GenConfig {
@@ -365,39 +327,6 @@ mod tests {
             .unwrap();
         }
         db
-    }
-
-    #[cfg(feature = "obs")]
-    #[test]
-    fn cold_containment_walk_delete_traced_twin_lands() {
-        let dir = scratch("cold-delete-trace");
-        let db = Db::create(&dir, Ledger, crate::harness::bench_work())
-            .expect("create")
-            .expect("accepted");
-        corpus::load_bumbledb(&db, CFG).expect("load");
-        let trace_dir = dir.join("trace");
-        let table = trace_cold_containment_walk_delete(&db, CFG, Some(&trace_dir))
-            .expect("the traced twin runs")
-            .expect("Some dir emits a table");
-        assert!(!table.is_empty(), "the flame embed is non-empty");
-        let json_path = trace_dir.join("cold_containment_walk_delete.json");
-        let text = std::fs::read_to_string(&json_path)
-            .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
-        assert!(
-            text.starts_with("[\n") && text.ends_with("\n]\n"),
-            "{} parses as a Chrome array",
-            json_path.display()
-        );
-        assert!(
-            text.contains(bumbledb::obs::names::APPLY_DELETES.label())
-                || text.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
-            "the delete-bearing commit reaches the artifact"
-        );
-        let folded = std::fs::read_to_string(trace_dir.join("cold_containment_walk_delete.folded"))
-            .expect("the folded twin lands beside the json");
-        assert!(!folded.is_empty(), "a non-degenerate fold");
-        drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// and the refusal commits NOTHING (the generation does not move).

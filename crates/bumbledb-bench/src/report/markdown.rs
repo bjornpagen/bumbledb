@@ -74,14 +74,21 @@ fn markdown_family_tables(out: &mut String, report: &RunReport) {
     let _ = writeln!(out, "## Read families\n");
     let _ = writeln!(
         out,
-        "| family | ours p50/p95/p99 (us) | sqlite p50/p95/p99 (us) | ratio | verdict |"
+        "Batch is operations per timed sample, shared by both engines. For batch > 1, \
+         quantiles (including the p99 budget) describe per-operation batch averages, \
+         not individual-call tails. Displacement runs between batches.\n"
     );
-    let _ = writeln!(out, "|---|---|---|---|---|");
+    let _ = writeln!(
+        out,
+        "| family | batch | ours p50/p95/p99 (us) | sqlite p50/p95/p99 (us) | ratio | verdict |"
+    );
+    let _ = writeln!(out, "|---|---|---|---|---|---|");
     for family in &report.reads {
         let _ = writeln!(
             out,
-            "| {} | {:.1} / {:.1} / {:.1} | {:.1} / {:.1} / {:.1} | {:.2} | {} |",
+            "| {} | {} | {:.1} / {:.1} / {:.1} | {:.1} / {:.1} / {:.1} | {:.2} | {} |",
             family.name,
+            family.batch,
             us(family.ours.p50),
             us(family.ours.p95),
             us(family.ours.p99),
@@ -142,23 +149,6 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         let _ = writeln!(out, "(not captured — run with the alloc window)\n");
     }
 
-    let _ = writeln!(out, "## Execution digests\n");
-    let _ = writeln!(
-        out,
-        "| family | worst est/actual | covers | emitted | absorbed |"
-    );
-    let _ = writeln!(out, "|---|---|---|---|---|");
-    for family in &report.reads {
-        if let Some(exec) = &family.exec {
-            let _ = writeln!(
-                out,
-                "| {} | {:.2} | {} | {} | {} |",
-                family.name, exec.worst_estimate_factor, exec.covers, exec.emitted, exec.absorbed,
-            );
-        }
-    }
-    let _ = writeln!(out);
-
     let _ = writeln!(out, "## Store\n");
     let _ = writeln!(
         out,
@@ -194,14 +184,50 @@ fn markdown_diagnostics(out: &mut String, report: &RunReport) {
         let _ = writeln!(out);
     }
 
-    let _ = writeln!(out, "## Flame summaries\n");
-    if report.flames.is_empty() {
-        let _ = writeln!(out, "(none captured — run with --trace)");
-    } else {
-        for flame in &report.flames {
-            let _ = writeln!(out, "### {}\n", flame.name);
-            let _ = writeln!(out, "```text\n{}```\n", flame.table);
+    markdown_engine_clocks(out, report);
+}
+
+fn markdown_engine_clocks(out: &mut String, report: &RunReport) {
+    let families = report
+        .reads
+        .iter()
+        .map(|family| (family.name.as_str(), family.ghz_ours, family.ghz_theirs))
+        .chain(
+            report
+                .writes
+                .iter()
+                .map(|family| (family.name.as_str(), family.ghz_ours, family.ghz_theirs)),
+        );
+    let mut started = false;
+    for (name, ours, theirs) in families {
+        for (engine, stamp) in [("bumbledb", ours), ("SQLite", theirs)] {
+            let Some(stamp) = stamp else {
+                continue;
+            };
+            if !started {
+                started = true;
+                let _ = writeln!(out, "## Per-engine clock proxy\n");
+                let _ = writeln!(
+                    out,
+                    "Legacy combined stamps above are unchanged. Write brackets include engine \
+                     setup and teardown, not just timed samples. An intermediate dip can flag \
+                     an engine while the legacy outer bracket is clean. Missing attribution \
+                     is unknown, never reconstructed from old reports.\n"
+                );
+                let _ = writeln!(out, "| family | engine | GHz pre | GHz post | status |");
+                let _ = writeln!(out, "|---|---|---|---|---|");
+            }
+            let _ = writeln!(
+                out,
+                "| {name} | {engine} | {:.2} | {:.2} | {} |",
+                stamp.pre,
+                stamp.post,
+                stamp.status()
+            );
         }
+    }
+    if started {
+        let _ = writeln!(out);
     }
 }
 

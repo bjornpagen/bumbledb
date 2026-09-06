@@ -62,7 +62,7 @@ pub(super) fn densify(
                     .map(|(field, _)| field)
                     .collect();
             let key_var_sets = match OccBind::of_occurrence(occurrence) {
-                OccBind::Finished(_) | OccBind::RecDelta(_) | OccBind::RecAcc(_) => Vec::new(),
+                OccBind::Finished(_) | OccBind::RecDelta(_) => Vec::new(),
                 OccBind::Edb(stored) => {
                     compiled_scalar_key_var_sets(schema, stored, occurrence, &pinned, &var_index)
                 }
@@ -79,8 +79,8 @@ pub(super) fn densify(
 }
 
 /// Join-step key sets come from interned [`DistinctnessWitness::ScalarKeyUnique`]
-/// projections only. Pointwise keys are full-row equality, not a scalar
-/// uniqueness premise (L01).
+/// projections only. Pointwise keys require their complete interval value,
+/// not merely a scalar uniqueness premise.
 fn compiled_scalar_key_var_sets(
     schema: &Schema,
     stored: RelationId,
@@ -98,6 +98,7 @@ fn compiled_scalar_key_var_sets(
             match theory.distinctness_witness(*id)? {
                 DistinctnessWitness::ScalarKeyUnique { .. } => {}
                 DistinctnessWitness::FullRowEquality
+                | DistinctnessWitness::IntervalKeyUnique { .. }
                 | DistinctnessWitness::ExistenceOnly { .. } => return None,
             }
             let projection = theory.projection(*id)?;

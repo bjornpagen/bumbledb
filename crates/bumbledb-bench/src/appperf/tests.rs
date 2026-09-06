@@ -378,18 +378,23 @@ fn runner_post_write_alternation_restores_the_loaded_state() {
             snap.count(crate::schema::ids::POSTING_TAG)
         })
         .expect("count");
-    let row = super::runner::post_write_first_read(&db, cfg, Some(8)).expect("regime runs");
+    let row = super::runner::post_write_first_read(&db, cfg, Some(7)).expect("regime runs");
     assert_eq!(row.regime, super::Regime::PostWrite);
-    assert!(
-        row.work > 0 && row.account.source_visits == Some(row.work),
-        "admitted visits, not a positive-time claim"
+    assert_eq!(
+        row.work,
+        7 * before - 4,
+        "four measured deletes and three reinserts; restore is untimed"
+    );
+    assert_eq!(
+        row.account.source_visits, None,
+        "output rows are not source visits"
     );
     let after = db
         .read(crate::harness::bench_work(), |snap| {
             snap.count(crate::schema::ids::POSTING_TAG)
         })
         .expect("count");
-    // 4 warmups + 8 samples = 12 mutations: even count restores the corpus.
+    // Four warmups plus seven samples end deleted; the runner restores it.
     assert_eq!(
         before, after,
         "alternating delete/insert restores the store"
@@ -406,6 +411,9 @@ fn runner_large_result_reports_split_segments_below_end_to_end() {
     let db = bumbledb::Db::create(&dir, crate::schema::Ledger, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
+    let empty = super::runner::large_result(&db, Some(1))
+        .expect("an empty query still delivers its terminal cursor frame");
+    assert_eq!(empty.work, 0);
     crate::corpus::load_bumbledb(
         &db,
         GenConfig {
@@ -416,7 +424,11 @@ fn runner_large_result_reports_split_segments_below_end_to_end() {
     .expect("load");
     let row = super::runner::large_result(&db, Some(4)).expect("regime runs");
     let phases = row.phases.expect("split reported");
-    assert!(row.work > 0, "rows were delivered");
+    assert_eq!(
+        row.work,
+        4 * crate::corpus_gen::Sizes::of(Scale::Tiny).postings
+    );
+    assert_eq!(row.account.source_visits, None);
     assert!(phases.execute_ns.expect("execute") <= phases.end_to_end_ns);
     assert!(phases.deliver_ns.expect("deliver") <= phases.end_to_end_ns);
     drop(db);
@@ -456,8 +468,33 @@ fn runner_cold_open_times_open_plus_first_read() {
     )
     .expect("load");
     drop(db);
-    let row = super::runner::cold_open(&dir).expect("cold regime runs");
+    let row = super::runner::cold_open(&dir, Some(2)).expect("cold regime runs");
     assert_eq!(row.regime, super::Regime::ColdOpen);
-    assert!(row.work > 0, "the first read counted admitted rows");
+    assert_eq!(
+        row.work,
+        2 * crate::corpus_gen::Sizes::of(Scale::Tiny).accounts
+    );
+    assert_eq!(row.account.source_visits, None);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn runner_refuses_existing_output_without_erasing_evidence() {
+    let dir =
+        std::env::temp_dir().join(format!("bumbledb-appperf-existing-{}", std::process::id()));
+    std::fs::create_dir(&dir).expect("fresh test root");
+    let sentinel = dir.join("app-perf.json");
+    std::fs::write(&sentinel, "previous evidence").expect("existing artifact");
+    let args = crate::cli::AppPerfArgs {
+        out: Some(dir.clone()),
+        ..crate::cli::AppPerfArgs::default()
+    };
+    let error = super::runner::run(&args).expect_err("never overwrite a previous run");
+    assert!(error.contains("fresh output"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(sentinel).unwrap(),
+        "previous evidence"
+    );
+    assert!(!dir.join("scratch").exists());
+    std::fs::remove_dir_all(dir).expect("remove this test's artifacts");
 }

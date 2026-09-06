@@ -1,11 +1,9 @@
-//! COLT — the Column-Oriented Lazy Trie, per paper §4.2 with the
-//! chunked-child-list deviation.
-//! Aliasing safety is representational: nodes, chunks, map slots, and key
-//! words live in index-addressed pools (`NodeRef`-style u32 indices, never
-//! pointers) — the fix for v5's `UnsafeCell` aliasing UB (post-mortem
-//! §36). The *bounds* checks on iteration
-//! release (`get_unchecked` per the 00-product unsafe policy: this
-//! segment-level invariant stated at the site). Nothing is ever built
+//! COLT — a column-oriented lazy trie with chunked child-position lists.
+//! Mutable nodes, chunks, map slots and key words live in index-addressed
+//! pools, not interior-mutable pointers into shared images. Singleton
+//! children pin an image row instead of allocating another node. Both
+//! singleton and node children use `Cursor`; only map storage packs it into
+//! a word. Pool access remains bounds-checked, including fixed-width loops.
 #![allow(clippy::inline_always)]
 pub(super) use crate::image::view::{BoundView, View};
 
@@ -54,6 +52,24 @@ pub enum SuffixRun<'a> {
 }
 
 impl SuffixRun<'_> {
+    /// Split borrowed position windows without materializing identity rows.
+    pub(crate) fn split_at(self, mid: usize) -> (Self, Self) {
+        assert!(mid <= self.len(), "suffix split stays within the run");
+        match self {
+            Self::Identity { start, len } => (
+                Self::Identity { start, len: mid },
+                Self::Identity {
+                    start: start + mid,
+                    len: len - mid,
+                },
+            ),
+            Self::Positions(positions) => {
+                let (head, tail) = positions.split_at(mid);
+                (Self::Positions(head), Self::Positions(tail))
+            }
+        }
+    }
+
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -63,10 +79,6 @@ impl SuffixRun<'_> {
     }
 
     #[must_use]
-    #[expect(
-        dead_code,
-        reason = "the companion API documents and preserves the type contract"
-    )]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -123,12 +135,6 @@ struct Chunk {
     next: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Slot {
-    Single(u32),
-    Node(NodeRef),
-}
-
 /// Sizing targets ≤ 0.4 load — the measured occupancy-invariant band (flat
 /// probes 0.15–0.4) — from the position-count guess, rehash-doubling in bucket
 /// units when the next insert would cross it: `(len + 1) * 5 > nbuckets * 16`
@@ -176,21 +182,26 @@ impl Map {
 
 const CHILD_NODE_TAG: u64 = 1 << 63;
 
-fn pack_child(slot: Slot) -> u64 {
-    match slot {
-        Slot::Single(position) => u64::from(position),
-        Slot::Node(node) => CHILD_NODE_TAG | u64::from(node.0),
+fn pack_child(cursor: Cursor) -> u64 {
+    match cursor {
+        Cursor::Row(position) => u64::from(position),
+        Cursor::Node(node) => CHILD_NODE_TAG | u64::from(node.0),
     }
 }
 
+/// Internal pool words, never persisted or decoded from database input.
+/// New children and singleton promotion use `pack_child`; rehash and bound
+/// cloning only copy those words. The u32 payload and node tag are disjoint,
+/// so extract the payload once instead of validating the tagged u64 as an
+/// integer position at every probe. Pool dereferences remain bounds-checked.
 #[inline(always)]
-fn unpack_child(word: u64) -> Slot {
+fn unpack_child(word: u64) -> Cursor {
+    debug_assert_eq!(word & !(CHILD_NODE_TAG | u64::from(u32::MAX)), 0);
+    let payload = u32::try_from(word & u64::from(u32::MAX)).expect("masked u32 child payload");
     if word & CHILD_NODE_TAG == 0 {
-        Slot::Single(u32::try_from(word).expect("positions fit u32"))
+        Cursor::Row(payload)
     } else {
-        Slot::Node(NodeRef(
-            u32::try_from(word & !CHILD_NODE_TAG).expect("node refs fit u32"),
-        ))
+        Cursor::Node(NodeRef(payload))
     }
 }
 

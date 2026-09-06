@@ -79,7 +79,7 @@ pub mod calendar {
 /// families (E-NO-RESERVE): the corpus is dense from 0 (at most
 /// `parents x children_per_parent` rows), so cursors seeded here can
 /// never collide with a loaded row; each family owns one cursor that
-/// persists across its timed window and any traced re-run.
+/// persists across warmups and measured samples.
 pub const MINT_BASE: u64 = 1 << 32;
 
 pub mod ids {
@@ -291,8 +291,6 @@ pub fn write_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
     mode: crate::storemode::StoreMode,
-    trace_dir: Option<&Path>,
-    flames: &mut Vec<crate::report::FlameEmbed>,
 ) -> Result<Vec<crate::report::WriteFamilyReport>, String> {
     let names = [
         "commit_capacity_baseline",
@@ -320,28 +318,22 @@ pub fn write_families(
         }
         eprintln!("bench: {name}");
         let (ours, ghz) = crate::clockproxy::stamped(|| run(write_protocol(name)))?;
-        // The traced solo sample (--trace): AFTER the timed window,
 
-        if let Some(table) = crate::trace_out::traced_solo(trace_dir, name, run)? {
-            flames.push(crate::report::FlameEmbed {
-                name: name.to_owned(),
-                table,
-            });
-        }
         out.push(crate::report::WriteFamilyReport {
             name: name.to_owned(),
             ours: ours.stats,
             theirs: None,
             facts_per_sec: None,
             ghz: Some(ghz.into()),
+            ghz_ours: Some(ghz.into()),
+            ghz_theirs: None,
         });
         Ok(())
     };
 
-    // shadow must not carry the judged rows' fsyncs).
-    // One persistent mint per (family, store): the cursor survives the
-    // traced re-run so a re-invocation keeps inserting NEW rows instead of
-    // degrading into no-op duplicate commits.
+    // Baseline first, before the judged commits' fsync-heavy windows.
+    // One persistent mint per (family, store) keeps inserting new rows
+    // instead of degenerating into duplicate commits.
     let mut baseline_mint = MINT_BASE;
     let mut sum_mint = MINT_BASE;
     let mut duration_mint = MINT_BASE;

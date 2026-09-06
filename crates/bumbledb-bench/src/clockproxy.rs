@@ -101,6 +101,23 @@ impl GhzStamp {
         }
     }
 
+    /// Attribute an explicitly observed boundary to two contiguous blocks.
+    /// The original outer readings and flag are preserved separately; an
+    /// intermediate dip may flag both parts while the outer stamp is clean.
+    #[must_use]
+    pub fn split_at(self, boundary: f64) -> (Self, Self) {
+        (
+            Self {
+                post: boundary,
+                ..self
+            },
+            Self {
+                pre: boundary,
+                ..self
+            },
+        )
+    }
+
     /// NaN readings (no reference-host law off aarch64) never mark.
     #[must_use]
     pub fn contaminated(&self) -> bool {
@@ -171,6 +188,28 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn boundary_attribution_keeps_outer_stamp_and_threshold() {
+        let clean = GhzStamp {
+            pre: 3.4,
+            post: 3.4,
+            retried: false,
+            threshold: 3.2,
+        };
+        let (ours, theirs) = clean.split_at(3.0);
+        assert!(!clean.contaminated());
+        assert!(ours.contaminated() && theirs.contaminated());
+        assert_eq!(ours, GhzStamp { post: 3.0, ..clean });
+        assert_eq!(theirs, GhzStamp { pre: 3.0, ..clean });
+
+        let later_dip = GhzStamp { post: 3.0, ..clean };
+        let (ours, theirs) = later_dip.split_at(3.4);
+        assert!(later_dip.contaminated());
+        assert!(!ours.contaminated());
+        assert!(theirs.contaminated());
+        assert!(!ours.retried && !theirs.retried);
+    }
 
     /// The plausibility band transcribes aarch64 physics: only there is
     /// per mul, so off aarch64 the estimate is indicative, not a claim —

@@ -33,6 +33,7 @@ fn fixture() -> RunReport {
         partial: false,
         reads: vec![ReadFamilyReport {
             name: "point".to_owned(),
+            batch: 1,
             ours: stats(10_000),
             theirs: stats(20_000),
             ratio_p50: 0.5,
@@ -43,14 +44,10 @@ fn fixture() -> RunReport {
                 alloc_bytes: 0,
                 dealloc_bytes: 0,
             }),
-            exec: Some(ExecDigest {
-                worst_estimate_factor: 1.0,
-                covers: "n0:t0x256".to_owned(),
-                emitted: 256,
-                absorbed: 7,
-            }),
             p99_within_budget: true,
             ghz: None,
+            ghz_ours: None,
+            ghz_theirs: None,
             p50_norm: None,
         }],
         writes: vec![WriteFamilyReport {
@@ -59,12 +56,13 @@ fn fixture() -> RunReport {
             theirs: Some(stats(120_000)),
             facts_per_sec: None,
             ghz: None,
+            ghz_ours: None,
+            ghz_theirs: None,
         }],
         store: StoreNumbers {
             db_bytes: 1024,
             sqlite_bytes: 2048,
         },
-        flames: vec![],
     }
 }
 
@@ -90,9 +88,11 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
 
 ## Read families
 
-| family | ours p50/p95/p99 (us) | sqlite p50/p95/p99 (us) | ratio | verdict |
-|---|---|---|---|---|
-| point | 10.0 / 30.0 / 40.0 | 20.0 / 60.0 / 80.0 | 0.50 | WIN |
+Batch is operations per timed sample, shared by both engines. For batch > 1, quantiles (including the p99 budget) describe per-operation batch averages, not individual-call tails. Displacement runs between batches.
+
+| family | batch | ours p50/p95/p99 (us) | sqlite p50/p95/p99 (us) | ratio | verdict |
+|---|---|---|---|---|---|
+| point | 1 | 10.0 / 30.0 / 40.0 | 20.0 / 60.0 / 80.0 | 0.50 | WIN |
 
 ## Write families
 
@@ -106,20 +106,11 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
 |---|---|---|---|---|
 | point | 0 | 0 | 0 | 0 |
 
-## Execution digests
-
-| family | worst est/actual | covers | emitted | absorbed |
-|---|---|---|---|---|
-| point | 1.00 | n0:t0x256 | 256 | 7 |
-
 ## Store
 
 - bumbledb file (compacted): 1024 bytes
 - sqlite file: 2048 bytes
 
-## Flame summaries
-
-(none captured — run with --trace)
 ";
     assert_eq!(to_markdown(&fixture()), expected);
 
@@ -139,8 +130,7 @@ p99 budget (<= 10 ms warm): PASS (informational below scale L).
 #[test]
 fn the_json_is_structurally_sound() {
     let text = to_json(&fixture());
-    assert_eq!(text.matches('{').count(), text.matches('}').count());
-    assert_eq!(text.matches('[').count(), text.matches(']').count());
+    crate::json::parse(&text).expect("report must parse, not merely balance delimiters");
     for key in [
         "\"provenance\":",
         "\"config\":",
@@ -150,12 +140,12 @@ fn the_json_is_structurally_sound() {
         "\"budget_ok\":true",
         "\"partial\":false",
         "\"reads\":[",
+        "\"batch\":1",
         "\"writes\":[",
         "\"ratio_p50\":0.5000",
         "\"verdict\":\"WIN\"",
         "\"facts_per_sec\":null",
         "\"store\":{\"db_bytes\":1024",
-        "\"flames\":[]",
     ] {
         assert!(text.contains(key), "missing {key} in {text}");
     }
@@ -276,6 +266,69 @@ fn ghz_stamps_render_in_markdown_json_and_the_merge_excludes_dirt() {
 }
 
 #[test]
+fn read_batch_is_reported_and_merges_never_invent_legacy_protocols() {
+    let mut batched = fixture();
+    batched.reads[0].batch = 16;
+    let text = to_json(&batched);
+    assert!(text.contains("\"batch\":16"), "{text}");
+    assert!(to_markdown(&batched).contains("| point | 16 |"));
+    let runs = [
+        ("a".to_owned(), json::parse(&text).expect("parses")),
+        ("b".to_owned(), json::parse(&text).expect("parses")),
+    ];
+    let merged = merge_markdown(&runs).expect("same batch merges");
+    assert!(merged.contains("| point | 16 | 16 |"), "{merged}");
+    assert!(
+        merged.contains("| point | 10.0 | 10.0 | 10.0 | 30.0 |"),
+        "{merged}"
+    );
+
+    for replacement in [
+        "",
+        "\"batch\":null,",
+        "\"batch\":0,",
+        "\"batch\":1.5,",
+        "\"batch\":-1,",
+        "\"batch\":1,",
+    ] {
+        let legacy = text.replace("\"batch\":16,", replacement);
+        let runs = [
+            ("a".to_owned(), json::parse(&text).expect("parses")),
+            ("b".to_owned(), json::parse(&legacy).expect("parses")),
+        ];
+        let merged = merge_markdown(&runs).expect("keeps incomparable rows visible");
+        assert!(
+            merged.contains("| point | 10.0 | 10.0 | - | - |"),
+            "{merged}"
+        );
+        let expected = if replacement == "\"batch\":1," {
+            "1"
+        } else {
+            "unknown"
+        };
+        assert!(
+            merged.contains(&format!("| point | 16 | {expected} |")),
+            "{merged}"
+        );
+        assert!(
+            merged.contains("| commit_single | 100.0 | 100.0 | 100.0 | 300.0 |"),
+            "{merged}"
+        );
+    }
+    let legacy = text.replace("\"batch\":16,", "");
+    let runs = [
+        ("a".to_owned(), json::parse(&legacy).expect("parses")),
+        ("b".to_owned(), json::parse(&legacy).expect("parses")),
+    ];
+    let merged = merge_markdown(&runs).expect("old reports remain readable");
+    assert!(merged.contains("| point | unknown | unknown |"), "{merged}");
+    assert!(
+        merged.contains("| point | 10.0 | 10.0 | - | - |"),
+        "{merged}"
+    );
+}
+
+#[test]
 fn the_merge_refuses_mixed_durability_labels() {
     let mut ephemeral = fixture();
     ephemeral.config.store = "ephemeral";
@@ -339,4 +392,55 @@ fn the_timestamp_formatter_matches_known_epochs() {
     assert_eq!(civil(86_399), "1970-01-01T23:59:59Z");
     // 2026-07-01T12:30:05Z.
     assert_eq!(civil(1_782_909_005), "2026-07-01T12:30:05Z");
+}
+
+#[test]
+fn engine_clock_attribution_serializes_without_reclassifying_legacy_reports() {
+    use crate::clockproxy::GhzStamp;
+
+    let legacy = fixture();
+    let legacy_json = to_json(&legacy);
+    assert!(!legacy_json.contains("ghz_ours"));
+    assert!(!legacy_json.contains("ghz_theirs"));
+    assert!(!to_markdown(&legacy).contains("## Per-engine clock proxy"));
+
+    let outer = GhzStamp {
+        pre: 3.4,
+        post: 3.0,
+        retried: false,
+        threshold: 3.2,
+    };
+    let (ours, theirs) = outer.split_at(3.4);
+    let mut combined_only = legacy.clone();
+    combined_only.reads[0].ghz = Some(ours.merge(theirs).into());
+    combined_only.writes[0].ghz = Some(outer.into());
+    let mut attributed = combined_only.clone();
+    attributed.reads[0].ghz_ours = Some(ours.into());
+    attributed.reads[0].ghz_theirs = Some(theirs.into());
+    attributed.writes[0].ghz_ours = Some(ours.into());
+    attributed.writes[0].ghz_theirs = Some(theirs.into());
+    let text = to_json(&attributed);
+    assert!(text.contains(
+        "\"ghz_ours\":{\"pre\":3.400,\"post\":3.400,\"retried\":false,\"contaminated\":false}"
+    ));
+    assert!(text.contains(
+        "\"ghz_theirs\":{\"pre\":3.400,\"post\":3.000,\"retried\":false,\"contaminated\":true}"
+    ));
+    let md = to_markdown(&attributed);
+    assert!(md.contains("| commit_single | bumbledb | 3.40 | 3.40 | clean |"));
+    assert!(md.contains("| commit_single | SQLite | 3.40 | 3.00 | CONTAMINATED |"));
+    // The existing merge keeps its historical combined-flag policy.
+    // New attribution is additional evidence, not a rewrite of old runs.
+    let merge = |report: &RunReport| {
+        merge_markdown(&[("run".into(), json::parse(&to_json(report)).unwrap())]).unwrap()
+    };
+    assert_eq!(merge(&combined_only), merge(&attributed));
+
+    // Engine-only writes have a measured ours bracket, no invented oracle.
+    attributed.writes[0].theirs = None;
+    attributed.writes[0].ghz_theirs = None;
+    let parsed = json::parse(&to_json(&attributed)).unwrap();
+    let write = &parsed.get("writes").unwrap().as_arr().unwrap()[0];
+    assert!(write.get("ghz_ours").is_some());
+    assert!(write.get("ghz_theirs").is_none());
 }

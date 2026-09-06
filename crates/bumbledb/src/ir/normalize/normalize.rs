@@ -73,12 +73,8 @@ fn normalize_rule_with(
         })
         .collect();
 
-    let (residuals, word_residuals, allen_residuals) = {
-        let mut span = crate::obs::span(crate::obs::names::PLACE_COMPARISONS);
-        let placed = place_comparisons(comparisons, &mut occurrences);
-        span.set_count((placed.0.len() + placed.1.len() + placed.2.len()) as u64);
-        placed
-    };
+    let (residuals, word_residuals, allen_residuals) =
+        place_comparisons(comparisons, &mut occurrences);
 
     let slot_widths: BTreeMap<VarId, SlotWidth> = rule
         .var_types()
@@ -111,12 +107,7 @@ fn normalize_rule_with(
             })
     );
 
-    let dead = {
-        let mut span = crate::obs::span(crate::obs::names::NORMALIZE_FOLD);
-        let dead = super::fold::fold(schema, &mut occurrences);
-        span.set_flag(dead.is_some());
-        dead
-    };
+    let dead = super::fold::fold(schema, &mut occurrences);
 
     NormalizedQuery {
         occurrences,

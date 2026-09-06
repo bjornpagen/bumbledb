@@ -8,7 +8,6 @@
 //! append-only interner (`image/intern.rs`) — a latch is final, and a
 //! text absent from every image is an ordinary unequal word, never an
 //! error.
-use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use crate::exec::colt::Colt;
@@ -243,48 +242,6 @@ pub struct Answer<'a> {
     answer: usize,
 }
 
-/// Pending intern literals vs the fully-latched fast path. The resolver
-/// returns how many literals latched; this sum is the remaining debt —
-/// not a counter that saturates when it distrusts itself.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Latch {
-    Pending(NonZeroU32),
-    Latched,
-}
-
-impl Latch {
-    fn from_count(n: u32) -> Self {
-        NonZeroU32::new(n).map_or(Self::Latched, Self::Pending)
-    }
-
-    fn is_latched(self) -> bool {
-        matches!(self, Self::Latched)
-    }
-
-    fn credit(self, n: u32) -> Self {
-        match self {
-            Self::Latched => {
-                debug_assert_eq!(n, 0, "a latched query has no remaining literals");
-                Self::Latched
-            }
-            Self::Pending(remaining) => Self::from_count(
-                remaining
-                    .get()
-                    .checked_sub(n)
-                    .expect("latch credits cannot exceed pending literals"),
-            ),
-        }
-    }
-
-    #[cfg(test)]
-    fn remaining(self) -> u32 {
-        match self {
-            Self::Pending(n) => n.get(),
-            Self::Latched => 0,
-        }
-    }
-}
-
 /// The reusable execution object. `!Sync` by construction (interior
 /// scratch); executes from one thread at a time; owns its scratch.
 /// Carries the preparing database's schema typestate `S`, so it executes
@@ -347,16 +304,13 @@ pub struct PreparedQuery<S> {
     /// is rebound in place (sorted, deduplicated words; capacity
     /// retained across differently-sized warm re-binds).
     resolved_params: Vec<Const>,
-    /// `str` literals in the rules' templates still awaiting their
-    /// dictionary word ([`Const::PendingIntern`]): decremented as each
-    /// latches (`bind.rs`), and [`Latch::Latched`] — with no params of
-    /// any shape — is the fully-latched fast path: `resolve_filters` is
-    /// skipped entirely, the resolved tables having been written once
-    /// and final.
-    latch: Latch,
+    /// Every memoized resident word belongs to this resolver. Executions
+    /// keep a strong owner locally; idle plans keep only this weak stamp.
+    /// A changed owner invalidates token-bearing views and resolutions.
+    text_generation: Option<crate::work::cache::WeakGenerationHandle>,
     /// Per param slot: the last successful String resolution — the
-    /// bound text and its word (`bind.rs`). A resident intern HIT is
-    /// final (append-only). A scratch word is bound to
+    /// bound text and its word (`bind.rs`). Resident hits are valid only
+    /// within `text_generation`. A scratch word is bound to
     /// [`NonresidentTextStore::epoch`] and forgotten when the store is dropped.
     param_word_memo: Vec<ParamWordMemo>,
     /// Per param: whether this execution's value missed the dictionary
@@ -402,6 +356,10 @@ pub struct PreparedQuery<S> {
     ///
     /// [`NumericalGuard`]: crate::exec::kernel::numeric::NumericalGuard
     numeric_outputs: Option<crate::error::FindIndex>,
+    /// Sealed only for a direct probe whose complete row, every parameter
+    /// and every result are text-free. Such execution uses the shared
+    /// decoder/predicate machinery without acquiring a text generation.
+    no_text_probe: bool,
     /// The query in the rule notation ([`crate::ir::render`]), rendered
     /// once at prepare — the introspection report's header and the
     /// [`Self::rendered_query`] diagnostic accessor. Cold data: read only
@@ -507,7 +465,7 @@ impl PreparedPipeline {
 }
 
 /// One rule's prepared artifact. Its kind carries exactly the scratch that
-/// kind can consume. Rec arms are [`RecArm`], inhabitable only in
+/// kind can consume. Rec arms are [`FreeJoinRule`], inhabitable only in
 /// [`reach::ReachDriver::rec`].
 #[expect(
     clippy::large_enum_variant,
@@ -516,18 +474,6 @@ impl PreparedPipeline {
 pub(crate) enum PreparedRule {
     FreeJoin(FreeJoinRule),
     KeyProbe(KeyProbeRule),
-}
-
-/// One rec arm: the unique positive self-atom is the delta occurrence.
-/// Extra EDB / interior atoms are accumulated/EDB, never a second
-/// delta. Inhabitable only in [`reach::ReachDriver::rec`].
-pub(crate) struct RecArm {
-    #[expect(
-        dead_code,
-        reason = "the rec arm's unique delta occurrence, recorded at prepare"
-    )]
-    delta: crate::ir::normalize::OccId,
-    rule: FreeJoinRule,
 }
 
 pub(crate) struct FreeJoinRule {
@@ -557,8 +503,8 @@ pub(crate) struct FreeJoinRule {
     resolved_selections: Vec<Vec<Vec<u64>>>,
     /// This rule's resolved tables were fully written by a completed
     /// `resolve_filters` pass (a short-circuited pass leaves later
-    /// slots unwritten and does not set it) — one leg of the
-    /// fully-latched fast path.
+    /// slots unwritten and does not set it). Within one text generation,
+    /// a parameter-free rule can reuse this completed resolution.
     resolution: ResolutionState,
     /// The view memo : per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
@@ -585,6 +531,12 @@ pub(super) struct OccurrencePin {
 
 pub(crate) struct KeyProbeRule {
     plan: KeyProbePlan,
+    /// Fixed-schema decoded row scratch, shared by the direct and sink
+    /// paths. Every candidate decode replaces its words, including after
+    /// a miss or failed execution; no row contents are memoized.
+    row: crate::image::canon::RowWords,
+    /// Retained row capacity belongs to the prepare ledger until drop.
+    _row_charge: crate::work::ByteReservation,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
     /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
@@ -593,42 +545,8 @@ pub(crate) struct KeyProbeRule {
 }
 
 impl<S> PreparedQuery<S> {
-    fn visit_rules(&self, mut visit: impl FnMut(&PreparedRule)) {
-        match &self.pipeline {
-            PreparedPipeline::PointProbe { .. } => {}
-            PreparedPipeline::Cq { interiors, rules } => {
-                for interior in interiors {
-                    for rule in &interior.rules {
-                        visit(rule);
-                    }
-                }
-                for rule in rules {
-                    visit(rule);
-                }
-            }
-            PreparedPipeline::Reach {
-                interiors,
-                driver,
-                main,
-                ..
-            } => {
-                for interior in interiors {
-                    for rule in &interior.rules {
-                        visit(rule);
-                    }
-                }
-                for rule in &driver.base {
-                    visit(rule);
-                }
-                for rule in main {
-                    visit(rule);
-                }
-            }
-        }
-    }
-
     /// Every prepared rule this query carries — interiors, rec base,
-    /// then main. Rec arms are [`RecArm`], visited via
+    /// then main. Rec arms are [`FreeJoinRule`], visited via
     /// [`Self::visit_rec_arms_mut`]. Cold surfaces only (the batch-size
     /// test affordance).
     fn visit_rules_mut(&mut self, mut visit: impl FnMut(&mut PreparedRule)) {
@@ -665,7 +583,7 @@ impl<S> PreparedQuery<S> {
         }
     }
 
-    fn visit_rec_arms_mut(&mut self, mut visit: impl FnMut(&mut RecArm)) {
+    fn visit_rec_arms_mut(&mut self, mut visit: impl FnMut(&mut FreeJoinRule)) {
         if let PreparedPipeline::Reach { driver, .. } = &mut self.pipeline {
             for arm in &mut driver.rec {
                 visit(arm);
@@ -677,8 +595,8 @@ impl<S> PreparedQuery<S> {
     /// image, parked view binding and active COLT this prepared query
     /// retains. The next execution rebuilds what it touches — a trim can
     /// make the next query allocate or use disk; it never changes answers.
-    /// Interner tokens stay (token stability is the cache's invariant;
-    /// dropping the whole prepared query is the text trim unit).
+    /// Text resolution rotates with the shared cache; immutable literal
+    /// templates and parameter text rebind on the next execution.
     pub fn trim(&mut self) {
         self.cache.trim();
         self.derived = reach::DerivedImages::default();
@@ -687,7 +605,7 @@ impl<S> PreparedQuery<S> {
                 fj.memo.trim();
             }
         });
-        self.visit_rec_arms_mut(|arm| arm.rule.memo.trim());
+        self.visit_rec_arms_mut(|rule| rule.memo.trim());
     }
 
     /// Retained bytes across this prepared query's caches (images plus
@@ -716,19 +634,6 @@ impl<S> PreparedQuery<S> {
     #[must_use]
     pub(crate) fn used_nonresident_text(&self) -> bool {
         self.used_nonresident_text
-    }
-
-    fn visit_free_join(&self, mut visit: impl FnMut(&FreeJoinRule)) {
-        self.visit_rules(|rule| {
-            if let PreparedRule::FreeJoin(fj) = rule {
-                visit(fj);
-            }
-        });
-        if let PreparedPipeline::Reach { driver, .. } = &self.pipeline {
-            for arm in &driver.rec {
-                visit(&arm.rule);
-            }
-        }
     }
 }
 
@@ -781,7 +686,7 @@ enum ParamSpec {
 
 /// One scalar param slot's memoized String resolution
 /// ([`PreparedQuery::param_word_memo`]): the bound text and its word.
-/// Resident intern HITS are final. Scratch words carry
+/// Resident words are scoped by `PreparedQuery::text_generation`. Scratch words carry
 /// [`NonresidentTextStore::epoch`] (instance owner id) and must not
 /// outlive that store.
 #[derive(Debug, Default, Clone)]
@@ -808,12 +713,15 @@ enum ResolutionState {
 const MEMO_SLOTS: usize = 4;
 const PARKED_SLOTS: usize = MEMO_SLOTS - 1;
 
-/// One executed binding: a real epoch plus the residual filters it was
-/// built for. Active and parked slots move this shape; the COLT lives
+/// One executed binding: a real epoch, residual filters and image coverage.
+/// Active and parked slots move this shape; the COLT lives
 /// on [`ViewMemo::colts`] (active) or [`Parked::colt`] (parked).
 struct Bound {
     epoch: crate::image::ViewEpoch,
     filters: Vec<FilterPredicate>,
+    /// None covers the whole relation; Some covers only this occurrence's
+    /// resolved selections. Partial images never enter the shared cache.
+    selections: Option<Vec<Vec<u64>>>,
     last_used: u64,
 }
 

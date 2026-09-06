@@ -192,18 +192,38 @@ impl TextInterner {
 /// A borrow-bundled generation resolver + work ledger for resolve/bind.
 /// The handle's generation is the token owner: a token cannot outlive it.
 pub(crate) struct InternerHandle<'a> {
-    generation: &'a GenerationHandle,
+    generation: Option<&'a GenerationHandle>,
     work: &'a WorkContext,
 }
 
 impl<'a> InternerHandle<'a> {
     pub(crate) fn new(generation: &'a GenerationHandle, work: &'a WorkContext) -> Self {
-        Self { generation, work }
+        Self {
+            generation: Some(generation),
+            work,
+        }
+    }
+
+    /// Only the sealed text-free direct-probe capability may use this.
+    /// This is absence of a resolver, never a substitute token namespace.
+    pub(crate) fn without_text(work: &'a WorkContext) -> Self {
+        Self {
+            generation: None,
+            work,
+        }
+    }
+
+    pub(crate) fn text_eq<'s>(
+        &'s self,
+        scratch: Option<&'s NonresidentTextStore>,
+    ) -> crate::image::TextEq<'s> {
+        crate::image::TextEq::from_optional_generation(self.generation, scratch)
     }
 
     #[must_use]
-    pub(crate) const fn generation(&self) -> &'a GenerationHandle {
+    pub(crate) fn generation(&self) -> &'a GenerationHandle {
         self.generation
+            .expect("sealed text-free probe cannot resolve text")
     }
 
     /// Production intern: cache refusal is [`ResidentAdmit::BeyondMemory`],
@@ -212,14 +232,16 @@ impl<'a> InternerHandle<'a> {
     /// # Errors
     /// Stopped work only. Cache/allocation refusal is `BeyondMemory`.
     pub fn intern_or_spill(&self, text: &str) -> crate::error::Result<ResidentAdmit<u64>> {
-        match self
-            .generation
+        let generation = self.generation.ok_or(crate::error::Error::Corruption(
+            crate::error::CorruptionError::MalformedValue("text outside a sealed text-free probe"),
+        ))?;
+        match generation
             .lock_resolver()
-            .intern(text, self.work, self.generation.ledger())
+            .intern(text, self.work, generation.ledger())
         {
             Ok(token) => Ok(ResidentAdmit::Ready(token)),
             Err(InternError::Cache(_) | InternError::Allocation) => Ok(
-                ResidentAdmit::BeyondMemory(ResidentTextExhausted::new(self.generation.clone())),
+                ResidentAdmit::BeyondMemory(ResidentTextExhausted::new(generation.clone())),
             ),
             Err(InternError::Work(work)) => Err(crate::error::Error::from(InternError::Work(work))),
         }
@@ -234,11 +256,11 @@ impl<'a> InternerHandle<'a> {
     }
 
     pub(crate) fn with_text<R>(&self, token: u64, read: impl FnOnce(&str) -> R) -> Option<R> {
-        self.generation.resolver().with_text(token, read)
+        self.generation().resolver().with_text(token, read)
     }
 
     pub(crate) fn lookup_word(&self, text: &str) -> u64 {
-        self.generation.resolver().lookup_word(text)
+        self.generation().resolver().lookup_word(text)
     }
 }
 
@@ -285,6 +307,21 @@ mod tests {
 
     #[test]
     fn tokens_are_dense_stable_and_exact() {
+        fn send_sync<T: Send + Sync>() {}
+        send_sync::<InternerHandle<'static>>();
+        assert_eq!(
+            std::mem::size_of::<InternerHandle<'_>>(),
+            std::mem::size_of::<(&GenerationHandle, &WorkContext)>(),
+            "the absent resolver uses the pointer niche, not a larger handle",
+        );
+        assert_eq!(
+            std::mem::size_of::<crate::image::TextEq<'_>>(),
+            std::mem::size_of::<(
+                &GenerationHandle,
+                Option<&NonresidentTextStore>,
+                Option<crate::image::TextStoreEpoch>,
+            )>(),
+        );
         let work = work();
         let cache = cache();
         let mut interner = TextInterner::default();
@@ -304,6 +341,19 @@ mod tests {
 
     #[test]
     fn equal_bytes_decide_identity_never_a_hash() {
+        let context = work();
+        let absent = InternerHandle::without_text(&context);
+        assert!(matches!(
+            absent.intern_or_spill("no namespace"),
+            Err(crate::error::Error::Corruption(_))
+        ));
+        assert!(
+            matches!(
+                absent.text_eq(None).tokens_equal(0, 0),
+                Err(crate::error::Error::Corruption(_))
+            ),
+            "absent text capability cannot silently compare equal or unequal"
+        );
         let work = work();
         let cache = cache();
         let mut interner = TextInterner::default();

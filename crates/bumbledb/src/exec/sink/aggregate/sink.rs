@@ -9,6 +9,11 @@ use crate::image::ColumnView;
 use super::super::FoldSource;
 
 impl Sink for AggregateSink {
+    #[inline]
+    fn may_use_distinct_traversal() -> bool {
+        true
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         for slot in 0..bindings.slot_count() {
             self.binding_scratch[slot] = bindings.get(slot);
@@ -218,10 +223,7 @@ impl Sink for AggregateSink {
             self.fold_batch_rows(batch);
             return Flow::from_sink_progress(AggregateSink::progress(self));
         }
-        match (
-            !matches!(self.dedup, DedupState::Elided { .. }),
-            self.cached_constant_group,
-        ) {
+        match (!self.distinct_bindings(), self.cached_constant_group) {
             (true, true) => self.fold_batch_dedup_constant_group(batch),
             // Raw survivor multiplicity (`push_repeated`) is legal ONLY
             // under the checked distinct-binding witness: exact float
@@ -229,11 +231,12 @@ impl Sink for AggregateSink {
             // partition — `lean/Bumbledb/Float64/Sum.lean:
             // merge_not_idempotent`, bench `partial_state_replay_is_not_
             // idempotent`), so a multiplicity contribution without either
-            // a seen-set verdict or the plan's `DistinctWitness` would
-            // double-count overlapping derivations.
+            // a seen-set verdict, the plan's semantic `DistinctWitness`,
+            // or a deduplicated resident COLT traversal would double-count
+            // overlapping derivations. The latter never licenses raw scans.
             (false, true) => {
                 debug_assert!(
-                    matches!(self.dedup, DedupState::Elided { .. }),
+                    self.distinct_bindings(),
                     "raw batch multiplicity requires the distinct-binding witness"
                 );
                 self.fold_batch_constant_group(batch, batch.survivors);

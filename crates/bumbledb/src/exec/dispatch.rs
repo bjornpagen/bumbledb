@@ -33,20 +33,42 @@ pub struct KeyProbeVar {
     pub width: usize,
 }
 
+/// One schema-sealed key field and its fixed word range. The three u16s
+/// occupy the alignment space beside Const; execution needs no span Vec.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyProbePart {
+    pub field: FieldId,
+    pub start: u16,
+    pub end: u16,
+    pub value: Const,
+}
+
+const _: () = assert!(
+    std::mem::size_of::<KeyProbePart>() <= std::mem::size_of::<(FieldId, Const)>(),
+    "sealed word ranges must not grow the existing key allocation"
+);
+
+impl KeyProbePart {
+    pub fn words(&self) -> std::ops::Range<usize> {
+        usize::from(self.start)..usize::from(self.end)
+    }
+}
+
 /// U vs M access path. Trusted layer: Option-as-tag is accidental.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyProbeKind {
     Uniqueness {
         statement: StatementId,
-        key: Vec<(FieldId, Const)>,
+        projection: crate::schema::ProjectionId,
+        key: Vec<KeyProbePart>,
     },
     Membership {
-        key: Vec<(FieldId, Const)>,
+        key: Vec<KeyProbePart>,
     },
 }
 
 impl KeyProbeKind {
-    pub fn key(&self) -> &[(FieldId, Const)] {
+    pub fn key(&self) -> &[KeyProbePart] {
         match self {
             Self::Uniqueness { key, .. } | Self::Membership { key } => key,
         }

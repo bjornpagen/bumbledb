@@ -1,35 +1,23 @@
-# Generated migration artifacts — PENDING F3 GENERATION
+# Generated migration repository
 
-This directory receives the canonical generated chain for the staged
-evolution history in `src/db/evolution-stages.ts`:
-
-```
-0000-initialize.plan.json
-0001-note-pinned.plan.json
-0002-create-tag-seed-tag.plan.json
-0003-note-text.plan.json
-0004-outbox-attachment.plan.json
-meta/0000.schema.json … meta/0004.schema.json
-manifest.json
-snapshots.json
-index.ts                    default export { manifest, plans, snapshots }
-runtime-contract.json
-```
-
-The artifacts are NOT hand-authored and are NOT checked in yet: plan and
-prefix digests are native canonical hashes whose byte format is
-provisional until the F3 format freeze (C12), and the campaign's
-no-execution rule forbids running the generator before the F3 barrier.
-Fabricating digest values here would be invented evidence.
-
-At F3, run:
+The example's source checkout does not contain a generated chain. From
+`examples/notes/`, after installing matching packages, run:
 
 ```sh
-pnpm run generate     # scripts/generate-history.ts → this directory
+pnpm run generate
 ```
 
-review the emitted plans, and commit them. Deterministic regeneration is
-part of the gate (TS-MIG-01): rerunning writes nothing and a fresh
-regeneration is byte-identical. Deployment consumes these committed files
-as inert data (`scripts/migrate.ts`, `scripts/init-tenant.ts`); no server
-ever runs generation.
+`scripts/generate-history.ts` passes the staged schemas and evolution intent
+to the real generator. It writes five plans, their schema snapshots, a
+manifest, `snapshots.json`, `index.ts`, and `runtime-contract.json` here.
+Review and commit that generated data in a deployed application's repository.
+Do not hand-author hashes, plans, or runtime contracts.
+
+The packed-consumer check generates this chain in its temporary copy of the
+Notes application and exercises it in the application tests. Those outputs
+are not release migrations installed in this source directory.
+
+Deployment reads generated artifacts; it must not generate a schema diff on
+the server. The current migration runner supports local history authorities
+only. Hosted S3 migration orchestration remains unfinished; never run a local
+migration against a hosted history's disposable cache.

@@ -613,7 +613,20 @@ mod tests {
             .resolve(&handle, Some(&mut first), tag, &mut answers)
             .expect("resolve first");
         assert_eq!(&answers.text[start..start + len], "first-text");
-        memo.forget_scratch();
+        let heap_len = answers.text.len();
+        assert_eq!(
+            memo.resolve(&handle, Some(&mut first), tag, &mut answers)
+                .unwrap(),
+            (start, len),
+            "a live scratch hit retains the resolved range"
+        );
+        assert_eq!(answers.text.len(), heap_len);
+        assert!(
+            memo.resolve(&handle, None, tag, &mut answers).is_err(),
+            "the cached token must not bypass its required live store"
+        );
+        // Do not manually clear the memo: changing the live scratch owner
+        // must invalidate a cached equal token before the fast return.
         drop(first);
 
         let mut second = open_from_exhausted(&exhausted, &work).expect("second store");
@@ -657,8 +670,52 @@ mod tests {
                 .resolve(&handle, None, tok, &mut answers)
                 .expect("resolve");
             assert_eq!(&answers.text[start..start + len], text);
+            let heap_len = answers.text.len();
+            assert_eq!(
+                memo.resolve(&handle, None, tok, &mut answers).unwrap(),
+                (start, len)
+            );
+            assert_eq!(
+                answers.text.len(),
+                heap_len,
+                "a resident hit does not copy twice"
+            );
         }
         assert_eq!(memo.ranges.len(), 32);
+        let first = handle.lookup_word("interned-0000");
+        let heap_len = answers.text.len();
+        let (start, len) = memo.resolve(&handle, None, first, &mut answers).unwrap();
+        assert_eq!(&answers.text[start..start + len], "interned-0000");
+        assert_eq!(
+            answers.text.len(),
+            heap_len,
+            "nonconsecutive memo hits reuse text"
+        );
+        // Neither an unminted resident token nor the sentinel may leave a
+        // placeholder that turns the next failed resolution into success.
+        for invalid in [1u64 << 62, crate::image::intern::SENTINEL_WORD] {
+            for _ in 0..2 {
+                assert!(matches!(
+                    memo.resolve(&handle, None, invalid, &mut answers),
+                    Err(Error::Corruption(CorruptionError::DanglingInternId(id)))
+                        if id.raw() == invalid
+                ));
+                assert_eq!(answers.text.len(), heap_len);
+            }
+            assert_eq!(memo.ranges.len(), 0);
+            assert!(memo.last.is_none());
+        }
+        let (start, len) = memo
+            .resolve(&handle, None, first, &mut answers)
+            .expect("valid text resolves after a failure");
+        assert_eq!(start, heap_len, "failed resolution preserves the heap");
+        assert_eq!(&answers.text[start..start + len], "interned-0000");
+        let recovered_len = answers.text.len();
+        assert_eq!(
+            memo.resolve(&handle, None, first, &mut answers).unwrap(),
+            (start, len)
+        );
+        assert_eq!(answers.text.len(), recovered_len, "recovery is memoized");
         memo.clear();
         memo.forget_scratch();
         assert_eq!(memo.ranges.len(), 0);

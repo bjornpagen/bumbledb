@@ -1,5 +1,5 @@
 use super::{
-    CHUNK_LEN, Chunk, Colt, NodeRef, NodeState, Positions, Slot, pack_child, reserve_pool,
+    CHUNK_LEN, Chunk, Colt, Cursor, NodeRef, NodeState, Positions, pack_child, reserve_pool,
     unpack_child,
 };
 use crate::work::WorkError;
@@ -34,7 +34,7 @@ impl Colt {
 
     pub(super) fn append_child(&mut self, child_at: usize, position: u32) -> Result<(), WorkError> {
         match unpack_child(self.buckets[child_at]) {
-            Slot::Single(first_position) => {
+            Cursor::Row(first_position) => {
                 let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap))?;
                 reserve_pool(
                     self.nodes.len() + 1,
@@ -53,9 +53,9 @@ impl Colt {
                     last: chunk_idx,
                     count: 2,
                 }));
-                self.buckets[child_at] = pack_child(Slot::Node(node_ref));
+                self.buckets[child_at] = pack_child(Cursor::Node(node_ref));
             }
-            Slot::Node(node_ref) => {
+            Cursor::Node(node_ref) => {
                 let NodeState::Unforced(Positions::Chunks { first, last, count }) =
                     self.nodes[node_ref.0 as usize]
                 else {

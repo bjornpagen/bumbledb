@@ -128,7 +128,7 @@ mod on_a_live_ram_disk {
             .expect_err("a RAM-backed path must refuse");
         assert!(refusal.identity.ram_backed);
 
-        // before loading any corpus.
+        // The write runner refuses before loading any corpus.
         let err = crate::driver::write_families::write_families(
             crate::corpus_gen::GenConfig {
                 seed: 7,
@@ -137,8 +137,6 @@ mod on_a_live_ram_disk {
             &disk.mount.join("scratch"),
             &|name| name == "commit_single",
             crate::duralane::DurabilityLane::Durable,
-            None,
-            &mut Vec::new(),
         )
         .expect_err("a timed family on a ram disk must refuse");
         assert!(
@@ -146,8 +144,7 @@ mod on_a_live_ram_disk {
             "the refusal must say why by name: {err}"
         );
 
-        // preflight, before generating any corpus there (the corpus
-
+        // The main benchmark refuses at preflight, before corpus generation.
         let corpus_dir = disk.mount.join("corpus");
         let err = crate::driver::cmd_bench(&crate::cli::BenchArgs {
             corpus: crate::cli::CorpusArgs {
@@ -157,7 +154,7 @@ mod on_a_live_ram_disk {
             },
             families: None,
             samples: None,
-            trace: false,
+            read_batch: None,
             alloc: false,
             proxy_per_rep: false,
             out: None,

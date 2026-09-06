@@ -20,6 +20,24 @@ fn debug_assert_idx_bounds(values: &[u64], stride: usize, offset: usize, indices
     );
 }
 
+/// The same wrapping-address, zero-default gather as portable SIMD, built
+/// from scalar loads. Keep defaults for invalid vector lanes; the folds'
+/// debug preconditions and scalar-tail behavior are unchanged.
+/// Select the default reference before loading: on Apple Silicon this lets
+/// LLVM interleave checked loads without a branch around each value load.
+#[inline]
+pub(super) fn gather_words(
+    values: &[u64],
+    stride: usize,
+    offset: usize,
+    indices: &[u32; IDX_LANES],
+) -> Simd<u64, IDX_LANES> {
+    Simd::from_array(indices.map(|index| {
+        let address = (index as usize).wrapping_mul(stride).wrapping_add(offset);
+        *values.get(address).unwrap_or(&0)
+    }))
+}
+
 /// Sum of sign-flip-decoded i64 words at the indexed positions — exact
 /// i128, bit-identical to the naive fold: `Σ value = Σ word −
 /// count·2^63` exactly (the bias identity, as in the dense fold).
@@ -43,12 +61,9 @@ pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &
     debug_assert_idx_bounds(values, stride, offset, indices);
     let mut lows = Simd::<u64, IDX_LANES>::splat(0);
     let mut carries = Simd::<u64, IDX_LANES>::splat(0);
-    let stride_v = Simd::<usize, IDX_LANES>::splat(stride);
-    let offset_v = Simd::<usize, IDX_LANES>::splat(offset);
     let (chunks, tail) = indices.as_chunks::<IDX_LANES>();
     for chunk in chunks {
-        let idx = Simd::<u32, IDX_LANES>::from_array(*chunk).cast::<usize>() * stride_v + offset_v;
-        let v = Simd::gather_or_default(values, idx);
+        let v = gather_words(values, stride, offset, chunk);
         let new = lows + v;
 
         carries -= lows.simd_gt(new).to_simd().cast::<u64>();
@@ -68,8 +83,8 @@ pub fn fold_sum_u64_idx(values: &[u64], stride: usize, offset: usize, indices: &
 /// i64 words are order-preserving, so one kernel serves both
 /// signednesses.
 /// # Panics
-/// executor never emits empty batches).
 /// Only on a programmer-invariant violation: an empty index list (the
+/// executor never emits empty batches).
 #[must_use]
 pub fn fold_min_max_u64_idx(
     values: &[u64],
@@ -81,12 +96,9 @@ pub fn fold_min_max_u64_idx(
     debug_assert_idx_bounds(values, stride, offset, indices);
     let mut mins = Simd::<u64, IDX_LANES>::splat(u64::MAX);
     let mut maxs = Simd::<u64, IDX_LANES>::splat(u64::MIN);
-    let stride_v = Simd::<usize, IDX_LANES>::splat(stride);
-    let offset_v = Simd::<usize, IDX_LANES>::splat(offset);
     let (chunks, tail) = indices.as_chunks::<IDX_LANES>();
     for chunk in chunks {
-        let idx = Simd::<u32, IDX_LANES>::from_array(*chunk).cast::<usize>() * stride_v + offset_v;
-        let v = Simd::gather_or_default(values, idx);
+        let v = gather_words(values, stride, offset, chunk);
         mins = mins.simd_min(v);
         maxs = maxs.simd_max(v);
     }

@@ -167,8 +167,20 @@ fn synthesis_lays_the_id_column_then_every_canonical_encoding() {
         ]
     );
 
-    assert_eq!(image.distinct_count(usize::from(id_span.first_column)), 3);
-    assert_eq!(image.distinct_count(usize::from(sunny.first_column)), 2);
+    let work = crate::api::prepared::source::unbounded_work().unwrap();
+    assert!(image.distincts.iter().all(|count| count.get().is_none()));
+    assert_eq!(
+        image
+            .distinct_count(usize::from(id_span.first_column), &work)
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        image
+            .distinct_count(usize::from(sunny.first_column), &work)
+            .unwrap(),
+        2
+    );
 }
 
 #[test]

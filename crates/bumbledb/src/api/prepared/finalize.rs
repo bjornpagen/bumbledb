@@ -1,3 +1,5 @@
+use std::mem::MaybeUninit;
+
 use super::result::ResultCharge;
 use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
@@ -127,6 +129,10 @@ fn drain_spilled_answers(
     })
 }
 
+#[expect(
+    unsafe_code,
+    reason = "Publish the reserved cells only after every column initialized every row"
+)]
 fn fill_resolved_answers(
     out: &mut Answers,
     interner: &InternerHandle<'_>,
@@ -137,78 +143,110 @@ fn fill_resolved_answers(
 ) -> Result<()> {
     let arity = columns.len();
     let base = out.cells.len();
-    out.cells.resize(base + sink.len() * arity, Cell::U64(0));
+    let rows = sink.len();
+    let additional = rows.checked_mul(arity).expect("answer cell count");
+    out.cells.reserve(additional);
     let mut word = 0;
     for (col, column) in columns.iter().enumerate() {
         word += match column.ty() {
             ValueType::String => {
-                for (row, answer) in sink.answers().enumerate() {
+                let mut answers = sink.answers();
+                for row in 0..rows {
+                    let answer = answers.next().expect("resident sink length");
                     let (start, len) =
                         memo.resolve(interner, store.as_deref_mut(), answer[word], out)?;
-                    out.cells[base + row * arity + col] = Cell::String { start, len };
+                    out.cells.spare_capacity_mut()[row * arity + col]
+                        .write(Cell::String { start, len });
                 }
                 1
             }
             ValueType::FixedBytes { len } => {
                 let width = crate::encoding::fixed_bytes_words(*len);
-                for (row, answer) in sink.answers().enumerate() {
+                let mut answers = sink.answers();
+                for row in 0..rows {
+                    let answer = answers.next().expect("resident sink length");
                     let cell = out.fixed_bytes_cell(*len, &answer[word..word + width]);
-                    out.cells[base + row * arity + col] = cell;
+                    out.cells.spare_capacity_mut()[row * arity + col].write(cell);
                 }
                 width
             }
-            ty => fill_fixed_column(&mut out.cells[base..], arity, col, ty, word, sink)?,
+            ty => fill_fixed_column(
+                &mut out.cells.spare_capacity_mut()[..additional],
+                arity,
+                col,
+                ty,
+                word,
+                sink,
+            )?,
         };
     }
+    // SAFETY: reserve admitted `additional` slots beyond the unchanged
+    // length. Each column writes its slot for every row, requiring an
+    // answer rather than silently truncating a zip. Text/blob resolution
+    // only grows those separate heaps, never the cells vector. On error
+    // or panic the old length remains valid; Cell has no drop resources.
+    unsafe { out.cells.set_len(base + additional) };
     Ok(())
 }
 
 fn fill_fixed_column(
-    cells: &mut [Cell],
+    cells: &mut [MaybeUninit<Cell>],
     arity: usize,
     col: usize,
     ty: &ValueType,
     word: usize,
     sink: &ProjectionSink,
 ) -> Result<usize> {
-    let rows = cells.chunks_exact_mut(arity).zip(sink.answers());
+    let mut answers = sink.answers();
+    let rows = cells
+        .chunks_exact_mut(arity)
+        .map(|slots| (slots, answers.next().expect("resident sink length")));
     match ty {
         ValueType::Bool => {
             for (slots, answer) in rows {
-                slots[col] = Cell::Bool(answer[word] != 0);
+                slots[col].write(Cell::Bool(answer[word] != 0));
             }
         }
         ValueType::U64 => {
             for (slots, answer) in rows {
-                slots[col] = Cell::U64(answer[word]);
+                slots[col].write(Cell::U64(answer[word]));
             }
         }
         ValueType::I64 => {
             for (slots, answer) in rows {
-                slots[col] = Cell::I64((answer[word] ^ (1 << 63)).cast_signed());
+                slots[col].write(Cell::I64((answer[word] ^ (1 << 63)).cast_signed()));
             }
         }
         ValueType::F64 => {
             for (slots, answer) in rows {
-                slots[col] = Cell::F64(crate::encoding::decode_f64(answer[word].to_be_bytes())?);
+                slots[col].write(Cell::F64(crate::encoding::decode_f64(
+                    answer[word].to_be_bytes(),
+                )?));
             }
         }
         ValueType::Uuid => {
             for (slots, answer) in rows {
-                slots[col] = Answers::uuid_cell(answer[word], answer[word + 1]);
+                slots[col].write(Answers::uuid_cell(answer[word], answer[word + 1]));
             }
             return Ok(2);
         }
         ValueType::Interval { element, .. } => {
             for (slots, answer) in rows {
-                slots[col] = Answers::interval_cell(*element, answer[word], answer[word + 1]);
+                slots[col].write(Answers::interval_cell(
+                    *element,
+                    answer[word],
+                    answer[word + 1],
+                ));
             }
             return Ok(2);
         }
         ValueType::FixedInterval { element, .. } => {
             for (slots, answer) in rows {
-                slots[col] =
-                    Answers::interval_cell(element.element(), answer[word], answer[word + 1]);
+                slots[col].write(Answers::interval_cell(
+                    element.element(),
+                    answer[word],
+                    answer[word + 1],
+                ));
             }
             return Ok(2);
         }

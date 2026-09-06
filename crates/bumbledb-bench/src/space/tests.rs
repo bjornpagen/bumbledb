@@ -12,7 +12,8 @@ use super::{NAMESPACES, Namespace, audited_layout, current_layout, successor_lay
 
 #[test]
 fn live_tags_match_keys_rs() {
-    assert_eq!(Namespace::from_census_tag(false, 0x01), Namespace::Fact);
+    assert_eq!(Namespace::from_census_tag(false, 0x04), Namespace::Fact);
+    assert_eq!(Namespace::from_census_tag(false, 0x01), Namespace::Unknown);
     assert_eq!(
         Namespace::from_census_tag(false, 0x02),
         Namespace::Membership
@@ -23,7 +24,6 @@ fn live_tags_match_keys_rs() {
     );
     assert_eq!(Namespace::from_census_tag(true, 0x01), Namespace::HostMeta);
     assert_eq!(Namespace::from_census_tag(false, 0xFF), Namespace::Unknown);
-    assert_eq!(current_layout::KEY_BYTES_FACT_MEMBERSHIP_FP_DET, 69);
 }
 
 // SPACE-01 — the raw-byte model reproduces chapter 41's bill.
@@ -43,14 +43,12 @@ fn model_reproduces_the_chapter41_entry_table() {
 
 #[test]
 fn current_layout_matches_live_keys_and_compiled_overhead() {
-    use super::current_layout;
-    assert_eq!(current_layout::ROW_KEY, 13);
-    assert_eq!(current_layout::MEMBERSHIP_ENTRY, 29);
-    assert_eq!(current_layout::determinant_exact_u64(), 19);
-    assert_eq!(current_layout::determinant_fingerprint(), 27);
-    assert_eq!(current_layout::KEY_BYTES_FACT_MEMBERSHIP_FP_DET, 69);
-    assert_eq!(current_layout::fact_membership_fp_det(24), 24 + 69);
-    assert_eq!(current_layout::DETERMINANT_OVERHEAD, 11);
+    let widths =
+        current_layout::PhysicalKeyWidths::for_schema(crate::schema::schema()).expect("widths");
+    assert_eq!(widths.row, 10);
+    assert_eq!(widths.membership, 26);
+    assert_eq!(widths.determinant_overhead, 10);
+    assert_eq!(current_layout::fact_membership_fp_det(widths, 24), 24 + 62);
 }
 
 #[test]
@@ -67,10 +65,11 @@ fn model_reproduces_the_chapter41_worked_example() {
 
 #[test]
 fn model_successor_membership_moves_the_row_id_without_duplicating_it() {
-    // (relation, fingerprint16, row8) key + empty value = 29; the audited
-    // entry was 45; the saving is exactly the 16 truncated digest bytes.
-    assert_eq!(successor_layout::MEMBERSHIP_ENTRY, 29);
-    assert_eq!(successor_layout::MEMBERSHIP_SAVING_PER_FACT, 16);
+    // Ledger's one-byte relation ordinal saves three further bytes beyond
+    // the original digest truncation and row-id relocation.
+    let widths =
+        current_layout::PhysicalKeyWidths::for_schema(crate::schema::schema()).expect("widths");
+    assert_eq!(successor_layout::membership_saving_per_fact(widths), 19);
 }
 
 // SPACE-01 — census mechanics over a synthetic source.

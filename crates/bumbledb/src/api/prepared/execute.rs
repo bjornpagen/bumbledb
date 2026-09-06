@@ -10,8 +10,6 @@ use crate::error::Result;
 use crate::exec::dispatch::execute_key_probe;
 use crate::exec::run::{Counters, NoopCounters};
 use crate::image::SourceImages;
-use crate::image::canon::RowWords;
-use crate::obs;
 
 use super::bind::LiteralResolution;
 
@@ -109,35 +107,42 @@ impl<S> PreparedQuery<S> {
         charge: Option<&mut super::result::ResultCharge<'_>>,
     ) -> Result<()> {
         self.check_identity(source.pinned())?;
-        self.release_text_store();
+        let generation = if self.no_text_probe {
+            debug_assert!(self.nonresident.is_none());
+            debug_assert!(self.text_generation.is_none());
+            None
+        } else {
+            self.release_text_store();
+            let generation = self.cache.acquire();
+            self.bind_text_generation(&generation);
+            Some(generation)
+        };
         #[cfg(test)]
         {
             self.last_visits = 0;
             self.used_nonresident_text = false;
         }
-        let mut execute_span = obs::span(obs::names::EXECUTE);
         out.begin(self.signature.columns.len());
-        {
-            let _s = obs::span(obs::names::BIND_PARAMS);
-            params.bind(self, source.work())?;
-        }
-        // The main sink's distinct state is measured against this
-        // execution's ledger and continues in the scratch map beyond its
-        // RAM allowance (chapter 12 §4).
-        self.sink
-            .begin_execution(Some(crate::exec::sink::SinkBudget {
-                work: source.work().clone(),
-                ram_bytes: self.sink_ram,
-            }));
-        let cache = Arc::clone(&self.cache);
-        let images = SourceImages::bind(source, &cache);
-        let result = self.run_bound(&images, out, charge);
+        params.bind(self, source.work())?;
+        let result = if matches!(self.pipeline, PreparedPipeline::PointProbe { .. }) {
+            // Direct probes consume rows and this execution's resolver,
+            // never images. Keep the same generation pinned across binding
+            // and finalization without retaining an unused cache owner.
+            self.execute_key_probe_direct(source, generation.as_ref(), out)
+        } else {
+            let cache = Arc::clone(&self.cache);
+            let images = SourceImages::with_generation(
+                source,
+                &cache,
+                generation.expect("non-probe pipelines always pin a generation"),
+            );
+            self.run_bound(&images, out, charge)
+        };
         #[cfg(test)]
         {
             self.last_visits = source.visit_count();
             self.used_nonresident_text = self.nonresident.is_some();
         }
-        execute_span.set_count(out.len() as u64);
         result
     }
 
@@ -155,12 +160,16 @@ impl<S> PreparedQuery<S> {
         out: &mut Answers,
         charge: Option<&mut super::result::ResultCharge<'_>>,
     ) -> Result<()> {
-        if matches!(self.pipeline, PreparedPipeline::PointProbe { .. }) {
-            return self.execute_key_probe_direct(images, out);
-        }
         if self.pipeline.is_empty_cq() {
             return Ok(());
         }
+        // Only pipelines that consume the main sink retain its ledger.
+        // Point probes copy directly into Answers; empty CQs emit nothing.
+        self.sink
+            .begin_execution(Some(crate::exec::sink::SinkBudget {
+                work: images.source().work().clone(),
+                ram_bytes: self.sink_ram,
+            }));
         // ONE numerical guard per whole engine operation (chapter 11 §3):
         // queries with computed scalar outputs establish the canonical FPU
         // environment here, hold it across every rule/derived stage and
@@ -179,31 +188,16 @@ impl<S> PreparedQuery<S> {
             None => None,
         };
 
-        let attempt = if obs::capturing() {
-            let mut timers = crate::exec::run::PhaseTimers::new();
-            let ran = self.run_rules(images, &mut timers);
-            timers.flush();
-            ran
-        } else {
-            self.run_rules(images, &mut NoopCounters)
-        };
+        let attempt = self.run_rules(images, &mut NoopCounters);
         let ran = match attempt {
             Ok(ran) => ran,
             // One bounded restart on the SAME pinned snapshot (chapter 12
             // §6): a resident reservation refusal reroutes every Free Join
             // rule through the complete cursor fallback — never an endless
-            // replan loop, and the discarded work is recorded.
+            // replan loop. The work ledger retains the discarded attempt's cost.
             Err(error) if !self.forced_fallback && super::source::is_working_exhaustion(&error) => {
-                obs::event(obs::names::FALLBACK_RESTART, obs::TraceArgs::Count(1));
                 self.forced_fallback = true;
-                let retried = if obs::capturing() {
-                    let mut timers = crate::exec::run::PhaseTimers::new();
-                    let ran = self.run_rules(images, &mut timers);
-                    timers.flush();
-                    ran
-                } else {
-                    self.run_rules(images, &mut NoopCounters)
-                };
+                let retried = self.run_rules(images, &mut NoopCounters);
                 self.forced_fallback = false;
                 retried?
             }
@@ -233,7 +227,6 @@ impl<S> PreparedQuery<S> {
         if !ran {
             return Ok(());
         }
-        let _s = obs::span(obs::names::FINALIZE);
         let interner = images.interner();
         finalize(
             &mut self.sink,
@@ -280,10 +273,6 @@ impl<S> PreparedQuery<S> {
         images: &SourceImages<'_>,
         counters: &mut Cnt,
     ) -> Result<bool> {
-        let mut rule_span = obs::span(obs::names::RULE[rule_idx]);
-        let emits_before = counters.emits();
-        let seen_before = self.sink.distinct_seen().unwrap_or(0);
-
         let rule_count = self.pipeline.main_rules().len();
         if rule_count > 1 {
             let rule = &self.pipeline.main_rules()[rule_idx];
@@ -296,8 +285,7 @@ impl<S> PreparedQuery<S> {
         self.fill_main_images(rule_idx);
         let occ_images = std::mem::take(&mut self.derived.occ_images);
         let mut retired = std::mem::take(&mut self.derived.retired);
-        let fast_eligible = self.latch.is_latched() && self.params.is_empty();
-        let mut latched = 0u32;
+        let fast_eligible = self.params.is_empty();
         let fallback = match &self.pipeline.main_rules()[rule_idx] {
             PreparedRule::FreeJoin(rule) => {
                 self.forced_fallback
@@ -321,6 +309,7 @@ impl<S> PreparedQuery<S> {
                     &interner,
                     &mut self.nonresident,
                     &self.resolved_params,
+                    &mut rule.row,
                     &mut self.key_scratch,
                     &mut self.bindings,
                     &mut self.sink,
@@ -332,19 +321,17 @@ impl<S> PreparedQuery<S> {
                 let mut use_fallback = fallback;
                 let mut ran_resident = true;
                 if !use_fallback {
-                    let plan = &mut rule.plan;
+                    let plan = &rule.plan;
                     let resolved =
                         if fast_eligible && rule.resolution == super::ResolutionState::Complete {
                             true
                         } else {
-                            let _s = obs::span(obs::names::RESOLVE_FILTERS);
                             let complete = LiteralResolution {
                                 interner: &interner,
                                 store: &mut self.nonresident,
                                 work: images.source().work(),
                                 params: &self.resolved_params,
                                 missed: &self.missed_params,
-                                latched: &mut latched,
                             }
                             .filters(
                                 plan,
@@ -397,22 +384,37 @@ impl<S> PreparedQuery<S> {
                                 s,
                                 counters,
                             )?,
-                            super::EitherSink::Aggregate(s) => run_join(
-                                plan,
-                                self.schema.as_ref(),
-                                images,
-                                work,
-                                &mut rule.executor,
-                                &mut self.bindings,
-                                &rule.resolved_filters,
-                                &rule.resolved_selections,
-                                &mut rule.memo,
-                                &occ_images,
-                                &mut retired,
-                                &mut self.nonresident,
-                                s.as_mut(),
-                                counters,
-                            )?,
+                            super::EitherSink::Aggregate(s) => {
+                                // This capability belongs to one resident
+                                // invocation, not the prepared sink: unions
+                                // and every fallback still require dedup.
+                                let witness = (rule_count == 1)
+                                    .then(|| plan.scalar_set_traversal())
+                                    .flatten();
+                                let witness = s.set_physical_distinct(witness);
+                                rule.executor.set_physical_distinct(witness);
+                                let joined = run_join(
+                                    plan,
+                                    self.schema.as_ref(),
+                                    images,
+                                    work,
+                                    &mut rule.executor,
+                                    &mut self.bindings,
+                                    &rule.resolved_filters,
+                                    &rule.resolved_selections,
+                                    &mut rule.memo,
+                                    &occ_images,
+                                    &mut retired,
+                                    &mut self.nonresident,
+                                    s.as_mut(),
+                                    counters,
+                                );
+                                // Restore before propagating a refusal or
+                                // selecting the nonresident fallback.
+                                rule.executor.set_physical_distinct(None);
+                                let _ = s.set_physical_distinct(None);
+                                joined?
+                            }
                         };
                         use_fallback = !joined;
                     } else {
@@ -433,31 +435,22 @@ impl<S> PreparedQuery<S> {
                             &mut rule.fallback,
                             &mut ctx,
                             &mut self.derived.published,
-                            None,
-                            None,
                             &mut self.bindings,
                             s.as_mut(),
-                            &mut latched,
                         )?,
                         super::EitherSink::Projection(s) => super::fallback::run_fallback(
                             &mut rule.fallback,
                             &mut ctx,
                             &mut self.derived.published,
-                            None,
-                            None,
                             &mut self.bindings,
                             s,
-                            &mut latched,
                         )?,
                         super::EitherSink::Aggregate(s) => super::fallback::run_fallback(
                             &mut rule.fallback,
                             &mut ctx,
                             &mut self.derived.published,
-                            None,
-                            None,
                             &mut self.bindings,
                             s.as_mut(),
-                            &mut latched,
                         )?,
                     }
                     true
@@ -467,14 +460,6 @@ impl<S> PreparedQuery<S> {
             }
         };
 
-        let emitted = counters.emits() - emits_before;
-        let newly_seen = self
-            .sink
-            .distinct_seen()
-            .map_or(emitted, |seen| (seen - seen_before) as u64);
-
-        rule_span.set_pair(emitted, emitted.saturating_sub(newly_seen));
-        self.latch = self.latch.credit(latched);
         self.derived.occ_images = occ_images;
         self.derived.retired = retired;
         Ok(ran)
@@ -482,37 +467,37 @@ impl<S> PreparedQuery<S> {
 
     pub(super) fn execute_key_probe_direct(
         &mut self,
-        images: &SourceImages<'_>,
+        source: &QuerySource<'_>,
+        generation: Option<&crate::work::GenerationHandle>,
         out: &mut Answers,
     ) -> Result<()> {
         let PreparedPipeline::PointProbe {
             finds: key_probe_finds,
             rule,
-        } = &self.pipeline
+        } = &mut self.pipeline
         else {
             unreachable!("PointProbe arm sealed at build");
         };
         let key_probe = &rule.plan;
         self.resolve_memo.clear();
-        let interner = images.interner();
-        let field_types: Vec<ValueType> = self
-            .schema
-            .relation(key_probe.relation)
-            .fields()
-            .iter()
-            .map(|f| f.value_type)
-            .collect();
-        let mut row = RowWords::new(&field_types);
-        if !crate::exec::dispatch::key_probe_row(
+        let interner = match generation {
+            Some(generation) => {
+                crate::image::intern::InternerHandle::new(generation, source.work())
+            }
+            None => crate::image::intern::InternerHandle::without_text(source.work()),
+        };
+        let row = &mut rule.row;
+        let hit = crate::exec::dispatch::key_probe_row(
             key_probe,
-            images.source(),
+            source,
             self.schema.as_ref(),
             &interner,
             &mut self.nonresident,
             &self.resolved_params,
-            &mut row,
+            row,
             &mut self.key_scratch,
-        )? {
+        )?;
+        if !hit {
             return Ok(());
         }
         out.cells.reserve(key_probe_finds.len());

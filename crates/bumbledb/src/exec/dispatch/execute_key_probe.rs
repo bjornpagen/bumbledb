@@ -20,18 +20,12 @@ pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
     interner: &InternerHandle<'_>,
     store: &mut Option<crate::image::NonresidentTextStore>,
     params: &[Const],
+    row: &mut RowWords,
     key_scratch: &mut Vec<u64>,
     bindings: &mut Bindings,
     sink: &mut S,
     counters: &mut C,
 ) -> Result<()> {
-    let field_types: Vec<bumbledb_theory::schema::ValueType> = schema
-        .relation(plan.relation)
-        .fields()
-        .iter()
-        .map(|f| f.value_type)
-        .collect();
-    let mut row = RowWords::new(&field_types);
     if !key_probe_row(
         plan,
         source,
@@ -39,7 +33,7 @@ pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
         interner,
         store,
         params,
-        &mut row,
+        row,
         key_scratch,
     )? {
         return Ok(());

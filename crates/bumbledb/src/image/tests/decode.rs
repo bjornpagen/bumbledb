@@ -11,11 +11,21 @@ fn distinct_counts_are_exact() {
     let schema = schema();
     let source = source_of(&schema, default_rows());
     let (_cache, image) = source.image_with_cache(R);
+    let work = crate::api::prepared::source::unbounded_work().unwrap();
+    assert!(image.distincts.iter().all(|count| count.get().is_none()));
 
-    assert_eq!(image.distinct_count(0), 10, "ids all distinct");
-    assert_eq!(image.distinct_count(1), 2, "bools");
-    assert_eq!(image.distinct_count(2), 2, "kind bools");
-    assert_eq!(image.distinct_count(3), 10, "amounts all distinct");
+    assert_eq!(
+        image.distinct_count(0, &work).unwrap(),
+        10,
+        "ids all distinct"
+    );
+    assert_eq!(image.distinct_count(1, &work).unwrap(), 2, "bools");
+    assert_eq!(image.distinct_count(2, &work).unwrap(), 2, "kind bools");
+    assert_eq!(
+        image.distinct_count(3, &work).unwrap(),
+        10,
+        "amounts all distinct"
+    );
 
     let mut rows = default_rows();
     for i in 10..110u64 {
@@ -25,9 +35,9 @@ fn distinct_counts_are_exact() {
     let source = source_of(&schema, rows);
     let (_cache, image) = source.image_with_cache(R);
     assert_eq!(image.row_count(), 110);
-    assert_eq!(image.distinct_count(0), 110);
+    assert_eq!(image.distinct_count(0, &work).unwrap(), 110);
 
-    assert_eq!(image.distinct_count(3), 15);
+    assert_eq!(image.distinct_count(3, &work).unwrap(), 15);
 }
 
 #[test]

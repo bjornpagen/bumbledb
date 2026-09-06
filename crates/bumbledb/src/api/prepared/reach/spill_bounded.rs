@@ -177,24 +177,22 @@ fn d09_small_projection_stays_resident() {
     );
 }
 
-/// D09: rec Δ is the watermark suffix; acc appends only that suffix.
+/// The frontier is only the watermark suffix, even while the source
+/// accumulated set continues growing in scratch.
 #[test]
-fn d09_rec_acc_appends_watermark_only() {
+fn scratch_frontier_seals_only_the_watermark_suffix() {
     let mut sink = spilled_sink(6);
     let types = u64_types(1);
     let work = work();
-    let Ok(SealedStage::Scratch(mut acc)) = seal_scratch_range(&mut sink, &work, &types, 1, 0, 6)
+    let Ok(SealedStage::Scratch(mut first)) = seal_scratch_range(&mut sink, &work, &types, 0)
     else {
-        panic!("acc prefix must be scratch");
+        panic!("frontier must be scratch");
     };
-    assert_eq!(acc.count, 6);
+    assert_eq!(first.count, 6);
     feed_ids(&mut sink, 6..10);
     assert_eq!(sink.len(), 10);
-    append_scratch_range(&mut acc, &mut sink, 6, 10).expect("append Δ");
-    assert_eq!(acc.count, 10);
-    assert_eq!(collect_ids(&mut acc), (0..10).collect::<Vec<_>>());
-    let Ok(SealedStage::Scratch(mut delta)) =
-        seal_scratch_range(&mut sink, &work, &types, 1, 6, 10)
+    assert_eq!(collect_ids(&mut first), (0..6).collect::<Vec<_>>());
+    let Ok(SealedStage::Scratch(mut delta)) = seal_scratch_range(&mut sink, &work, &types, 6)
     else {
         panic!("Δ must be scratch");
     };

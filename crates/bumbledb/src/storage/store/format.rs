@@ -25,8 +25,27 @@ pub const FAMILY: &[u8; 8] = b"BDBCOR1\0";
 /// load-bearing — every sealed key statement's scalar determinant entries
 /// are maintained with each row and consumed by keyed reads, key probes and
 /// judgment enumeration. A layout-1 directory (empty determinant namespace)
-/// refuses instead of silently missing on every keyed read.
-pub const LAYOUT: u32 = 2;
+/// refuses instead of silently missing on every keyed read. Layout 3 moves
+/// the row namespace after secondary indexes to preserve right-edge append
+/// packing during ascending relation loads. Layout 2 must refuse rather
+/// than silently read the old row namespace as an empty database.
+/// Layout 4 uses schema-fixed ordinal widths in data-tree keys; older
+/// layouts refuse before interpreting those keys. Metadata is unchanged.
+/// Layout 5 omits membership entries for relations with a selected exact
+/// scalar key, using that determinant multimap with full-row confirmation.
+/// Logical export uses the selected key order for those relations and
+/// fingerprint order otherwise. Older layouts must refuse: their readers
+/// would silently omit the rows whose membership entries no longer exist.
+/// Layout 6 clusters eligible row bodies under their selected exact scalar
+/// home and stores that home in secondary-index values. The selected home
+/// determinant entry is omitted. Logical export retains layout-5 ordering;
+/// row ordinals and canonical bytes are unchanged, but older physical
+/// readers must refuse before interpreting the new keys and index values.
+/// Layout 7 removes interval endpoints from determinant keys: every bucket
+/// is scalar route plus row ordinal. Canonical rows retain interval values,
+/// and pointwise judgment orders its own scratch by those endpoints. Older
+/// physical readers refuse; logical export and diagnostic ranks are unchanged.
+pub const LAYOUT: u32 = 7;
 
 /// Named databases inside the environment. Deliberately distinct from the
 /// transitional store's `_meta`/`_data`/`_dict` so neither format can adopt
@@ -121,6 +140,49 @@ pub struct StoreIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct RowId(pub u64);
+
+/// A directory-free physical row address within one relation. The ordinal
+/// remains the stable diagnostic rank; the bounded home locates the body.
+/// Neither component is an application value or logical export identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RowLocator {
+    pub id: RowId,
+    home: [u8; crate::schema::MAX_EXACT_SCALAR_BYTES],
+    len: u8,
+}
+
+impl RowLocator {
+    /// Construct an inline address. The relation's selected home width is
+    /// checked at storage-consumer boundaries, not inferred from these bytes.
+    /// # Errors
+    /// A home wider than the bounded exact-scalar representation.
+    pub fn new(id: RowId, home: &[u8]) -> StoreResult<Self> {
+        let len = u8::try_from(home.len())
+            .ok()
+            .filter(|len| usize::from(*len) <= crate::schema::MAX_EXACT_SCALAR_BYTES)
+            .ok_or(StoreError::Corruption(StoreCorruption::MalformedKey(
+                "row locator home width",
+            )))?;
+        let mut locator = Self::unclustered(id);
+        locator.home[..home.len()].copy_from_slice(home);
+        locator.len = len;
+        Ok(locator)
+    }
+
+    #[must_use]
+    pub const fn unclustered(id: RowId) -> Self {
+        Self {
+            id,
+            home: [0; crate::schema::MAX_EXACT_SCALAR_BYTES],
+            len: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn home(&self) -> &[u8] {
+        &self.home[..usize::from(self.len)]
+    }
+}
 
 pub(crate) fn row_count_key(relation: bumbledb_theory::schema::RelationId) -> [u8; 5] {
     let mut key = [K_ROW_COUNT_TAG, 0, 0, 0, 0];

@@ -2,6 +2,92 @@ use super::*;
 use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
+fn finalize_mixed_test_rows(
+    rows: &[[u64; 4]],
+    out: &mut Answers,
+    charged: bool,
+) -> crate::error::Result<()> {
+    use crate::exec::run::{Bindings, Sink};
+    use crate::ir::validate::SignatureColumn;
+
+    let mut projection = ProjectionSink::new(vec![0, 1, 2, 3]);
+    let mut bindings = Bindings::new(4);
+    for row in rows {
+        for (slot, word) in row.iter().enumerate() {
+            bindings.set(slot, *word);
+        }
+        assert!(!projection.emit(&bindings).is_terminal());
+    }
+    let work = crate::api::db::test_operation().unwrap();
+    let interner = crate::image::intern::InternerHandle::without_text(&work);
+    let columns = [
+        ValueType::U64,
+        ValueType::FixedBytes { len: 9 },
+        ValueType::F64,
+    ]
+    .map(|ty| SignatureColumn::Project { ty });
+    let mut charge = charged.then(|| super::super::result::ResultCharge::new(&work, usize::MAX));
+    super::super::finalize::finalize(
+        &mut EitherSink::Projection(projection),
+        &mut Vec::new(),
+        &mut ResolveMemo::new(),
+        &interner,
+        None,
+        &columns,
+        out,
+        charge.as_mut(),
+    )
+}
+
+#[test]
+fn bulk_finalize_keeps_initialized_prefix_on_error_and_matches_rowwise_retry() {
+    let bytes = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    let rows = [
+        [
+            7,
+            0x0102_0304_0506_0708,
+            0x0900_0000_0000_0000,
+            0xbff0_0000_0000_0000,
+        ],
+        [
+            8,
+            0x0102_0304_0506_0708,
+            0x0900_0000_0000_0000,
+            0xc000_0000_0000_0000,
+        ],
+    ];
+    let mut bad = rows;
+    bad[1][3] = 0; // Noncanonical F64 order key, after the first float succeeds.
+    let mut out = Answers::new();
+    out.begin(3);
+    out.push_value(&AnswerValue::U64(99));
+    out.push_value(&AnswerValue::FixedBytes(&bytes));
+    out.push_value(&AnswerValue::F64(crate::F64::from(3.0)));
+    let failed = finalize_mixed_test_rows(&bad, &mut out, false);
+    assert!(matches!(failed, Err(Error::Corruption(_))));
+    assert_eq!(
+        out.len(),
+        1,
+        "no partially initialized appended row is published"
+    );
+    assert_eq!(out.get(0, 0), AnswerValue::U64(99));
+    assert_eq!(out.get(0, 1), AnswerValue::FixedBytes(&bytes));
+    assert_eq!(out.get(0, 2), AnswerValue::F64(crate::F64::from(3.0)));
+
+    // Both layouts must agree with literals, including the two-word byte
+    // find between single-word finds and reuse after a failed bulk fill.
+    for charged in [false, true, false] {
+        out.begin(3);
+        finalize_mixed_test_rows(&rows, &mut out, charged).unwrap();
+        assert_eq!(out.len(), 2);
+        for (row, id, value) in [(0, 7, 1.0), (1, 8, 2.0)] {
+            assert_eq!(out.get(row, 0), AnswerValue::U64(id));
+            assert_eq!(out.get(row, 1), AnswerValue::FixedBytes(&bytes));
+            assert_eq!(out.get(row, 2), AnswerValue::F64(crate::F64::from(value)));
+        }
+    }
+}
+
 #[test]
 fn overflow_errors_leave_answers_reusable() {
     let fix = postings(&[(1, 7, "a", i64::MAX), (2, 7, "b", 1), (3, 8, "c", 4)]);
@@ -87,11 +173,8 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
     assert_eq!(first.len(), 3);
 }
 
-#[cfg(feature = "trace")]
 #[test]
-fn finalize_resolves_each_distinct_intern_once() {
-    use crate::obs;
-
+fn finalize_materializes_each_distinct_intern_once() {
     let facts: Vec<(u64, u64, String, i64)> = (0..64)
         .map(|id| {
             (
@@ -111,21 +194,16 @@ fn finalize_resolves_each_distinct_intern_once() {
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
 
     let resolves = |prepared: &mut PreparedQuery<T>, account: u64| {
-        obs::start_capture();
         let out = fix
             .execute(prepared, &[BindValue::U64(account), BindValue::I64(-1)])
             .expect("execute");
-        let events = obs::finish_capture();
-        let count = events
-            .iter()
-            .filter(|e| e.point() == obs::names::DICT_RESOLVE)
-            .count();
+        let count = prepared.resolve_memo.ranges.len();
         (out, count)
     };
 
     let (out, count) = resolves(&mut prepared, 1);
     assert_eq!(out.len(), 64);
-    assert_eq!(count, 1, "one distinct intern, one resolution");
+    assert_eq!(count, 1, "one memo entry for the shared intern");
     assert_eq!(out.byte_len(), "shared-memo".len(), "bytes stored once");
 
     let (out, count) = resolves(&mut prepared, 2);

@@ -5,8 +5,10 @@
 //!
 //! The stream is logical: physical LMDB row IDs, dictionary numbering,
 //! freelist layout and host page sizes never enter it. Facts are ordered
-//! canonically (relation ascending, then full canonical row bytes); receipt
-//! rows are ordered by their storage key (epoch, then request bytes). Chunks
+//! canonically by the schema-derived core export order: relation ascending,
+//! then the selected exact scalar-key route when available, otherwise the
+//! full-row fingerprint; full canonical bytes break ties within a bucket.
+//! Receipt rows are ordered by their storage key (epoch, then request bytes). Chunks
 //! are uncompressed in 1.0 and may split records; the decoder is a bounded
 //! streaming parser.
 //!
@@ -35,12 +37,14 @@ use crate::store::{ObjectKind, ObjectRef};
 pub const CHUNK_TARGET: usize = 8 * 1024 * 1024;
 
 pub const MANIFEST_FAMILY: &[u8] = b"bumbledb.ckpt.v1\0";
-pub const MANIFEST_LAYOUT: u16 = 1;
+// Layout 2 binds the membership-elided core export order. Older manifests
+// refuse instead of comparing old-order application identities after restore.
+pub const MANIFEST_LAYOUT: u16 = 2;
 const MANIFEST_KIND: u8 = 1;
 
-pub const APPLICATION_DOMAIN: &str = "bumbledb.checkpoint.v1/application-digest";
+pub const APPLICATION_DOMAIN: &str = "bumbledb.checkpoint.v2/application-digest";
 pub const SYSTEM_DOMAIN: &str = "bumbledb.checkpoint.v1/system-digest";
-pub const STREAM_DOMAIN: &str = "bumbledb.checkpoint.v1/stream-digest";
+pub const STREAM_DOMAIN: &str = "bumbledb.checkpoint.v2/stream-digest";
 
 const TAG_FACT: u8 = 1;
 const TAG_SYSTEM: u8 = 2;
@@ -844,6 +848,13 @@ mod tests {
             decode_manifest(&bytes, StreamLimits::DEFAULT).unwrap(),
             manifest
         );
+        let mut old_order = bytes.clone();
+        old_order[MANIFEST_FAMILY.len()..MANIFEST_FAMILY.len() + 2]
+            .copy_from_slice(&1u16.to_be_bytes());
+        assert!(matches!(
+            decode_manifest(&old_order, StreamLimits::DEFAULT),
+            Err(FrameError::Layout { got: 1 })
+        ));
         for end in 0..bytes.len() {
             assert!(decode_manifest(&bytes[..end], StreamLimits::DEFAULT).is_err());
         }

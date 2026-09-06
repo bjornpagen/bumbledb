@@ -141,15 +141,30 @@ impl WarmAliases {
 /// [`Self::canonical`] — not raw `u64 ==`.
 #[derive(Clone, Copy)]
 pub struct TextEq<'a> {
-    generation: &'a GenerationHandle,
+    generation: Option<&'a GenerationHandle>,
     scratch: Option<&'a NonresidentTextStore>,
     stamp: Option<TextStoreEpoch>,
 }
+
+// Unit-test fault injection deliberately adds a non-Sync Cell to the
+// scratch store. Check the real production auto-traits in ordinary builds.
+#[cfg(not(test))]
+const _: fn() = || {
+    fn send_sync<T: Send + Sync>() {}
+    send_sync::<TextEq<'static>>();
+};
 
 impl<'a> TextEq<'a> {
     #[must_use]
     pub fn bind(
         generation: &'a GenerationHandle,
+        scratch: Option<&'a NonresidentTextStore>,
+    ) -> Self {
+        Self::from_optional_generation(Some(generation), scratch)
+    }
+
+    pub(crate) fn from_optional_generation(
+        generation: Option<&'a GenerationHandle>,
         scratch: Option<&'a NonresidentTextStore>,
     ) -> Self {
         Self {
@@ -193,6 +208,11 @@ impl<'a> TextEq<'a> {
     /// `Ok(None)` is a miss (stale stamp, not live, not text).
     /// `Err` is scratch I/O, work refusal, or corrupt UTF-8 — never unequal.
     pub fn canonical(self, token: u64) -> Result<Option<u64>> {
+        let generation =
+            self.generation
+                .ok_or(Error::Corruption(CorruptionError::MalformedValue(
+                    "text outside a sealed text-free probe",
+                )))?;
         if is_resident_token(token) {
             return Ok(Some(token));
         }
@@ -206,11 +226,11 @@ impl<'a> TextEq<'a> {
             return Ok(None);
         }
         if let Some(canonical) = store.warm.get(token)
-            && store.handle.ptr_eq(self.generation)
+            && store.handle.ptr_eq(generation)
         {
             return Ok(Some(canonical));
         }
-        store.alias_from_scratch(token, self.generation).map(Some)
+        store.alias_from_scratch(token, generation).map(Some)
     }
 
     /// Same function as [`Self::canonical`]: grouping/hash/dedup keys.
@@ -223,7 +243,8 @@ impl<'a> TextEq<'a> {
     pub fn tokens_equal(self, left: u64, right: u64) -> Result<bool> {
         match (self.canonical(left)?, self.canonical(right)?) {
             (Some(left), Some(right)) => {
-                Ok(left == right || self.generation.tokens_equal(left, self.generation, right))
+                let generation = self.generation.expect("canonical checked the resolver");
+                Ok(left == right || generation.tokens_equal(left, generation, right))
             }
             _ => Ok(false),
         }

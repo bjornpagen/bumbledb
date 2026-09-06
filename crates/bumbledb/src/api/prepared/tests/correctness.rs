@@ -1,6 +1,338 @@
 use super::*;
 use crate::ir::FoldOp;
 
+fn id_amount_pairs(answers: &Answers) -> Vec<(u64, i64)> {
+    (0..answers.len())
+        .map(|row| match (answers.get(row, 0), answers.get(row, 1)) {
+            (AnswerValue::U64(id), AnswerValue::I64(amount)) => (id, amount),
+            other => panic!("expected id/amount, got {other:?}"),
+        })
+        .collect()
+}
+
+fn output_hashing_is_elided(prepared: &PreparedQuery<T>) -> bool {
+    match &prepared.sink {
+        EitherSink::Projection(sink) => sink.output_hashing_is_elided(),
+        _ => false,
+    }
+}
+
+fn fallback_lookup_schema(lookup_type: ValueType, keyed_lookup: bool) -> SchemaDescriptor {
+    use bumbledb_theory::schema::StatementDescriptor;
+
+    let mut schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Item".into(),
+                fields: vec![
+                    FieldDescriptor {
+                        name: "id".into(),
+                        value_type: ValueType::U64,
+                    },
+                    FieldDescriptor {
+                        name: "lookup".into(),
+                        value_type: lookup_type,
+                    },
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Gate".into(),
+                fields: vec![FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                }],
+            },
+        ],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }],
+    };
+    if keyed_lookup {
+        schema.statements.push(StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(1)]),
+        });
+    }
+    schema
+}
+
+fn fallback_lookup_query(selected_field: FieldId, gate_first: bool) -> Query {
+    let variable_field = FieldId(1 - selected_field.0);
+    let mut atoms = vec![
+        Atom {
+            source: AtomSource::Edb(RelationId(0)),
+            bindings: vec![
+                (selected_field, Term::Param(crate::ir::ParamId(0))),
+                (variable_field, Term::Var(VarId(0))),
+            ],
+        },
+        Atom {
+            source: AtomSource::Edb(RelationId(1)),
+            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+        },
+    ];
+    if gate_first {
+        atoms.reverse();
+    }
+    Query::single(Rule {
+        finds: vec![FindTerm::Var(VarId(0))],
+        atoms,
+        negated: vec![],
+        conditions: vec![],
+    })
+}
+
+#[test]
+fn keyed_fallback_uses_selection_fields_and_preserves_typed_keys() {
+    let cases = [
+        (
+            ValueType::Bool,
+            [Value::Bool(false), Value::Bool(true)],
+            [BindValue::Bool(false), BindValue::Bool(true)],
+        ),
+        (
+            ValueType::I64,
+            [Value::I64(-7), Value::I64(9)],
+            [BindValue::I64(-7), BindValue::I64(9)],
+        ),
+        (
+            ValueType::F64,
+            [
+                Value::F64(crate::F64::from(-7.5)),
+                Value::F64(crate::F64::from(9.25)),
+            ],
+            [
+                BindValue::F64(crate::F64::from(-7.5)),
+                BindValue::F64(crate::F64::from(9.25)),
+            ],
+        ),
+        (
+            ValueType::U64,
+            [Value::U64(7), Value::U64(9)],
+            [BindValue::U64(7), BindValue::U64(9)],
+        ),
+        (
+            ValueType::String,
+            [
+                Value::String("first".into()),
+                Value::String("second".into()),
+            ],
+            [BindValue::Str("first"), BindValue::Str("second")],
+        ),
+        (
+            ValueType::FixedBytes { len: 4 },
+            [
+                Value::FixedBytes(Box::new([1, 2, 3, 4])),
+                Value::FixedBytes(Box::new([5, 6, 7, 8])),
+            ],
+            [
+                BindValue::FixedBytes(&[1, 2, 3, 4]),
+                BindValue::FixedBytes(&[5, 6, 7, 8]),
+            ],
+        ),
+    ];
+    for (lookup_type, values, params) in cases {
+        // The selection is field 1, while the join variable is field 0.
+        // String tokens and inline bytes are not scalar U64 lookup keys.
+        for keyed_lookup in [false, true] {
+            let store = StoreFix::store(
+                "fallback-typed-lookup",
+                fallback_lookup_schema(lookup_type, keyed_lookup),
+            );
+            store.insert_dyn(
+                RelationId(0),
+                &[
+                    vec![Value::U64(101), values[0].clone()],
+                    vec![Value::U64(202), values[1].clone()],
+                ],
+            );
+            store.insert_dyn(
+                RelationId(1),
+                &[vec![Value::U64(101)], vec![Value::U64(202)]],
+            );
+            let mut prepared = store
+                .prepare(&fallback_lookup_query(FieldId(1), false))
+                .unwrap();
+            prepared.force_cursor_fallback(true);
+            for (index, expected) in [(1, 202), (0, 101), (1, 202)] {
+                let answers = store.execute(&mut prepared, &[params[index]]).unwrap();
+                assert_eq!(answers.len(), 1, "{lookup_type:?}, keyed={keyed_lookup}");
+                assert_eq!(answers.get(0, 0), AnswerValue::U64(expected));
+            }
+        }
+    }
+}
+
+#[test]
+fn heap_keyed_fallback_does_not_stop_after_a_rejected_first_row() {
+    let heap = Fix::heap(
+        fallback_lookup_schema(ValueType::U64, false),
+        &[
+            (
+                RelationId(0),
+                vec![
+                    vec![Value::U64(1), Value::U64(10)],
+                    vec![Value::U64(2), Value::U64(20)],
+                ],
+            ),
+            (RelationId(1), vec![vec![Value::U64(20)]]),
+        ],
+    );
+    // Gate binds the last atom's only variable. A successful callback does
+    // not imply a matched row: the heap key visitor first sees rejected id 1.
+    let mut prepared = heap
+        .prepare(&fallback_lookup_query(FieldId(0), true))
+        .unwrap();
+    prepared.force_cursor_fallback(true);
+    for (id, expected_len) in [(2, 1), (1, 0), (2, 1)] {
+        let answers = heap.execute(&mut prepared, &[BindValue::U64(id)]).unwrap();
+        assert_eq!(answers.len(), expected_len);
+        if expected_len != 0 {
+            assert_eq!(answers.get(0, 0), AnswerValue::U64(20));
+        }
+    }
+}
+
+fn keyed_range_query(project_id: bool) -> Query {
+    Query::single(Rule {
+        finds: if project_id {
+            vec![FindTerm::Var(VarId(0)), FindTerm::Var(VarId(1))]
+        } else {
+            vec![FindTerm::Var(VarId(1))]
+        },
+        atoms: vec![Atom {
+            source: AtomSource::Edb(POSTING),
+            bindings: vec![
+                (FieldId(0), Term::Var(VarId(0))),
+                (FieldId(3), Term::Var(VarId(1))),
+                (FieldId(1), Term::Var(VarId(2))),
+            ],
+        }],
+        negated: vec![],
+        conditions: vec![
+            ConditionTree::Leaf(Comparison {
+                op: CmpOp::Ge,
+                lhs: Term::Var(VarId(2)),
+                rhs: Term::Param(crate::ir::ParamId(0)),
+            }),
+            ConditionTree::Leaf(Comparison {
+                op: CmpOp::Lt,
+                lhs: Term::Var(VarId(2)),
+                rhs: Term::Param(crate::ir::ParamId(1)),
+            }),
+        ],
+    })
+}
+
+#[test]
+fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
+    // Same shape as the benchmark: output(id, amount), range predicate on
+    // an unprojected scalar. The fixture calls that scalar account, not at.
+    let rows: Vec<_> = (0..513u64)
+        .map(|id| (id, id % 11, "", i64::try_from(id % 7).unwrap()))
+        .collect();
+    let store = posting_store("prepared-proved-output", &rows);
+    let query = keyed_range_query(true);
+    for (fallback, ram_bytes) in [(false, usize::MAX), (false, 0), (true, usize::MAX)] {
+        let mut append = store.prepare(&query).unwrap();
+        assert!(
+            output_hashing_is_elided(&append),
+            "prove and activate the actual store pipeline"
+        );
+        let mut hashed = store.prepare(&query).unwrap();
+        let rule = &hashed.pipeline.main_rules()[0];
+        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
+            rule.finds(),
+            rule.slot_count(),
+            0,
+        ));
+        assert!(!output_hashing_is_elided(&hashed));
+        for prepared in [&mut append, &mut hashed] {
+            prepared.force_cursor_fallback(fallback);
+            prepared.set_sink_ram(ram_bytes);
+        }
+        for (lower, upper) in [(0u64, 3u64), (4, 8), (9, 11), (0, 11), (0, 3)] {
+            let params = [BindValue::U64(lower), BindValue::U64(upper)];
+            let actual = id_amount_pairs(&store.execute(&mut append, &params).unwrap());
+            let control = id_amount_pairs(&store.execute(&mut hashed, &params).unwrap());
+            assert_eq!(actual, control, "same first-emission order, not just a set");
+            let mut sorted = actual;
+            sorted.sort_unstable();
+            let expected: Vec<_> = rows
+                .iter()
+                .filter(|row| row.1 >= lower && row.1 < upper)
+                .map(|row| (row.0, row.3))
+                .collect();
+            assert_eq!(sorted, expected, "independent literal range denotation");
+        }
+    }
+}
+
+#[test]
+fn hidden_keys_heap_and_overlapping_union_keep_output_hashing() {
+    let rows: Vec<_> = (0..33u64)
+        .map(|id| (id, id % 11, "", i64::try_from(id % 7).unwrap()))
+        .collect();
+    let store = posting_store("prepared-output-proof-exclusions", &rows);
+    let query = keyed_range_query(true);
+    let mut repeats = store.prepare(&keyed_range_query(false)).unwrap();
+    assert!(
+        !output_hashing_is_elided(&repeats),
+        "hidden ids cannot prove amount unique"
+    );
+    assert_eq!(
+        store
+            .execute(&mut repeats, &[BindValue::U64(0), BindValue::U64(11)])
+            .unwrap()
+            .len(),
+        7
+    );
+    let heap = postings(&rows);
+    assert!(
+        !output_hashing_is_elided(&heap.prepare(&query).unwrap()),
+        "heap is deliberately outside the initial optimization scope"
+    );
+
+    let mut left = query.rules()[0].clone();
+    left.conditions.push(ConditionTree::Leaf(Comparison {
+        op: CmpOp::Lt,
+        lhs: Term::Var(VarId(2)),
+        rhs: Term::Literal(Value::U64(7)),
+    }));
+    let mut right = query.rules()[0].clone();
+    right.conditions.push(ConditionTree::Leaf(Comparison {
+        op: CmpOp::Ge,
+        lhs: Term::Var(VarId(2)),
+        rhs: Term::Literal(Value::U64(5)),
+    }));
+    let union = Query {
+        interiors: vec![],
+        rec: None,
+        head: vec![HeadTerm::Var, HeadTerm::Var],
+        rules: vec![left, right],
+    };
+    let mut union = store.prepare(&union).unwrap();
+    assert_eq!(
+        union.pipeline.main_rules().len(),
+        2,
+        "neither overlapping arm subsumes the other"
+    );
+    assert!(!output_hashing_is_elided(&union));
+    let mut union_rows = id_amount_pairs(
+        &store
+            .execute(&mut union, &[BindValue::U64(0), BindValue::U64(11)])
+            .unwrap(),
+    );
+    union_rows.sort_unstable();
+    assert_eq!(
+        union_rows,
+        rows.iter().map(|row| (row.0, row.3)).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn u64_ranges_and_cross_atom_residuals_match_nested_loops() {
     let rows: &[(u64, u64, &str, i64)] = &[
@@ -286,6 +618,102 @@ fn a_prepared_query_refuses_a_foreign_source() {
         matches!(refused, Err(Error::ForeignPreparedQuery)),
         "another environment's lease refuses, got {refused:?}"
     );
+}
+
+#[test]
+fn heap_prepared_witnesses_require_the_same_schema_laws() {
+    use bumbledb_theory::schema::{StatementDescriptor, ValueType};
+
+    let keyed = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Item".into(),
+            fields: ["id", "payload"]
+                .map(|name| FieldDescriptor {
+                    name: name.into(),
+                    value_type: ValueType::U64,
+                })
+                .into(),
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+        }],
+    };
+    let mut unkeyed = keyed.clone();
+    unkeyed.statements.clear();
+    let admit = |descriptor: SchemaDescriptor, rows: &[(u64, u64)]| {
+        let mut builder =
+            InstanceBuilder::new(descriptor, crate::api::db::test_operation().expect("work"))
+                .expect("schema");
+        let facts: Vec<_> = rows
+            .iter()
+            .map(|&(id, payload)| vec![Value::U64(id), Value::U64(payload)])
+            .collect();
+        builder.load_dyn(RelationId(0), facts.iter()).expect("load");
+        builder.admit().expect("admission").expect("lawful rows")
+    };
+    // Identical Rust typestate and field layout do not imply identical laws.
+    let original: OwnedInstance<SchemaDescriptor> = admit(keyed.clone(), &[(1, 10), (2, 20)]);
+    let compatible = admit(keyed, &[(7, 30)]);
+    let foreign = admit(unkeyed, &[(1, 10), (1, 20)]);
+    let query = Query::single(Rule {
+        finds: vec![FindTerm::Count],
+        atoms: vec![Atom {
+            source: AtomSource::Edb(RelationId(0)),
+            bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+        }],
+        negated: vec![],
+        conditions: vec![ConditionTree::Leaf(Comparison {
+            op: CmpOp::Ge,
+            lhs: Term::Var(VarId(0)),
+            rhs: Term::Param(crate::ir::ParamId(0)),
+        })],
+    });
+    let params = [BindValue::U64(0)];
+    let mut prepared = original.prepare(&query).expect("prepare with key witness");
+    let mut out = Answers::new();
+    prepared
+        .execute_owned(&original, &params, &mut out)
+        .expect("original");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out.get(0, 0), AnswerValue::U64(2));
+
+    // Identity is semantic schema identity, not the instance or Arc address.
+    prepared
+        .execute_owned(&compatible, &params, &mut out)
+        .expect("same schema");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out.get(0, 0), AnswerValue::U64(1));
+
+    let refused = prepared.execute_owned(&foreign, &params, &mut out);
+    assert!(matches!(refused, Err(Error::ForeignPreparedQuery)));
+    assert_eq!(
+        out.len(),
+        1,
+        "identity refusal must not reset caller output"
+    );
+    assert_eq!(out.get(0, 0), AnswerValue::U64(1));
+    let invalid_params: &[BindValue] = &[];
+    let refused = prepared.execute_owned(&foreign, invalid_params, &mut out);
+    assert!(
+        matches!(refused, Err(Error::ForeignPreparedQuery)),
+        "foreign schema must refuse before parameter binding"
+    );
+
+    // The unkeyed instance itself is valid: its two facts bind one distinct id.
+    let mut own = foreign
+        .prepare(&query)
+        .expect("prepare without a key witness");
+    own.execute_owned(&foreign, &params, &mut out)
+        .expect("unkeyed execution");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out.get(0, 0), AnswerValue::U64(1));
+    prepared
+        .execute_owned(&original, &params, &mut out)
+        .expect("retry original");
+    assert_eq!(out.len(), 1);
+    assert_eq!(out.get(0, 0), AnswerValue::U64(2));
 }
 
 #[test]

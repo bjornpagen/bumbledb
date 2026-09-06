@@ -493,7 +493,8 @@ pub enum FactShapeError {
         field: FieldId,
     },
 
-    /// collection). ETL input is data, so the bound is a typed refusal,
+    /// A bridge collection's arena offset or payload length exceeds `u32`.
+    /// Direct Rust writes have no such arena; operation budgets bound them.
     PayloadBound {
         relation: RelationId,
     },

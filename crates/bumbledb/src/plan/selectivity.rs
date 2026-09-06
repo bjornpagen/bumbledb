@@ -3,9 +3,10 @@
 //! honesty numbers. Three sources, strongest first — schema structure
 //! (free and exact), resident-image exact distinct counts, documented
 //! constant floors. Prepare **never builds** an image for statistics
-//! (the cache is peeked); a cold prepare degrades to bounds and floors,
+//! (the cache is peeked); a cold prepare degrades to bounds and floors.
+//! Requested resident columns count once on demand under this prepare's work
+//! allowance. Only the scalar is cached; temporary counting tables are released.
 use crate::api::prepared::source::QuerySource;
-use crate::image::ColumnWidth;
 use crate::image::ImageBind;
 use crate::image::SourceImages;
 use crate::image::view::{Const, FilterPredicate};
@@ -16,6 +17,30 @@ use crate::plan::fj::split_filters;
 use crate::plan::planner::OccStats;
 use crate::schema::Schema;
 use bumbledb_theory::schema::FieldId;
+use std::collections::BTreeSet;
+
+/// Only shared variables can enter the DP estimator's prefix intersection.
+/// Normalized occurrences bind distinct variables; negated/folded/eliminated
+/// occurrences do not participate in that DP. Output-only variables need no
+/// column statistics, regardless of how many rows their image contains.
+pub(crate) fn join_variables(
+    normalized: &crate::ir::normalize::NormalizedQuery,
+) -> BTreeSet<crate::ir::VarId> {
+    let mut seen = BTreeSet::new();
+    let mut joined = BTreeSet::new();
+    for occurrence in normalized
+        .occurrences
+        .iter()
+        .filter(|o| o.role.participates())
+    {
+        for (_, var) in &occurrence.vars {
+            if !seen.insert(*var) {
+                joined.insert(*var);
+            }
+        }
+    }
+    joined
+}
 
 /// A closed relation's rows ARE its sealed extension — the option is the kind
 /// (`schema/relation.rs`) — and its stored `S` counter never exists (closed
@@ -31,10 +56,6 @@ pub(crate) fn relation_rows_on(
         Some(rows) => u64::try_from(rows.len()).expect("bounded extension"),
         None => source.row_count(relation)?,
     };
-    crate::obs::event(
-        crate::obs::names::RELATION_ROWS,
-        crate::obs::TraceArgs::Pair(u64::from(relation.0), rows),
-    );
     Ok(rows)
 }
 
@@ -60,6 +81,7 @@ pub(crate) fn occurrence_stats_on(
     schema: &Schema,
     occurrence: &Occurrence,
     rows: u64,
+    join_variables: &BTreeSet<crate::ir::VarId>,
 ) -> crate::error::Result<OccStats> {
     match OccBind::of_occurrence(occurrence) {
         OccBind::RecDelta(_) => {
@@ -70,11 +92,12 @@ pub(crate) fn occurrence_stats_on(
                 var_distincts: occurrence
                     .vars
                     .iter()
+                    .filter(|(_, var)| join_variables.contains(var))
                     .map(|(_, var)| (*var, floor))
                     .collect(),
             })
         }
-        OccBind::Finished(_) | OccBind::RecAcc(_) => {
+        OccBind::Finished(_) => {
             let floor = ACCUMULATED_PLANNING_ROWS.max(1);
             Ok(OccStats {
                 occ_id: occurrence.occ_id,
@@ -82,24 +105,29 @@ pub(crate) fn occurrence_stats_on(
                 var_distincts: occurrence
                     .vars
                     .iter()
+                    .filter(|(_, var)| join_variables.contains(var))
                     .map(|(_, var)| (*var, floor))
                     .collect(),
             })
         }
         OccBind::Edb(relation) => {
             let image = images.peek(schema, relation)?;
-            let mut var_distincts = Vec::with_capacity(occurrence.vars.len());
-            for (field, var) in &occurrence.vars {
-                let distinct = distinct_of(
-                    images.source(),
-                    schema,
-                    relation,
-                    *field,
-                    image.as_deref(),
-                    rows,
-                )?;
-                var_distincts.push((*var, distinct));
-            }
+            let var_distincts = occurrence
+                .vars
+                .iter()
+                .filter(|(_, var)| join_variables.contains(var))
+                .map(|(field, var)| {
+                    distinct_of(
+                        images.source(),
+                        schema,
+                        relation,
+                        *field,
+                        image.as_deref(),
+                        rows,
+                    )
+                    .map(|distinct| (*var, distinct))
+                })
+                .collect::<crate::error::Result<Vec<_>>>()?;
             let estimate = occurrence_estimate(
                 images.source(),
                 schema,
@@ -222,25 +250,18 @@ fn distinct_of(
         })
     });
     if keyed {
-        let distinct = rows.max(1);
-        ladder_event(0, distinct);
-        return Ok(distinct);
+        return Ok(rows.max(1));
     }
     if let Some(image) = image {
         let span = image.span(field);
         let first = usize::from(span.first_column);
-        let distinct = match span.width {
-            ColumnWidth::Byte | ColumnWidth::Word => image.distinct_count(first),
-
-            ColumnWidth::WordPair | ColumnWidth::Words { .. } => (first
-                ..first + usize::from(span.width.column_count()))
-                .map(|column| image.distinct_count(column))
-                .max()
-                .expect("at least one column"),
-        };
-        let distinct = distinct.max(1);
-        ladder_event(1, distinct);
-        return Ok(distinct);
+        // Multiword fields keep the existing max-column estimate (not an
+        // exact tuple count); every constituent column count is exact.
+        let mut distinct = 0;
+        for column in first..first + usize::from(span.width.column_count()) {
+            distinct = distinct.max(image.distinct_count(column, source.work())?);
+        }
+        return Ok(distinct.max(1));
     }
 
     let mut containment_bound: Option<u64> = None;
@@ -254,24 +275,13 @@ fn distinct_of(
         }
     }
     if let Some(bound) = containment_bound {
-        let distinct = bound.min(rows).max(1);
-        ladder_event(2, distinct);
-        return Ok(distinct);
+        return Ok(bound.min(rows).max(1));
     }
     let distinct = match &descriptor.field(field).value_type {
         bumbledb_theory::schema::ValueType::Bool => 2,
         _ => DEFAULT_EQ_DISTINCT,
     };
-    ladder_event(3, distinct);
     Ok(distinct)
-}
-
-#[inline]
-fn ladder_event(rung: u64, distinct: u64) {
-    crate::obs::event(
-        crate::obs::names::DISTINCT_LADDER,
-        crate::obs::TraceArgs::Pair(rung, distinct),
-    );
 }
 
 #[cfg(test)]

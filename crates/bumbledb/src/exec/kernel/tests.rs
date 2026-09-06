@@ -221,17 +221,61 @@ fn fold_min_max_extent_guard_refuses_wrapping_extents() {
 }
 
 #[test]
+fn scalar_gather_preserves_vector_wrapping_addresses_and_default_lanes() {
+    use std::simd::prelude::*;
+
+    let values = [11u64, u64::MAX, 0, 1 << 63, 7, 19, 23];
+    let index_sets = [
+        [0, 1, 2, 3],
+        [3, 0, 3, 1],
+        [u32::MAX, 0, 1, 2],
+        [2, 4, 6, 8],
+        [u32::MAX; 4],
+    ];
+    for len in 0..=values.len() {
+        let values = &values[..len];
+        for stride in [0, 1, 2, 5, usize::MAX, usize::MAX / 2 + 1] {
+            for offset in [0, 1, 5, usize::MAX] {
+                for indices in index_sets {
+                    // Original vector construction is the differential oracle.
+                    // Test the load helper directly: malformed vector lanes
+                    // are outside the public sum's debug precondition.
+                    let addresses = Simd::<u32, 4>::from_array(indices).cast::<usize>()
+                        * Simd::splat(stride)
+                        + Simd::splat(offset);
+                    let expected = Simd::<u64, 4>::gather_or_default(values, addresses);
+                    assert_eq!(
+                        super::gather::gather_words(values, stride, offset, &indices).to_array(),
+                        expected.to_array(),
+                        "len={len}, stride={stride}, offset={offset}, indices={indices:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn gather_folds_pin_the_overflow_and_sign_edges() {
     let values = vec![u64::MAX; 1024];
     let mut indices: Vec<u32> = (0..1024).collect();
     indices.extend(std::iter::repeat_n(7u32, 9));
-    let expected = u128::from(u64::MAX) * 1033;
-    assert_eq!(fold_sum_u64_idx(&values, 1, 0, &indices), expected);
-
-    assert_eq!(
-        fold_sum_biased_i64_idx(&values, 1, 0, &indices),
-        i128::from(i64::MAX) * 1033
-    );
+    // Every tail length, repeated carries, and both executor quantum and
+    // larger chunk boundaries. The existing randomized fold test separately
+    // spans strided/offset layouts and mixed signs.
+    for len in [
+        0, 1, 2, 3, 4, 5, 7, 8, 9, 255, 256, 257, 1023, 1024, 1025, 1033,
+    ] {
+        let selected = &indices[..len];
+        assert_eq!(
+            fold_sum_u64_idx(&values, 1, 0, selected),
+            u128::from(u64::MAX) * len as u128
+        );
+        assert_eq!(
+            fold_sum_biased_i64_idx(&values, 1, 0, selected),
+            i128::from(i64::MAX) * i128::try_from(len).expect("small test length")
+        );
+    }
     assert_eq!(
         fold_min_max_u64_idx(&values, 1, 0, &indices),
         (u64::MAX, u64::MAX)
@@ -1036,39 +1080,6 @@ fn allen_filter_columns_match_the_scalar_survivors_bit_for_bit() {
                 mask.bits()
             );
         }
-    }
-}
-
-#[cfg(feature = "trace")]
-#[test]
-fn allen_dense_scans_record_one_batch_event() {
-    use bumbledb_theory::allen::AllenMask;
-    let mut rng = Lcg(0xA11E);
-    let len = 300usize;
-    let (a_s, a_e, b_s, b_e) = allen_corpus(len, &mut rng);
-
-    crate::obs::start_capture();
-    let mut out = Vec::new();
-    allen_filter_columns(&a_s, &a_e, &b_s, &b_e, AllenMask::INTERSECTS, &mut out);
-    let mut out_const = Vec::new();
-    allen_filter_columns_const(&a_s, &a_e, 3, 9, AllenMask::DISJOINT, &mut out_const);
-    let events = crate::obs::finish_capture();
-
-    let hits: Vec<&crate::obs::TraceEvent> = events
-        .iter()
-        .filter(|e| e.point() == crate::obs::names::KERNEL_ALLEN)
-        .collect();
-    assert_eq!(
-        hits.len(),
-        2,
-        "one event per batch invocation, never per lane"
-    );
-    for (event, survivors) in hits.iter().zip([out.len(), out_const.len()]) {
-        assert_eq!(
-            (event.a0(), event.a1()),
-            (len as u64, survivors as u64),
-            "lanes swept and survivors kept",
-        );
     }
 }
 

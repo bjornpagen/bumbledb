@@ -112,10 +112,6 @@ fn push_matching<T, const N: usize>(
 
     // drop obligation).
     unsafe { out.set_len(write) };
-    crate::obs::event(
-        crate::obs::names::KERNEL_FILTER,
-        crate::obs::TraceArgs::Pair(col.len() as u64, (write - start) as u64),
-    );
 }
 
 #[expect(
@@ -153,10 +149,6 @@ fn push_matching_pair(
 
     // drop obligation).
     unsafe { out.set_len(write) };
-    crate::obs::event(
-        crate::obs::names::KERNEL_FILTER,
-        crate::obs::TraceArgs::Pair(starts.len() as u64, (write - start) as u64),
-    );
 }
 
 /// The one hoisted position guard (the per-lane `u32::try_from` was a per-item

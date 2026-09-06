@@ -16,6 +16,10 @@ be quoted as a claim.
   capped point, one hand-tuned twin, and one warmth object
   (`bench-curves.svg`, `bench-warmth.svg`).
 
+Historical lane names in synthetic renderer fixtures are compatibility
+inputs for the chart parser, not currently supported engine modes. In
+particular, the current engine has no no-sync write API.
+
 Dry-run against them into a temp dir:
 
 ```sh

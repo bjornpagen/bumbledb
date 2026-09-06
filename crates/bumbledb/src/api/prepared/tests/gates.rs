@@ -435,7 +435,9 @@ fn d12_preview_does_not_advance_until_commit() {
     let sealed = crate::api::prepared::result::CompleteResult::seal(
         answers,
         crate::api::prepared::result::ResultIdentity {
-            source: crate::api::prepared::source::PinnedSource::Heap,
+            source: crate::api::prepared::source::PinnedSource::Heap(
+                crate::schema::fingerprint::SchemaFingerprint([0; 32]),
+            ),
             generation: None,
         },
         &work,

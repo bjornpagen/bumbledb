@@ -12,7 +12,8 @@
 //!    ([`crate::hashprobe::kat`]); absence is recorded as `NotRun`, never as
 //!    success;
 //! 4. times each candidate per input size and alignment offset, the mixed
-//!    short-fact stream, and the state-initialization/reuse split.
+//!    short-fact stream, and fresh-state empty-message proxy. State reuse
+//!    is not measured; reports say so explicitly.
 //!
 //! Outputs are bytes, compared as bytes. `TigerBeetle`'s little-endian `u128`
 //! checksum convention is deliberately **not** copied into any byte codec
@@ -20,7 +21,9 @@
 //!
 //! More bytes per second on a bulk buffer is not necessarily faster per small
 //! fact: state initialization/copy dominates short inputs, which is why the
-//! corpus starts at 0/8/16 bytes and why `init` and `reuse` are separate rows.
+//! corpus starts at 0/8/16 bytes. Every timed call includes fresh state,
+//! finalization and the returned Vec allocation; `init-empty` is not an
+//! isolated constructor measurement.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -32,13 +35,8 @@ use crate::report;
 use super::inputs::{self, ProbeInput};
 use super::kat;
 
-/// BLAKE3 derive-key context for the fingerprint-shaped candidate — the
-/// **production** fact-fingerprint domain, mirrored from
-/// `crates/bumbledb/src/encoding/fingerprint.rs` (`FACT_FINGERPRINT_DOMAIN`,
-/// private there; P01 owns it, and changing it is a storage format change).
-/// The production construction takes the first 16 XOF bytes, which by
-/// BLAKE3's XOF-prefix property equal the first 16 bytes of the 32-byte
-/// digest computed here, so this candidate times the real construction.
+/// Historical derive-key candidate context. Retain its label and bytes for
+/// comparison with existing results; this is NOT the current row fingerprint.
 pub const FINGERPRINT_PROBE_CONTEXT: &str = "bumbledb v1 2026-09-04 fact fingerprint";
 
 /// The measured candidates. `Blake3Trunc16` shares `Blake3Full32`'s
@@ -49,12 +47,14 @@ pub const FINGERPRINT_PROBE_CONTEXT: &str = "bumbledb v1 2026-09-04 fact fingerp
 pub enum Candidate {
     /// Full 32-byte BLAKE3 — the authoritative-content baseline.
     Blake3Full32,
-    /// First 16 bytes of the same BLAKE3 digest — the selected local
-    /// fingerprint default (pre-probe).
+    /// First 16 bytes of the same plain BLAKE3 digest; a width baseline,
+    /// not the production domain-separated row construction.
     Blake3Trunc16,
-    /// Domain-separated (derive-key) BLAKE3, 16 bytes — the actual
-    /// fingerprint construction shape including its keyed-state init cost.
+    /// Historical derive-key candidate, including context-key setup cost.
     Blake3DeriveKey16,
+    /// Current row construction: BLAKE3(row domain || relation 0:u32 BE
+    /// || message), first 16 bytes. Does not model determinant hashing.
+    Blake3RowPrefix16,
     /// AEGIS-128L MAC, zero 16-byte key, 16-byte tag — the TigerBeetle-style
     /// AES-round candidate. A cryptographic construction with a public fixed
     /// key is a checksum, not sender authentication, and the birthday bound
@@ -62,10 +62,11 @@ pub enum Candidate {
     Aegis128LMac16,
 }
 
-pub const CANDIDATES: [Candidate; 4] = [
+pub const CANDIDATES: [Candidate; 5] = [
     Candidate::Blake3Full32,
     Candidate::Blake3Trunc16,
     Candidate::Blake3DeriveKey16,
+    Candidate::Blake3RowPrefix16,
     Candidate::Aegis128LMac16,
 ];
 
@@ -76,6 +77,7 @@ impl Candidate {
             Self::Blake3Full32 => "blake3-full-32",
             Self::Blake3Trunc16 => "blake3-trunc-16",
             Self::Blake3DeriveKey16 => "blake3-derive-key-16",
+            Self::Blake3RowPrefix16 => "blake3-row-prefix-rel0-16",
             Self::Aegis128LMac16 => "aegis-128l-mac-16",
         }
     }
@@ -84,9 +86,23 @@ impl Candidate {
     pub const fn output_bytes(self) -> usize {
         match self {
             Self::Blake3Full32 => 32,
-            Self::Blake3Trunc16 | Self::Blake3DeriveKey16 | Self::Aegis128LMac16 => 16,
+            Self::Blake3Trunc16
+            | Self::Blake3DeriveKey16
+            | Self::Blake3RowPrefix16
+            | Self::Aegis128LMac16 => 16,
         }
     }
+}
+
+/// Mirrors the private row envelope in storage/store/fingerprint.rs, using
+/// its public streaming Digest primitive. `RelationId` is u32; the domain is
+/// raw prefix bytes, NOT a derive-key context. No prepared-state cache:
+/// production creates and feeds this prefix on every row fingerprint.
+fn row_prefix_state() -> bumbledb::digest::Digest {
+    let mut digest = bumbledb::digest::Digest::new();
+    digest.update(b"bumbledb/1/row-fp");
+    digest.update(&bumbledb::RelationId(0).0.to_be_bytes());
+    digest
 }
 
 /// AEGIS MAC adapter — one place to fix if the pinned `aegis` crate exposes a
@@ -120,6 +136,11 @@ pub fn digest_oneshot(candidate: Candidate, message: &[u8]) -> Vec<u8> {
             let mut hasher = blake3::Hasher::new_derive_key(FINGERPRINT_PROBE_CONTEXT);
             hasher.update(message);
             hasher.finalize().as_bytes()[..16].to_vec()
+        }
+        Candidate::Blake3RowPrefix16 => {
+            let mut digest = row_prefix_state();
+            digest.update(message);
+            digest.finalize()[..16].to_vec()
         }
         Candidate::Aegis128LMac16 => aegis128l_mac16_oneshot(message).to_vec(),
     }
@@ -159,6 +180,13 @@ pub fn digest_streaming(candidate: Candidate, message: &[u8], schedule: &[usize]
                 hasher.update(chunk);
             }
             hasher.finalize().as_bytes()[..16].to_vec()
+        }
+        Candidate::Blake3RowPrefix16 => {
+            let mut digest = row_prefix_state();
+            for chunk in &chunks {
+                digest.update(chunk);
+            }
+            digest.finalize()[..16].to_vec()
         }
         Candidate::Aegis128LMac16 => aegis128l_mac16_streaming(&mut chunks.into_iter()).to_vec(),
     }
@@ -225,7 +253,7 @@ pub struct TimingRow {
     pub len: usize,
     pub align_offset: usize,
     pub stats: Stats,
-    /// Bytes hashed across all samples (the work denominator).
+    /// Message payload bytes across samples; excludes domain/scope framing.
     pub work_bytes: u64,
 }
 
@@ -236,7 +264,7 @@ pub struct ProbeReport {
     pub equivalence: &'static str,
     pub kat: kat::KatOutcome,
     pub rows: Vec<TimingRow>,
-    /// State-init proxy: hashing the empty input, fresh state per call.
+    /// Fresh-state empty-message proxy; includes finalization and Vec allocation.
     pub init_rows: Vec<TimingRow>,
     /// Mixed short-fact stream rows (one row per candidate over the stream).
     pub mixture_rows: Vec<TimingRow>,
@@ -412,6 +440,9 @@ pub fn to_json(probe: &ProbeReport) -> String {
         probe.seed, probe.equivalence
     );
     probe.kat.push_json(&mut out);
+    out.push_str(
+        ",\"kat_scope\":[\"blake3-full-32\"],\"reuse_timing\":\"not-run\",\"timing_scope\":\"fresh-state-finalize-vec\"",
+    );
     push_rows(&mut out, "rows", &probe.rows);
     push_rows(&mut out, "init_rows", &probe.init_rows);
     push_rows(&mut out, "mixture_rows", &probe.mixture_rows);
@@ -424,12 +455,19 @@ fn render(probe: &ProbeReport) -> String {
     let _ = writeln!(out, "# Hash candidate probe\n");
     let _ = writeln!(
         out,
-        "Equivalence: {}. KAT: {}. Seed {}. Times are per-hash; work is bytes \
-         hashed across samples. Output width and hashing time are separate \
+        "Equivalence: {}. KAT: {}. Seed {}. Times are per-hash; work is message \
+         payload bytes across samples, excluding framing. Output width and hashing time are separate \
          decisions — trunc-16 shares full-32 compression work by construction.\n",
         probe.equivalence,
         probe.kat.describe(),
         probe.seed
+    );
+    let _ = writeln!(
+        out,
+        "Production row candidate: blake3-row-prefix-rel0-16. The derive-key label \
+         retains its historical construction. KAT status covers only plain \
+         blake3-full-32; other construction KATs and reuse timing are not run. \
+         All timings include fresh state, finalization and Vec allocation.\n"
     );
     let _ = writeln!(
         out,

@@ -17,7 +17,7 @@ use crate::json;
 use crate::report::{GhzReport, Provenance};
 use crate::schema::{Ledger, Posting, PostingId, ids, schema};
 use crate::sqlite_run::POSTING_INSERT;
-use crate::{clockproxy, corpus, sqlmap, trace_out, writebench};
+use crate::{clockproxy, corpus, sqlmap, writebench};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WritesReport {
@@ -98,7 +98,7 @@ pub fn to_json(report: &WritesReport) -> String {
     out
 }
 
-fn to_markdown(report: &WritesReport, flames: &[(&'static str, String, String)]) -> String {
+fn to_markdown(report: &WritesReport) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -128,13 +128,6 @@ fn to_markdown(report: &WritesReport, flames: &[(&'static str, String, String)])
                 row.rows_per_sec_ours,
                 row.rows_per_sec_theirs,
             );
-        }
-    }
-    if !flames.is_empty() {
-        let _ = writeln!(out, "\n## Flame summaries (per cell, --trace)\n");
-        for (lane, family, table) in flames {
-            let _ = writeln!(out, "### {lane} / {family}\n");
-            let _ = writeln!(out, "```text\n{table}```\n");
         }
     }
     out
@@ -535,18 +528,13 @@ fn verify_post_state(
 /// always (seconds of fsync leave the deepest clock shadow; nothing measures
 /// after it — the `write_families` order pin, carried here by the same
 /// `debug_assert!`).
-#[expect(
-    clippy::too_many_lines,
-    reason = "one durability lane, whole — the measured order is the content"
-)]
 fn run_lane(
     lane: DurabilityLane,
     cfg: GenConfig,
     proto: Protocol,
     batches: &[u32],
     scratch: &Path,
-    trace_dir: Option<&Path>,
-) -> Result<(LaneReport, Vec<(String, String)>), String> {
+) -> Result<LaneReport, String> {
     std::fs::create_dir_all(scratch).map_err(|e| format!("scratch: {e}"))?;
     let sizes = Sizes::of(cfg.scale);
 
@@ -562,11 +550,10 @@ fn run_lane(
     lane.configure(&conn)?;
     lane.assert_parity(&conn)?;
 
-    let calls = u64::from(proto.warmups + proto.samples) + u64::from(trace_dir.is_some());
+    let calls = u64::from(proto.warmups + proto.samples);
     let mut inserted = 0u64;
     let mut deleted = 0u64;
     let mut rows = Vec::new();
-    let mut flames: Vec<(String, String)> = Vec::new();
 
     for &batch in batches {
         let name = format!("commit_b{batch}");
@@ -579,14 +566,6 @@ fn run_lane(
                 commit_sqlite(&conn, cfg, proto, batch, &mut rng_theirs)?,
             ))
         })?;
-        if let Some(table) = trace_out::traced_twin(
-            trace_dir,
-            &name,
-            &mut |p| commit_engine(&db, cfg, p, batch, &mut rng_ours),
-            &mut |p| commit_sqlite(&conn, cfg, p, batch, &mut rng_theirs),
-        )? {
-            flames.push((name.clone(), table));
-        }
         inserted += calls * u64::from(batch);
         rows.push(ladder_row(
             name,
@@ -609,14 +588,6 @@ fn run_lane(
                 delete_sqlite(&conn, &mut mirrored, proto, batch)?,
             ))
         })?;
-        if let Some(table) = trace_out::traced_twin(
-            trace_dir,
-            &name,
-            &mut |p| harness::measure(p, || delete_recorded(&db, &mut recorded, batch)),
-            &mut |p| delete_sqlite(&conn, &mut mirrored, p, batch),
-        )? {
-            flames.push((name.clone(), table));
-        }
         if !recorded.is_empty() || !mirrored.is_empty() {
             return Err(format!(
                 "delete_b{batch}: {} engine / {} sqlite rows survived the ladder \
@@ -669,22 +640,16 @@ fn run_lane(
             .is_none_or(|index| index == rows.len() - 1),
         "insert_stream must be the last write row"
     );
-    Ok((
-        LaneReport {
-            lane: lane.label(),
-            sqlite_sync: lane.sqlite_sync_label(),
-            rows,
-        },
-        flames,
-    ))
+    Ok(LaneReport {
+        lane: lane.label(),
+        sqlite_sync: lane.sqlite_sync_label(),
+        rows,
+    })
 }
 
 /// # Errors
 /// The device-honesty refusal; setup failures; the post-state gate.
 pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
-    if args.trace && !cfg!(feature = "obs") {
-        return Err(crate::driver::obs_missing("--trace"));
-    }
     // Device honesty FIRST, before creating anything: the timed write
 
     crate::devhonesty::assert_disk_backed(&args.dir, "the timed write lanes")
@@ -698,8 +663,7 @@ pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    // Write-appropriate protocol, COLD-family-sized: every sample pays
-
+    // Each sample includes a durable commit; use the smaller cold-family protocol.
     let proto = Protocol {
         warmups: 2,
         samples: args.samples.unwrap_or(32),
@@ -710,26 +674,10 @@ pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
     };
 
     let mut lanes = Vec::new();
-    let mut flames: Vec<(&'static str, String, String)> = Vec::new();
     for lane in &args.lanes {
         let scratch = out_dir.join("scratch").join(lane.label());
-        let trace_dir = args
-            .trace
-            .then(|| out_dir.join("trace").join("writes").join(lane.label()));
-        let (report, lane_flames) = run_lane(
-            *lane,
-            cfg,
-            proto,
-            &args.batches,
-            &scratch,
-            trace_dir.as_deref(),
-        )?;
+        let report = run_lane(*lane, cfg, proto, &args.batches, &scratch)?;
         lanes.push(report);
-        flames.extend(
-            lane_flames
-                .into_iter()
-                .map(|(family, table)| (lane.label(), family, table)),
-        );
     }
 
     let report = WritesReport {
@@ -741,14 +689,11 @@ pub fn run(args: &crate::cli::WritesArgs) -> Result<i32, String> {
     };
     std::fs::write(out_dir.join("writes-report.json"), to_json(&report))
         .map_err(|e| format!("artifact: {e}"))?;
-    let markdown = to_markdown(&report, &flames);
+    let markdown = to_markdown(&report);
     std::fs::write(out_dir.join("writes-report.md"), &markdown)
         .map_err(|e| format!("artifact: {e}"))?;
     print!("{markdown}");
     println!("artifacts: {}", out_dir.display());
-    if args.trace {
-        println!("traces: {}", out_dir.join("trace").join("writes").display());
-    }
 
     let _ = std::fs::remove_dir_all(out_dir.join("scratch"));
     Ok(0)
@@ -931,7 +876,6 @@ mod tests {
             lanes: vec![DurabilityLane::Durable],
             batches: vec![1, 10],
             samples: Some(4),
-            trace: false,
             out: Some(out.clone()),
         })
         .expect("the tiny ladder runs");
@@ -1079,53 +1023,6 @@ mod tests {
             "the divergent count is named: {err}"
         );
         drop((db, conn));
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[cfg(feature = "obs")]
-    #[test]
-    fn traced_writes_land_the_lmdb_commit_span() {
-        let dir = scratch("traced-ladder");
-        let out = dir.join("out");
-        let code = run(&crate::cli::WritesArgs {
-            scale: Scale::Tiny,
-            seed: 1,
-            dir: dir.clone(),
-            lanes: vec![DurabilityLane::Durable],
-            batches: vec![1],
-            samples: Some(2),
-            trace: true,
-            out: Some(out.clone()),
-        })
-        .expect("the traced tiny ladder runs (post-state gate included)");
-        assert_eq!(code, 0);
-        let md = std::fs::read_to_string(out.join("writes-report.md")).expect("markdown");
-        assert!(md.contains("Flame summaries"), "{md}");
-        let lane_dir = out.join("trace").join("writes").join("durable");
-        for cell in ["commit_b1", "delete_b1"] {
-            let json_path = lane_dir.join(format!("{cell}.json"));
-            let text = std::fs::read_to_string(&json_path)
-                .unwrap_or_else(|e| panic!("{}: {e}", json_path.display()));
-            assert!(
-                text.starts_with("[\n") && text.ends_with("\n]\n"),
-                "{} parses as a Chrome array",
-                json_path.display()
-            );
-            let folded = std::fs::read_to_string(lane_dir.join(format!("{cell}.folded")))
-                .expect("the folded twin lands beside the json");
-            assert!(!folded.is_empty(), "a non-degenerate fold: {cell}");
-            for line in folded.lines() {
-                let count = line.rsplit(' ').next().expect("a self-ns tail");
-                assert!(count.parse::<u64>().is_ok(), "folded self-ns: {line}");
-            }
-        }
-        let commit = std::fs::read_to_string(lane_dir.join("commit_b1.json")).expect("commit");
-        assert!(
-            commit.contains(bumbledb::obs::names::LMDB_COMMIT.label()),
-            "the LMDB commit span reaches the commit cell's artifact"
-        );
-
-        assert!(!lane_dir.join("insert_stream.json").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

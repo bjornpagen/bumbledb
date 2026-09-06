@@ -160,10 +160,6 @@ fn filter_chunked(
 
     // capacity` (`u32` carries no drop obligation).
     unsafe { out.set_len(write) };
-    crate::obs::event(
-        crate::obs::names::KERNEL_ALLEN,
-        crate::obs::TraceArgs::Pair(n as u64, (write - start) as u64),
-    );
 }
 
 fn codes_into(

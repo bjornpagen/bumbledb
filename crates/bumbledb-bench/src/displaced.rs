@@ -394,8 +394,8 @@ pub fn bench_families(
     scratch: &Path,
     selected: &dyn Fn(&str) -> bool,
     samples: Option<u32>,
-    alloc: bool,
-    proxy_per_rep: bool,
+    read_batch: Option<std::num::NonZeroU32>,
+    modes: Modes,
     mode: crate::storemode::StoreMode,
 ) -> Result<Vec<report::ReadFamilyReport>, String> {
     if !all().iter().any(|family| selected(family.name)) {
@@ -441,27 +441,23 @@ pub fn bench_families(
             .map_err(|e| format!("execute: {e:?}"))?;
             Ok(buffer.len() as u64)
         };
-        let modes = Modes {
-            alloc_window: alloc,
-            trace: false,
-            proxy_per_rep,
-        };
+        let initial_batch = read_batch.map_or(1, std::num::NonZeroU32::get);
         let mut foreign = ForeignStream::new(family.displace_mib);
         let (ours, ghz_ours) = clockproxy::frequency_checked(|| {
             harness::measure_interleaved(
                 proto,
                 modes,
-                1,
+                initial_batch,
                 || foreign.stream(),
                 || run_ours(&mut prepared),
             )
         })?;
-        let batch = if ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
-            16
+        let batch = if read_batch.is_none() && ours.stats.p50 < harness::QUANTUM_FLOOR_NS {
+            harness::MAX_READ_BATCH
         } else {
-            1
+            initial_batch
         };
-        let (ours, ghz_ours) = if batch > 1 {
+        let (ours, ghz_ours) = if read_batch.is_none() && batch > 1 {
             eprintln!(
                 "bench: {} p50 under the {} ns quantum floor — re-measuring at batch {batch}",
                 family.name,
@@ -513,14 +509,16 @@ pub fn bench_families(
         let merged = ghz_ours.merge(ghz_theirs);
         out.push(report::ReadFamilyReport {
             name: family.name.to_owned(),
+            batch,
             verdict: report::verdict(family.kind, ours.stats.p50, theirs.stats.p50),
             p99_within_budget: report::within_budget(ours.stats.p99),
             ours: ours.stats,
             theirs: theirs.stats,
             ratio_p50,
             alloc: alloc_report,
-            exec: None,
             ghz: Some(merged.into()),
+            ghz_ours: Some(ghz_ours.into()),
+            ghz_theirs: Some(ghz_theirs.into()),
             p50_norm: ours.p50_norm,
         });
     }

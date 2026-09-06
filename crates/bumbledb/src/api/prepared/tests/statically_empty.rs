@@ -124,41 +124,8 @@ fn a_dead_rule_beside_a_live_one_runs_the_live_one_only() {
     assert_eq!(scores_of(&out), vec![40], "kind 7's row; kind 3 never ran");
 }
 
-#[cfg(feature = "trace")]
-#[test]
-fn a_dead_rule_opens_no_rule_span() {
-    use crate::obs;
-
-    let fix = events(&[(1, 7, (0, 10), 40)]);
-
-    let query = Query {
-        interiors: vec![],
-        head: vec![HeadTerm::Var],
-        rules: vec![by_kind_rule(3, contradiction()), by_kind_rule(7, vec![])],
-        rec: None,
-    };
-    let mut prepared = fix.prepare(&query).expect("prepare");
-    obs::start_capture();
-    fix.execute(&mut prepared, &[] as &[BindValue])
-        .expect("execute");
-    let events = obs::finish_capture();
-    let rule_spans: Vec<obs::TracePoint> = events
-        .iter()
-        .map(|e| e.point())
-        .filter(|p| matches!(p, obs::TracePoint::Rule(_)))
-        .collect();
-    assert_eq!(
-        rule_spans,
-        vec![obs::names::RULE[0]],
-        "one rule span: the live rule"
-    );
-}
-
-#[cfg(feature = "trace")]
 #[test]
 fn the_empty_query_builds_no_image_and_binds_no_view() {
-    use crate::obs;
-
     let fix = events(&[(1, 3, (0, 10), 10)]);
 
     let query = Query {
@@ -173,24 +140,12 @@ fn the_empty_query_builds_no_image_and_binds_no_view() {
         PreparedPipeline::Cq { ref rules, .. } if rules.is_empty()
     ));
 
-    obs::start_capture();
     let out = fix
         .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
-    let events = obs::finish_capture();
     assert_eq!(out.len(), 0);
-    let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
-    for touched in [
-        obs::names::IMAGE_BUILD,
-        obs::names::CACHE_HIT,
-        obs::names::VIEW_BUILD,
-        obs::names::JOIN,
-    ] {
-        assert!(
-            !names.contains(&touched),
-            "the empty query must not reach {touched}: {names:?}"
-        );
-    }
+    assert_eq!(prepared.cache.image_count(), 0);
+    assert!(prepared.pipeline.main_rules().is_empty());
 }
 
 #[test]

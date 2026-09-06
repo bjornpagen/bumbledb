@@ -314,61 +314,6 @@ fn deep_chain_is_the_four_atom_report_lane() {
     );
 }
 
-#[cfg(feature = "obs")]
-#[test]
-fn deep_chain_reaches_node_three_at_runtime() {
-    use crate::corpus_gen::{GenConfig, Scale};
-    use crate::harness::Rotation;
-
-    let dir = std::env::temp_dir().join("bumbledb-bench-deep-chain");
-    let _ = std::fs::remove_dir_all(&dir);
-    let cfg = GenConfig {
-        seed: 1,
-        scale: Scale::S,
-    };
-    let db = bumbledb::Db::create(
-        &dir.join("db"),
-        crate::schema::Ledger,
-        crate::harness::bench_work(),
-    )
-    .expect("create")
-    .expect("accepted");
-    crate::corpus::load_bumbledb(&db, cfg).expect("load");
-
-    let family = all()
-        .iter()
-        .find(|f| f.name == "deep_chain")
-        .expect("registered");
-    let mut prepared = db
-        .prepare(&(family.query)(), crate::harness::bench_work())
-        .expect("prepare");
-    let mut rotation = Rotation::new((family.params)(&cfg));
-    let mut buffer = bumbledb::Answers::new();
-    let mut run = || {
-        let args = crate::families::param_args(rotation.next_set());
-        db.read(crate::harness::bench_work(), |snap| {
-            snap.execute(&mut prepared, &args, &mut buffer)
-        })
-        .map_err(|e| format!("{e:?}"))?;
-        Ok(buffer.len() as u64)
-    };
-    for _ in 0..4 {
-        run().expect("warm");
-    }
-    let (rows, events) = crate::harness::traced_sample(&mut run).expect("traced");
-    assert!(rows > 0, "the suffix edge selects rows");
-    assert!(
-        events.iter().any(|event| event.name().ends_with("_n3")),
-        "no node-3 phase fired: {:?}",
-        events
-            .iter()
-            .map(|event| event.name())
-            .collect::<std::collections::BTreeSet<_>>()
-    );
-    drop(db);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 #[test]
 fn the_query_list_renders_every_section_of_both_theories() {
     let md = render_queries_md();

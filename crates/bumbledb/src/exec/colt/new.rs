@@ -64,6 +64,13 @@ impl Colt {
         }
     }
 
+    /// Move cached view/trie contents without moving either slot's current
+    /// operation binding. Pool reservations move with their owning pools.
+    pub(crate) fn swap_contents_preserving_work(&mut self, other: &mut Self) {
+        std::mem::swap(self, other);
+        std::mem::swap(&mut self.work, &mut other.work);
+    }
+
     pub fn reset(&mut self, view: View) -> View {
         let old = std::mem::replace(&mut self.view, view);
         self.nodes.clear();

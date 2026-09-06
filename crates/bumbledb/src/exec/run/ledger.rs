@@ -9,10 +9,14 @@ use crate::exec::sink::STEP_QUANTUM;
 use crate::work::{WorkContext, WorkError};
 
 impl Executor {
-    /// Install this execution's ledger. Called by `run_join` before every
-    /// `execute`; the executor releases its growth reservations and drops
-    /// the handle when that execution ends.
-    pub(crate) fn begin_work(&mut self, work: &WorkContext) {
+    /// Bind the operation once, before any COLT force/select or execution.
+    /// Both prepared queries and direct executor callers pass the same COLTs
+    /// they will execute. Pool reservations retain their original ownership;
+    /// rebinding changes only the context used for subsequent work.
+    pub(crate) fn begin_work(&mut self, work: &WorkContext, colts: &mut [Colt]) {
+        for colt in colts {
+            colt.bind(Some(work));
+        }
         self.ledger = Some(ExecLedger {
             work: work.clone(),
             pending: 0,
@@ -47,13 +51,7 @@ impl Executor {
         let Some(ledger) = &mut self.ledger else {
             return true;
         };
-        ledger.pending = ledger
-            .pending
-            .saturating_add(u32::try_from(yielded).unwrap_or(u32::MAX));
-        if ledger.pending < STEP_QUANTUM {
-            return true;
-        }
-        if let Err(error) = poll(ledger) {
+        if let Err(error) = ledger.note_explored(yielded) {
             self.poison(Poison::Work(error));
             return false;
         }
@@ -71,6 +69,21 @@ impl Executor {
                 None
             }
         }
+    }
+}
+
+impl ExecLedger {
+    /// Charge the same bounded exploration quantum from recursion or a
+    /// borrowed fused scan; the caller retains ownership of error poison.
+    #[inline]
+    pub(super) fn note_explored(&mut self, yielded: usize) -> Result<(), WorkError> {
+        self.pending = self
+            .pending
+            .saturating_add(u32::try_from(yielded).unwrap_or(u32::MAX));
+        if self.pending < STEP_QUANTUM {
+            return Ok(());
+        }
+        poll(self)
     }
 }
 

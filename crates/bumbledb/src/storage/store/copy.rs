@@ -1,17 +1,19 @@
 //! Fresh-destination capability and snapshot adoption (CORE-015/CORE-016).
 
-use heed::RoTxn;
+use heed::types::Bytes;
+use heed::{Database, PutFlags, RoTxn, RwTxn};
 
 use super::candidate::RowIndexer;
 use super::error::{StoreCorruption, StoreError, StoreResult};
-use super::format::{K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, K_RELATION_VERSION_TAG};
+use super::format::{
+    K_ATTACHMENT, K_GENERATION, K_HOST_RECORD_TAG, K_RELATION_VERSION_TAG, K_STORE_ID,
+};
 use super::keys;
 use super::rows;
 use super::snapshot::OwnedSnapshot;
 use super::store_env::Store;
 use crate::storage::GenerationId;
 use crate::work::WorkContext;
-use bumbledb_theory::schema::RelationId;
 
 /// Unforgeable proof that a store was freshly created for adoption (chapter
 /// 61). Only [`Store::create`] mints this; snapshot adoption consumes it.
@@ -28,6 +30,50 @@ impl FreshDestination {
 }
 
 impl Store {
+    /// Same-format maintenance copy, not logical snapshot adoption. Preserve
+    /// row surrogates and every physical index, packing each tree in ascending
+    /// key order. Rebuilding indexes row-by-row interleaves ordered insertions
+    /// before other namespaces and leaves half-full LMDB pages.
+    #[cfg_attr(
+        not(any(test, feature = "collision-probe")),
+        expect(
+            clippy::needless_pass_by_value,
+            reason = "The fresh-destination capability must be consumed, not borrowed"
+        )
+    )]
+    pub(crate) fn compact_snapshot(
+        &self,
+        source: &OwnedSnapshot,
+        fresh: FreshDestination,
+        work: &WorkContext,
+    ) -> StoreResult<()> {
+        if source.schema_fingerprint() != self.inner.schema_fp {
+            return Err(StoreError::ForeignSchema);
+        }
+        // Production has one format-fixed fingerprint policy. Forced-collision
+        // stores are test-only and need logical reindexing when policies differ.
+        #[cfg(any(test, feature = "collision-probe"))]
+        if !same_fingerprinter(source.store_inner().fingerprinter, self.inner.fingerprinter) {
+            return self.adopt_snapshot(source, fresh, &super::UnindexedRows, work);
+        }
+        let FreshDestination(FreshDestinationToken) = fresh;
+        let owner = self.writer(work)?;
+        loop {
+            work.checkpoint()?;
+            match compact_attempt(self, source, work) {
+                Err(StoreError::MapFull { .. }) => {
+                    self.grow(work, None)?;
+                }
+                result => {
+                    result?;
+                    break;
+                }
+            }
+        }
+        drop(owner);
+        Ok(())
+    }
+
     /// Copy every committed row, host record, attachment and generation of
     /// `source` into this store atomically. Requires a [`FreshDestination`]
     /// or complete metadata emptiness — zero rows alone is insufficient
@@ -98,6 +144,111 @@ impl Store {
     }
 }
 
+#[cfg(any(test, feature = "collision-probe"))]
+fn same_fingerprinter(left: super::Fingerprinter, right: super::Fingerprinter) -> bool {
+    match (left, right) {
+        (super::Fingerprinter::Blake3, super::Fingerprinter::Blake3) => true,
+        (super::Fingerprinter::Constant(left), super::Fingerprinter::Constant(right)) => {
+            left == right
+        }
+        _ => false,
+    }
+}
+
+fn compact_attempt(dest: &Store, source: &OwnedSnapshot, work: &WorkContext) -> StoreResult<()> {
+    let inner = &dest.inner;
+    let mut gated = dest.gated_write_txn(work)?;
+    refuse_nonempty_destination(&gated.txn, dest)?;
+    // APPEND requires the entire target tree to be empty, not merely its row
+    // namespace. Refuse orphan indexes too, even with a fresh-create token.
+    if !inner
+        .data
+        .is_empty(&gated.txn)
+        .map_err(StoreError::from_heed)?
+    {
+        return Err(StoreError::DestinationExists {
+            path: dest.path().to_path_buf(),
+        });
+    }
+    let source_inner = source.store_inner();
+    let source_txn = source.read_txn();
+    for entry in source_inner
+        .data
+        .iter(source_txn)
+        .map_err(StoreError::from_heed)?
+    {
+        let (key, value) = entry.map_err(StoreError::from_heed)?;
+        if key.first() == Some(&keys::TAG_ROW) {
+            work.rows(1)?;
+        }
+        append_entry(*inner.data, &mut gated.txn, key, value, work)?;
+    }
+    // Repack metadata as well. Source and destination were opened/created with
+    // the same format and schema. Copy all state, including future metadata
+    // families, but keep the destination's newly minted store identity.
+    inner
+        .meta
+        .clear(&mut gated.txn)
+        .map_err(super::store_env::map_txn_error)?;
+    for entry in source_inner
+        .meta
+        .iter(source_txn)
+        .map_err(StoreError::from_heed)?
+    {
+        let (key, value) = entry.map_err(StoreError::from_heed)?;
+        let value = if key == K_STORE_ID {
+            inner.identity.store.0.as_slice()
+        } else {
+            value
+        };
+        append_entry(inner.meta, &mut gated.txn, key, value, work)?;
+    }
+    work.checkpoint()?;
+    gated.commit()
+}
+
+/// No owned row buffers: small entries copy directly, overflow-sized values
+/// fill LMDB's reserved space in bounded chunks with typed cancellation.
+fn append_entry<C>(
+    db: Database<Bytes, Bytes, C>,
+    txn: &mut RwTxn<'_>,
+    key: &[u8],
+    value: &[u8],
+    work: &WorkContext,
+) -> StoreResult<()> {
+    use std::io::Write as _;
+    work.step(1)?;
+    work.input(key.len() as u64)?;
+    work.input(value.len() as u64)?;
+    if value.len() <= rows::BYTE_QUANTUM {
+        work.step(value.len() as u64)?;
+        return db
+            .put_with_flags(txn, PutFlags::APPEND, key, value)
+            .map_err(super::store_env::map_txn_error);
+    }
+    let mut stopped = None;
+    let result =
+        db.get_or_put_reserved_with_flags(txn, PutFlags::APPEND, key, value.len(), |space| {
+            for chunk in value.chunks(rows::BYTE_QUANTUM) {
+                work.step(chunk.len() as u64).map_err(|error| {
+                    stopped = Some(error);
+                    std::io::Error::from(std::io::ErrorKind::Interrupted)
+                })?;
+                space.write_all(chunk)?;
+            }
+            Ok(())
+        });
+    if let Some(error) = stopped {
+        return Err(StoreError::Work(error));
+    }
+    if result.map_err(super::store_env::map_txn_error)?.is_some() {
+        return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
+            "compaction entries are not strictly ordered",
+        )));
+    }
+    Ok(())
+}
+
 fn copy_attempt(
     dest: &Store,
     source: &OwnedSnapshot,
@@ -105,8 +256,9 @@ fn copy_attempt(
     work: &WorkContext,
 ) -> StoreResult<()> {
     let inner = &dest.inner;
-    let mut gated = dest.gated_write_txn(work)?;
+    let gated = dest.gated_write_txn(work)?;
     refuse_nonempty_destination(&gated.txn, dest)?;
+    let mut writer = rows::RowWriter::new(inner, gated, work);
     {
         let source_txn = source.read_txn();
         let prefix = [keys::TAG_ROW];
@@ -118,10 +270,16 @@ fn copy_attempt(
         for entry in range {
             work.step(1)?;
             let (key, row) = entry.map_err(StoreError::from_heed)?;
-            let relation = relation_of_row_key(key)?;
-            rows::insert_row(inner, &mut gated.txn, relation, row, indexer, work)?;
+            let (relation, locator) = source.store_inner().keys.decode_row(key)?;
+            if locator.home().len() != source.store_inner().det.home_width(relation) {
+                return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
+                    "copy row home width",
+                )));
+            }
+            writer.insert(relation, row, indexer)?;
         }
     }
+    let mut gated = writer.finish()?;
     {
         let source_txn = source.read_txn();
         let prefix = [K_HOST_RECORD_TAG];
@@ -253,16 +411,4 @@ fn refuse_relation_versions(txn: &RoTxn<'_, heed::AnyTls>, dest: &Store) -> Stor
         });
     }
     Ok(())
-}
-
-fn relation_of_row_key(key: &[u8]) -> StoreResult<RelationId> {
-    if key.len() != keys::ROW_KEY_LEN {
-        return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
-            "row key width",
-        )));
-    }
-    let relation: [u8; 4] = key[1..5]
-        .try_into()
-        .map_err(|_| StoreError::Corruption(StoreCorruption::MalformedKey("row key relation")))?;
-    Ok(RelationId(u32::from_be_bytes(relation)))
 }

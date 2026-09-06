@@ -9,25 +9,6 @@ use crate::cli::PrimerlaneArgs;
 use super::report::{PhaseAlloc, PhaseRow, PrimerlaneReport, to_json, to_markdown};
 use super::{PrimerConfig, corpus};
 
-mod obs_gate {
-    #[cfg(feature = "obs")]
-    #[expect(
-        clippy::unnecessary_wraps,
-        reason = "signature twin of the feature-off refusal (the obs.rs law)"
-    )]
-    pub(super) fn require(mode: &str) -> Result<(), String> {
-        let _ = mode;
-        Ok(())
-    }
-
-    #[cfg(not(feature = "obs"))]
-    pub(super) fn require(mode: &str) -> Result<(), String> {
-        Err(format!(
-            "`--{mode}` needs the obs feature build (bumbledb/trace + bumbledb/alloc-counter)"
-        ))
-    }
-}
-
 /// # Panics
 fn phase<R>(
     phases: &mut Vec<PhaseRow>,
@@ -193,11 +174,8 @@ fn scan_lane(
 
 /// # Errors
 pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
-    if args.trace {
-        obs_gate::require("trace")?;
-    }
-    if args.alloc {
-        obs_gate::require("alloc")?;
+    if args.alloc && !cfg!(feature = "alloc-counter") {
+        return Err(crate::driver::alloc_missing("--alloc"));
     }
     let out_dir = args.out.clone().unwrap_or_else(|| {
         PathBuf::from("bench-out").join(format!(
@@ -218,9 +196,6 @@ pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
     let counts = corpus::relation_rows(&cfg);
     let descriptor = corpus::descriptor(&cfg);
 
-    if args.trace {
-        bumbledb::obs::start_capture();
-    }
     let mut phases = Vec::new();
     builder_lane(
         &cfg,
@@ -240,11 +215,6 @@ pub fn run(args: &PrimerlaneArgs) -> Result<i32, String> {
     )?;
     scan_lane(&db, &counts, args.alloc, &mut phases)?;
     drop(db);
-    if args.trace {
-        let events = bumbledb::obs::finish_capture();
-        let flame = crate::trace_out::emit_pair(&out_dir, "primerlane", events)?;
-        print!("{flame}");
-    }
 
     let report = PrimerlaneReport {
         provenance: crate::report::provenance(Path::new(".")),

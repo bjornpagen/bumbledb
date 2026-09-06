@@ -1,5 +1,28 @@
 use super::*;
 
+#[test]
+#[cfg(target_os = "macos")]
+fn native_deadline_does_not_enlarge_the_work_ledger() {
+    #[expect(
+        dead_code,
+        reason = "layout-only control for the previous Instant-backed ledger"
+    )]
+    struct InstantLedger {
+        limits: [u64; 6],
+        used: [AtomicU64; 6],
+        deadline: std::time::Instant,
+        cancelled: AtomicBool,
+    }
+    assert_eq!(
+        std::mem::size_of::<Ledger>(),
+        std::mem::size_of::<InstantLedger>()
+    );
+    assert_eq!(
+        std::mem::align_of::<Ledger>(),
+        std::mem::align_of::<InstantLedger>()
+    );
+}
+
 fn policy() -> ExecutionPolicy {
     ExecutionPolicy {
         input_bytes: 10,
@@ -77,6 +100,46 @@ fn joining_reservations_releases_the_donor_ledger_reference() {
 }
 
 #[test]
+fn reservation_resize_preserves_old_owner_on_refusal_and_refunds_after_shrink() {
+    let ctx = policy().start().unwrap();
+    let mut owner = ctx.reserve(ByteKind::Working, 3).unwrap();
+    let other = ctx.reserve(ByteKind::Working, 2).unwrap();
+    owner.resize(8).unwrap();
+    assert_eq!(ctx.used(Resource::WorkingBytes), 10);
+    assert!(matches!(
+        owner.resize(9),
+        Err(WorkError::Exhausted { requested: 1, .. })
+    ));
+    assert_eq!(owner.bytes(), 8);
+    assert_eq!(ctx.used(Resource::WorkingBytes), 10);
+    owner.resize(4).unwrap();
+    assert_eq!(ctx.used(Resource::WorkingBytes), 6);
+    ctx.cancel();
+    assert_eq!(owner.resize(5), Err(WorkError::Cancelled));
+    owner.resize(0).unwrap();
+    assert_eq!(ctx.used(Resource::WorkingBytes), 2);
+    drop((owner, other));
+    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
+
+    let large = ExecutionPolicy {
+        working_bytes: u64::MAX,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    let mut owner = large.reserve(ByteKind::Working, 1).unwrap();
+    let other = large.reserve(ByteKind::Working, 1).unwrap();
+    assert!(
+        owner.resize(u64::MAX).is_err(),
+        "overflow cannot wrap into admission"
+    );
+    assert_eq!(owner.bytes(), 1);
+    assert_eq!(large.used(Resource::WorkingBytes), 2);
+    drop((owner, other));
+    assert_eq!(large.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
 fn concurrent_admission_cannot_oversubscribe_the_same_allowance() {
     let ctx = policy().start().unwrap();
     let barrier = Arc::new(std::sync::Barrier::new(16));
@@ -122,4 +185,11 @@ fn cancellation_deadline_and_unwind_do_not_leak_reservations() {
     .start()
     .unwrap();
     assert_eq!(expired.checkpoint(), Err(WorkError::DeadlineExceeded));
+    expired.cancel();
+    assert_eq!(
+        expired.step(1),
+        Err(WorkError::Cancelled),
+        "cancellation still wins over deadline and work refusal"
+    );
+    assert_eq!(expired.used(Resource::WorkUnits), 0);
 }

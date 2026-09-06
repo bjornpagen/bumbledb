@@ -1,171 +1,60 @@
-# The Lean specification
+# Lean specification
 
-This tree is the ONLY normative home of bumbledb's semantics; the
-architecture docs cite it and never restate it. The docs keep what
-Lean cannot hold: mechanism, measurement (Free Join realization, COLT,
-the Apple-Silicon laws), decision records, and operations.
+Lean models the database's value, schema, query, and admission semantics.
+It does not verify the Rust implementation. Differential tests connect the
+executable model to independent Rust evaluators and the production engine.
 
-## Toolchain record
+## Build and check
 
-The pin file (`lean-toolchain`) is bare by format, so the selection
-record lives here. The pin moves deliberately, never implicitly — the
-same law as the repository's `rust-toolchain.toml`.
+The toolchain is pinned in `lean-toolchain` to Lean 4.32.0. From the repository
+root, run:
 
-- **Pinned:** `leanprover/lean4:v4.32.0` — the latest stable Lean 4
-  release at selection time (`elan self update` to 4.2.3, then
-  `elan toolchain install stable` resolved to v4.32.0).
-- **Date:** 2026-07-14.
-- **Check 1 — the tree builds:** `lake build` under the pin completes
-  green (15 jobs, seconds-fast).
-- **Check 2 — the version matches:** `lean --version` under the pin
-  reports `Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit
-  8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)`.
+```sh
+scripts/lean.sh
+```
 
-Lakefile form: **TOML** (`lakefile.toml`) — the declarative form; this
-project needs no build programmability.
+This builds the tree, checks for proof placeholders and axiom declarations,
+evaluates the checked-in conformance cases, and runs the Rust-constructor
+correspondence census. The workspace tests own the Rust oracle comparisons;
+the Lean script does not run those tests a second time.
 
-## The refinement chain
+## Model map
 
-- **Level 0 — denotations**: what every construct means
-  (`Values`, `Schema`, `Capacity`, `Dependencies`,
-  `Subsumption`, `Query/Syntax`, `Query/Denotation`,
-  `Query/Membership`, `Query/Aggregates`), plus the successor float
-  domain: canonical binary64 identity and total order (`Float64`,
-  `Float64/Order`), the exact sum/mean accumulator with its merge
-  algebra, 34-limb bound and once-rounding (`Float64/Sum`), dense
-  numeric float intervals over exact rational endpoint order
-  (`FloatInterval`), and the staged nonrecursive composition model
-  with aggregate/computed outputs and the frozen-finite-domain
-  recursion induction (`Query/Stages`).
-- **Level 1 — abstract algorithms**: each semantics-bearing algorithm
-  as a small pure Lean function, PROVED equal to its denotation
-  (`Exec/Sweep`, `Exec/Dedup`, `Exec/Rewrites`, `Exec/Plan` — the
-  Free Join plan formalism at the mathematical level: plan validity,
-  plan soundness against the rule denotation, plannability — and
-  `Exec/Reach` — interior DAG once, then either main `rulesAnswers`
-  (`.cq`) or `reachDen` plus main `rulesAnswers` (`.reach`);
-  `evalQueryList` is the executable listing, proved equal to
-  `evalQuery`. Fuel is not a Lean semantic
-  parameter).
-  Where an algorithm needs a premise the denotation does not supply,
-  Lean forces the premise to be named — those names are exactly the
-  engine's witness types. `Oracle` sits at this level too (placement
-  recorded 2026-07-14, the admission calculus): enforcement plans as
-  witness terms over an abstract ordered oracle, each accepted form's
-  delta-restricted check decided at a proved consultation count —
-  law 3's abstract-cost scoping, spent. `Admission` closes that
-  calculus: the acceptance gate as one inhabited structure
-  (`AdmissibleForm`) — per single-key form one term bundling the
-  denotation, the executable judge, the delta restriction, the
-  oracle plan, and quarantine compliance (five inhabitants); a
-  future form enters the vocabulary by inhabiting the
-  type, and the refused E1 shape is proved uninhabitable in
-  `Countermodels`.
-- **Level 2 — the lifecycle**: transactions, final-state judgment,
-  generation witnesses, ETL — a state machine with its invariance
-  theorems (`Txn`), the delta-restricted incremental judgment
-  (`Txn/DeltaRestriction`), and the successor mutable-consulted
-  support and one-command normalization laws (`Txn/Support`). The
-  fresh-mint allocation model and the braid component-locality
-  theorems are DELETED with their mechanisms: entity identity is
-  application-owned and sealed before submission, and tenant history
-  is ordered by the log's single authority — no retired theorem is
-  relabeled as successor proof.
-- **Level 3 — verified Rust: REFUSED, permanently.** The Rust↔Lean
-  link is empirical: the differential and exhaustive estates,
-  plus the executable-denotation conformance lane.
+| Modules under `Bumbledb/` | Subject |
+|---|---|
+| `Values`, `Float64`, `Float64/Order`, `FloatInterval` | Structural values, canonical floats, ordering, and intervals. |
+| `Schema`, `Capacity`, `Dependencies`, `Subsumption` | Relational constraints and admissible forms. |
+| `Query/` | Query syntax, denotation, membership, aggregates, and stages. |
+| `Exec/` | Abstract planning, rewrites, deduplication, sweeps, and restricted recursion. |
+| `Float64/Sum` | Exact accumulation and once-rounded sum/mean model. |
+| `Txn`, `Txn/DeltaRestriction`, `Txn/Support`, `Decide` | Complete and incremental final-state judgment and their premises. |
+| `Oracle`, `Admission` | Abstract consultation bounds and accepted enforcement forms. |
+| `Countermodels` | Cases that refute stronger or unsupported claims. |
+| `Bridge` | Theorems and the Rust constructors responsible for their premises. |
+| `Conformance`, `Float64/Conformance` | Executable interchange and comparison. |
 
-`Bridge.lean` maps each Lean premise to the current Rust constructor
-that must discharge it (`judge_complete` / `judge_incremental` +
-`LawfulParent` / `judge_final_state`); `lean/correspondence.md` names
-independent expected results. `Countermodels.lean` is the design
-scratchpad — anything refused or bounded gets its countermodel there.
-`Bumbledb.lean` imports everything; building it builds the tree.
+`Bumbledb.lean` imports the model. The tree uses core Lean rather than mathlib.
+Keep implementation details—LMDB pages, SIMD, batching, caches, memory budgets,
+and measured latency—in Rust and benchmark documentation, not the denotation.
+Abstract algorithmic cost is distinct from measured machine performance.
 
-## The laws
+## Scope of the evidence
 
-1. **The zero-duplication law (this campaign's whole point).** A
-   semantic or execution-semantic FACT lives in `lean/` and nowhere
-   else. The architecture docs may MOTIVATE (one intuition sentence
-   per concept) and CITE (`lean/…` theorem name), never restate.
-   Banned in docs after PRDs 11–12: display-math denotations,
-   semantic truth tables, matching/typing equations, and any
-   "means/denotes/iff/exactly when" sentence that does not carry a
-   theorem citation. Mechanically: deleting any semantic sentence from
-   the docs must lose nothing that `lean/` does not already state.
-   `scripts/spec-census.sh` resolves current constructor tokens; it
-   does not ban wording or count `dyn`.
-2. **The gate law.** A change to accepted schemas, query denotation,
-   or execution semantics is not done until the Lean side moves in the
-   same commit; qualification runs `scripts/lean.sh` (kernel +
-   correspondence). Verification is NotRun during fanout.
-3. **The mechanism fence.** Level 1 models the algorithmic essence
-   ONLY: a sweep is a fold, grounding is substitution, dedup is set
-   union. The moment a Lean file mentions batching, buffers, scratch,
-   SIMD, pipelining, memos, or LMDB, it is modeling mechanism and the
-   work is mis-scoped: stop. Performance content NEVER moves to Lean —
-   the docs keep Free Join realization, COLT, the kernels, the
-   measured laws, the refutation records, whole. **Abstract cost is
-   admissible mathematics** (owner ruling 2026-07-14, the admission
-   calculus): consultation counts over an abstract ordered oracle —
-   complexity, stated and proved — may live here, because "the
-   enforcement plan exists and is oracle-bounded" is a semantic fact
-   of acceptance, not a measurement. Measured cost — pinned numbers,
-   batch sizes, kernel shapes, anything with units — stays in the
-   docs, forever.
-4. **Mathlib-free.** The tree builds on core Lean 4 (`lake build`
-   seconds-fast, CI-cheap). `Std`/`Batteries` may be adopted ONLY if a
-   PRD records the specific need; heavy automation and mathlib are
-   refused — proofs stay elementary (finite sets as `List`-quotients
-   or `Finset`-lite structures built in-tree; decidability by
-   construction).
-5. **Zero placeholders, zero axiom declarations — always.** Every
-   gate runs `scripts/lean.sh`: the build plus a grep battery for the
-   proof-escape tokens and for `axiom` as a declaration keyword. The
-   battery bans the escape tokens outright throughout this tree —
-   comments and this README included, which is why this law does not
-   spell them; the exact patterns and their shaping are documented in
-   the script. A statement that resists proof is either wrong (a
-   design finding — record it, the campaign's best outcome) or
-   over-general (narrow it and record the narrowing).
+Read [the conformance guide](conformance/README.md) for the executable subset,
+[correspondence cases](correspondence.md) for independent expected results,
+and [the proof bridge](proof-bridge-ledger.md) for premises and remaining gaps.
+Passing those checks is evidence for their covered cases, not a proof of the
+whole database.
 
-## What Lean does NOT own
+Lean does not model LMDB durability, S3 conditional writes, crash recovery,
+native resource lifetimes, or the host floating-point environment. Hashes are
+also an implementation concern: logical identity uses canonical values, not
+a theorem that distinct values cannot collide under a finite hash.
 
-Mechanism and measurement (the planner's cost decisions, batching,
-kernels, LMDB layout, every pinned number), durability and crash (the
-crashpoint estate owns those; Level 2 models committed-state
-transitions only), the notation grammar (a host-surface fact), and
-operations. The laws live in the code, at the site each governs. **Hashing is
-mechanism:** Lean identity is canonical encoding equality
-(`value_eq_iff_encode_eq`); the store treats blake3 equality as fact
-equality (collision axiom in `10-data-model.md`). **Schema fingerprint**
-is extra-theoretic engine identity, not a hash of `Theory`.
-Engine `DerivedBudgetExceeded` is incompleteness vs `evalQuery`
-(interior tables and `reachDen` on one ledger) — not vs a fueled Lean
-evaluator (there isn't one). **OriginCapacity** and
-**ResultBytesOverflow** are engine-only resource errors.
+Application identity is a structural UUID value. There is no database ID
+minting machine. Set-level commutation does not establish concurrent admission
+or log publication safety; the history implementation has its own authority
+protocol and independent tests.
 
-## History — the seed artifact's provenance
-
-This tree was built from a statement inventory, not a working seed:
-`GPT55DependencyTheory.lean`, produced by the gpt55 audit on
-2026-07-13, pinned against repository commit `98f1103`, checked under
-`leanprover/lean4:v4.32.0` with no `axiom` declarations and no proof
-escapes. Its two imported precursor modules (`LeanQuerySemantics`,
-which imported `DependencyTheory`) were supplied by the audit
-environment and were never in this repository, so the artifact did not
-check standalone here. The campaign REBUILT the base definitions
-in-tree (PRDs 02–05) and PORTED the artifact's theorem statements and
-proofs onto them, adapting names to the language law. The retired
-byte-pinned seed (SHA-256
-`e1f09501079feb23ad93be9ab98aeba3b6b5f50a6a84cbbbf78af095c048a576`,
-byte-identical to the source artifact) remains reachable in git
-history forever. The one recorded semantic
-divergence is the empty-global aggregate (the artifact's `sum [] = 0`
-is refused — `Countermodels.lean`, the SQL zero-row countermodel), and
-the artifact's stratification lemma was structurally subsumed at port
-time (the then-modeled syntax had no head-referencing atoms). The
-linear-reach model lives in `Exec/Reach.lean` over
-`Query/Syntax.lean`'s interiors and `cq | reach` — interior DAG once,
-then either main `rulesAnswers` or `reachDen` plus main. `Bridge.lean` carries
-the reach model's rows, landed with the mechanisms they ledger.
+Semantic changes must update the applicable model and correspondence cases.
+Do not change expected results merely to hide a disagreement.

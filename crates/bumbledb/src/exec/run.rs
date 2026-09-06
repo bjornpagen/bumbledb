@@ -1,9 +1,6 @@
-//! The pipelined Free Join executor (the architecture docs) —
-//! vectorized execution is the default and only path;
-//! batch size 1 is merely its degenerate setting, never a mode
-//! .
-//! path. Middle nodes pump: pending binding rows + carried cursor sets
-//! flow node to node, each node expanding pending entries into shared
+//! Pipelined Free Join: pending bindings and carried cursors flow between
+//! nodes in batches. Batch size one uses the same execution path. Middle
+//! nodes expand and probe shared batches; leaves emit directly to the sink.
 use std::num::NonZeroUsize;
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
@@ -87,8 +84,8 @@ impl LeafBatch<'_> {
     }
 }
 
-/// A fused leaf scan: the last node's suffix
-/// batch is materialized at all. The sink reads leaf words through
+/// A fused leaf scan: no intermediate key batch is materialized.
+/// The sink reads leaf words through
 /// [`Colt::suffix_column`] and outer slots through `bindings`.
 pub struct LeafScan<'a> {
     pub colt: &'a Colt,
@@ -102,6 +99,18 @@ pub struct LeafScan<'a> {
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output`).
 pub trait Sink {
+    /// Whether this sink can consume a witnessed physical set traversal.
+    /// Static dispatch erases the extra traversal machinery for ordinary
+    /// projection/computed sinks. The executor still requires the plan's
+    /// opaque witness before enabling it; capability alone proves nothing.
+    #[inline]
+    fn may_use_distinct_traversal() -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> Flow;
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow;
@@ -123,6 +132,12 @@ pub trait Sink {
     fn skip_capability(&self) -> SkipCapability {
         SkipCapability::Forbidden
     }
+
+    /// Prepare immutable output routing for this execution's single-cover
+    /// fast leaf, after the sink has been aimed at the current rule. Scan
+    /// calls keep this key-slot layout; outer binding values may change.
+    /// Other sinks need no setup and retain their existing scan behavior.
+    fn prepare_scan(&mut self, _key_slots: &[usize]) {}
 
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         let _ = scan;
@@ -169,31 +184,9 @@ pub enum SkipCapability {
     Licensed,
 }
 
-/// One executor phase, for per-(node, phase) time attribution
-/// : the sequential segments of
-/// a node entry's batch loop. `Descend` wraps the per-survivor recursion
-/// loop, so its exclusive time (total minus the next node's phases) is
-/// the per-row bookkeeping — binds, journal restores, and leaf emits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum JoinPhase {
-    Iter,
-
-    Hash,
-
-    Probe,
-
-    Residual,
-
-    Descend,
-
-    Force,
-
-    Gather,
-}
-
-/// Execution observability seam (40-execution): the normal path
-/// instantiates [`NoopCounters`] — zero-sized, compiled to nothing; the
-/// introspection entry point instantiates the counting variant.
+/// Structural test observer. Production instantiates [`NoopCounters`], a
+/// zero-sized type whose callbacks compile away. Tests count work and assert
+/// batch ordering without timing or recording a profile.
 pub trait Counters {
     fn node_entry(&mut self, node: usize);
 
@@ -208,107 +201,17 @@ pub trait Counters {
     fn anti_probe(&mut self, node: usize, hit: bool);
     fn emit(&mut self);
 
-    fn emits(&self) -> u64 {
-        0
-    }
-
     fn skip(&mut self, node: usize);
 
-    /// before the round's rec arms run. Default no-op.
+    /// Keys scheduled together for one sibling probe. Tests distinguish
+    /// cross-parent batches from premature singleton drains without timers.
     #[inline]
-    fn fixpoint_delta(&mut self, rows: u64) {
-        let _ = rows;
-    }
-
-    #[inline]
-    fn fixpoint_round(&mut self, emitted: u64, absorbed: u64) {
-        let _ = (emitted, absorbed);
-    }
-
-    /// unimplemented is exactly zero after monomorphization).
-    #[inline]
-    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
-        let _ = (node, phase);
-    }
-    #[inline]
-    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
-        let _ = (node, phase);
-    }
-}
-
-/// Node-index cap for phase attribution tables: indices past the cap
-/// share the overflow bucket (`nX` names) — plans deeper than this are
-/// attributed coarsely, never dropped.
-#[cfg(feature = "trace")]
-pub const PHASE_NODE_CAP: usize = 8;
-
-/// The trace-mode phase accumulator:
-/// per (node, phase) tick totals via the obs fast clock, flushed as
-/// `Category::Phase` point events at capture end. Never in a timing
-/// path — the prepared-query execute path selects it only under an
-/// active obs capture.
-#[cfg(feature = "trace")]
-pub struct PhaseTimers {
-    acc: [[(u64, u64); JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
-
-    open: [[u64; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
-
-    /// in-cap (node, phase) never reopens before it closes — but every
-    depth: [[u32; JoinPhase::COUNT]; PHASE_NODE_CAP + 1],
-
-    emits: u64,
+    fn probe_batch(&mut self, _node: usize, _subatom: usize, _len: usize) {}
 }
 
 /// The release-path counters: every method compiles to nothing.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct NoopCounters;
-
-/// The phase accumulator's inert twin (the `trace` feature is off): a
-/// ZST with empty bodies, so the execute path's capture branch is
-/// written once, `#[cfg]`-free — the obs.rs law. `obs::capturing` is
-/// a compile-time `false` off, so this arm is dead code the optimizer
-/// drops; the timing path monomorphizes [`NoopCounters`] exactly as
-/// before.
-#[cfg(not(feature = "trace"))]
-#[derive(Debug, Default, Clone, Copy)]
-pub struct PhaseTimers;
-
-#[cfg(not(feature = "trace"))]
-impl PhaseTimers {
-    #[must_use]
-    pub fn new() -> Self {
-        Self
-    }
-
-    #[expect(
-        clippy::unused_self,
-        clippy::trivially_copy_pass_by_ref,
-        reason = "signature twin of the trace-mode flush (the obs.rs law)"
-    )]
-    pub fn flush(&self) {}
-}
-
-#[cfg(not(feature = "trace"))]
-impl Counters for PhaseTimers {
-    #[inline]
-    fn node_entry(&mut self, _: usize) {}
-    #[inline]
-    fn batch(&mut self, _: usize, _: usize) {}
-    #[inline]
-    fn cover_choice(&mut self, _: usize, _: usize, _: KeyCount) {}
-    #[inline]
-    fn probe_hash(&mut self, _: usize, _: usize) {}
-    #[inline]
-    fn probe(&mut self, _: usize, _: usize, _: bool) {}
-    #[inline]
-    fn residual(&mut self, _: usize, _: bool) {}
-    #[inline]
-    fn anti_probe(&mut self, _: usize, _: bool) {}
-    #[inline]
-    fn emit(&mut self) {}
-    #[inline]
-    fn skip(&mut self, _: usize) {}
-}
 
 /// Dense slot-indexed binding array with an epoch discipline instead of
 /// `Option` (branch-light: stale slots are never read — reads are
@@ -501,6 +404,8 @@ struct NodePrecompute {
 /// (the prepared query owns both, the 40-execution doc).
 pub struct Executor {
     batch: usize,
+
+    physical_distinct: Option<crate::plan::fj::ScalarSetTraversal>,
 
     cursors: Vec<(Cursor, usize)>,
 

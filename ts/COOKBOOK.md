@@ -1,6 +1,6 @@
 # The Bumbledb TypeScript cookbook
 
-Worked recipes for the successor Effect-native surface: typed schema values,
+Worked recipes for the Effect-native surface: typed schema values,
 declared keys and laws, application-owned `Uuid` identity, one bounded
 native runtime, scoped resources, immutable final-state changes, `Option`
 reads, sealed complete results, and one-shot page streams.

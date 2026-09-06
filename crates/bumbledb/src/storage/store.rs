@@ -8,25 +8,31 @@
 //! `storage::env`/`storage::dict`/`storage::delta` machinery is deleted;
 //! this store is the one storage engine.
 //!
-//! Selected representation, per `final-solution/10` §3–7 and `41`:
+//! Physical representation:
 //!
 //! - Rows are the canonical successor row bytes ([`crate::canonical`]),
 //!   text inline in the LMDB value. There is **no dictionary database**: a
 //!   deleted row leaves no independently live text entry (ENG-006).
-//! - Membership is `(relation, 16-byte fingerprint, local row id) → ()`.
+//! - Row bodies are `(relation, selected exact scalar home, local ordinal)`.
+//!   Relations without an eligible home use an empty home and retain ordinal
+//!   placement. The body exists once: no row directory or duplicate cache.
+//! - Exact membership reuses the selected scalar-home row bucket when
+//!   available. Other relations keep
+//!   `(relation, 16-byte fingerprint, local row id) → ()`.
 //!   The fingerprint is the first 16 bytes of a domain-separated BLAKE3
 //!   digest; it selects a candidate bucket only. Full canonical bytes decide
 //!   equality, also under forced collision. All colliding rows remain
 //!   enumerable and individually deletable.
-//! - Unique-key determinants are `(projection id, routing bytes, optional interval tail, local row id) → ()`
+//! - Secondary determinants are `(projection id, routing bytes, optional interval tail, local row id) → home`
 //!   where routing is either compact exact scalar bytes (≤16) or a 16-byte
 //!   BLAKE3 fingerprint — a **multimap**, so competing proposals coexist
-//!   proposals coexist physically while the final state is judged. Semantic
+//!   physically while the final state is judged. Semantic
 //!   uniqueness is a law enforced by judgment (C03), not an LMDB key
 //!   constraint; installation-order accidents are unrepresentable. The
-//!   entries are schema-derived ([`det_index`]): every sealed key
-//!   statement's scalar determinant is projected, canonically encoded and
-//!   fingerprinted inside the same transaction as its row mutation —
+//!   entries are schema-derived ([`det_index`]); the selected home projection
+//!   has no separate entry because its row bucket already serves it. Other
+//!   determinants are projected and encoded inside the
+//!   same transaction as its row mutation —
 //!   insert, replace, delete and snapshot adoption all maintain the index
 //!   atomically, and keyed reads (point gets, key probes, judgment
 //!   enumeration) resolve through the bucket plus exact decoded-value
@@ -94,11 +100,12 @@ pub use candidate::{
 };
 pub use error::{HostKeyFault, StoreError, StoreResult};
 pub use fingerprint::{FP_LEN, Fingerprinter};
-pub use format::{CoreStoreId, EnvironmentId, RelationVersion, RowId, StoreIdentity};
+pub use format::{CoreStoreId, EnvironmentId, RelationVersion, RowId, RowLocator, StoreIdentity};
 pub use host::{
     AttachmentChange, HostChanges, HostRecordChange, HostResume, HostSealError, HostWindow,
 };
 pub use judge_bridge::{SchemaJudge, UnindexedRows};
+pub use keys::{PhysicalKeyKind, PhysicalKeyWidths};
 pub use map::{MapPolicy, MapReport};
 pub use snapshot::{ExportReport, OwnedSnapshot, StorePageStats};
 pub use store_env::{CloseReport, GrowReport, Store};

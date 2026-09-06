@@ -1,105 +1,107 @@
-# Publishing @bjornpagen/bumbledb
+# Release and package publishing
 
-The owner-run release runbook for the successor packaging design
-(immutable staging via `ts/scripts/stage.ts` and `ts-log/scripts/stage.ts`). Publication is
-OWNER CEREMONY under a separate authorization — no agent, CI job or
-implementation campaign publishes or tags. Historical 0.x release notes
-live in git history of this file; none of their compatibility claims
-carry forward across the 1.0 cutover.
+The release family has five npm packages. All use the workspace version;
+Effect is pinned to `4.0.0-rc.112`, and the SDKs require Node 24 or newer.
 
-## The five packages
+| Package | Contents |
+|---|---|
+| `@bjornpagen/bumbledb-darwin-arm64` | Apple Silicon native addon. |
+| `@bjornpagen/bumbledb-linux-arm64` | Linux ARM64 addon, built in Amazon Linux 2023. |
+| `@bjornpagen/bumbledb-linux-x64` | Linux x64 addon, built in Amazon Linux 2023. |
+| `@bjornpagen/bumbledb` | Core Effect SDK, declarations, source types, and guides. |
+| `@bjornpagen/bumbledb-log` | History SDK, schema/migration subpaths, and migration CLI. |
 
-| Package | Contents | `os`/`cpu` |
-| --- | --- | --- |
-| `@bjornpagen/bumbledb` | dist JS + `.d.ts` + `src/` types isolation (no binary) | none |
-| `@bjornpagen/bumbledb-log` | dist JS + `.d.ts`, `/schema` + `/migrations` subpaths, the `bumbledb-log` CLI | none |
-| `@bjornpagen/bumbledb-darwin-arm64` | only `bumbledb.node` | `darwin` / `arm64` |
-| `@bjornpagen/bumbledb-linux-arm64` | only `bumbledb.node` (amazonlinux:2023, glibc 2.34) | `linux` / `arm64` |
-| `@bjornpagen/bumbledb-linux-x64` | only `bumbledb.node` (amazonlinux:2023, glibc 2.34) | `linux` / `x64` |
+The Linux build targets glibc 2.34; it is not a musl build. Rust workspace
+crates have `publish = false` and are consumed from source/Git. There is no
+C package or public Rust log SDK to publish.
 
-The PUBLISHED main manifest pins every platform package
-`optionalDependencies`-EXACT to its own version; the COMMITTED manifest
-carries no pin and no pack lifecycle hook. `ts/scripts/stage.ts` derives
-the pinned manifest inside an isolated staging tree and packs THERE —
-the checkout is never rewritten, an interrupted stage changes nothing,
-and a lockfile can never demand the current unpublished version (the old
-prepack/postpack injection and its interrupted-restore window are
-deleted). `ts-log`'s staged manifest is derived the same way by
-`ts-log/scripts/stage.ts` (exact same-version core peer, exact
-`effect@4.0.0-rc.112`, the workspace `link:` twin stripped with
-devDependencies).
+A Git tag, a GitHub Release, and npm publication are separate actions.
+Creating a GitHub Release does not put packages in the registry. Registry
+publication remains an explicit owner action.
 
-## Version lockstep
+## Version and source
 
-One writer: the root `[workspace.package] version`. Every versioned
-manifest is a line on `scripts/version-roster.txt`;
-`assertVersionLockstep` (`ts/scripts/build.ts`) fails the build unless
-every roster entry matches, the roster is sweep-complete, ts-log's core
-peer is exact, and the Effect pin is exact. `engineVersion()` bakes the
-version into the shipped binary; the loader only ever resolves its
-own-version artifact (the FFI ABI is not semver-stable).
+The root `[workspace.package] version` owns the version. Keep every manifest
+in `scripts/version-roster.txt`, the log's exact core peer, example dependency
+pins, and lockfiles aligned. Never reuse an npm version that already exists.
 
-## Runbook (darwin-arm64 host, owner)
+`ts/scripts/build.ts` checks the version roster and Effect pin, rebuilds the
+native addon, checks its embedded engine version, emits isolated declarations,
+and verifies the staged package shape.
+
+The released core manifest gets exact-version optional dependencies on all
+three native packages. These pins are injected into staging, not the checkout.
+The log gets an exact-version core peer. A consumer must never load a native
+addon from a different package version.
+
+## Verification and native artifacts
+
+1. Finish the source and documentation, then run the repository correctness
+   battery. Preserve benchmark source provenance separately from the final
+   release revision; a documentation/version-only change does not turn an
+   older report into a measurement of a different binary.
+2. Push the final candidate and require its exact-commit CI checks to pass.
+   The `bumbledb-log` workflow builds the Linux artifacts in Amazon Linux
+   2023 on their respective architectures.
+3. Download `bumbledb.linux-arm64.node` and `bumbledb.linux-x64.node` from
+   that run. Place them as `ts/npm/<platform>/bumbledb.node`; retain the
+   run ID, source revision, and artifact digests. Do not substitute a macOS
+   binary or an earlier candidate's artifact.
+4. Build the local Apple Silicon addon and both SDKs. Stage all platforms
+   and run the installed-consumer check. Per-host CI uses `--host-only`;
+   release assembly requires all three real platform binaries.
+
+Useful checks from the repository root:
 
 ```sh
-cd ts
-
-# 1. Bump the workspace version + roster manifests; the build asserts it.
-
-# 2. Place the linux artifacts from a green CI run of THIS commit:
-#    gh run download <run-id> --name bumbledb.linux-arm64.node --dir /tmp/artifacts
-#    gh run download <run-id> --name bumbledb.linux-x64.node   --dir /tmp/artifacts
-#    cp /tmp/artifacts/bumbledb.linux-arm64.node npm/linux-arm64/bumbledb.node
-#    cp /tmp/artifacts/bumbledb.linux-x64.node   npm/linux-x64/bumbledb.node
-#    Never rebuild a linux binary on this host; never copy a darwin
-#    binary into a linux package.
-
-# 3. Build + verify (lockstep, cargo release build, smoke-load through
-#    the by-name loader, STAGED tarball proof: pins exact, no binary in
-#    main, platform allowlist exact, checkout untouched).
-pnpm install
-pnpm test
-pnpm exec tsc --noEmit
-pnpm exec biome check .
-
-# 4. Full repo gates + the packed-import gate (stages all five tarballs
-#    into an isolated consumer, typechecks the chapter 34 fixtures,
-#    runs the runtime smoke):
-(cd .. && scripts/battery.sh)
-
-# 5. Stage the release tarballs — these EXACT files are what publishes;
-#    nothing is rebuilt at publish time.
-node scripts/stage.ts --out /tmp/release
-(cd ../ts-log && node scripts/stage.ts --out /tmp/release)
-
-# 6. Publish platform packages FIRST (the main's exact pins must resolve),
-#    then the main, then the log (its exact core peer must resolve).
-#    Interactive OTP each time; access is public via publishConfig.
-V=<version>
-pnpm publish --no-git-checks /tmp/release/bjornpagen-bumbledb-darwin-arm64-$V.tgz
-pnpm publish --no-git-checks /tmp/release/bjornpagen-bumbledb-linux-arm64-$V.tgz
-pnpm publish --no-git-checks /tmp/release/bjornpagen-bumbledb-linux-x64-$V.tgz
-pnpm publish --no-git-checks /tmp/release/bjornpagen-bumbledb-$V.tgz
-pnpm publish --no-git-checks /tmp/release/bjornpagen-bumbledb-log-$V.tgz
-
-# 7. Distribution proof (PKG-07B): download the actual registry
-#    artifacts, verify digests match the staged files, clean-install in
-#    an empty project, and only then declare the release complete. A
-#    mismatch is a release incident, never retroactive qualification.
-pnpm view @bjornpagen/bumbledb@$V dist.shasum
-shasum /tmp/release/bjornpagen-bumbledb-$V.tgz
-
-# 8. Tag (owner ceremony): git tag -a v$V <commit> && git push origin v$V
+scripts/battery.sh
+scripts/packed-import.sh
 ```
 
-Notes:
+A passing local battery does not prove real-S3 behavior, Graviton performance,
+a larger-than-memory workload, or public-registry installation. Required
+evidence and its validator remain in `.config/obligation-inventory.json`
+and `scripts/release-results.mjs`. Do not relabel missing evidence as passed.
 
-- pnpm 11's default `minimumReleaseAge` (1440 min) delays consumers that
-  do not exclude `@bjornpagen/*`; this repo's own workspaces do.
-- `npm publish --provenance` needs a CI runner; if adopted, order stays
-  platform-first.
-- Verifying a published install on a clean host: `npm install
-  @bjornpagen/bumbledb` in an empty project, then import it — the
-  platform dep resolves by host; outside the shipped set the install
-  succeeds and the first load throws the typed unsupported-platform
-  error naming the shipped roster.
+## Immutable staging
+
+After building and checking the candidate, stage into a fresh output directory:
+
+```sh
+(cd ts && node scripts/stage.ts --out /absolute/path/to/release)
+(cd ts-log && node scripts/stage.ts --out /absolute/path/to/release)
+```
+
+The first command requires all three native binaries by default. The
+`--host-only` and `--skip-binary` options are development conveniences, not
+full-release assembly. Staging copies built outputs into temporary package
+trees and records package provenance; it does not rewrite source manifests.
+
+Inspect the five tarballs, their versions, dependency pins, native platform
+headers, and provenance. Record SHA-256 digests of the exact files. Attach
+those tarballs and checksums to the GitHub Release so the owner can publish
+the verified bytes without rebuilding.
+
+## Registry order and confirmation
+
+Publish the three native platform tarballs first, then core, then log. Use
+the staged tarball paths, not the source package directories. Every command
+must stop on failure; never proceed with a partially published dependency
+family as though it were complete. Authentication or OTP may be required.
+
+After publication, download the registry artifacts and compare their hashes
+with the staged files. Test a clean installed consumer on each supported
+platform. Only this establishes registry distribution; local tarball tests
+cannot substitute for it.
+
+pnpm's minimum-release-age policy can delay fresh packages. Consumers should
+make any scoped exception deliberately; do not turn off registry safeguards
+globally as part of a database install.
+
+## Release scope
+
+This remains a 0.x release. Hosted generated migration orchestration is
+unfinished through the TypeScript/native bridge, and local benchmark results
+do not satisfy the independent remote/backend qualification requirements.
+Release notes must state these limitations. A published release is not a
+claim that all 1.0 gates have been met.

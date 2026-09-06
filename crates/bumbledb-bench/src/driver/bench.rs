@@ -13,23 +13,22 @@ use super::{BenchRun, CASES_FILE, CorpusPaths, ensure_corpus};
 /// The stamp-refusal message, with the user's own flags substituted.
 pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
     format!(
-        "bench refuses: no fresh verify stamp for this corpus.\n\
-         run first: bumbledb-bench verify --scale {} --seed {} --dir {}\n\
-         (or pass --i-am-lying to run unverified — the report will say so)",
+        "no fresh verify stamp for this corpus.\n\
+         run first: bumbledb-bench verify --scale {} --seed {} --dir {}",
         corpus.scale.label(),
         corpus.seed,
         corpus.dir.display(),
     )
 }
 
-pub(crate) fn obs_missing(what: &str) -> String {
+pub(crate) fn alloc_missing(what: &str) -> String {
     format!(
-        "{what} needs an obs build; run:\n\
-         cargo run -p bumbledb-bench --features obs --release -- …"
+        "{what} needs an alloc-counter build; run:\n\
+         cargo run -p bumbledb-bench --features alloc-counter --release -- …"
     )
 }
 
-fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
+pub(super) fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
     let Ok(raw) = std::fs::read_to_string(paths.root.join(CASES_FILE)) else {
         return false;
     };
@@ -45,20 +44,12 @@ fn stamp_is_fresh(paths: &CorpusPaths, cfg: GenConfig) -> bool {
 }
 
 fn bench_preflight(args: &BenchArgs, cfg: GenConfig) -> Result<(CorpusPaths, bool), String> {
-    if args.alloc && !cfg!(feature = "obs") {
-        return Err(obs_missing("--alloc"));
+    if args.alloc && !cfg!(feature = "alloc-counter") {
+        return Err(alloc_missing("--alloc"));
     }
 
-    if args.trace && !cfg!(feature = "obs") {
-        return Err(obs_missing("--trace"));
-    }
-    if args.alloc && args.trace {
-        return Err("--alloc and --trace are mutually exclusive modes".to_owned());
-    }
-
-    // write_families checks itself). Before ensure_corpus: refuse
-    // before generating anything onto the ram disk. The verify/
-
+    // Refuse RAM-backed timing before generating a corpus. Write runners
+    // independently check their scratch targets.
     crate::devhonesty::assert_disk_backed(&args.corpus.dir, "the timed read families")
         .map_err(|refusal| refusal.to_string())?;
     let paths = ensure_corpus(&args.corpus.dir, cfg)?;
@@ -134,16 +125,14 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     let mut run = BenchRun {
         cfg,
         proto,
+        read_batch: args.read_batch,
         alloc: args.alloc,
-        trace: args.trace,
         proxy_per_rep: args.proxy_per_rep,
         first_family_warmed: false,
-        trace_dir: out_dir.join("trace"),
         db: &db,
         conn: &conn,
         cal_db: &cal_db,
         cal_conn: &cal_conn,
-        flames: Vec::new(),
     };
     let mut reads = Vec::new();
     for family in families::all() {
@@ -152,16 +141,12 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         }
     }
 
-    // calendar benchmark): same protocol, second store pair; the DU
-
+    // Calendar families use the same protocol over their own store pair.
     for family in crate::calendar::families::all() {
         if selected(family.name) {
             reads.push(run.read_cal_family(family)?);
         }
     }
-    let mut flames = std::mem::take(&mut run.flames);
-    drop(run);
-
     // under the same protocol — report-only rows beside the reads. It
     // runs after the stamped read families (its corpus load commits
     // fsync) and before the write families (it times reads).
@@ -170,8 +155,11 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         &out_dir.join("scratch"),
         &selected,
         proto,
-        args.alloc,
-        args.proxy_per_rep,
+        args.read_batch,
+        crate::harness::Modes {
+            alloc_window: args.alloc,
+            proxy_per_rep: args.proxy_per_rep,
+        },
         lane.store_mode(),
     )?);
 
@@ -182,25 +170,18 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         &out_dir.join("scratch"),
         &selected,
         args.samples,
-        args.alloc,
-        args.proxy_per_rep,
+        args.read_batch,
+        crate::harness::Modes {
+            alloc_window: args.alloc,
+            proxy_per_rep: args.proxy_per_rep,
+        },
         lane.store_mode(),
     )?);
 
-    // Write families run AFTER every read family (measured): an
+    // Fsync-heavy write families follow every read family.
+    let writes = write_families(cfg, &out_dir.join("scratch"), &selected, lane)?;
 
-    let trace_dir = args.trace.then(|| out_dir.join("trace"));
-    let writes = write_families(
-        cfg,
-        &out_dir.join("scratch"),
-        &selected,
-        lane,
-        trace_dir.as_deref(),
-        &mut flames,
-    )?;
-
-    // The image cache is gone with the transitional store (owned snapshots
-    // replaced images), so the store block is the two file sizes.
+    // File sizes are disk measurements, not image-cache memory usage.
     let store = report::StoreNumbers {
         db_bytes: db
             .disk_size(crate::harness::bench_work())
@@ -231,7 +212,6 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
         reads,
         writes,
         store,
-        flames,
     };
     report::write_artifacts(&run_report, &out_dir).map_err(|e| format!("artifacts: {e}"))?;
     print!("{}", report::to_markdown(&run_report));

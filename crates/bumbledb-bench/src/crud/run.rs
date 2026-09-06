@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use bumbledb::schema::ValueType;
 use bumbledb::{Answers, Db};
@@ -10,7 +10,7 @@ use crate::families::bind_values;
 use crate::harness::{self, Measurement, Protocol, Rotation};
 use crate::sqlite_run::{self, PreparedFamily};
 use crate::translate::{self, Translated};
-use crate::{clockproxy, compare, poststate, report, trace_out};
+use crate::{clockproxy, compare, poststate, report};
 
 use super::lanes::{self, MintCursor, read_query};
 use super::{CrudSizes, CrudWorld, corpus, families, ids, ops, render, schema};
@@ -32,8 +32,6 @@ pub struct CrudRow {
     pub work: u64,
 
     pub ghz: Option<report::GhzReport>,
-
-    pub flame: Option<String>,
 }
 
 /// [`run_with`] binds it to [`corpus::load_stores`]; the gate tests bind a
@@ -49,16 +47,8 @@ pub fn run(
     seed: u64,
     samples: Option<u32>,
     only: Option<&[String]>,
-    trace_root: Option<&Path>,
 ) -> Result<(String, String), String> {
-    run_with(
-        dir,
-        seed,
-        CrudSizes::of(Scale::S),
-        samples,
-        only,
-        trace_root,
-    )
+    run_with(dir, seed, CrudSizes::of(Scale::S), samples, only)
 }
 
 /// # Errors
@@ -68,17 +58,10 @@ pub fn run_with(
     sizes: CrudSizes,
     samples: Option<u32>,
     only: Option<&[String]>,
-    trace_root: Option<&Path>,
 ) -> Result<(String, String), String> {
-    fold(
-        dir,
-        seed,
-        sizes,
-        samples,
-        only,
-        trace_root,
-        &|lane_dir, lane| corpus::load_stores(lane_dir, seed, sizes, lane),
-    )
+    fold(dir, seed, sizes, samples, only, &|lane_dir, lane| {
+        corpus::load_stores(lane_dir, seed, sizes, lane)
+    })
 }
 
 pub(crate) fn fold(
@@ -87,15 +70,13 @@ pub(crate) fn fold(
     sizes: CrudSizes,
     samples: Option<u32>,
     only: Option<&[String]>,
-    trace_root: Option<&Path>,
     load: &LaneLoader<'_>,
 ) -> Result<(String, String), String> {
-    // ramdisk sanction): a RAM-backed target refuses before any store
-
+    // Durable timings must use a disk-backed target; refuse before opening stores.
     crate::devhonesty::assert_disk_backed(dir, "the timed crud lanes")
         .map_err(|refusal| refusal.to_string())?;
 
-    // bench_preflight precedent) — a typo must not silently run nothing.
+    // A typo must not silently select no families.
     let names: Vec<&str> = families().iter().map(|f| f.name).collect();
     if let Some(only) = only {
         for name in only {
@@ -112,7 +93,7 @@ pub(crate) fn fold(
     for lane in duralane::ALL {
         let (db, conn) = load(&dir.join("crud").join(lane.label()), lane)?;
 
-        // (3) THE ORACLE GATE — unconditional, before any timed window.
+        // The oracle gate is unconditional, before any timed window.
         eprintln!("crud [{}]: gate crud_read_point", lane.label());
         let (translated, types) = gate(&db, &conn, lane, seed, sizes)?;
 
@@ -126,7 +107,6 @@ pub(crate) fn fold(
             ours_cursor: MintCursor::at_base(sizes),
             theirs_cursor: MintCursor::at_base(sizes),
             model: ops::CounterModel::at_load(sizes),
-            trace_dir: trace_root.map(|root| root.join("trace").join("crud").join(lane.label())),
         };
         for family in families() {
             if let Some(only) = only
@@ -139,7 +119,7 @@ pub(crate) fn fold(
                 samples: samples.unwrap_or(family.protocol.samples),
             };
             eprintln!("crud [{}]: {}", lane.label(), family.name);
-            let (ours, theirs, stamp, flame) = lane_run.time_family(family.name, proto)?;
+            let (ours, theirs, stamp) = lane_run.time_family(family.name, proto)?;
             #[expect(
                 clippy::cast_precision_loss,
                 reason = "reporting accepts lossy integer-to-float conversion"
@@ -154,12 +134,10 @@ pub(crate) fn fold(
                 ratio_p50,
                 work: ours.work,
                 ghz: Some(stamp.into()),
-                flame,
             });
         }
 
-        // (5) THE POST-STATE FOLD — after ALL selected families of the
-
+        // Compare the complete post-state after all selected families in the lane.
         for rel in [ids::DOC, ids::COUNTER] {
             let name = schema().relation(rel).name();
             let ours = poststate::engine_rows(&db, rel)
@@ -183,22 +161,11 @@ struct LaneRun<'l> {
     ours_cursor: MintCursor,
     theirs_cursor: MintCursor,
     model: ops::CounterModel,
-
-    trace_dir: Option<PathBuf>,
 }
 
-type FamilyOutcome = (
-    Measurement,
-    Measurement,
-    clockproxy::GhzStamp,
-    Option<String>,
-);
+type FamilyOutcome = (Measurement, Measurement, clockproxy::GhzStamp);
 
 impl LaneRun<'_> {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one match arm per registered family: the registry IS the run order"
-    )]
     fn time_family(
         &mut self,
         name: &'static str,
@@ -206,9 +173,6 @@ impl LaneRun<'_> {
     ) -> Result<FamilyOutcome, String> {
         let count =
             usize::try_from(proto.warmups + proto.samples).expect("protocol counts are small");
-        let extra = usize::from(self.trace_dir.is_some());
-        let dir = self.trace_dir.clone();
-        let dir = dir.as_deref();
         let (db, conn, seed, sizes) = (self.db, self.conn, self.seed, self.sizes);
         match name {
             "crud_read_point" => {
@@ -218,94 +182,63 @@ impl LaneRun<'_> {
                         read_point_theirs(conn, proto, seed, sizes, self.translated, self.types)?,
                     ))
                 })?;
-                let (translated, types) = (self.translated, self.types);
-                let flame = trace_out::traced_twin(
-                    dir,
-                    name,
-                    &mut |p| read_point_ours(db, p, seed, sizes),
-                    &mut |p| read_point_theirs(conn, p, seed, sizes, translated, types),
-                )?;
-                Ok((ours, theirs, stamp, flame))
+                Ok((ours, theirs, stamp))
             }
-            "crud_insert" => self.insert_pair(name, proto, 1),
-            "crud_insert_10" => self.insert_pair(name, proto, 10),
-            "crud_insert_100" => self.insert_pair(name, proto, 100),
-            "crud_insert_1k" => self.insert_pair(name, proto, 1_000),
+            "crud_insert" => self.insert_pair(proto, 1),
+            "crud_insert_10" => self.insert_pair(proto, 10),
+            "crud_insert_100" => self.insert_pair(proto, 100),
+            "crud_insert_1k" => self.insert_pair(proto, 1_000),
             "crud_update" | "crud_update_hot" => {
                 let stream = if name == "crud_update" {
-                    ops::update_stream(seed, sizes, count + extra, &mut self.model)
+                    ops::update_stream(seed, sizes, count, &mut self.model)
                 } else {
-                    ops::hot_update_stream(count + extra, &mut self.model)
+                    ops::hot_update_stream(count, &mut self.model)
                 };
-                let (timed, spare) = stream.split_at(count);
+                let timed = stream.as_slice();
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
                     Ok((
                         lanes::update_bumbledb(db, proto, timed)?,
                         lanes::update_sqlite(conn, proto, timed)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    dir,
-                    name,
-                    &mut |p| lanes::update_bumbledb(db, p, spare),
-                    &mut |p| lanes::update_sqlite(conn, p, spare),
-                )?;
-                Ok((ours, theirs, stamp, flame))
+                Ok((ours, theirs, stamp))
             }
             "crud_upsert" => {
-                let stream = ops::upsert_stream(seed, sizes, count + extra, &mut self.model);
-                let (timed, spare) = stream.split_at(count);
+                let stream = ops::upsert_stream(seed, sizes, count, &mut self.model);
+                let timed = stream.as_slice();
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
                     Ok((
                         lanes::upsert_bumbledb(db, proto, timed)?,
                         lanes::upsert_sqlite(conn, proto, timed)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    dir,
-                    name,
-                    &mut |p| lanes::upsert_bumbledb(db, p, spare),
-                    &mut |p| lanes::upsert_sqlite(conn, p, spare),
-                )?;
-                Ok((ours, theirs, stamp, flame))
+                Ok((ours, theirs, stamp))
             }
             "crud_rmw" => {
-                let keys = ops::rmw_stream(seed, sizes, count + extra, &mut self.model);
-                let (timed, spare) = keys.split_at(count);
+                let keys = ops::rmw_stream(seed, sizes, count, &mut self.model);
+                let timed = keys.as_slice();
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
                     Ok((
                         lanes::rmw_bumbledb(db, proto, timed)?,
                         lanes::rmw_sqlite(conn, proto, timed)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    dir,
-                    name,
-                    &mut |p| lanes::rmw_bumbledb(db, p, spare),
-                    &mut |p| lanes::rmw_sqlite(conn, p, spare),
-                )?;
-                Ok((ours, theirs, stamp, flame))
+                Ok((ours, theirs, stamp))
             }
             "crud_delete" => {
-                let rows = ops::delete_rows(seed, sizes, count + extra);
-                let ids: Vec<u64> = (0..count + extra)
+                let rows = ops::delete_rows(seed, sizes, count);
+                let ids: Vec<u64> = (0..count)
                     .map(|i| sizes.docs + u64::try_from(i).expect("protocol counts are small"))
                     .collect();
-                let (timed_rows, spare_rows) = rows.split_at(count);
-                let (timed_ids, spare_ids) = ids.split_at(count);
+                let timed_rows = rows.as_slice();
+                let timed_ids = ids.as_slice();
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
                     Ok((
                         lanes::delete_bumbledb(db, proto, timed_rows)?,
                         lanes::delete_sqlite(conn, proto, timed_ids)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    dir,
-                    name,
-                    &mut |p| lanes::delete_bumbledb(db, p, spare_rows),
-                    &mut |p| lanes::delete_sqlite(conn, p, spare_ids),
-                )?;
-                Ok((ours, theirs, stamp, flame))
+                Ok((ours, theirs, stamp))
             }
             "crud_mixed_90_10" => {
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
@@ -314,25 +247,13 @@ impl LaneRun<'_> {
                         lanes::mixed_sqlite(conn, proto, seed, sizes, &mut self.theirs_cursor)?,
                     ))
                 })?;
-                let (ours_cursor, theirs_cursor) = (&mut self.ours_cursor, &mut self.theirs_cursor);
-                let flame = trace_out::traced_twin(
-                    dir,
-                    name,
-                    &mut |p| lanes::mixed_bumbledb(db, p, seed, sizes, ours_cursor),
-                    &mut |p| lanes::mixed_sqlite(conn, p, seed, sizes, theirs_cursor),
-                )?;
-                Ok((ours, theirs, stamp, flame))
+                Ok((ours, theirs, stamp))
             }
             other => unreachable!("the registry names are exhaustive: {other}"),
         }
     }
 
-    fn insert_pair(
-        &mut self,
-        name: &'static str,
-        proto: Protocol,
-        per_commit: u64,
-    ) -> Result<FamilyOutcome, String> {
+    fn insert_pair(&mut self, proto: Protocol, per_commit: u64) -> Result<FamilyOutcome, String> {
         let (db, conn, seed) = (self.db, self.conn, self.seed);
         let ((ours, theirs), stamp) = clockproxy::stamped(|| {
             Ok((
@@ -340,15 +261,7 @@ impl LaneRun<'_> {
                 lanes::insert_sqlite(conn, proto, seed, per_commit, &mut self.theirs_cursor)?,
             ))
         })?;
-        let dir = self.trace_dir.clone();
-        let (ours_cursor, theirs_cursor) = (&mut self.ours_cursor, &mut self.theirs_cursor);
-        let flame = trace_out::traced_twin(
-            dir.as_deref(),
-            name,
-            &mut |p| lanes::insert_bumbledb(db, p, seed, per_commit, ours_cursor),
-            &mut |p| lanes::insert_sqlite(conn, p, seed, per_commit, theirs_cursor),
-        )?;
-        Ok((ours, theirs, stamp, flame))
+        Ok((ours, theirs, stamp))
     }
 }
 

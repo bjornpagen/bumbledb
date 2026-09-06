@@ -1,13 +1,9 @@
-//! node probes its negated occurrence per surviving binding; a hit
-//! rejects the binding — the inverted polarity of a positive probe miss,
-//! compacted through the same survivor cursor-write. Existence, not
-//! continuation: the negated occurrence's trie schema is one probe level
-//! holding all its variables, so a single `get`-style confirmation
-//! decides the probe — an anti-probe never iterates a leaf. The one
-//! The anti-probe pass: after residual compaction, each anti-probe attached to the
+//! After residual compaction, probe each negated occurrence per surviving
+//! binding. A hit rejects the binding. The negated trie holds all its key
+//! variables at one level: this checks existence, not a continuation to emit.
 use super::{
-    AntiProbeForm, AntiProbeSpec, Colt, Counters, JoinPhase, PREFETCH_WIDTH_FLOOR, Source,
-    grow_scratch, word_base,
+    AntiProbeForm, AntiProbeSpec, Colt, Counters, PREFETCH_WIDTH_FLOOR, Source, grow_scratch,
+    word_base,
 };
 use crate::work::WorkError;
 
@@ -114,12 +110,9 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 }
                 debug_assert_eq!(sources.len(), key_words.get(), "key widths add up");
 
-                counters.phase_start(node_idx, JoinPhase::Force);
                 let start = colts[spec.occ].start();
                 colts[spec.occ].ensure_forced(start, 0)?;
-                counters.phase_end(node_idx, JoinPhase::Force);
 
-                counters.phase_start(node_idx, JoinPhase::Hash);
                 let kw = key_words.get();
                 grow_scratch(hashes, n);
                 {
@@ -136,22 +129,13 @@ pub(super) fn anti_probe_pass<C: Counters>(
                         hashes[k] = crate::exec::colt::hash_key(&probe_keys[k * kw..(k + 1) * kw]);
                     }
                 }
-                counters.phase_end(node_idx, JoinPhase::Hash);
 
                 if n >= PREFETCH_WIDTH_FLOOR {
-                    crate::obs::event(
-                        crate::obs::names::PREFETCH_PASS,
-                        crate::obs::TraceArgs::Pair(
-                            n as u64,
-                            colts[spec.occ].probe_footprint_bytes() as u64,
-                        ),
-                    );
                     for &hash in &hashes[..n] {
                         colts[spec.occ].prefetch_bucket(start, hash);
                     }
                 }
 
-                counters.phase_start(node_idx, JoinPhase::Probe);
                 grow_scratch(mask, n);
                 {
                     let probe_keys = &probe_keys[..n * kw];
@@ -191,7 +175,6 @@ pub(super) fn anti_probe_pass<C: Counters>(
                     }
                 }
                 crate::exec::kernel::compact_u32_by_mask(survivors, mask);
-                counters.phase_end(node_idx, JoinPhase::Probe);
             }
         }
     }

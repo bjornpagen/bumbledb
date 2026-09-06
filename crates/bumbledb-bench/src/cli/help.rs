@@ -6,16 +6,13 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20 verify-store  the offline sweeper (Db::verify_store): namespace\n\
     \x20          coherence + global judgments over the committed store\n\
     \x20 bench    the timing run (requires a fresh verify stamp)\n\
-    \x20 trace    one traced warm+cold pair for one family\n\
+    \x20 profile  repeat one real engine read for native stack sampling\n\
     \x20 scenarios non-ledger worlds (joins/graph/olap/points/rings/temporal), gated then timed\n\
     \x20 crud     the OLTP home-turf world: round-trips under matched\n\
     \x20          durability pairs (report-class; writes crud.md + crud.json)\n\
     \x20 lawful   the law home-turf world: judged-law admission vs SQL\n\
     \x20          constraint enforcement (report-class; writes\n\
     \x20          lawful.md + lawful.json)\n\
-    \x20 sweep-commit  the T8 commit-size sweep: judgment spans by\n\
-    \x20          touched-parent count, delta vs key-sorted probe order\n\
-    \x20          (scratch windowed twins; needs --features obs)\n\
     \x20 merge    min-of-runs table from N run dirs' report.json\n\
     \x20 storage  on-disk bytes per corpus scale, both engines\n\
     \x20          (report-class; no timing)\n\
@@ -55,7 +52,7 @@ pub fn help() -> String {
          \n\
          {COMMANDS}\
          \n\
-         SHARED FLAGS (gen, verify, verify-store, bench, trace):\n\
+         SHARED FLAGS (gen, verify, verify-store, bench, profile):\n\
          \x20 --scale S|M|L   corpus scale        (default S)\n\
          \x20 --seed N        corpus seed         (default 1)\n\
          \x20 --dir PATH      corpus cache root   (default bench-data)\n\
@@ -66,14 +63,21 @@ pub fn help() -> String {
          BENCH:\n\
          \x20 --families a,b  run only these families (verdict becomes PARTIAL)\n\
          \x20 --samples N     measured samples per read family (default 256)\n\
-         \x20 --trace         capture one traced warm+cold sample per family\n\
-         \x20 --alloc         allocation windows (needs the obs feature build)\n\
+         \x20 --read-batch N  operations per timed read sample, 1..=16 (default auto)\n\
+         \x20                N > 1 reports batch-average quantiles, not per-call tails\n\
+         \x20 --alloc         allocation windows (needs the alloc-counter feature build)\n\
          \x20 --proxy-per-rep per-sample GHz stamps + normalized p50 (confirm runs)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>)\n\
          \x20 --i-am-lying    skip the stamp gate; the report reads UNVERIFIED\n\
          \n\
-         TRACE:\n\
-         \x20 --family NAME   the family to trace (required)\n\
+         PROFILE (diagnostic, not a benchmark score):\n\
+         \x20 --family NAME   registered read or scenario query (required)\n\
+         \x20 --seconds N     native sampling window, 1..3600 (default 10)\n\
+         \x20 --out PATH      fresh workload report directory\n\
+         \x20                 complete draw cycles; ledger/calendar need verify stamp\n\
+         \x20                 closure/displaced/scenarios: fresh corpus + SQLite gate\n\
+         \x20                 scenarios have fixed scale S; displaced retains foreign stream\n\
+         \x20                 no alloc-counter feature; use cargo --profile profiling\n\
          \n\
          MERGE:\n\
          \x20 merge DIR [DIR ...]   run directories holding report.json\n\
@@ -84,21 +88,15 @@ pub fn help() -> String {
          \x20 --only a,b      run only these scenarios/families\n\
          \x20 --samples N     measured samples/query   (default 64; crud and\n\
          \x20                 lawful fall back to their registered protocols)\n\
-         \x20 --trace         traced artifacts (.json + .folded) under\n\
-         \x20                 <out>/trace/ + the flame top-10 embeds: per-query\n\
-         \x20                 warm+cold pairs (scenarios), per-family traced\n\
-         \x20                 twin samples (crud/lawful); needs the obs build\n\
          \x20 --alloc         per-query alloc windows (scenarios ONLY; needs\n\
-         \x20                 obs; a separate pass — exclusive with --trace)\n\
+         \x20                 the alloc-counter feature; a separate pass)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-<command>)\n\
          \n\
-         SWEEP-COMMIT:\n\
-         \x20 --sizes a,b,c   touched-parent counts (default 4,16,64,256,1024,4096)\n\
-         \x20 --samples N     commits per (size, order) cell (default 8, max 48)\n\
-         \x20 --seed N        draw seed                (default 1)\n\
-         \x20 --dir PATH      scratch root             (default bench-data)\n\
-         \n\
          STORAGE:\n\
+         \x20 --profile corpus|home-costs              (default corpus)\n\
+         \x20 --rows N        home-costs only: 256-row multiples, max 1048576 (default 16384)\n\
+         \x20 --samples N     home-costs read samples, 1..4096 (default 64)\n\
+         \x20                 home-costs emits home-costs.json; no corpus/churn options\n\
          \x20 --scales S,M,L  corpus scales            (default S)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      corpus cache root        (default bench-data)\n\
@@ -113,9 +111,6 @@ pub fn help() -> String {
          \x20                 ENG-008 retired the engine's no-sync surface)\n\
          \x20 --batches a,b   rows per commit          (default 1,10,100,1000)\n\
          \x20 --samples N     measured samples per cell\n\
-         \x20 --trace         per-cell traced twin samples (.json + .folded)\n\
-         \x20                 under <out>/trace/writes/<lane>/ (needs obs;\n\
-         \x20                 insert_stream stays untraced — the ladder covers commits)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-writes)\n\
          \n\
          CURVES:\n\
@@ -155,10 +150,7 @@ pub fn help() -> String {
          \x20 --relations N   ordinary relation count  (default 12, min 2)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      scratch root             (default bench-data)\n\
-         \x20 --trace         one capture over the lanes: chrome+folded\n\
-         \x20                 artifacts + the component span fold (needs\n\
-         \x20                 obs; exclusive with --alloc)\n\
-         \x20 --alloc         per-phase alloc windows (needs obs)\n\
+         \x20 --alloc         per-phase alloc windows (needs alloc-counter)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-primerlane)\n\
          \n\
          CORPUS-FLOAT:\n\

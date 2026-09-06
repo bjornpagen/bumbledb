@@ -21,8 +21,10 @@ fn the_corpus_digest_is_deterministic_and_pinned() {
 
     assert_eq!(
         digest_hex(&a),
-        "cc7f023f1ce6fc94ad2766ce1e9149555fc2db9286a63deef17e305fc688f2ca",
-        "generator output changed — re-baseline deliberately"
+        // The preimage includes STORAGE_FORMAT_VERSION. Layout 7 drops
+        // physical interval tails; the generated logical corpus is unchanged.
+        "fa73e680324f9b26dd1c8504899c43beec8eef48953ca4bdf4ca432623caaca8",
+        "corpus or storage format changed — re-baseline deliberately"
     );
 }
 

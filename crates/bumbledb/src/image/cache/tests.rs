@@ -1,6 +1,6 @@
 //! The version-keyed image cache: hits at the same relation change version,
 //! one rebuild per newer version, query-local images for old pinned
-//! versions, per-execution rebuilds for heap ticks, once-only closed
+//! versions, per-execution rebuilds for heap ticks, owner-scoped closed
 //! synthesis, and the memory-pressure trim. (The end-to-end per-relation
 //! invalidation contract over a real store lives in
 //! `image/tests/relation_reuse.rs`.)
@@ -88,7 +88,7 @@ fn same_generation_reads_hit_the_memo() {
         "the same generation returns the same image"
     );
     assert!(
-        cache.peek_at(R, generation(3)).is_some(),
+        cache.peek_at(R, generation(3), &cache.acquire()).is_some(),
         "the memo is peekable without building"
     );
 }
@@ -108,10 +108,10 @@ fn a_newer_generation_rebuilds_and_retires_the_old_entry() {
         .expect_ready("resident");
     assert!(!Arc::ptr_eq(&old, &new), "a newer generation rebuilds");
     assert!(
-        cache.peek_at(R, generation(3)).is_none(),
+        cache.peek_at(R, generation(3), &cache.acquire()).is_none(),
         "the old generation's entry retired when the newer one landed"
     );
-    assert!(cache.peek_at(R, generation(4)).is_some());
+    assert!(cache.peek_at(R, generation(4), &cache.acquire()).is_some());
     // The pinned reader's Arc keeps the old image alive query-local.
     assert_eq!(old.row_count(), new.row_count());
 }
@@ -131,11 +131,11 @@ fn an_old_pinned_generation_builds_query_local_after_a_newer_landed() {
         .expect_ready("resident");
     assert_eq!(old.row_count(), 8, "the old snapshot still gets its image");
     assert!(
-        cache.peek_at(R, generation(2)).is_none(),
+        cache.peek_at(R, generation(2), &cache.acquire()).is_none(),
         "old generations never displace the newest memo"
     );
     assert!(
-        cache.peek_at(R, generation(9)).is_some(),
+        cache.peek_at(R, generation(9), &cache.acquire()).is_some(),
         "the newest memo survives the pinned reader"
     );
 }
@@ -159,11 +159,14 @@ fn heap_ticks_never_memoize() {
         !Arc::ptr_eq(&first, &second),
         "a heap execution rebuilds every time — no durable identity to key by"
     );
-    assert!(cache.peek_at(R, epoch).is_none(), "nothing was cached");
+    assert!(
+        cache.peek_at(R, epoch, &cache.acquire()).is_none(),
+        "nothing was cached"
+    );
 }
 
 #[test]
-fn closed_relations_synthesize_once_and_never_trim() {
+fn closed_relations_synthesize_once_per_owner_and_trim_detaches_them() {
     let fixture = fixture();
     let cache = ImageCache::new(fixture.schema());
     let source = fixture.source();
@@ -184,9 +187,116 @@ fn closed_relations_synthesize_once_and_never_trim() {
         .expect("still resident")
         .expect_ready("resident");
     assert!(
-        Arc::ptr_eq(&first, &after),
-        "trim never evicts a closed image"
+        !Arc::ptr_eq(&first, &after),
+        "closed images rebuild with the new resolver owner"
     );
+    assert!(!first.generation().ptr_eq(after.generation()));
+    assert_eq!(
+        first.row_count(),
+        after.row_count(),
+        "old pinned image remains valid"
+    );
+}
+
+#[test]
+fn late_old_owner_builds_never_repopulate_or_displace_current_images() {
+    let fixture = fixture();
+    let source = fixture.source();
+    for (relation, epoch) in [(R, generation(1)), (STATUS, ViewEpoch::Closed)] {
+        let cache = ImageCache::new(fixture.schema());
+        let old_owner = cache.acquire();
+        cache.trim();
+        let current_owner = cache.acquire();
+        let late = cache
+            .get_or_build_with(&source, fixture.schema(), relation, epoch, &old_owner)
+            .unwrap()
+            .expect_ready("old query-local image");
+        assert!(late.generation().ptr_eq(&old_owner));
+        assert!(
+            cache.peek_at(relation, epoch, &old_owner).is_none(),
+            "retired owner cannot repopulate an empty slot"
+        );
+        let current = cache
+            .get_or_build_with(&source, fixture.schema(), relation, epoch, &current_owner)
+            .unwrap()
+            .expect_ready("current image");
+        let late_again = cache
+            .get_or_build_with(&source, fixture.schema(), relation, epoch, &old_owner)
+            .unwrap()
+            .expect_ready("old query-local image");
+        assert!(late_again.generation().ptr_eq(&old_owner));
+        assert!(!Arc::ptr_eq(&late_again, &current));
+        assert!(
+            cache.peek_at(relation, epoch, &old_owner).is_none(),
+            "peek never lends a foreign resolver's tokens"
+        );
+        assert!(
+            Arc::ptr_eq(
+                &current,
+                &cache.peek_at(relation, epoch, &current_owner).unwrap()
+            ),
+            "late retired builder cannot displace current owner's cache entry"
+        );
+        let weak_old = old_owner.downgrade();
+        drop(late);
+        drop(late_again);
+        drop(old_owner);
+        assert!(
+            weak_old.upgrade().is_none(),
+            "no stale slot permanently pins the retired resolver"
+        );
+    }
+}
+
+#[test]
+fn closed_images_release_the_retired_owner_when_the_last_reader_drops() {
+    // Closed relations cannot contain text. They nevertheless share the
+    // operation's generation owner and must not keep a retired resolver
+    // alive forever through an unevictable cache entry.
+    let fixture = fixture();
+    let source = fixture.source();
+    let cache = ImageCache::new(fixture.schema());
+    let old = cache
+        .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
+        .unwrap()
+        .expect_ready("first closed image");
+    let old_owner = old.generation().downgrade();
+    let pinned = Arc::clone(&old);
+    cache.trim();
+    let current_owner = cache.acquire();
+    let current = cache
+        .get_or_build_with(
+            &source,
+            fixture.schema(),
+            STATUS,
+            ViewEpoch::Closed,
+            &current_owner,
+        )
+        .unwrap()
+        .expect_ready("rebuilt closed image");
+    assert!(current.generation().ptr_eq(&current_owner));
+    assert!(!current_owner.ptr_eq(old.generation()));
+    assert_eq!(old.column_words(0), &[0, 1]);
+    assert_eq!(old.column_words(0), current.column_words(0));
+    let charged = cache.cache_ledger().used();
+    drop(old);
+    assert!(
+        old_owner.upgrade().is_some(),
+        "the pinned reader keeps its owner"
+    );
+    assert_eq!(cache.cache_ledger().used(), charged);
+    drop(pinned);
+    assert!(
+        old_owner.upgrade().is_none(),
+        "trim detached the old closed cache entry"
+    );
+    assert!(cache.cache_ledger().used() < charged);
+    assert!(Arc::ptr_eq(
+        &current,
+        &cache
+            .peek_at(STATUS, ViewEpoch::Closed, &current_owner)
+            .unwrap()
+    ));
 }
 
 #[test]
@@ -203,7 +313,7 @@ fn trim_detaches_map_entries_without_refunding_a_held_image() {
 
     cache.trim();
     assert!(
-        cache.peek_at(R, generation(1)).is_none(),
+        cache.peek_at(R, generation(1), &cache.acquire()).is_none(),
         "trim evicts generation-keyed map entries"
     );
     assert_eq!(

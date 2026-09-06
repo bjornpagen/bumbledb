@@ -156,7 +156,7 @@ impl RowIndexer for NoIndex {
         _relation: RelationId,
         _row: &[u8],
         _work: &WorkContext,
-        _emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
+        _emit: &mut dyn FnMut(ProjectionId, &[u8]) -> StoreResult<()>,
     ) -> StoreResult<()> {
         Ok(())
     }
@@ -172,7 +172,7 @@ impl RowIndexer for FirstFieldKey {
         relation: RelationId,
         row: &[u8],
         work: &WorkContext,
-        emit: &mut dyn FnMut(ProjectionId, &[u8], Option<&[u8]>) -> StoreResult<()>,
+        emit: &mut dyn FnMut(ProjectionId, &[u8]) -> StoreResult<()>,
     ) -> StoreResult<()> {
         if relation != NOTE {
             return Ok(());
@@ -181,7 +181,7 @@ impl RowIndexer for FirstFieldKey {
         let Value::U64(id) = decoded.values()[0] else {
             panic!("test rows lead with a u64 id");
         };
-        emit(NOTE_KEY, &id.to_be_bytes(), None)
+        emit(NOTE_KEY, &id.to_be_bytes())
     }
 }
 
@@ -238,7 +238,7 @@ impl CandidateJudge for UniqueNoteId {
                     .expect("bucket entries resolve");
                 let row = crate::canonical::decode(schema().relation(NOTE).fields(), row, work)?;
                 if row.values()[0] == Value::U64(id) {
-                    matching.push(row_id);
+                    matching.push(row_id.id);
                 }
             }
             if matching.len() > 1 {

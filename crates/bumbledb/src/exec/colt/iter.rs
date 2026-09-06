@@ -1,9 +1,23 @@
 use super::{
-    BatchToken, BoundView, Colt, Cursor, DENSE_TOKEN_TAG, NodeRef, NodeState, Positions,
-    STALE_EPOCH, STALE_TOKEN, Slot, TOKEN_EPOCH_MASK, TOKEN_PAYLOAD_MASK, View, unpack_child,
+    BatchToken, BoundView, Colt, Cursor, DENSE_TOKEN_TAG, Map, NodeRef, NodeState, Positions,
+    STALE_EPOCH, STALE_TOKEN, TOKEN_EPOCH_MASK, TOKEN_PAYLOAD_MASK, View, unpack_child,
 };
 
 impl Colt {
+    /// Force cover tuples before enumeration, even at a terminal level.
+    /// Raw terminal positions need not be distinct after hidden fields
+    /// were projected away. Pinned rows already contain one tuple.
+    pub(crate) fn force_distinct_iteration(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+    ) -> Result<(), crate::work::WorkError> {
+        if let Cursor::Node(node) = cursor {
+            self.force(node, self.join_index(level))?;
+        }
+        Ok(())
+    }
+
     /// # Panics
     /// Only on programmer-invariant violations: undersized caller buffers.
     /// # Errors
@@ -53,7 +67,8 @@ impl Colt {
         let arity = self.arity_at(level);
         // Caller-buffer contract — a plan-shape invariant, never data:
 
-        assert!(keys_out.len() >= max * arity && children_out.len() >= max);
+        let key_words = max.checked_mul(arity).expect("iteration key buffer extent");
+        assert!(keys_out.len() >= key_words && children_out.len() >= max);
         match cursor {
             Cursor::Row(position) => {
                 let payload = self.token_payload(token);
@@ -168,13 +183,12 @@ impl Colt {
         children_out: &mut [Cursor],
         max: usize,
     ) -> (usize, BatchToken) {
-        let m = self.maps[map as usize];
+        let m = &self.maps[map as usize];
         let arity = self.arity_at(level);
         debug_assert_eq!(arity, m.arity);
         let payload = self.token_payload(token);
 
-        // iteration before this node was forced — reinterpreting it as a
-
+        // A positions token cannot be reinterpreted as dense-map iteration.
         assert!(
             payload == 0 || payload & DENSE_TOKEN_TAG != 0,
             "{STALE_TOKEN}"
@@ -183,25 +197,55 @@ impl Colt {
         let len = usize::try_from(m.len).expect("64-bit usize");
         let take = max.min(len.saturating_sub(start));
 
-        let dense = &self.dense[m.dense_start..m.dense_start + len];
-        for k in 0..take {
-            let dense_idx = start + k;
-            if dense_idx + 8 < len {
-                let ahead = usize::try_from(dense[dense_idx + 8]).expect("64-bit usize");
-                crate::exec::kernel::prefetch_read(&raw const self.buckets[m.bucket_base(ahead)]);
+        if take > 0 {
+            let keys = &mut keys_out[..take * arity];
+            let children = &mut children_out[..take];
+            // Match construction/probing's fixed-width kernels. Dispatch once
+            // per batch; bucket pitch and the per-key copy are then constants.
+            match arity {
+                1 => self.copy_map_batch::<1>(m, start, keys, children),
+                2 => self.copy_map_batch::<2>(m, start, keys, children),
+                3 => self.copy_map_batch::<3>(m, start, keys, children),
+                4 => self.copy_map_batch::<4>(m, start, keys, children),
+                _ => self.copy_map_batch::<0>(m, start, keys, children),
             }
-            let slot_idx = usize::try_from(dense[dense_idx]).expect("64-bit usize");
-            for word in 0..arity {
-                keys_out[k * arity + word] = self.buckets[m.key_word_at(slot_idx, word)];
-            }
-            children_out[k] = match unpack_child(self.buckets[m.child_at(slot_idx)]) {
-                Slot::Single(position) => Cursor::Row(position),
-                Slot::Node(child) => Cursor::Node(child),
-            };
         }
         (
             take,
             BatchToken((start + take) as u64 | DENSE_TOKEN_TAG | self.epoch_bits()),
         )
+    }
+
+    /// One checked view of this map's pools, shared by fixed and dynamic
+    /// widths. `A == 0` retains general keys, including actual zero-width
+    /// keys; the child stream, not the key slice, determines row count.
+    fn copy_map_batch<const A: usize>(
+        &self,
+        map: &Map,
+        start: usize,
+        keys_out: &mut [u64],
+        children_out: &mut [Cursor],
+    ) {
+        debug_assert!(A == 0 || A == map.arity);
+        let arity = if A == 0 { map.arity } else { A };
+        let stride = 8 * (arity + 1);
+        let len = usize::try_from(map.len).expect("64-bit usize");
+        let dense = &self.dense[map.dense_start..][..len];
+        let slots = &dense[start..][..children_out.len()];
+        let buckets = &self.buckets[map.bucket_start..][..map.nbuckets * stride];
+        for (k, (&slot, child)) in slots.iter().zip(children_out).enumerate() {
+            let dense_idx = start + k;
+            if dense_idx + 8 < len {
+                let ahead = usize::try_from(dense[dense_idx + 8]).expect("64-bit usize");
+                crate::exec::kernel::prefetch_read(&raw const buckets[(ahead >> 3) * stride]);
+            }
+            let slot = usize::try_from(slot).expect("64-bit usize");
+            let base = (slot >> 3) * stride;
+            let lane = slot & 7;
+            for word in 0..arity {
+                keys_out[k * arity + word] = buckets[base + word * 8 + lane];
+            }
+            *child = unpack_child(buckets[base + 8 * arity + lane]);
+        }
     }
 }

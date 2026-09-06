@@ -28,7 +28,7 @@ use crate::image::intern::InternerHandle;
 use crate::image::view::{Const, FilterPredicate, ImageRow, Loaded, OperandAddr, Operands};
 use crate::ir::VarId;
 use crate::ir::normalize::{AntiProbe, OccBind, Occurrence, Role};
-use crate::schema::{DistinctnessWitness, Schema, VisitControl};
+use crate::schema::{Schema, VisitControl};
 use bumbledb_theory::schema::{FieldId, RelationId, ValueType};
 
 /// How a bound variable's slots load for residual comparison.
@@ -62,11 +62,18 @@ pub(super) struct FallbackRule {
     resolved_selections: Vec<Vec<Vec<u64>>>,
     /// Plan-side selection templates (not carried on normalized occurrences).
     selection_templates: Vec<Vec<crate::plan::fj::Selection>>,
-    /// Plan-side trie schemas for keyed fallback probes.
-    trie_schemas: Vec<Vec<Vec<VarId>>>,
 }
 
 impl FallbackRule {
+    pub(super) fn forget_resolved_text(&mut self) {
+        for filters in &mut self.resolved {
+            filters.clear();
+        }
+        for selections in &mut self.resolved_selections {
+            selections.clear();
+        }
+    }
+
     pub(super) fn seal(
         normalized: &crate::ir::normalize::NormalizedQuery,
         plan: &crate::plan::fj::ValidatedPlan,
@@ -103,11 +110,6 @@ impl FallbackRule {
             .iter()
             .map(|occurrence| occurrence.selections.clone())
             .collect();
-        let trie_schemas = plan
-            .occurrences()
-            .iter()
-            .map(|occurrence| occurrence.trie_schema.clone())
-            .collect();
         Self {
             occurrences,
             residuals: normalized.residuals.clone(),
@@ -120,7 +122,6 @@ impl FallbackRule {
             resolved,
             resolved_selections,
             selection_templates,
-            trie_schemas,
         }
     }
 
@@ -159,42 +160,21 @@ pub(super) struct FallbackCtx<'a> {
     pub(super) nonresident: &'a mut Option<crate::image::NonresidentTextStore>,
 }
 
-fn resolve_derived<'a>(
-    published: &'a mut [SealedStage],
-    rec_delta: Option<&'a mut SealedStage>,
-    rec_acc: Option<&'a mut SealedStage>,
-    bind: OccBind,
-) -> Option<&'a mut SealedStage> {
-    match bind {
-        OccBind::Finished(id) => published.get_mut(id.index()),
-        OccBind::RecDelta(_) => rec_delta,
-        OccBind::RecAcc(_) => rec_acc,
-        OccBind::Edb(_) => None,
-    }
-}
-
 /// Run one rule through the cursor fallback into `sink`.
 /// # Errors
-/// Storage/work failure, corrupt stored bytes, or a latch refusal. A
+/// Storage/work failure, corrupt stored bytes, or a literal-resolution refusal. A
 /// short-circuited resolution (empty set under positive `Eq`) is `Ok` —
 /// the rule contributes nothing on this snapshot.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-)]
 pub(super) fn run_fallback<S: Sink>(
     rule: &mut FallbackRule,
     ctx: &mut FallbackCtx<'_>,
     published: &mut [SealedStage],
-    rec_delta: Option<&mut SealedStage>,
-    rec_acc: Option<&mut SealedStage>,
     bindings: &mut Bindings,
     sink: &mut S,
-    latched: &mut u32,
 ) -> Result<()> {
     // Resolve every occurrence's filter templates for this execution
-    // (literals latch through the shared interner exactly like the
-    // resident path).
+    // (literal words are memoized within the shared generation exactly
+    // like the resident path; the original bytes remain immutable).
     let FallbackRule {
         occurrences,
         resolved,
@@ -208,9 +188,8 @@ pub(super) fn run_fallback<S: Sink>(
         work: ctx.source.work(),
         params: ctx.params,
         missed: ctx.missed,
-        latched,
     };
-    for (occ_idx, occurrence) in occurrences.iter_mut().enumerate() {
+    for (occ_idx, occurrence) in occurrences.iter().enumerate() {
         if occurrence.role.discharged() {
             continue;
         }
@@ -220,7 +199,7 @@ pub(super) fn run_fallback<S: Sink>(
             filters.clear();
             filters.extend(occurrence.filters.iter().cloned());
         }
-        for (template, slot) in occurrence.filters.iter_mut().zip(filters.iter_mut()) {
+        for (template, slot) in occurrence.filters.iter().zip(filters.iter_mut()) {
             if !resolver.filter(template, negated, slot)? {
                 return Ok(());
             }
@@ -231,7 +210,7 @@ pub(super) fn run_fallback<S: Sink>(
             selections.clear();
             selections.resize_with(templates.len(), Vec::new);
         }
-        for (selection, words) in templates.iter_mut().zip(selections.iter_mut()) {
+        for (selection, words) in templates.iter().zip(selections.iter_mut()) {
             if !resolver.selection(selection, words)? {
                 return Ok(());
             }
@@ -251,8 +230,6 @@ pub(super) fn run_fallback<S: Sink>(
         rule,
         ctx,
         published,
-        rec_delta,
-        rec_acc,
         positives,
         bound: vec![false; rule_slots(rule)],
         deferred_points: Vec::new(),
@@ -268,8 +245,6 @@ struct Search<'a, 'c> {
     rule: &'a FallbackRule,
     ctx: &'a mut FallbackCtx<'c>,
     published: &'a mut [SealedStage],
-    rec_delta: Option<&'a mut SealedStage>,
-    rec_acc: Option<&'a mut SealedStage>,
     positives: Vec<usize>,
     bound: Vec<bool>,
     /// `(start, end, var, dense)` membership checks whose point variable
@@ -290,8 +265,8 @@ impl Search<'_, '_> {
         let occurrence = &self.rule.occurrences[occ_idx];
         match occurrence.bind {
             OccBind::Edb(relation) => self.scan_stored(depth, occ_idx, relation, bindings, sink),
-            OccBind::Finished(_) | OccBind::RecDelta(_) | OccBind::RecAcc(_) => {
-                self.scan_derived(depth, occ_idx, bindings, sink)
+            OccBind::Finished(id) | OccBind::RecDelta(id) => {
+                self.scan_stage_at(depth, occ_idx, id.index(), bindings, sink)
             }
         }
     }
@@ -361,21 +336,13 @@ impl Search<'_, '_> {
         if selections.is_empty() || !selections.iter().all(|level| level.len() == 1) {
             return Ok(false);
         }
-        let occurrence = &self.rule.occurrences[occ_idx];
-        let trie_schema = &self.rule.trie_schemas[occ_idx];
-        if trie_schema.is_empty() {
-            return Ok(false);
-        }
         let key_words: Vec<u64> = selections.iter().map(|level| level[0]).collect();
-        let key_fields: Vec<FieldId> = trie_schema[0]
+        // Resolved values retain their selection's field coordinate. A
+        // join-trie variable is unrelated: a symbol filter must never be
+        // interpreted as a lookup of the occurrence's ID variable.
+        let key_fields: Vec<FieldId> = self.rule.selection_templates[occ_idx]
             .iter()
-            .filter_map(|var| {
-                occurrence
-                    .vars
-                    .iter()
-                    .find(|(_, v)| v == var)
-                    .map(|(field, _)| *field)
-            })
+            .map(|selection| selection.field)
             .collect();
         if key_fields.len() != key_words.len() {
             return Ok(false);
@@ -389,31 +356,14 @@ impl Search<'_, '_> {
         }) else {
             return Ok(false);
         };
-        let last_positive = self.positives.get(depth + 1).is_none();
-        let all_bound = occurrence.vars.iter().all(|(_, var)| {
-            let (slot, _, _) = self.rule.locate(*var);
-            self.bound[slot]
-        });
-        let witness = if last_positive && all_bound {
-            DistinctnessWitness::ExistenceOnly {
-                projection: projection.id,
-            }
-        } else {
-            match theory.distinctness_witness(projection.id) {
-                Some(DistinctnessWitness::ScalarKeyUnique { projection }) => {
-                    DistinctnessWitness::ScalarKeyUnique { projection }
-                }
-                Some(witness) => witness,
-                None => return Ok(false),
-            }
+        let Some(witness) = theory.distinctness_witness(projection.id) else {
+            return Ok(false);
         };
         let rel = self.ctx.schema.relation(relation);
         let fields = rel.fields();
         let field_types: Vec<ValueType> = fields.iter().map(|f| f.value_type).collect();
         let mut row = RowWords::new(&field_types);
         let mut failure: Option<Error> = None;
-        let unique = matches!(witness, DistinctnessWitness::ScalarKeyUnique { .. });
-        let existence = matches!(witness, DistinctnessWitness::ExistenceOnly { .. });
         let visited = self.ctx.source.consume_compiled_visits(
             self.ctx.schema,
             relation,
@@ -437,7 +387,9 @@ impl Search<'_, '_> {
                     return Ok(VisitControl::Stop);
                 }
                 match self.try_row(depth, occ_idx, &row, bindings, sink) {
-                    Ok(()) if existence || unique => Ok(VisitControl::Sufficient),
+                    // try_row also succeeds when a filter rejects. It is
+                    // not an existence witness: hash collisions and heap
+                    // walks must continue to the remaining candidates.
                     Ok(()) => Ok(VisitControl::Continue),
                     Err(error) => {
                         failure = Some(error);
@@ -453,84 +405,7 @@ impl Search<'_, '_> {
         }
     }
 
-    fn scan_derived<S: Sink>(
-        &mut self,
-        depth: usize,
-        occ_idx: usize,
-        bindings: &mut Bindings,
-        sink: &mut S,
-    ) -> Result<()> {
-        let bind = self.rule.occurrences[occ_idx].bind;
-        match bind {
-            OccBind::Edb(_) => Err(Error::Corruption(
-                crate::error::CorruptionError::MalformedValue("fallback derived source"),
-            )),
-            OccBind::RecDelta(_) | OccBind::RecAcc(_) => {
-                self.scan_rec_stage(depth, occ_idx, bind, bindings, sink)
-            }
-            OccBind::Finished(id) => {
-                self.scan_scratch_stage_at(depth, occ_idx, id.index(), bindings, sink)
-            }
-        }
-    }
-
-    fn scan_rec_stage<S: Sink>(
-        &mut self,
-        depth: usize,
-        occ_idx: usize,
-        bind: OccBind,
-        bindings: &mut Bindings,
-        sink: &mut S,
-    ) -> Result<()> {
-        let stage = match bind {
-            OccBind::RecDelta(_) => self.rec_delta.as_mut(),
-            OccBind::RecAcc(_) => self.rec_acc.as_mut(),
-            _ => None,
-        };
-        let Some(stage) = stage else {
-            return Err(Error::Corruption(
-                crate::error::CorruptionError::MalformedValue("fallback derived source"),
-            ));
-        };
-        match stage {
-            SealedStage::Resident(image) => {
-                let image = Arc::clone(image);
-                self.scan_image_rows(depth, occ_idx, &image, bindings, sink)
-            }
-            SealedStage::Scratch(scratch) => {
-                let count = scratch.count;
-                let row_words = scratch.row_words;
-                let field_types = scratch.field_types.clone();
-                let mut words = Vec::with_capacity(row_words);
-                for index in 0..count {
-                    self.ctx
-                        .source
-                        .work()
-                        .step(1)
-                        .map_err(super::source::work_error)?;
-                    // End the stage borrow before recursing: the suffix may
-                    // visit this same immutable derived relation again.
-                    let stage = match bind {
-                        OccBind::RecDelta(_) => self.rec_delta.as_deref_mut(),
-                        OccBind::RecAcc(_) => self.rec_acc.as_deref_mut(),
-                        _ => unreachable!("recursive source"),
-                    };
-                    let Some(SealedStage::Scratch(scratch)) = stage else {
-                        unreachable!("a sealed stage does not change backing during a scan")
-                    };
-                    super::derived::SealedStage::scratch_row_words(scratch, index, &mut words)?;
-                    let row = ScratchRow {
-                        field_types: &field_types,
-                        words: &words,
-                    };
-                    self.try_row(depth, occ_idx, &row, bindings, sink)?;
-                }
-                Ok(())
-            }
-        }
-    }
-
-    fn scan_scratch_stage_at<S: Sink>(
+    fn scan_stage_at<S: Sink>(
         &mut self,
         depth: usize,
         occ_idx: usize,
@@ -855,7 +730,7 @@ impl Search<'_, '_> {
                 }
                 Ok(hit)
             }
-            OccBind::Finished(id) => {
+            OccBind::Finished(id) | OccBind::RecDelta(id) => {
                 let stage_idx = id.index();
                 match self.published.get(stage_idx) {
                     Some(SealedStage::Resident(image)) => {
@@ -908,58 +783,6 @@ impl Search<'_, '_> {
                                 "fallback derived source",
                             ),
                         ));
-                    }
-                }
-                Ok(hit)
-            }
-            OccBind::RecDelta(_) | OccBind::RecAcc(_) => {
-                let Some(resolved) = resolve_derived(
-                    self.published,
-                    self.rec_delta.as_deref_mut(),
-                    self.rec_acc.as_deref_mut(),
-                    occurrence.bind,
-                ) else {
-                    return Err(Error::Corruption(
-                        crate::error::CorruptionError::MalformedValue("fallback derived source"),
-                    ));
-                };
-                match resolved {
-                    SealedStage::Resident(image) => {
-                        for position in 0..image.row_count() {
-                            self.ctx
-                                .source
-                                .work()
-                                .step(1)
-                                .map_err(super::source::work_error)?;
-                            let row = ImageRow { image, position };
-                            if check_row(&row, self.ctx.nonresident)? {
-                                hit = true;
-                                break;
-                            }
-                        }
-                    }
-                    SealedStage::Scratch(scratch) => {
-                        let count = scratch.count;
-                        let field_types = scratch.field_types.clone();
-                        let mut words = Vec::new();
-                        for index in 0..count {
-                            self.ctx
-                                .source
-                                .work()
-                                .step(1)
-                                .map_err(super::source::work_error)?;
-                            super::derived::SealedStage::scratch_row_words(
-                                scratch, index, &mut words,
-                            )?;
-                            let row = ScratchRow {
-                                field_types: &field_types,
-                                words: &words,
-                            };
-                            if check_row(&row, self.ctx.nonresident)? {
-                                hit = true;
-                                break;
-                            }
-                        }
                     }
                 }
                 Ok(hit)
@@ -1303,7 +1126,6 @@ mod tests {
             resolved: Vec::new(),
             resolved_selections: Vec::new(),
             selection_templates: Vec::new(),
-            trie_schemas: Vec::new(),
         };
         let bindings = Bindings::new(2);
         let ops = BindingOps {

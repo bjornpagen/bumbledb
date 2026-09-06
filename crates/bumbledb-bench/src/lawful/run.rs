@@ -4,7 +4,7 @@ use crate::corpus_gen::Scale;
 use crate::duralane::{self, DurabilityLane};
 use crate::harness::{Protocol, Stats};
 use crate::report::GhzReport;
-use crate::{clockproxy, poststate, trace_out};
+use crate::{clockproxy, poststate};
 
 use super::{LawFamily, LawSizes, families, ids, lanes, load, render, schema};
 
@@ -20,8 +20,6 @@ pub struct LawRow {
 
     pub work: u64,
     pub ghz: GhzReport,
-
-    pub flame: Option<String>,
 }
 
 /// # Errors
@@ -30,16 +28,13 @@ pub fn run(
     seed: u64,
     samples: Option<u32>,
     only: Option<&[String]>,
-    trace_root: Option<&Path>,
 ) -> Result<(String, String), String> {
-    run_with(dir, seed, LawSizes::of(Scale::S), samples, only, trace_root)
+    run_with(dir, seed, LawSizes::of(Scale::S), samples, only)
 }
 
-/// The full lawful run: returns `(markdown, json)` — the two artifacts count
-/// (warmups stay registered); `only` selects families by as strings
-/// ([`render`]), produced only after every lane's post-state fold passed.
-/// `samples` overrides each registered protocol's sample registry name (unknown
-/// names are refused before anything loads).
+/// The full lawful run: returns `(markdown, json)` only after every lane's
+/// post-state comparison passes. `samples` overrides measured samples, not
+/// warmups. `only` selects registry names; unknown names refuse before loading.
 /// # Errors
 /// The device-honesty refusal (the timed lawful lanes are fsync-bound); an
 /// unknown `--only` name; loader, runner, and post-state failures, stringified
@@ -50,10 +45,8 @@ pub fn run_with(
     sizes: LawSizes,
     samples: Option<u32>,
     only: Option<&[String]>,
-    trace_root: Option<&Path>,
 ) -> Result<(String, String), String> {
-    // Device honesty FIRST, before creating anything: every legal
-
+    // Every lane is durable; refuse RAM-backed targets before creating anything.
     crate::devhonesty::assert_disk_backed(dir, "the timed lawful lanes")
         .map_err(|refusal| refusal.to_string())?;
     if let Some(names) = only {
@@ -74,16 +67,7 @@ pub fn run_with(
         move |name: &str| only.is_none_or(|names| names.iter().any(|n| n.as_str() == name));
     let mut rows = Vec::new();
     for lane in duralane::ALL {
-        let trace_dir = trace_root.map(|root| root.join("trace").join("lawful").join(lane.label()));
-        rows.extend(run_lane(
-            lane,
-            dir,
-            seed,
-            sizes,
-            samples,
-            &selected,
-            trace_dir.as_deref(),
-        )?);
+        rows.extend(run_lane(lane, dir, seed, sizes, samples, &selected)?);
     }
     Ok((render::markdown(seed, &rows), render::json(seed, &rows)))
 }
@@ -116,15 +100,13 @@ fn run_lane(
     sizes: LawSizes,
     samples: Option<u32>,
     selected: &dyn Fn(&str) -> bool,
-    trace_dir: Option<&Path>,
 ) -> Result<Vec<LawRow>, String> {
     eprintln!("bench: lawful {} — loading the twin pair", lane.label());
     let (db, conn) = load::load_stores(&dir.join(lane.label()), seed, sizes, lane)?;
     let mut ours_cursor = lanes::LawCursor::at_base(sizes);
     let mut theirs_cursor = lanes::LawCursor::at_base(sizes);
 
-    // selected (both engines, cursors advanced in lockstep, before any
-
+    // Saturate the rejection target on both engines before any timing.
     if selected("law_reject_window") {
         lanes::fill_window_target_engine(&db, sizes, &mut ours_cursor)?;
         lanes::fill_window_target_sqlite(&conn, sizes, &mut theirs_cursor)?;
@@ -140,15 +122,10 @@ fn run_lane(
                 usize::try_from(proto.warmups + proto.samples).expect("protocol counts are small")
             })
     };
-    let spare_for = |name: &str| -> usize {
-        usize::from(trace_dir.is_some() && selected(name) && count_for(name) > 0)
-    };
     let n_attempt = count_for("law_commit_attempt");
     let n_cluster = count_for("law_commit_cluster");
-    let e_attempt = spare_for("law_commit_attempt");
-    let e_cluster = spare_for("law_commit_cluster");
-    let stream = lanes::attempt_ops(sizes, n_attempt + e_attempt + n_cluster + e_cluster);
-    let (attempt_stream, cluster_stream) = stream.split_at(n_attempt + e_attempt);
+    let stream = lanes::attempt_ops(sizes, n_attempt + n_cluster);
+    let (attempt_stream, cluster_stream) = stream.split_at(n_attempt);
 
     let mut rows = Vec::new();
     for family in families() {
@@ -157,38 +134,26 @@ fn run_lane(
         }
         let proto = proto_of(family, samples);
         eprintln!("bench: lawful {} — {}", lane.label(), family.name);
-        let (ours, theirs, stamp, flame) = match family.name {
+        let (ours, theirs, stamp) = match family.name {
             "law_commit_attempt" => {
-                let (timed, spare) = attempt_stream.split_at(n_attempt);
+                let timed = attempt_stream;
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
                     Ok((
                         lanes::commit_attempt_engine(&db, proto, timed, &mut ours_cursor)?,
                         lanes::commit_attempt_sqlite(&conn, proto, timed, &mut theirs_cursor)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    trace_dir,
-                    family.name,
-                    &mut |p| lanes::commit_attempt_engine(&db, p, spare, &mut ours_cursor),
-                    &mut |p| lanes::commit_attempt_sqlite(&conn, p, spare, &mut theirs_cursor),
-                )?;
-                (ours, theirs, stamp, flame)
+                (ours, theirs, stamp)
             }
             "law_commit_cluster" => {
-                let (timed, spare) = cluster_stream.split_at(n_cluster);
+                let timed = cluster_stream;
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
                     Ok((
                         lanes::commit_cluster_engine(&db, proto, timed, &mut ours_cursor)?,
                         lanes::commit_cluster_sqlite(&conn, proto, timed, &mut theirs_cursor)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    trace_dir,
-                    family.name,
-                    &mut |p| lanes::commit_cluster_engine(&db, p, spare, &mut ours_cursor),
-                    &mut |p| lanes::commit_cluster_sqlite(&conn, p, spare, &mut theirs_cursor),
-                )?;
-                (ours, theirs, stamp, flame)
+                (ours, theirs, stamp)
             }
             "law_reject_key" => {
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
@@ -197,14 +162,7 @@ fn run_lane(
                         lanes::reject_key_sqlite(&conn, proto)?,
                     ))
                 })?;
-
-                let flame = trace_out::traced_twin(
-                    trace_dir,
-                    family.name,
-                    &mut |p| lanes::reject_key_engine(&db, p),
-                    &mut |p| lanes::reject_key_sqlite(&conn, p),
-                )?;
-                (ours, theirs, stamp, flame)
+                (ours, theirs, stamp)
             }
             "law_reject_containment" => {
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
@@ -213,13 +171,7 @@ fn run_lane(
                         lanes::reject_containment_sqlite(&conn, proto, sizes)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    trace_dir,
-                    family.name,
-                    &mut |p| lanes::reject_containment_engine(&db, p, sizes),
-                    &mut |p| lanes::reject_containment_sqlite(&conn, p, sizes),
-                )?;
-                (ours, theirs, stamp, flame)
+                (ours, theirs, stamp)
             }
             "law_reject_window" => {
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
@@ -228,13 +180,7 @@ fn run_lane(
                         lanes::reject_window_sqlite(&conn, proto)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    trace_dir,
-                    family.name,
-                    &mut |p| lanes::reject_window_engine(&db, p),
-                    &mut |p| lanes::reject_window_sqlite(&conn, p),
-                )?;
-                (ours, theirs, stamp, flame)
+                (ours, theirs, stamp)
             }
             "law_reject_scope" => {
                 let ((ours, theirs), stamp) = clockproxy::stamped(|| {
@@ -243,13 +189,7 @@ fn run_lane(
                         lanes::reject_scope_sqlite(&conn, proto)?,
                     ))
                 })?;
-                let flame = trace_out::traced_twin(
-                    trace_dir,
-                    family.name,
-                    &mut |p| lanes::reject_scope_engine(&db, p),
-                    &mut |p| lanes::reject_scope_sqlite(&conn, p),
-                )?;
-                (ours, theirs, stamp, flame)
+                (ours, theirs, stamp)
             }
             other => return Err(format!("unregistered lawful family: {other}")),
         };
@@ -268,7 +208,6 @@ fn run_lane(
             ratio_p50: ratio(ours.stats.p50, theirs.stats.p50),
             work: ours.work,
             ghz: stamp.into(),
-            flame,
         });
     }
 

@@ -16,12 +16,12 @@ use super::{
     CandidateFacts, DeltaFacts, DeltaShape, JudgeBudget, JudgeScratch, Judgment, LawfulParent,
     judge_final_state, judge_incremental,
 };
-use crate::schema::tests::{capacity, containment, fd, field, side};
+use crate::schema::tests::{capacity, closed, containment, fd, field, row, side, side_where};
 use crate::schema::{
     FieldId, IntervalElement, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
     StatementId, ValidateDescriptor as _, ValueType,
 };
-use crate::work::ExecutionPolicy;
+use crate::work::{ExecutionPolicy, Resource};
 use crate::{Interval, Value, WorkContext};
 use std::time::Duration;
 
@@ -119,6 +119,12 @@ fn room(id: u64) -> Vec<Value> {
 /// determinant field indices)`.
 type KeyIndex = (StatementId, RelationId, &'static [usize]);
 
+struct RankedOrder {
+    ranks: Vec<u64>,
+    full: Vec<usize>,
+    group: Vec<usize>,
+}
+
 const ALL_KEYS: &[KeyIndex] = &[
     (USER_ID_KEY, USER, &[0]),
     (USER_EMAIL_KEY, USER, &[1]),
@@ -140,6 +146,15 @@ pub(super) struct DeltaState {
     refuse_stream: bool,
     row_visits: std::cell::Cell<u64>,
     group_visits: std::cell::Cell<u64>,
+    key_row_visits: std::cell::Cell<u64>,
+    cancel_on_key_row: Option<(u64, WorkContext)>,
+    compiled_row_visits: std::cell::Cell<u64>,
+    unindexed_group: Option<(RelationId, Vec<Value>)>,
+    unindexed_key_group: Option<(StatementId, Vec<Value>)>,
+    indexed_matches_before_decline: std::cell::Cell<u64>,
+    declined_groups: std::cell::Cell<u64>,
+    ranked_order: Option<RankedOrder>,
+    ranked_available: bool,
 }
 
 impl DeltaState {
@@ -191,6 +206,15 @@ impl DeltaState {
             refuse_stream: false,
             row_visits: std::cell::Cell::new(0),
             group_visits: std::cell::Cell::new(0),
+            key_row_visits: std::cell::Cell::new(0),
+            cancel_on_key_row: None,
+            compiled_row_visits: std::cell::Cell::new(0),
+            unindexed_group: None,
+            unindexed_key_group: None,
+            indexed_matches_before_decline: std::cell::Cell::new(0),
+            declined_groups: std::cell::Cell::new(0),
+            ranked_order: None,
+            ranked_available: true,
         }
     }
 
@@ -211,6 +235,71 @@ impl DeltaState {
     pub(super) fn group_visits(&self) -> u64 {
         self.group_visits.get()
     }
+
+    fn ranked_rows(
+        &self,
+        relation: RelationId,
+        group: bool,
+    ) -> impl Iterator<Item = (u64, &[Value])> {
+        (0..self.rows.len())
+            .map(move |position| {
+                self.ranked_order.as_ref().map_or(position, |order| {
+                    if group {
+                        order.group[position]
+                    } else {
+                        order.full[position]
+                    }
+                })
+            })
+            .filter(move |&index| self.rows[index].0 == relation)
+            .enumerate()
+            .map(move |(ordinal, index)| {
+                let rank = self
+                    .ranked_order
+                    .as_ref()
+                    .map_or(ordinal as u64, |order| order.ranks[index]);
+                (rank, self.rows[index].1.as_slice())
+            })
+    }
+
+    fn visit_group(
+        &self,
+        projection: &crate::schema::compiled::CompiledProjection,
+        determinant: &[Value],
+        visit: super::RankedRowVisitor<'_, std::convert::Infallible>,
+    ) -> Result<Option<()>, std::convert::Infallible> {
+        if self.keys.is_empty() {
+            return Ok(None);
+        }
+        if self
+            .unindexed_group
+            .as_ref()
+            .is_some_and(|(relation, values)| {
+                *relation == projection.relation && values.as_slice() == determinant
+            })
+        {
+            let remaining = self.indexed_matches_before_decline.get();
+            if remaining == 0 {
+                self.declined_groups.set(self.declined_groups.get() + 1);
+                return Ok(None);
+            }
+            self.indexed_matches_before_decline.set(remaining - 1);
+        }
+        self.group_visits
+            .set(self.group_visits.get().saturating_add(1));
+        // Rank the entire relation before filtering the bucket. Numbering
+        // only matching rows would reuse rank zero for distinct groups.
+        for (rank, values) in self.ranked_rows(projection.relation, true) {
+            if projection.scalar_values(values).as_slice() == determinant {
+                self.compiled_row_visits
+                    .set(self.compiled_row_visits.get() + 1);
+                if !visit(rank, values)? {
+                    break;
+                }
+            }
+        }
+        Ok(Some(()))
+    }
 }
 
 impl CandidateFacts for DeltaState {
@@ -221,17 +310,22 @@ impl CandidateFacts for DeltaState {
         relation: RelationId,
         visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
     ) -> Result<(), Self::Error> {
+        self.visit_ranked_rows(relation, &mut |_rank, values| visit(values))
+    }
+
+    fn visit_ranked_rows(
+        &self,
+        relation: RelationId,
+        visit: super::RankedRowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
         assert!(
             !self.refuse_stream,
             "the delta-local judge streamed relation {relation:?} — a skip \
              or index path failed structurally"
         );
-        for (id, values) in &self.rows {
-            if *id != relation {
-                continue;
-            }
+        for (rank, values) in self.ranked_rows(relation, false) {
             self.row_visits.set(self.row_visits.get() + 1);
-            if !visit(values)? {
+            if !visit(rank, values)? {
                 break;
             }
         }
@@ -283,6 +377,18 @@ impl DeltaFacts for DeltaState {
         else {
             return Ok(None);
         };
+        if self
+            .unindexed_key_group
+            .as_ref()
+            .is_some_and(|(id, values)| *id == statement && values.as_slice() == determinant)
+        {
+            let remaining = self.indexed_matches_before_decline.get();
+            if remaining == 0 {
+                self.declined_groups.set(self.declined_groups.get() + 1);
+                return Ok(None);
+            }
+            self.indexed_matches_before_decline.set(remaining - 1);
+        }
         self.group_visits
             .set(self.group_visits.get().saturating_add(1));
         for (id, values) in &self.rows {
@@ -290,8 +396,16 @@ impl DeltaFacts for DeltaState {
                 continue;
             }
             let projected: Vec<Value> = fields.iter().map(|&at| values[at].clone()).collect();
-            if projected.as_slice() == determinant && !visit(values)? {
-                break;
+            if projected.as_slice() == determinant {
+                self.key_row_visits.set(self.key_row_visits.get() + 1);
+                if let Some((at, context)) = &self.cancel_on_key_row
+                    && self.key_row_visits.get() == *at
+                {
+                    context.cancel();
+                }
+                if !visit(values)? {
+                    break;
+                }
             }
         }
         Ok(Some(()))
@@ -303,20 +417,19 @@ impl DeltaFacts for DeltaState {
         determinant: &[Value],
         visit: &mut dyn FnMut(&[Value]) -> Result<bool, Self::Error>,
     ) -> Result<Option<()>, Self::Error> {
-        if self.keys.is_empty() {
+        self.visit_group(projection, determinant, &mut |_rank, values| visit(values))
+    }
+
+    fn visit_ranked_compiled_group(
+        &self,
+        projection: &crate::schema::compiled::CompiledProjection,
+        determinant: &[Value],
+        visit: super::RankedRowVisitor<'_, Self::Error>,
+    ) -> Result<Option<()>, Self::Error> {
+        if !self.ranked_available {
             return Ok(None);
         }
-        self.group_visits
-            .set(self.group_visits.get().saturating_add(1));
-        for (id, values) in &self.rows {
-            if *id != projection.relation {
-                continue;
-            }
-            if projection.scalar_values(values).as_slice() == determinant && !visit(values)? {
-                break;
-            }
-        }
-        Ok(Some(()))
+        self.visit_group(projection, determinant, visit)
     }
 }
 
@@ -351,6 +464,436 @@ fn lawful_parent() -> Vec<(RelationId, Vec<Value>)> {
         (BOOKING, booking(10, 5, 9)),
         (BOOKING, booking(11, 3, 7)),
     ]
+}
+
+type Facts = Vec<(RelationId, Vec<Value>)>;
+
+/// The open twin keeps identical field/statement ids but cannot use the
+/// closed-member shortcut: its complete judge exercises grouped containment.
+fn closed_edge_pair(
+    members: usize,
+    selection: Vec<(FieldId, Value)>,
+    equality: bool,
+) -> (Schema, Schema, Facts) {
+    let source = RelationDescriptor {
+        extension: None,
+        name: "Source".into(),
+        fields: vec![
+            field("member", ValueType::U64),
+            field("id", ValueType::U64),
+            field("active", ValueType::Bool),
+        ],
+    };
+    let target_rows: Facts = (0..members)
+        .map(|index| {
+            (
+                RelationId(1),
+                vec![
+                    Value::U64(index as u64),
+                    Value::Bool(index.is_multiple_of(2)),
+                ],
+            )
+        })
+        .collect();
+    let source_side = side_where(
+        RelationId(0),
+        &[FieldId(0)],
+        vec![(FieldId(2), Value::Bool(true))],
+    );
+    let target_side = side_where(RelationId(1), &[FieldId(0)], selection);
+    let mut statements = Vec::new();
+    if equality {
+        statements.push(fd(RelationId(0), &[FieldId(0)]));
+    }
+    statements.push(containment(source_side.clone(), target_side.clone()));
+    if equality {
+        statements.push(containment(target_side, source_side));
+    }
+    let closed_schema = SchemaDescriptor {
+        relations: vec![
+            source.clone(),
+            closed(
+                "Target",
+                vec![field("enabled", ValueType::Bool)],
+                target_rows
+                    .iter()
+                    .enumerate()
+                    .map(|(index, (_, values))| row(&format!("v{index}"), vec![values[1].clone()]))
+                    .collect(),
+            ),
+        ],
+        statements: statements.clone(),
+    }
+    .validate()
+    .unwrap();
+    statements.insert(0, fd(RelationId(1), &[FieldId(0)]));
+    let open_schema = SchemaDescriptor {
+        relations: vec![
+            source,
+            RelationDescriptor {
+                extension: None,
+                name: "Target".into(),
+                fields: vec![
+                    field("id", ValueType::U64),
+                    field("enabled", ValueType::Bool),
+                ],
+            },
+        ],
+        statements,
+    }
+    .validate()
+    .unwrap();
+    (closed_schema, open_schema, target_rows)
+}
+
+fn closed_source(member: u64, id: u64, active: bool) -> (RelationId, Vec<Value>) {
+    (
+        RelationId(0),
+        vec![Value::U64(member), Value::U64(id), Value::Bool(active)],
+    )
+}
+
+fn assert_closed_open_twin(
+    pair: &(Schema, Schema, Facts),
+    parent: &[(RelationId, Vec<Value>)],
+    adds: &[(RelationId, Vec<Value>)],
+    removes: &[(RelationId, Vec<Value>)],
+    budget: JudgeBudget,
+) -> Judgment {
+    let (closed_schema, open_schema, ground) = pair;
+    let mut open_parent = parent.to_vec();
+    open_parent.extend_from_slice(ground);
+    let open = DeltaState::new(&open_parent, adds, removes);
+    let closed = DeltaState::new(parent, adds, removes);
+    let expected = judge_final_state(open_schema, &open, &work(), budget).unwrap();
+    assert_eq!(
+        judge_final_state(closed_schema, &closed, &work(), budget).unwrap(),
+        expected
+    );
+    assert_eq!(
+        judge_incremental(
+            LawfulParent::established(),
+            closed_schema,
+            &closed,
+            &work(),
+            budget,
+            JudgeScratch::disabled(),
+        )
+        .unwrap(),
+        expected
+    );
+    expected
+}
+
+#[test]
+fn closed_member_fast_path_matches_open_twin_for_selection_delta_and_citations() {
+    let pair = closed_edge_pair(8, vec![(FieldId(1), Value::Bool(true))], false);
+    let parent = vec![closed_source(0, 0, true), closed_source(999, 1, false)];
+    let cases = [
+        (vec![parent[0].clone()], vec![], true),
+        (vec![parent[0].clone()], vec![parent[0].clone()], true),
+        (vec![closed_source(2, 2, true)], vec![], true),
+        (vec![closed_source(1, 2, false)], vec![], true),
+        (vec![], vec![parent[0].clone()], true),
+        (
+            vec![closed_source(4, 0, true)],
+            vec![parent[0].clone()],
+            true,
+        ),
+        (
+            vec![closed_source(256, 0, true)],
+            vec![parent[0].clone()],
+            false,
+        ),
+        (
+            vec![closed_source(256, 4, true), closed_source(256, 4, true)],
+            vec![],
+            false,
+        ),
+        (
+            vec![
+                closed_source(1, 8, true),
+                closed_source(256, 7, true),
+                closed_source(u64::MAX, 6, true),
+            ],
+            vec![],
+            false,
+        ),
+    ];
+    for (adds, removes, admitted) in cases {
+        for examples in [0, 1, 8] {
+            let verdict = assert_closed_open_twin(
+                &pair,
+                &parent,
+                &adds,
+                &removes,
+                JudgeBudget {
+                    examples_per_statement: examples,
+                },
+            );
+            assert_eq!(matches!(verdict, Judgment::Admitted), admitted);
+        }
+    }
+    // Selecting the unprojected flag excludes this sole (enabled) axiom.
+    // A selection on the projected handle itself is rejected by sealing.
+    let pair = closed_edge_pair(1, vec![(FieldId(1), Value::Bool(false))], false);
+    let parent = [closed_source(0, 0, false)];
+    assert!(matches!(
+        assert_closed_open_twin(
+            &pair,
+            &parent,
+            &[closed_source(0, 1, true)],
+            &[],
+            JudgeBudget::default()
+        ),
+        Judgment::Rejected(_)
+    ));
+}
+
+#[test]
+fn closed_member_equality_keeps_the_mutable_opposite_direction() {
+    let pair = closed_edge_pair(4, vec![(FieldId(1), Value::Bool(true))], true);
+    let parent = [closed_source(0, 0, true), closed_source(2, 1, true)];
+    assert_eq!(
+        assert_closed_open_twin(&pair, &parent, &[], &[], JudgeBudget::default()),
+        Judgment::Admitted
+    );
+    let verdict =
+        assert_closed_open_twin(&pair, &parent, &[], &parent[..1], JudgeBudget::default());
+    let Judgment::Rejected(violations) = verdict else {
+        panic!("deleting the open-side witness must break equality");
+    };
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].statement, StatementId(3));
+    assert_eq!(violations[0].examples[0].relation, RelationId(1));
+    assert!(matches!(
+        assert_closed_open_twin(
+            &pair,
+            &parent,
+            &[closed_source(1, 2, true)],
+            &[],
+            JudgeBudget::default()
+        ),
+        Judgment::Rejected(_)
+    ));
+}
+
+#[test]
+fn valid_closed_delta_uses_no_full_scans_scratch_or_parent_cardinality_work() {
+    let mut charged = None;
+    for members in [2, 256] {
+        let (schema, _, _) =
+            closed_edge_pair(members, vec![(FieldId(1), Value::Bool(true))], false);
+        for size in [0, 1000] {
+            let parent: Facts = (0..size).map(|id| closed_source(0, id, true)).collect();
+            let state =
+                DeltaState::new(&parent, &[closed_source(0, size, true)], &[]).refusing_streams();
+            let work = ExecutionPolicy {
+                input_bytes: 0,
+                working_bytes: 0,
+                scratch_bytes: 0,
+                result_bytes: 0,
+                rows: 0,
+                work_units: 16,
+                timeout: Duration::from_secs(60),
+            }
+            .start()
+            .unwrap();
+            assert_eq!(
+                judge_incremental(
+                    LawfulParent::established(),
+                    &schema,
+                    &state,
+                    &work,
+                    JudgeBudget::default(),
+                    JudgeScratch::disabled()
+                )
+                .unwrap(),
+                Judgment::Admitted
+            );
+            assert_eq!(state.row_visits(), 0);
+            assert_eq!(state.group_visits(), 0);
+            assert_eq!(work.used(Resource::WorkingBytes), 0);
+            assert_eq!(work.used(Resource::ScratchBytes), 0);
+            let units = work.used(Resource::WorkUnits);
+            if let Some(previous) = charged {
+                assert_eq!(units, previous);
+            }
+            charged = Some(units);
+        }
+    }
+}
+
+#[test]
+fn closed_member_bitset_boundaries_match_the_open_reference_without_truncation() {
+    let even = closed_edge_pair(256, vec![(FieldId(1), Value::Bool(true))], false);
+    let valid: Facts = [0, 62, 64, 126, 128, 190, 192, 254]
+        .into_iter()
+        .map(|member| closed_source(member, member, true))
+        .collect();
+    assert_eq!(
+        assert_closed_open_twin(&even, &[], &valid, &[], JudgeBudget::default()),
+        Judgment::Admitted
+    );
+    let invalid = [
+        closed_source(255, 1, true),
+        closed_source(256, 2, true),
+        closed_source(u64::MAX, 3, true),
+    ];
+    assert!(matches!(
+        assert_closed_open_twin(&even, &[], &invalid, &[], JudgeBudget::default()),
+        Judgment::Rejected(_)
+    ));
+    let odd = closed_edge_pair(256, vec![(FieldId(1), Value::Bool(false))], false);
+    assert_eq!(
+        assert_closed_open_twin(
+            &odd,
+            &[],
+            &[closed_source(255, 0, true)],
+            &[],
+            JudgeBudget::default()
+        ),
+        Judgment::Admitted
+    );
+}
+
+#[test]
+fn invalid_closed_delta_cites_only_added_offenders_without_rescanning_parent() {
+    let pair = closed_edge_pair(2, vec![(FieldId(1), Value::Bool(true))], false);
+    let parent: Facts = (0..1000).map(|id| closed_source(0, id, true)).collect();
+    let adds = [
+        closed_source(256, 1, true),
+        closed_source(1, 2, true),
+        closed_source(999, 3, false),
+    ];
+    let budget = JudgeBudget {
+        examples_per_statement: 1,
+    };
+    let expected = assert_closed_open_twin(&pair, &parent, &adds, &[], budget);
+    let state = DeltaState::new(&parent, &adds, &[]).refusing_streams();
+    assert_eq!(
+        judge_incremental(
+            LawfulParent::established(),
+            &pair.0,
+            &state,
+            &work(),
+            budget,
+            JudgeScratch::disabled()
+        )
+        .unwrap(),
+        expected
+    );
+    assert_eq!(state.row_visits(), 0);
+    assert_eq!(state.group_visits(), 0);
+}
+
+/// A provider failure after one offered row must not publish provisional
+/// citations or mask a work refusal, even if it fails after a stop request.
+struct ClosedAddedFailure(Vec<Value>);
+
+impl CandidateFacts for ClosedAddedFailure {
+    type Error = &'static str;
+
+    fn visit_rows(
+        &self,
+        _: RelationId,
+        _: super::RowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
+        panic!("closed containment must not ask the state for complete/closed rows")
+    }
+}
+
+impl DeltaFacts for ClosedAddedFailure {
+    fn delta_shape(&self, relation: RelationId) -> DeltaShape {
+        DeltaShape {
+            adds: relation == RelationId(0),
+            removes: false,
+        }
+    }
+
+    fn visit_added_rows(
+        &self,
+        relation: RelationId,
+        visit: super::RowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
+        assert_eq!(relation, RelationId(0));
+        let _ = visit(&self.0)?;
+        Err("injected added-row failure")
+    }
+
+    fn visit_removed_rows(
+        &self,
+        _: RelationId,
+        _: super::RowVisitor<'_, Self::Error>,
+    ) -> Result<(), Self::Error> {
+        panic!("immutable target cannot have removed rows")
+    }
+
+    fn visit_key_competitors(
+        &self,
+        _: StatementId,
+        _: &[Value],
+        _: super::RowVisitor<'_, Self::Error>,
+    ) -> Result<Option<()>, Self::Error> {
+        panic!("closed-member check requires no key competitors")
+    }
+}
+
+#[test]
+fn closed_delta_propagates_cancel_budget_and_provider_errors_without_partial_verdict() {
+    let (schema, _, _) = closed_edge_pair(2, vec![(FieldId(1), Value::Bool(true))], false);
+    let state = ClosedAddedFailure(closed_source(256, 0, true).1);
+    let context = work();
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            JudgeBudget::default(),
+            JudgeScratch::disabled()
+        ),
+        Err(super::JudgeError::State("injected added-row failure"))
+    ));
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+    context.cancel();
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            JudgeBudget::default(),
+            JudgeScratch::disabled()
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+    ));
+    let limited = ExecutionPolicy {
+        input_bytes: 1_000_000,
+        working_bytes: 1_000_000,
+        scratch_bytes: 0,
+        result_bytes: 0,
+        rows: 1000,
+        work_units: 1,
+        timeout: Duration::from_secs(60),
+    }
+    .start()
+    .unwrap();
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &limited,
+            JudgeBudget::default(),
+            JudgeScratch::disabled()
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+            resource: Resource::WorkUnits,
+            ..
+        }))
+    ));
+    assert_eq!(limited.used(Resource::WorkingBytes), 0);
 }
 
 #[test]
@@ -522,6 +1065,63 @@ fn pointwise_offender_selection_is_the_reference_adjacent_pair_sweep() {
 }
 
 #[test]
+fn sparse_ranked_pointwise_ties_keep_both_offenders_under_shuffled_traversal() {
+    let relation = RelationId(0);
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Span".into(),
+            fields: vec![
+                field("group", ValueType::U64),
+                field(
+                    "span",
+                    ValueType::Interval {
+                        element: IntervalElement::U64,
+                    },
+                ),
+                field("marker", ValueType::U64),
+            ],
+        }],
+        statements: vec![fd(relation, &[FieldId(0), FieldId(1)])],
+    }
+    .validate()
+    .unwrap();
+    let row = |start, end, marker| {
+        let mut values = booking(0, start, end);
+        values.push(Value::U64(marker));
+        (relation, values)
+    };
+    let added = [row(0, 10, 0), row(0, 10, 1), row(20, 30, 2)];
+    for examples_per_statement in [0, 1, 2, 4] {
+        let budget = JudgeBudget {
+            examples_per_statement,
+        };
+        let plain = DeltaState::new(&[], &added, &[]);
+        let expected = judge_final_state(&schema, &plain, &work(), budget).unwrap();
+        let mut shuffled = DeltaState::new(&[], &added, &[]);
+        shuffled.ranked_order = Some(RankedOrder {
+            ranks: vec![0, u64::MAX, 42],
+            full: vec![2, 0, 1],
+            group: vec![1, 2, 0],
+        });
+        let actual = assert_equivalent(&schema, &shuffled, budget);
+        assert_eq!(actual, expected);
+        let Judgment::Rejected(violations) = actual else {
+            panic!("equal spans conflict")
+        };
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].examples.len(), examples_per_statement.min(2));
+        for cited in &violations[0].examples {
+            assert_ne!(
+                cited.values[2],
+                Value::U64(2),
+                "disjoint third row is not an offender"
+            );
+        }
+    }
+}
+
+#[test]
 fn an_unlawful_parent_can_hide_from_the_delta_local_judge_by_design() {
     let schema = theory();
     // The parent ALREADY violates the email key and strands a booking —
@@ -641,4 +1241,1124 @@ fn delta_local_key_judgment_never_streams_any_relation() {
     };
     assert_eq!(violations[0].statement, USER_EMAIL_KEY);
     assert_eq!(violations[0].examples.len(), 2, "both competitors cited");
+}
+
+fn scalar_key_work(working_bytes: u64, scratch_bytes: u64) -> WorkContext {
+    ExecutionPolicy {
+        input_bytes: 1_000_000,
+        working_bytes,
+        scratch_bytes,
+        result_bytes: 0,
+        rows: 100_000,
+        work_units: 1_000_000,
+        timeout: Duration::from_secs(60),
+    }
+    .start()
+    .unwrap()
+}
+
+#[test]
+fn scalar_key_host_allocation_failure_is_not_budget_exhaustion() {
+    use super::grouped::ScalarKeyScratch;
+    use crate::storage::store::StoreError;
+
+    // The ledger permits the reservation, but this element count cannot
+    // fit a Vec allocation. try_reserve_exact refuses capacity overflow
+    // deterministically; no enormous allocation or host OOM is attempted.
+    let context = scalar_key_work(u64::MAX, 0);
+    assert!(matches!(
+        ScalarKeyScratch::<std::convert::Infallible>::new(&context, usize::MAX, None),
+        Err(super::JudgeError::Allocation)
+    ));
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+    assert!(matches!(
+        ScalarKeyScratch::new(&context, usize::MAX, Some(super::store_fault)),
+        Err(super::JudgeError::State(StoreError::Allocation))
+    ));
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+
+    // With insufficient allowance the same request is refused BEFORE the
+    // allocator, through Work, even when a state fault channel exists.
+    let limited = scalar_key_work(1024, 0);
+    assert!(matches!(
+        ScalarKeyScratch::new(&limited, usize::MAX, Some(super::store_fault)),
+        Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+            resource: Resource::WorkingBytes,
+            ..
+        }))
+    ));
+    assert_eq!(limited.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
+fn scalar_key_valid_growth_retains_no_good_groups() {
+    let schema = theory();
+    let parent = [(USER, user(999, "existing")), (USER, user(1000, "removed"))];
+    for count in [1, 256] {
+        let mut added: Vec<_> = (0..count)
+            .map(|id| (USER, user(id, &format!("unique-{id}"))))
+            .collect();
+        // The producer may over-report a no-op Add, and a replacement may
+        // reuse a removed key. Neither is a new final-state competitor.
+        added.push(parent[0].clone());
+        added.push((USER, user(1000, "replacement")));
+        let mut state = DeltaState::new(&parent, &added, &parent[1..]);
+        let expected = judge_final_state(&schema, &state, &work(), JudgeBudget::default()).unwrap();
+        assert_eq!(expected, Judgment::Admitted);
+        state.refuse_stream = true;
+        state.row_visits.set(0);
+        // A fixed allowance fits the current determinant, but not a set
+        // retaining every good group. No spill can hide that retention.
+        let context = scalar_key_work(1024, 0);
+        let actual = judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            JudgeBudget::default(),
+            JudgeScratch::disabled(),
+        )
+        .expect("lawful scalar groups require no retained good-key map");
+        assert_eq!(actual, expected);
+        assert_eq!(state.row_visits(), 0);
+        assert_eq!(state.key_row_visits.get(), 2 * added.len() as u64);
+        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        assert_eq!(context.used(Resource::ScratchBytes), 0);
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum GroupedFamily {
+    ScalarContainment,
+    PointwiseContainment,
+    Capacity,
+}
+
+/// All scalar variants share one reordered determinant fixture. The complete
+/// reference first verifies the parent is lawful; indexed runs later prohibit
+/// full scans. Pointwise parents cover a source through two adjacent spans.
+fn grouped_family_schema(family: GroupedFamily) -> Schema {
+    let source = RelationId(0);
+    let target = RelationId(1);
+    let extras = [
+        field("flag", ValueType::Bool),
+        field("unsigned", ValueType::U64),
+        field("signed", ValueType::I64),
+        field("float", ValueType::F64),
+        field("uuid", ValueType::Uuid),
+        field("bytes", ValueType::FixedBytes { len: 3 }),
+    ];
+    let mut source_fields = vec![
+        field("group", ValueType::String),
+        field("id", ValueType::U64),
+        field("partition", ValueType::String),
+    ];
+    source_fields.extend_from_slice(&extras);
+    let mut target_fields = vec![
+        field("partition", ValueType::String),
+        field("group", ValueType::String),
+    ];
+    target_fields.extend_from_slice(&extras);
+    let mut source_projection = vec![FieldId(2), FieldId(0)];
+    source_projection.extend((3..9).map(FieldId));
+    let mut target_projection: Vec<_> = (0..8).map(FieldId).collect();
+    let pointwise = matches!(family, GroupedFamily::PointwiseContainment);
+    if pointwise {
+        let span = field(
+            "span",
+            ValueType::Interval {
+                element: IntervalElement::U64,
+            },
+        );
+        source_fields.push(span.clone());
+        target_fields.push(span);
+        source_projection.push(FieldId(9));
+        target_projection.push(FieldId(8));
+    }
+    let source_side = side(source, &source_projection);
+    let target_side = side(target, &target_projection);
+    let statement = match family {
+        GroupedFamily::Capacity => capacity(source_side, 0, Some(2), target_side),
+        _ => containment(source_side, target_side),
+    };
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                name: "Source".into(),
+                fields: source_fields,
+                extension: None,
+            },
+            RelationDescriptor {
+                name: "Target".into(),
+                fields: target_fields,
+                extension: None,
+            },
+        ],
+        statements: vec![fd(target, &target_projection), statement],
+    }
+    .validate()
+    .unwrap()
+}
+
+fn grouped_family_fixture(
+    family: GroupedFamily,
+    groups: u64,
+    text_bytes: usize,
+) -> (Schema, DeltaState) {
+    let schema = grouped_family_schema(family);
+    let source = RelationId(0);
+    let target = RelationId(1);
+    let pointwise = matches!(family, GroupedFamily::PointwiseContainment);
+    let extra_values = [
+        Value::Bool(true),
+        Value::U64(u64::MAX),
+        Value::I64(i64::MIN),
+        Value::F64(crate::F64::NAN),
+        Value::Uuid(crate::Uuid::from_bytes([0x5a; 16])),
+        Value::FixedBytes(Box::new([1, 2, 3])),
+    ];
+
+    let mut parent = Vec::new();
+    let mut added = Vec::new();
+    let mut removed = Vec::new();
+    // Logical partition order and canonical source row order disagree.
+    // Target rank is also independent of spilled fingerprint key order.
+    for group in (0..groups).rev() {
+        let text = Value::String(format!("g-{group:03}-{}", "x".repeat(text_bytes)).into());
+        let partition = Value::String(format!("p-{:03}", groups - group).into());
+        let mut source_row = vec![text.clone(), Value::U64(0), partition.clone()];
+        source_row.extend_from_slice(&extra_values);
+        let mut target_row = vec![partition, text];
+        target_row.extend_from_slice(&extra_values);
+        if pointwise {
+            source_row.push(Value::IntervalU64(Interval::new(0, 10).unwrap()));
+            target_row.push(Value::IntervalU64(Interval::new(0, 4).unwrap()));
+        }
+        parent.push((source, source_row.clone()));
+        parent.push((target, target_row.clone()));
+        source_row[1] = Value::U64(1);
+        added.push((source, source_row.clone()));
+        match family {
+            GroupedFamily::ScalarContainment => removed.push((target, target_row)),
+            GroupedFamily::PointwiseContainment => {
+                target_row[8] = Value::IntervalU64(Interval::new(4, 10).unwrap());
+                parent.push((target, target_row.clone()));
+                removed.push((target, target_row));
+            }
+            GroupedFamily::Capacity => {
+                // Most affected groups remain valid. Two groups violate;
+                // group zero has the last target rank AND the larger total.
+                if group == 0 || group + 1 == groups {
+                    source_row[1] = Value::U64(2);
+                    added.push((source, source_row.clone()));
+                }
+                if group == 0 {
+                    source_row[1] = Value::U64(3);
+                    added.push((source, source_row));
+                }
+            }
+        }
+    }
+    let budget = JudgeBudget {
+        examples_per_statement: 0,
+    };
+    assert_eq!(
+        judge_final_state(
+            &schema,
+            &DeltaState::new(&parent, &[], &[]),
+            &work(),
+            budget
+        )
+        .unwrap(),
+        Judgment::Admitted,
+    );
+    (schema, DeltaState::new(&parent, &added, &removed))
+}
+
+#[test]
+fn indexed_grouped_verdicts_and_canonical_citations_match_in_ram_and_spill() {
+    for family in [
+        GroupedFamily::ScalarContainment,
+        GroupedFamily::PointwiseContainment,
+        GroupedFamily::Capacity,
+    ] {
+        let (schema, mut state) = grouped_family_fixture(family, 40, 512);
+        for examples_per_statement in [0, 2] {
+            let budget = JudgeBudget {
+                examples_per_statement,
+            };
+            state.refuse_stream = false;
+            let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+            let Judgment::Rejected(violations) = &expected else {
+                panic!("the fixture must violate its grouped statement");
+            };
+            assert_eq!(violations.len(), 1);
+            assert_eq!(violations[0].statement, StatementId(1));
+            assert_eq!(violations[0].examples.len(), examples_per_statement);
+            assert!(violations[0].examples_truncated);
+            if matches!(family, GroupedFamily::Capacity) {
+                assert_eq!(violations[0].measure, Some(4));
+            }
+            state.refuse_stream = true;
+            state.row_visits.set(0);
+            for (working_bytes, scratch_bytes) in [(1_000_000, 0), (16_384, 32 << 20)] {
+                let context = scalar_key_work(working_bytes, scratch_bytes);
+                let actual = judge_incremental(
+                    LawfulParent::established(),
+                    &schema,
+                    &state,
+                    &context,
+                    budget,
+                    JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
+                )
+                .unwrap();
+                assert_eq!(actual, expected, "{family:?}, working={working_bytes}");
+                assert_eq!(state.row_visits(), 0);
+                assert_eq!(context.used(Resource::WorkingBytes), 0);
+                assert_eq!(context.used(Resource::ScratchBytes), 0);
+            }
+        }
+        // The small-budget success really needs scratch; it is not an
+        // accidentally all-in-memory fixture with a permissive disk cap.
+        let context = scalar_key_work(16_384, 0);
+        assert!(matches!(
+            judge_incremental(
+                LawfulParent::established(),
+                &schema,
+                &state,
+                &context,
+                JudgeBudget {
+                    examples_per_statement: 0
+                },
+                JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
+            ),
+            Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+                resource: Resource::ScratchBytes,
+                ..
+            }))
+        ));
+        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        assert_eq!(context.used(Resource::ScratchBytes), 0);
+    }
+}
+
+#[test]
+fn one_oversized_determinant_refuses_working_budget_despite_scratch_allowance() {
+    let (schema, state) = grouped_family_fixture(GroupedFamily::ScalarContainment, 1, 32_768);
+    let state = state.refusing_streams();
+    let context = scalar_key_work(16_384, 32 << 20);
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            JudgeBudget {
+                examples_per_statement: 0
+            },
+            JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+            resource: Resource::WorkingBytes,
+            ..
+        }))
+    ));
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+    assert_eq!(context.used(Resource::ScratchBytes), 0);
+}
+
+#[test]
+fn scalar_key_bad_groups_probe_two_then_cite_once_in_canonical_order() {
+    let schema = theory();
+    let parent = [(USER, user(100, "z")), (USER, user(101, "a"))];
+    // Reverse encounter order puts the smallest canonical citations last.
+    // Many additions to each bad group must not repeat its full scan.
+    let added: Vec<_> = (0..32)
+        .rev()
+        .map(|id| (USER, user(id, if id % 2 == 0 { "z" } else { "a" })))
+        .collect();
+    for examples_per_statement in [0, 1, 4, 34, 35] {
+        let budget = JudgeBudget {
+            examples_per_statement,
+        };
+        let state = DeltaState::new(&parent, &added, &[]);
+        let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+        let indexed = DeltaState::new(&parent, &added, &[]).refusing_streams();
+        let actual = judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &indexed,
+            &work(),
+            budget,
+            JudgeScratch::disabled(),
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        let Judgment::Rejected(violations) = actual else {
+            panic!("email keys violated")
+        };
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].statement, USER_EMAIL_KEY);
+        assert_eq!(violations[0].examples.len(), examples_per_statement.min(34));
+        assert_eq!(
+            violations[0].examples_truncated,
+            examples_per_statement < 34
+        );
+        // Unique id probes: 32. Email probes: two per bad group, then all
+        // 34 offending rows exactly once. No repeated full enumeration.
+        assert_eq!(indexed.key_row_visits.get(), 32 + 4 + 34);
+    }
+}
+
+#[test]
+fn scalar_key_late_unindexed_group_discards_provisional_citations() {
+    let schema = theory();
+    let parent = [(USER, user(100, "z")), (USER, user(101, "a"))];
+    let added = [
+        (USER, user(9, "valid")),
+        (USER, user(8, "z")),
+        (USER, user(0, "a")),
+    ];
+    // Decline either the initial probe or the second (citation) visit,
+    // after an earlier good group and provisional bad-group citations.
+    for visits_before_decline in [0, 1] {
+        for examples_per_statement in [0, 1, 4] {
+            let mut state = DeltaState::new(&parent, &added, &[]);
+            state.unindexed_key_group = Some((USER_EMAIL_KEY, vec![Value::String("a".into())]));
+            state
+                .indexed_matches_before_decline
+                .set(visits_before_decline);
+            assert_late_index_fallback(
+                &schema,
+                &state,
+                JudgeBudget {
+                    examples_per_statement,
+                },
+            );
+        }
+    }
+}
+
+#[test]
+fn scalar_key_bad_group_scratch_is_charged_and_work_failure_releases_it() {
+    let schema = theory();
+    let parent: Vec<_> = (0..128)
+        .map(|id| (USER, user(id, &format!("group-{id:03}"))))
+        .collect();
+    let added: Vec<_> = (0..128)
+        .map(|id| (USER, user(id + 128, &format!("group-{id:03}"))))
+        .collect();
+    let state = DeltaState::new(&parent, &added, &[]);
+    let budget = JudgeBudget {
+        examples_per_statement: 1,
+    };
+    let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+    assert!(matches!(expected, Judgment::Rejected(_)));
+    for scratch_bytes in [0, 32 << 20] {
+        let context = scalar_key_work(8192, scratch_bytes);
+        let actual = judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            budget,
+            JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
+        );
+        if scratch_bytes == 0 {
+            assert!(matches!(
+                actual,
+                Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+                    resource: Resource::ScratchBytes,
+                    ..
+                }))
+            ));
+        } else {
+            assert_eq!(actual.unwrap(), expected);
+        }
+        assert_eq!(context.used(Resource::WorkingBytes), 0);
+    }
+    let context = scalar_key_work(8192, 0);
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            budget,
+            JudgeScratch::disabled(),
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+            resource: Resource::WorkingBytes,
+            ..
+        }))
+    ));
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+    context.cancel();
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            budget,
+            JudgeScratch::disabled(),
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+    ));
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
+fn scalar_key_reordered_text_projection_matches_complete_and_charges_large_clones() {
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            extension: None,
+            name: "Entry".into(),
+            fields: vec![
+                field("name", ValueType::String),
+                field("id", ValueType::U64),
+                field("group", ValueType::String),
+            ],
+        }],
+        statements: vec![fd(USER, &[FieldId(2), FieldId(0)])],
+    }
+    .validate()
+    .unwrap();
+    let entry = |name: &str, id, group: &str| {
+        (
+            USER,
+            vec![
+                Value::String(name.into()),
+                Value::U64(id),
+                Value::String(group.into()),
+            ],
+        )
+    };
+    let parent = [entry("a", 0, "x"), entry("b", 1, "y")];
+    let added = [entry("a", 2, "y"), entry("a", 3, "x"), entry("b", 4, "y")];
+    let mut state = DeltaState::new(&parent, &added, &[]);
+    state.keys = &[(StatementId(0), USER, &[2, 0])];
+    let budget = JudgeBudget {
+        examples_per_statement: 3,
+    };
+    let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+    assert!(matches!(expected, Judgment::Rejected(_)));
+    state.refuse_stream = true;
+    assert_eq!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &work(),
+            budget,
+            JudgeScratch::disabled(),
+        )
+        .unwrap(),
+        expected,
+    );
+
+    let large = "wide".repeat(2048);
+    let mut state = DeltaState::new(&[], &[entry(&large, 0, "x")], &[]).refusing_streams();
+    state.keys = &[(StatementId(0), USER, &[2, 0])];
+    let context = scalar_key_work(1024, 32 << 20);
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &schema,
+            &state,
+            &context,
+            budget,
+            JudgeScratch::channel(|fault| panic!("unexpected scratch fault: {fault:?}")),
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Exhausted {
+            resource: Resource::WorkingBytes,
+            ..
+        }))
+    ));
+    assert_eq!(
+        state.key_row_visits.get(),
+        0,
+        "refuse the projection clone before probing"
+    );
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
+fn scalar_key_second_competitor_cancellation_is_not_a_verdict() {
+    let context = work();
+    let mut state =
+        DeltaState::new(&[(USER, user(1, "a"))], &[(USER, user(1, "b"))], &[]).refusing_streams();
+    state.cancel_on_key_row = Some((2, context.clone()));
+    assert!(matches!(
+        judge_incremental(
+            LawfulParent::established(),
+            &theory(),
+            &state,
+            &context,
+            JudgeBudget::default(),
+            JudgeScratch::disabled(),
+        ),
+        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+    ));
+    assert_eq!(state.key_row_visits.get(), 2);
+    assert_eq!(
+        state.group_visits(),
+        1,
+        "no citation pass after cancellation"
+    );
+    assert_eq!(context.used(Resource::WorkingBytes), 0);
+}
+
+fn scalar_containment_theory() -> Schema {
+    let source = RelationId(0);
+    let target = RelationId(1);
+    SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Source".into(),
+                fields: vec![field("group", ValueType::U64), field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Target".into(),
+                fields: vec![
+                    field("group", ValueType::U64),
+                    field("id", ValueType::U64),
+                    field("active", ValueType::Bool),
+                ],
+            },
+        ],
+        statements: vec![
+            fd(target, &[FieldId(0)]),
+            containment(
+                side(source, &[FieldId(0)]),
+                side_where(target, &[FieldId(0)], vec![(FieldId(2), Value::Bool(true))]),
+            ),
+        ],
+    }
+    .validate()
+    .unwrap()
+}
+
+#[test]
+fn scalar_containment_witness_skips_existing_source_fanout() {
+    let source = RelationId(0);
+    let target = RelationId(1);
+    let schema = scalar_containment_theory();
+    let mut parent: Vec<_> = (0..1024)
+        .map(|id| (source, vec![Value::U64(0), Value::U64(id)]))
+        .collect();
+    // The unique group-zero target witnesses all existing sources. Other
+    // targets belong to different groups, preserving the lawful parent.
+    parent.extend((0..1024).map(|id| {
+        (
+            target,
+            vec![Value::U64(id), Value::U64(id), Value::Bool(true)],
+        )
+    }));
+    let added = [(source, vec![Value::U64(0), Value::U64(1024)])];
+    let mut state = DeltaState::new(&parent, &added, &[]).refusing_streams();
+    state.keys = &[(StatementId(0), RelationId(1), &[0])];
+    let verdict = judge_incremental(
+        LawfulParent::established(),
+        &schema,
+        &state,
+        &work(),
+        JudgeBudget::default(),
+        JudgeScratch::disabled(),
+    )
+    .unwrap();
+    assert_eq!(verdict, Judgment::Admitted);
+    assert!(
+        state.compiled_row_visits.get() <= 4,
+        "existing fan-out must not be revisited after an existential witness: {} visits",
+        state.compiled_row_visits.get()
+    );
+
+    // Replacing the selected group-zero target with an unselected target
+    // must not be mistaken for an existential witness. The optimized path
+    // must cite unsatisfied sources exactly as complete judgment does.
+    let removed: Vec<_> = parent
+        .iter()
+        .filter(|(relation, row)| *relation == target && row[0] == Value::U64(0))
+        .cloned()
+        .collect();
+    let mut replacement = added.to_vec();
+    replacement.push((
+        target,
+        vec![Value::U64(0), Value::U64(0), Value::Bool(false)],
+    ));
+    let mut missing = DeltaState::new(&parent, &replacement, &removed);
+    missing.keys = state.keys;
+    assert!(matches!(
+        assert_equivalent(&schema, &missing, JudgeBudget::default()),
+        Judgment::Rejected(_)
+    ));
+}
+
+#[test]
+fn scalar_containment_late_unindexed_group_discards_provisional_citations() {
+    let source = RelationId(0);
+    let target = RelationId(1);
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Source".into(),
+                fields: vec![
+                    field("group", ValueType::String),
+                    field("id", ValueType::U64),
+                    field("partition", ValueType::String),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Target".into(),
+                fields: vec![
+                    field("partition", ValueType::String),
+                    field("group", ValueType::String),
+                    field("active", ValueType::Bool),
+                ],
+            },
+        ],
+        statements: vec![
+            fd(target, &[FieldId(1), FieldId(0)]),
+            containment(
+                side(source, &[FieldId(2), FieldId(0)]),
+                side_where(
+                    target,
+                    &[FieldId(0), FieldId(1)],
+                    vec![(FieldId(2), Value::Bool(true))],
+                ),
+            ),
+        ],
+    }
+    .validate()
+    .unwrap();
+    let group = |id| Value::String(format!("group-{id}-{}", "text".repeat(32)).into());
+    let partition = |at| {
+        Value::String(
+            if at == 0 {
+                "z-partition"
+            } else {
+                "a-partition"
+            }
+            .into(),
+        )
+    };
+    let source_row = |at, id| (source, vec![group(at), Value::U64(id), partition(at)]);
+    let target_row = |at| (target, vec![partition(at), group(at), Value::Bool(true)]);
+    let parent = vec![
+        source_row(0, 0),
+        source_row(1, 0),
+        target_row(0),
+        target_row(1),
+    ];
+    // Logical partition order visits group one first, independent of delta order.
+    // The later group zero has the canonically smallest offending facts.
+    // Repeated groups, an over-reported duplicate Add, and removed targets
+    // share logical (partition, group) keys despite differing physical order.
+    let added = vec![
+        source_row(1, 1),
+        source_row(1, 2),
+        source_row(0, 1),
+        source_row(0, 1),
+    ];
+    let removed = parent[2..].to_vec();
+    for unavailable_relation in [source, target] {
+        for examples in [0, 1, 4] {
+            let budget = JudgeBudget {
+                examples_per_statement: examples,
+            };
+            let mut state = DeltaState::new(&parent, &added, &removed);
+            state.keys = &[(StatementId(0), RelationId(1), &[1, 0])];
+            let physical_group = vec![group(0), partition(0)];
+            state.unindexed_group = Some((unavailable_relation, physical_group));
+            assert_late_index_fallback(&schema, &state, budget);
+        }
+    }
+}
+
+fn assert_late_index_fallback(schema: &Schema, state: &DeltaState, budget: JudgeBudget) {
+    let expected = judge_final_state(schema, state, &work(), budget).unwrap();
+    state.row_visits.set(0);
+    let context = work();
+    let actual = judge_incremental(
+        LawfulParent::established(),
+        schema,
+        state,
+        &context,
+        budget,
+        JudgeScratch::disabled(),
+    )
+    .unwrap();
+    assert_eq!(actual, expected);
+    assert!(matches!(actual, Judgment::Rejected(_)));
+    assert_eq!(
+        state.declined_groups.get(),
+        1,
+        "late index fallback must be exercised"
+    );
+    assert!(
+        state.row_visits() > 0,
+        "the fallback must complete its relation scan"
+    );
+    assert_eq!(
+        context.used(Resource::WorkingBytes),
+        0,
+        "provisional and completed scratch ownership must be released"
+    );
+}
+
+#[test]
+fn pointwise_containment_late_unindexed_group_discards_provisional_citations() {
+    let source = RelationId(0);
+    let target = RelationId(1);
+    let span_type = ValueType::Interval {
+        element: IntervalElement::U64,
+    };
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Source".into(),
+                fields: vec![
+                    field("group", ValueType::U64),
+                    field("id", ValueType::U64),
+                    field("span", span_type),
+                ],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Target".into(),
+                fields: vec![field("group", ValueType::U64), field("span", span_type)],
+            },
+        ],
+        statements: vec![
+            fd(target, &[FieldId(0), FieldId(1)]),
+            containment(
+                side(source, &[FieldId(0), FieldId(2)]),
+                side(target, &[FieldId(0), FieldId(1)]),
+            ),
+        ],
+    }
+    .validate()
+    .unwrap();
+    let source_row = |group, id| {
+        (
+            source,
+            vec![
+                Value::U64(group),
+                Value::U64(id),
+                Value::IntervalU64(Interval::new(0, 10).unwrap()),
+            ],
+        )
+    };
+    let parent = vec![
+        source_row(0, 0),
+        source_row(1, 0),
+        (target, booking(0, 0, 10)),
+        (target, booking(1, 0, 10)),
+    ];
+    let added = vec![source_row(1, 1), source_row(0, 1)];
+    let removed = parent[2..].to_vec();
+    for unavailable_relation in [source, target] {
+        for examples in [0, 1, 4] {
+            let mut state = DeltaState::new(&parent, &added, &removed);
+            state.keys = &[(StatementId(0), RelationId(1), &[0])];
+            state.unindexed_group = Some((unavailable_relation, vec![Value::U64(1)]));
+            assert_late_index_fallback(
+                &schema,
+                &state,
+                JudgeBudget {
+                    examples_per_statement: examples,
+                },
+            );
+        }
+    }
+}
+
+#[test]
+fn capacity_admission_remains_index_only() {
+    let schema = theory();
+    let parent = [(ROOM, room(0)), (BOOKING, booking(0, 0, 1))];
+    let added = [(BOOKING, booking(0, 1, 2))];
+    let state = DeltaState::new(&parent, &added, &[]).refusing_streams();
+    let verdict = judge_incremental(
+        LawfulParent::established(),
+        &schema,
+        &state,
+        &work(),
+        JudgeBudget::default(),
+        JudgeScratch::disabled(),
+    )
+    .unwrap();
+    assert_eq!(verdict, Judgment::Admitted);
+    assert!(state.group_visits() > 0);
+    assert_eq!(state.row_visits(), 0);
+}
+
+#[test]
+fn capacity_measure_uses_global_rank_without_full_scans_for_equal_or_differing_totals() {
+    let schema = theory();
+    let parent = [
+        (ROOM, room(1)),
+        (BOOKING, booking(0, 0, 1)),
+        (ROOM, room(0)),
+        (BOOKING, booking(1, 0, 1)),
+    ];
+    let mut added = vec![
+        (BOOKING, booking(0, 1, 2)),
+        (BOOKING, booking(0, 2, 3)),
+        (BOOKING, booking(1, 1, 2)),
+        (BOOKING, booking(1, 2, 3)),
+    ];
+    for differing in [false, true] {
+        if differing {
+            added.push((BOOKING, booking(1, 3, 4)));
+        }
+        for examples in [0, 1, 4] {
+            let budget = JudgeBudget {
+                examples_per_statement: examples,
+            };
+            let state = DeltaState::new(&parent, &added, &[]);
+            let expected = judge_final_state(&schema, &state, &work(), budget).unwrap();
+            let Judgment::Rejected(violations) = &expected else {
+                panic!("capacity violated")
+            };
+            assert_eq!(violations.len(), 1);
+            assert_eq!(
+                violations[0].measure,
+                Some(3),
+                "room0 has the last target rank, not the largest total"
+            );
+            for shuffled in [false, true] {
+                let mut indexed = DeltaState::new(&parent, &added, &[]);
+                if shuffled {
+                    let length = indexed.rows.len();
+                    let mut full: Vec<usize> = (0..length).rev().collect();
+                    full.rotate_left(3);
+                    let mut group: Vec<usize> = (0..length).collect();
+                    group.rotate_left(1);
+                    indexed.ranked_order = Some(RankedOrder {
+                        ranks: (0..length).map(|index| 7 + index as u64 * 101).collect(),
+                        full,
+                        group,
+                    });
+                    assert_eq!(
+                        judge_final_state(&schema, &indexed, &work(), budget).unwrap(),
+                        expected
+                    );
+                }
+                indexed.row_visits.set(0);
+                let indexed = indexed.refusing_streams();
+                let context = work();
+                let actual = judge_incremental(
+                    LawfulParent::established(),
+                    &schema,
+                    &indexed,
+                    &context,
+                    budget,
+                    JudgeScratch::disabled(),
+                )
+                .unwrap();
+                assert_eq!(actual, expected);
+                assert!(indexed.group_visits() > 0);
+                assert_eq!(indexed.row_visits(), 0);
+                assert_eq!(context.used(Resource::WorkingBytes), 0);
+            }
+            // A provider may implement the older exact group capability
+            // without relation-wide ranks. Its source index still runs,
+            // but the target must decline to the complete affected walk.
+            let mut unranked = DeltaState::new(&parent, &added, &[]);
+            unranked.ranked_available = false;
+            let context = work();
+            let actual = judge_incremental(
+                LawfulParent::established(),
+                &schema,
+                &unranked,
+                &context,
+                budget,
+                JudgeScratch::disabled(),
+            )
+            .unwrap();
+            assert_eq!(actual, expected);
+            assert!(unranked.group_visits() > 0);
+            assert!(unranked.row_visits() > 0);
+            assert_eq!(context.used(Resource::WorkingBytes), 0);
+        }
+    }
+}
+
+#[test]
+fn capacity_late_unindexed_group_discards_provisional_citations_and_measure() {
+    let source = RelationId(0);
+    let target = RelationId(1);
+    let schema = SchemaDescriptor {
+        relations: vec![
+            RelationDescriptor {
+                extension: None,
+                name: "Source".into(),
+                fields: vec![field("group", ValueType::U64), field("id", ValueType::U64)],
+            },
+            RelationDescriptor {
+                extension: None,
+                name: "Target".into(),
+                fields: vec![field("group", ValueType::U64)],
+            },
+        ],
+        statements: vec![
+            fd(target, &[FieldId(0)]),
+            capacity(
+                side(source, &[FieldId(0)]),
+                0,
+                Some(1),
+                side(target, &[FieldId(0)]),
+            ),
+        ],
+    }
+    .validate()
+    .unwrap();
+    let source_row = |group, id| (source, vec![Value::U64(group), Value::U64(id)]);
+    let parent = vec![
+        source_row(0, 0),
+        source_row(1, 0),
+        (target, room(0)),
+        (target, room(1)),
+    ];
+    let added = vec![source_row(1, 1), source_row(1, 2), source_row(0, 1)];
+    // Unequal totals also ensure fallback replaces the indexed pass's
+    // last measure with the complete target traversal's exact measure.
+    // Target decline follows the first group's target evidence. Source
+    // decline must wait until the second visit: the first computes totals,
+    // and the second cites sources after both target violations are known.
+    for (unavailable_relation, permitted_visits) in [(target, 0), (source, 1)] {
+        for examples in [0, 1, 4] {
+            let mut state = DeltaState::new(&parent, &added, &[]);
+            state.keys = &[(StatementId(0), RelationId(1), &[0])];
+            state.unindexed_group = Some((unavailable_relation, vec![Value::U64(1)]));
+            state.indexed_matches_before_decline.set(permitted_visits);
+            assert_late_index_fallback(
+                &schema,
+                &state,
+                JudgeBudget {
+                    examples_per_statement: examples,
+                },
+            );
+            assert_eq!(state.indexed_matches_before_decline.get(), 0);
+        }
+    }
+}
+
+// The affected key is the sole retained determinant representation. Exercise
+// its borrowed logical-coordinate decoder in both physical tiers, including
+// oversized exact keys, another map spilling inside the callback, and every
+// visitor exit. These are mechanism checks, not a second relation oracle.
+#[test]
+fn affected_determinants_decode_reordered_oversized_keys_and_release_scratch() {
+    use super::grouped::{GroupedMap, ScalarKeyScratch};
+    use std::convert::Infallible;
+
+    let fields = [
+        field("group", ValueType::String),
+        field("id", ValueType::U64),
+        field("partition", ValueType::String),
+    ];
+    let projection = [FieldId(2), FieldId(0)];
+    let rows: Vec<_> = (0..32)
+        .map(|id| {
+            vec![
+                Value::String(format!("{id:02}-{}", "payload".repeat(80)).into()),
+                Value::U64(id),
+                Value::String("partition".into()),
+            ]
+        })
+        .collect();
+    let expected: Vec<_> = rows
+        .iter()
+        .map(|row| vec![row[2].clone(), row[0].clone()])
+        .collect();
+    for spill in [false, true] {
+        let context = scalar_key_work(
+            if spill { 8192 } else { 1_000_000 },
+            if spill { 32 << 20 } else { 0 },
+        );
+        let channel: Option<fn(super::ScratchFault) -> Infallible> =
+            Some(|fault| panic!("unexpected scratch fault: {fault:?}"));
+        let mut affected = GroupedMap::new(&context, channel);
+        {
+            let mut key = ScalarKeyScratch::new(&context, 0, channel).unwrap();
+            for row in rows.iter().rev() {
+                let key = key.encode_projection(row, &projection).unwrap();
+                assert!(affected.insert_if_absent(key).unwrap());
+                assert!(!affected.insert_if_absent(key).unwrap());
+            }
+        }
+        assert_eq!(context.used(Resource::ScratchBytes) > 0, spill);
+        let mut mirror = GroupedMap::new(&context, channel);
+        let mut actual = Vec::new();
+        affected
+            .for_each_determinant(&fields, &projection, &context, |key, determinant| {
+                assert!(mirror.insert_if_absent(key)?);
+                actual.push(determinant.to_vec());
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(actual.len(), expected.len());
+        assert!(expected.iter().all(|row| actual.contains(row)));
+        assert_eq!(mirror.len(), affected.len());
+        drop(mirror);
+
+        let baseline = context.used(Resource::WorkingBytes);
+        let error = super::JudgeError::UndefinedDuration {
+            statement: StatementId(91),
+        };
+        assert_eq!(
+            affected.for_each_determinant(&fields, &projection, &context, |_, _| {
+                Err(super::JudgeError::UndefinedDuration {
+                    statement: StatementId(91),
+                })
+            }),
+            Err(error),
+        );
+        assert_eq!(context.used(Resource::WorkingBytes), baseline);
+        let mut visits = 0;
+        affected
+            .for_each_determinant(&fields, &projection, &context, |_, _| {
+                visits += 1;
+                Ok(false)
+            })
+            .unwrap();
+        assert_eq!(visits, 1);
+        assert_eq!(context.used(Resource::WorkingBytes), baseline);
+
+        // A projection containing only an interval has no scalar fields:
+        // its determinant is the valid empty tuple, not an empty group set.
+        {
+            let mut empty = GroupedMap::new(&context, channel);
+            assert!(empty.insert_if_absent(&[]).unwrap());
+            empty
+                .for_each_determinant(&fields, &[], &context, |key, values| {
+                    assert!(key.is_empty());
+                    assert!(values.is_empty());
+                    Ok(true)
+                })
+                .unwrap();
+        }
+        let mut visits = 0;
+        assert_eq!(
+            affected.for_each_determinant(&fields, &projection, &context, |_, _| {
+                visits += 1;
+                context.cancel();
+                Ok(true)
+            }),
+            Err(super::JudgeError::Work(crate::WorkError::Cancelled)),
+        );
+        assert_eq!(visits, 1);
+        assert_eq!(context.used(Resource::WorkingBytes), baseline);
+        drop(affected);
+        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        assert_eq!(context.used(Resource::ScratchBytes), 0);
+    }
 }

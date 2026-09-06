@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# (a regression), blue shrank, drawn on the AFTER profile's widths. Pure
-# <base>/flame/<name>.diff.folded `stack before after`
+# Compare CPU-weighted folded stacks exported from native captures.
+# Red = more sampled CPU, blue = less; this is attribution, not a latency verdict.
 set -euo pipefail
 
-if [ "$#" -lt 2 ]; then
-    sed -n '2,17p' "$0" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+    echo "usage: flamediff.sh <before.folded> <after.folded> [name]" >&2
     exit 2
 fi
 

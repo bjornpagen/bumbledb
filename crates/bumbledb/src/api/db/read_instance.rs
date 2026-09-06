@@ -6,7 +6,7 @@
 //! cross-thread lifetime. Metadata (`generation`, `witness`) is read from
 //! this snapshot; a second transaction is never opened for it.
 //!
-//! [`ReadFrame`] borrows that owner for one operation and carries that
+//! [`ReadFrame`] borrows snapshot and metadata for one operation and carries that
 //! operation's explicit [`WorkContext`]. Snapshot age does not donate a
 //! deadline or work budget.
 //!
@@ -36,7 +36,6 @@ use crate::schema::Schema;
 use crate::storage::GenerationId;
 use crate::storage::store::OwnedSnapshot;
 use crate::work::WorkContext;
-use crate::work::cache::GenerationHandle;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 use super::closed::ClosedRows;
@@ -52,17 +51,18 @@ pub struct OwnedRead<S> {
     pub(super) closed: Arc<ClosedRows>,
     pub(super) snapshot: OwnedSnapshot,
     pub(super) cache: Arc<ImageCache>,
-    /// [`ImageCache::acquire`](ImageCache::acquire) is the pin. There is
-    /// no `pin_generation`.
-    pub(super) pin: GenerationHandle,
     pub(super) marker: PhantomData<fn() -> S>,
 }
 
-/// Short borrowed per-operation frame over an [`OwnedRead`] (C4).
+/// Short borrowed per-operation frame over snapshot and metadata (C4).
 /// Fresh work is passed here; it is not the snapshot's lifetime deadline.
 pub struct ReadFrame<'read, S> {
-    pub(super) owner: &'read OwnedRead<S>,
+    pub(super) schema: &'read Arc<Schema>,
+    pub(super) closed: &'read ClosedRows,
+    pub(super) snapshot: &'read OwnedSnapshot,
+    pub(super) cache: &'read Arc<ImageCache>,
     pub(super) work: &'read WorkContext,
+    pub(super) marker: PhantomData<fn() -> S>,
 }
 
 /// Historical name for [`ReadFrame`]. Prefer [`ReadFrame`].
@@ -72,14 +72,6 @@ impl<S> OwnedRead<S> {
     #[must_use]
     pub fn schema(&self) -> &Schema {
         self.schema.as_ref()
-    }
-
-    pub(crate) fn schema_arc(&self) -> &Arc<Schema> {
-        &self.schema
-    }
-
-    pub(crate) fn cache(&self) -> &Arc<ImageCache> {
-        &self.cache
     }
 
     #[must_use]
@@ -93,17 +85,17 @@ impl<S> OwnedRead<S> {
         self.snapshot.generation()
     }
 
-    /// The cache generation pin acquired at snapshot time.
-    /// [`crate::image::cache::ImageCache::acquire`] is the pin.
-    #[must_use]
-    pub fn generation_handle(&self) -> GenerationHandle {
-        self.pin.clone()
-    }
-
     /// Open one operation frame. Fresh work is the operation's budget.
     #[must_use]
     pub fn frame<'read>(&'read self, work: &'read WorkContext) -> ReadFrame<'read, S> {
-        ReadFrame { owner: self, work }
+        ReadFrame {
+            schema: &self.schema,
+            closed: &self.closed,
+            snapshot: &self.snapshot,
+            cache: &self.cache,
+            work,
+            marker: PhantomData,
+        }
     }
 
     /// # Errors
@@ -114,41 +106,12 @@ impl<S> OwnedRead<S> {
 
     /// # Errors
     /// Shape refusals or storage failure.
-    #[expect(
-        clippy::needless_pass_by_value,
-        reason = "a key value is the read's input, spelled `snapshot.get(id, work)`"
-    )]
     pub fn get<'pin, K: Key<'pin, Schema = S>>(
         &'pin self,
         key: K,
         work: &WorkContext,
     ) -> Result<Option<K::Fact>> {
-        let relation = <K::Fact as Fact<'pin>>::RELATION;
-        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
-        let mut key_values = Vec::new();
-        key.append_key_values(&mut key_values)?;
-        let result = match get_path::get_with_work(
-            &self.snapshot,
-            self.schema.as_ref(),
-            self.closed.as_ref(),
-            relation,
-            K::STATEMENT,
-            &key_values,
-            work,
-        )? {
-            None => Ok(None),
-            Some(get_path::KeyedRowHit::Closed(row)) => {
-                K::Fact::decode(RowReader::new(&row.canonical)?).map(Some)
-            }
-            Some(get_path::KeyedRowHit::Store(bytes)) => {
-                K::Fact::decode(RowReader::new(bytes)?).map(Some)
-            }
-        };
-        if let Ok(found) = &result {
-            span.set_flag(found.is_some());
-        }
-        span.end();
-        result
+        get_fact(&self.snapshot, &self.schema, &self.closed, key, work)
     }
 
     /// # Errors
@@ -160,56 +123,36 @@ impl<S> OwnedRead<S> {
         key_values: &[Value],
         work: &WorkContext,
     ) -> Result<Option<DecodedRow>> {
-        let mut span = crate::obs::span(crate::obs::names::POINT_READ);
-        let bytes = match get_path::get_with_work(
+        get_row(
             &self.snapshot,
-            self.schema.as_ref(),
-            self.closed.as_ref(),
+            &self.schema,
+            &self.closed,
             relation,
             key,
             key_values,
             work,
-        )? {
-            None => None,
-            Some(get_path::KeyedRowHit::Closed(row)) => Some(row.canonical.as_ref()),
-            Some(get_path::KeyedRowHit::Store(bytes)) => Some(bytes),
-        };
-        let row = bytes
-            .map(|bytes| {
-                crate::canonical::decode(self.schema.relation(relation).fields(), bytes, work)
-                    .map_err(row_error)
-            })
-            .transpose()?;
-        span.set_flag(row.is_some());
-        span.end();
-        Ok(row)
+        )
     }
 
     /// # Errors
     /// Unknown relation, or storage failure.
     pub fn count(&self, relation: RelationId) -> Result<u64> {
-        let Some(rel) = self.schema.relation_checked(relation) else {
-            return Err(DynIdError::UnknownRelation { relation }.into());
-        };
-        match rel.body().closed_rows() {
-            Some(rows) => Ok(rows.len() as u64),
-            None => self.snapshot.row_count(relation).map_err(Error::from_store),
-        }
+        count_rows(&self.snapshot, &self.schema, relation)
     }
 }
 
 impl<S> ReadFrame<'_, S> {
     #[must_use]
     pub fn schema(&self) -> &Schema {
-        self.owner.schema()
+        self.schema.as_ref()
     }
 
     pub(crate) fn schema_arc(&self) -> &Arc<Schema> {
-        self.owner.schema_arc()
+        self.schema
     }
 
     pub(crate) fn cache(&self) -> &Arc<ImageCache> {
-        self.owner.cache()
+        self.cache
     }
 
     #[must_use]
@@ -219,13 +162,13 @@ impl<S> ReadFrame<'_, S> {
 
     #[must_use]
     pub fn snapshot(&self) -> &OwnedSnapshot {
-        self.owner.snapshot()
+        self.snapshot
     }
 
     /// The generation this pin witnessed — from the owned snapshot.
     #[must_use]
     pub fn generation(&self) -> GenerationId {
-        self.owner.generation()
+        self.snapshot.generation()
     }
 
     /// # Errors
@@ -292,22 +235,22 @@ impl<S> ReadFrame<'_, S> {
     /// # Errors
     /// Unknown relation, or storage failure.
     pub fn count(&self, relation: RelationId) -> Result<u64> {
-        self.owner.count(relation)
+        count_rows(self.snapshot, self.schema, relation)
     }
 
     /// # Errors
     /// Unknown relation, storage failure, or a malformed stored row.
     pub fn scan(&self, rel: RelationId) -> Result<impl Iterator<Item = Result<DecodedRow>> + '_> {
-        let Some(relation) = self.owner.schema.relation_checked(rel) else {
+        let Some(relation) = self.schema.relation_checked(rel) else {
             return Err(DynIdError::UnknownRelation { relation: rel }.into());
         };
         let fields = relation.fields();
-        if let Some(rows) = self.owner.closed.get(rel) {
+        if let Some(rows) = self.closed.get(rel) {
             return Ok(ScanRows::Closed(rows.iter().map(move |row| {
                 crate::canonical::decode(fields, &row.canonical, self.work).map_err(row_error)
             })));
         }
-        let iterator = self.owner.snapshot.rows(rel).map_err(Error::from_store)?;
+        let iterator = self.snapshot.rows(rel).map_err(Error::from_store)?;
         Ok(ScanRows::Store(iterator.map(move |entry| {
             let (_, bytes) = entry.map_err(Error::from_store)?;
             crate::canonical::decode(fields, bytes, self.work).map_err(row_error)
@@ -319,17 +262,13 @@ impl<S> ReadFrame<'_, S> {
     pub fn scan_facts<'lease, F: Fact<'lease, Schema = S>>(
         &'lease self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'lease> {
-        if let Some(rows) = self.owner.closed.get(F::RELATION) {
+        if let Some(rows) = self.closed.get(F::RELATION) {
             return Ok(ScanRows::Closed(
                 rows.iter()
                     .map(|row| F::decode(RowReader::new(&row.canonical)?)),
             ));
         }
-        let iterator = self
-            .owner
-            .snapshot
-            .rows(F::RELATION)
-            .map_err(Error::from_store)?;
+        let iterator = self.snapshot.rows(F::RELATION).map_err(Error::from_store)?;
         Ok(ScanRows::Store(iterator.map(move |entry| {
             let (_, bytes) = entry.map_err(Error::from_store)?;
             F::decode(RowReader::new(bytes)?)
@@ -351,13 +290,11 @@ impl<S> ReadFrame<'_, S> {
     }
 
     fn contains_values(&self, relation: RelationId, values: &[Value]) -> Result<bool> {
-        if let Some(rows) = self.owner.closed.get(relation) {
+        if let Some(rows) = self.closed.get(relation) {
             return Ok(rows.iter().any(|row| row.values.as_ref() == values));
         }
-        let bytes =
-            super::tx::encode_values(self.owner.schema.as_ref(), relation, values, self.work)?;
-        self.owner
-            .snapshot
+        let bytes = super::tx::encode_values(self.schema.as_ref(), relation, values, self.work)?;
+        self.snapshot
             .contains(relation, &bytes, self.work)
             .map_err(Error::from_store)
     }
@@ -380,7 +317,7 @@ impl<S> ReadFrame<'_, S> {
         work: &WorkContext,
         key: K,
     ) -> Result<Option<K::Fact>> {
-        self.owner.get(key, work)
+        get_fact(self.snapshot, self.schema, self.closed, key, work)
     }
 
     /// # Errors
@@ -392,7 +329,15 @@ impl<S> ReadFrame<'_, S> {
         key_values: &[Value],
         work: &WorkContext,
     ) -> Result<Option<DecodedRow>> {
-        self.owner.get_dyn(relation, key, key_values, work)
+        get_row(
+            self.snapshot,
+            self.schema,
+            self.closed,
+            relation,
+            key,
+            key_values,
+            work,
+        )
     }
 
     /// # Errors
@@ -420,6 +365,75 @@ impl<S> PreparedQuery<S> {
         params: P,
     ) -> Result<Answers> {
         self.execute_collect(&owned.frame(work), params)
+    }
+}
+
+// Typed facts borrow canonical row owners, never the operation's work or
+// a temporary frame. Both public read surfaces share this exact lookup.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the public read surfaces consume a key value; only its encoded fields are used"
+)]
+fn get_fact<'row, K: Key<'row>>(
+    snapshot: &'row OwnedSnapshot,
+    schema: &Schema,
+    closed: &'row ClosedRows,
+    key: K,
+    work: &WorkContext,
+) -> Result<Option<K::Fact>> {
+    let relation = <K::Fact as Fact<'row>>::RELATION;
+    let mut key_values = Vec::new();
+    key.append_key_values(&mut key_values)?;
+    match get_path::get_with_work(
+        snapshot,
+        schema,
+        closed,
+        relation,
+        K::STATEMENT,
+        &key_values,
+        work,
+    )? {
+        None => Ok(None),
+        Some(get_path::KeyedRowHit::Closed(row)) => {
+            K::Fact::decode(RowReader::new(&row.canonical)?).map(Some)
+        }
+        Some(get_path::KeyedRowHit::Store(bytes)) => {
+            K::Fact::decode(RowReader::new(bytes)?).map(Some)
+        }
+    }
+}
+
+fn get_row(
+    snapshot: &OwnedSnapshot,
+    schema: &Schema,
+    closed: &ClosedRows,
+    relation: RelationId,
+    key: StatementId,
+    key_values: &[Value],
+    work: &WorkContext,
+) -> Result<Option<DecodedRow>> {
+    let bytes =
+        match get_path::get_with_work(snapshot, schema, closed, relation, key, key_values, work)? {
+            None => None,
+            Some(get_path::KeyedRowHit::Closed(row)) => Some(row.canonical.as_ref()),
+            Some(get_path::KeyedRowHit::Store(bytes)) => Some(bytes),
+        };
+    let row = bytes
+        .map(|bytes| {
+            crate::canonical::decode(schema.relation(relation).fields(), bytes, work)
+                .map_err(row_error)
+        })
+        .transpose()?;
+    Ok(row)
+}
+
+fn count_rows(snapshot: &OwnedSnapshot, schema: &Schema, relation: RelationId) -> Result<u64> {
+    let Some(rel) = schema.relation_checked(relation) else {
+        return Err(DynIdError::UnknownRelation { relation }.into());
+    };
+    match rel.body().closed_rows() {
+        Some(rows) => Ok(rows.len() as u64),
+        None => snapshot.row_count(relation).map_err(Error::from_store),
     }
 }
 

@@ -83,17 +83,6 @@ impl From<crate::clockproxy::GhzStamp> for GhzReport {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct ExecDigest {
-    pub worst_estimate_factor: f64,
-
-    pub covers: String,
-
-    pub emitted: u64,
-
-    pub absorbed: u64,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GhzReport {
     pub pre: f64,
@@ -105,14 +94,20 @@ pub struct GhzReport {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReadFamilyReport {
     pub name: String,
+    /// Operations per timed sample, shared by both engines. Percentiles for
+    /// batches above one describe per-operation batch averages, not call tails.
+    pub batch: u32,
     pub ours: Stats,
     pub theirs: Stats,
     pub ratio_p50: f64,
     pub verdict: Verdict,
     pub alloc: Option<AllocReport>,
-    pub exec: Option<ExecDigest>,
     pub p99_within_budget: bool,
+    /// Legacy merged stamp; retain it unchanged for existing consumers.
     pub ghz: Option<GhzReport>,
+    /// Recorded engine brackets. None is unknown, never inferred from ghz.
+    pub ghz_ours: Option<GhzReport>,
+    pub ghz_theirs: Option<GhzReport>,
 
     /// ran: samples rescaled to the cohort's best clock before the
     pub p50_norm: Option<u64>,
@@ -124,19 +119,18 @@ pub struct WriteFamilyReport {
     pub ours: Stats,
     pub theirs: Option<Stats>,
     pub facts_per_sec: Option<f64>,
+    /// Legacy outer bracket, including its original contamination flag.
     pub ghz: Option<GhzReport>,
+    /// Whole engine blocks, including setup and teardown outside samples.
+    /// None is unknown or absent, never inferred from the outer bracket.
+    pub ghz_ours: Option<GhzReport>,
+    pub ghz_theirs: Option<GhzReport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StoreNumbers {
     pub db_bytes: u64,
     pub sqlite_bytes: u64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlameEmbed {
-    pub name: String,
-    pub table: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -152,7 +146,6 @@ pub struct RunReport {
     pub reads: Vec<ReadFamilyReport>,
     pub writes: Vec<WriteFamilyReport>,
     pub store: StoreNumbers,
-    pub flames: Vec<FlameEmbed>,
 }
 
 mod budget;

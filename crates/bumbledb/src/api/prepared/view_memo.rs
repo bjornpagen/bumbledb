@@ -44,6 +44,18 @@ impl ViewMemo {
         matches!(self.occs[occ].active, Binding::Derived)
     }
 
+    /// A same-epoch miss with no free memo slot means selection diversity
+    /// has exhausted bounded partial-image reuse. Promote once to a full
+    /// image instead of allocating and rescanning on every LRU rotation.
+    /// Called AFTER bind: a vacant slot leaves the active binding Unbound;
+    /// only an eviction leaves a same-epoch partial victim here.
+    pub(super) fn partial_capacity_exhausted(&self, occ: usize, epoch: ViewEpoch) -> bool {
+        let memo = &self.occs[occ];
+        matches!(&memo.active, Binding::Bound(bound)
+            if bound.epoch == epoch && bound.selections.is_some())
+            && memo.parked.iter().all(Option::is_some)
+    }
+
     pub(super) fn active_matches(
         &self,
         occ: usize,
@@ -51,23 +63,36 @@ impl ViewMemo {
         filters: &[FilterPredicate],
     ) -> bool {
         match &self.occs[occ].active {
-            Binding::Bound(bound) => bound.epoch == epoch && bound.filters == filters,
+            Binding::Bound(bound) => {
+                bound.epoch == epoch && bound.filters == filters && bound.selections.is_none()
+            }
             Binding::Unbound | Binding::Derived => false,
         }
     }
 
-    pub(super) fn set_bound(&mut self, occ: usize, epoch: ViewEpoch, filters: &[FilterPredicate]) {
+    pub(super) fn set_bound(
+        &mut self,
+        occ: usize,
+        epoch: ViewEpoch,
+        filters: &[FilterPredicate],
+        selections: Option<&[Vec<u64>]>,
+    ) {
         match &mut self.occs[occ].active {
             Binding::Bound(bound) => {
                 bound.epoch = epoch;
                 bound.filters.clear();
                 bound.filters.extend_from_slice(filters);
+                match (selections, &mut bound.selections) {
+                    (Some(keys), Some(bound)) => keys.clone_into(bound),
+                    _ => bound.selections = selections.map(<[Vec<u64>]>::to_vec),
+                }
                 bound.last_used = self.tick;
             }
             Binding::Unbound | Binding::Derived => {
                 self.occs[occ].active = Binding::Bound(Bound {
                     epoch,
                     filters: filters.to_vec(),
+                    selections: selections.map(<[Vec<u64>]>::to_vec),
                     last_used: self.tick,
                 });
             }
@@ -79,6 +104,7 @@ impl ViewMemo {
         occ: usize,
         epoch: ViewEpoch,
         filters: &[FilterPredicate],
+        selections: &[Vec<u64>],
     ) -> bool {
         let tick = self.tick;
         let colt = &mut self.colts[occ];
@@ -97,12 +123,22 @@ impl ViewMemo {
         if let Binding::Bound(bound) = &occ_memo.active
             && bound.epoch == epoch
             && bound.filters == filters
+            && bound
+                .selections
+                .as_deref()
+                .is_none_or(|keys| keys == selections)
         {
             return true;
         }
         if let Some(slot) = occ_memo.parked.iter().position(|slot| {
             slot.as_ref().is_some_and(|parked| {
-                parked.bound.epoch == epoch && parked.bound.filters == filters
+                parked.bound.epoch == epoch
+                    && parked.bound.filters == filters
+                    && parked
+                        .bound
+                        .selections
+                        .as_deref()
+                        .is_none_or(|keys| keys == selections)
             })
         }) {
             match &mut occ_memo.active {
@@ -111,13 +147,13 @@ impl ViewMemo {
                 }
                 Binding::Bound(active) => {
                     let parked = occ_memo.parked[slot].as_mut().expect("matched Some above");
-                    std::mem::swap(colt, &mut parked.colt);
+                    colt.swap_contents_preserving_work(&mut parked.colt);
                     std::mem::swap(active, &mut parked.bound);
                     parked.bound.last_used = tick;
                 }
                 Binding::Unbound => {
-                    let parked = occ_memo.parked[slot].take().expect("matched Some above");
-                    *colt = parked.colt;
+                    let mut parked = occ_memo.parked[slot].take().expect("matched Some above");
+                    colt.swap_contents_preserving_work(&mut parked.colt);
                     occ_memo.active = Binding::Bound(parked.bound);
                 }
             }
@@ -150,7 +186,7 @@ impl ViewMemo {
                 let Binding::Bound(active) = &mut occ_memo.active else {
                     unreachable!("just matched Bound");
                 };
-                std::mem::swap(colt, &mut victim.colt);
+                colt.swap_contents_preserving_work(&mut victim.colt);
                 std::mem::swap(active, &mut victim.bound);
                 victim.bound.last_used = tick;
             }

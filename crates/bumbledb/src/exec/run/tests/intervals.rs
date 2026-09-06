@@ -1015,72 +1015,6 @@ fn the_overlap_enumeration_prunes_the_leaf_batch_to_true_candidates() {
     );
 }
 
-struct PhasePairs {
-    leaf: usize,
-    iter_calls: usize,
-    open: usize,
-    entries: usize,
-}
-
-impl Counters for PhasePairs {
-    fn node_entry(&mut self, node: usize) {
-        if node == self.leaf {
-            self.entries += 1;
-        }
-    }
-    fn batch(&mut self, _: usize, _: usize) {}
-    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
-    fn probe_hash(&mut self, _: usize, _: usize) {}
-    fn probe(&mut self, _: usize, _: usize, _: bool) {}
-    fn residual(&mut self, _: usize, _: bool) {}
-    fn anti_probe(&mut self, _: usize, _: bool) {}
-    fn emit(&mut self) {}
-    fn skip(&mut self, _: usize) {}
-    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
-        if node == self.leaf && matches!(phase, JoinPhase::Iter) {
-            self.open += 1;
-        }
-    }
-    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
-        if node == self.leaf && matches!(phase, JoinPhase::Iter) {
-            assert_eq!(self.open, 1, "Iter windows nest never");
-            self.open -= 1;
-            self.iter_calls += 1;
-        }
-    }
-}
-
-#[test]
-fn the_overlap_enumeration_is_attributed_to_the_iter_phase() {
-    let schema = keyed_span_schema(1);
-    let mut state = 0x7A11_u64;
-    let rows = keyed_span_corpus(&mut state);
-    let views = keyed_span_views(&schema, &[&rows]);
-    let query = keyed_span_query(&[AllenMask::INTERSECTS]);
-    let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
-    let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slot_count());
-    let mut sink = CollectSink::default();
-    let mut executor = Executor::with_batch_size(&plan, BATCH);
-    let mut phases = PhasePairs {
-        leaf: plan.nodes().len() - 1,
-        iter_calls: 0,
-        open: 0,
-        entries: 0,
-    };
-    executor
-        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut phases)
-        .expect("execute");
-    assert_eq!(phases.open, 0, "every Iter window closed");
-    assert!(
-        phases.iter_calls >= 2 * phases.entries,
-        "each leaf call records the enumerate window plus its drain \
-         windows ({} calls over {} entries)",
-        phases.iter_calls,
-        phases.entries
-    );
-}
-
 #[test]
 #[allow(clippy::too_many_lines)]
 fn const_side_touching_residuals_conjoin_into_one_window_query() {
@@ -1283,53 +1217,6 @@ fn allen_masks_agree_with_the_naive_model_through_the_pipelined_pass() {
     }
 }
 
-#[derive(Default)]
-struct PhaseProfile {
-    acc: [[u64; 7]; 8],
-    open: [[u64; 7]; 8],
-    epoch: Option<std::time::Instant>,
-}
-
-fn phase_slot(phase: JoinPhase) -> usize {
-    match phase {
-        JoinPhase::Iter => 0,
-        JoinPhase::Hash => 1,
-        JoinPhase::Probe => 2,
-        JoinPhase::Residual => 3,
-        JoinPhase::Descend => 4,
-        JoinPhase::Force => 5,
-        JoinPhase::Gather => 6,
-    }
-}
-
-impl PhaseProfile {
-    fn now(&mut self) -> u64 {
-        let epoch = *self.epoch.get_or_insert_with(std::time::Instant::now);
-        u64::try_from(epoch.elapsed().as_nanos()).expect("short run")
-    }
-}
-
-impl Counters for PhaseProfile {
-    fn node_entry(&mut self, _: usize) {}
-    fn batch(&mut self, _: usize, _: usize) {}
-    fn cover_choice(&mut self, _: usize, _: usize, _: crate::exec::colt::KeyCount) {}
-    fn probe_hash(&mut self, _: usize, _: usize) {}
-    fn probe(&mut self, _: usize, _: usize, _: bool) {}
-    fn residual(&mut self, _: usize, _: bool) {}
-    fn anti_probe(&mut self, _: usize, _: bool) {}
-    fn emit(&mut self) {}
-    fn skip(&mut self, _: usize) {}
-    fn phase_start(&mut self, node: usize, phase: JoinPhase) {
-        let stamp = self.now();
-        self.open[node.min(7)][phase_slot(phase)] = stamp;
-    }
-    fn phase_end(&mut self, node: usize, phase: JoinPhase) {
-        let stamp = self.now();
-        let cell = &mut self.acc[node.min(7)][phase_slot(phase)];
-        *cell += stamp - self.open[node.min(7)][phase_slot(phase)];
-    }
-}
-
 fn uniform_keyed_corpus(
     keys: u64,
     per_key: u64,
@@ -1383,12 +1270,8 @@ fn timed_run(
 }
 
 #[test]
-#[ignore = "manual profiling rig — run release with --nocapture"]
-#[expect(
-    clippy::cast_precision_loss,
-    reason = "profile display arithmetic — nanoseconds beyond f64's mantissa are immaterial"
-)]
-fn overlap_profile() {
+#[ignore = "manual crossover benchmark — run release with --nocapture"]
+fn overlap_crossover_benchmark() {
     let touching = AllenMask::INTERSECTS | AllenMask::MEETS;
     let index_masks = [touching, touching];
     let generic_masks = [touching | AllenMask::BEFORE, touching | AllenMask::AFTER];
@@ -1412,46 +1295,5 @@ fn overlap_profile() {
              ratio {:.2}  answers {index_answers}",
             generic_p50.as_secs_f64() / index_p50.as_secs_f64(),
         );
-    }
-
-    let mut state = 0x07E2_5CA1_u64;
-    let rows = uniform_keyed_corpus(400, 75, 3000, &mut state);
-    let schema = keyed_span_schema(1);
-    let views = keyed_span_views(&schema, &[&rows]);
-    for (name, masks) in [("generic", generic_masks), ("index", index_masks)] {
-        let query = keyed_span_query(&masks);
-        let plan = planned_with_sinks(&query, &schema, &[0, 1], &all_vars(&query));
-        let mut colts = colts_for(&plan, &views);
-        let mut bindings = Bindings::new(plan.slot_count());
-        let mut sink = CollectSink::default();
-        let mut executor = Executor::new(&plan);
-        let mut profile = PhaseProfile::default();
-        let t0 = std::time::Instant::now();
-        executor
-            .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut profile)
-            .expect("execute");
-        let total = t0.elapsed();
-        println!(
-            "t2-scale [{name}] total {total:?} answers {}",
-            sink.rows.len()
-        );
-        let names = ["iter", "hash", "probe", "residual", "descend", "force"];
-        for (node, phases) in profile.acc.iter().enumerate() {
-            if phases.iter().all(|&nanos| nanos == 0) {
-                continue;
-            }
-            let line: Vec<String> = names
-                .iter()
-                .zip(phases)
-                .map(|(phase, &nanos)| {
-                    format!(
-                        "{phase} {:.1}ms ({:.0}%)",
-                        nanos as f64 / 1e6,
-                        nanos as f64 / total.as_nanos() as f64 * 100.0
-                    )
-                })
-                .collect();
-            println!("  node {node}: {}", line.join("  "));
-        }
     }
 }

@@ -179,55 +179,6 @@ fn middle_node_membership_batches_pinned_rows_and_walks_fanouts() {
     }
 }
 
-#[cfg(feature = "trace")]
-#[test]
-fn pump_gather_windows_are_attributed() {
-    let schema = schema(3);
-    let r: Vec<(u64, u64)> = (0..64u64).map(|i| (i, i % 8)).collect();
-    let s: Vec<(u64, u64)> = (0..8u64)
-        .flat_map(|y| (0..8u64).map(move |j| (y, y * 8 + j)))
-        .collect();
-    let t: Vec<(u64, u64)> = (0..64u64).map(|z| (z, z)).collect();
-    let views = views_of(&schema, &[r, s, t]);
-    let normalized = normalized(
-        vec![
-            occurrence(0, 0, &[(0, 0), (1, 1)]),
-            occurrence(1, 1, &[(0, 1), (1, 2)]),
-            occurrence(2, 2, &[(0, 2), (1, 3)]),
-        ],
-        vec![],
-    );
-    let sinks = all_vars(&normalized);
-    let plan = planned_with_sinks(&normalized, &schema, &[0, 1, 2], &sinks);
-    let mut executor = Executor::new(&plan);
-    assert!(
-        matches!(executor.drive, super::super::Drive::Pipeline(_)),
-        "pipeline dispatched"
-    );
-    let mut colts = colts_for(&plan, &views);
-    let mut bindings = Bindings::new(plan.slot_count());
-    let mut sink = CollectSink::default();
-    crate::obs::start_capture();
-    let mut timers = PhaseTimers::new();
-    executor
-        .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut timers)
-        .expect("execute");
-    timers.flush();
-    let events = crate::obs::finish_capture();
-    assert!(!sink.rows.is_empty());
-
-    for point in [
-        crate::obs::names::JOIN_PHASE[6][0],
-        crate::obs::names::JOIN_PHASE[6][1],
-    ] {
-        let event = events
-            .iter()
-            .find(|e| e.point() == point)
-            .unwrap_or_else(|| panic!("{point} attributed"));
-        assert!(event.a1() > 0, "{point} counts its windows");
-    }
-}
-
 /// An entry whose cover holds an exact multiple of the batch size drains at one
 /// full batch plus one empty resume draw (the token must be re-presented to
 /// learn the entry is exhausted), and `pump` used to count that empty draw —

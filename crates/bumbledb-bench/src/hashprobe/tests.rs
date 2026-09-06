@@ -230,6 +230,46 @@ fn equivalence_truncation_is_the_prefix_and_widths_are_pinned() {
 }
 
 #[test]
+fn row_prefix_candidate_matches_exact_current_envelope_not_derive_key() {
+    let candidate = Candidate::Blake3RowPrefix16;
+    assert_eq!(candidate.name(), "blake3-row-prefix-rel0-16");
+    assert_eq!(
+        CANDIDATES.iter().filter(|&&item| item == candidate).count(),
+        1
+    );
+    for len in [0, 1, 15, 16, 31, 32, 63, 64, 65, 1023, 1024, 1025] {
+        let message = kat::blake3_vector_input(len);
+        // Independent one-shot envelope oracle, not the shared streaming
+        // initializer. This pins the current format bytes, not an upstream KAT.
+        let mut envelope = b"bumbledb/1/row-fp".to_vec();
+        envelope.extend_from_slice(&[0, 0, 0, 0]);
+        envelope.extend_from_slice(&message);
+        let expected = blake3::hash(&envelope);
+        let got = probe::digest_oneshot(candidate, &message);
+        assert_eq!(got, expected.as_bytes()[..16], "length {len}");
+        assert_ne!(
+            got,
+            probe::digest_oneshot(Candidate::Blake3Trunc16, &message)
+        );
+        assert_ne!(
+            got,
+            probe::digest_oneshot(Candidate::Blake3DeriveKey16, &message)
+        );
+    }
+    // Old output labels must keep denoting the old algorithm's actual bytes.
+    let mut legacy = blake3::Hasher::new_derive_key("bumbledb v1 2026-09-04 fact fingerprint");
+    legacy.update(b"preserve historical observations");
+    assert_eq!(Candidate::Blake3DeriveKey16.name(), "blake3-derive-key-16");
+    assert_eq!(
+        probe::digest_oneshot(
+            Candidate::Blake3DeriveKey16,
+            b"preserve historical observations"
+        ),
+        legacy.finalize().as_bytes()[..16]
+    );
+}
+
+#[test]
 fn equivalence_distinct_inputs_distinct_digests_across_candidates() {
     // Not a collision claim — a smoke check that each candidate actually
     // consumes its input (a stubbed constant function must fail here).

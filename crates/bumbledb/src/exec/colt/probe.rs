@@ -1,6 +1,6 @@
 #[cfg(test)]
 use super::hash_words;
-use super::{Colt, Cursor, Map, Slot, ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask};
+use super::{Colt, Cursor, Map, ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask};
 
 impl Colt {
     #[cfg(test)]
@@ -22,6 +22,22 @@ impl Colt {
         self.probe_child_at(cursor, self.join_index(level), key, hash)
     }
 
+    /// The sibling batch has already selected its fixed key width.
+    /// `K == 0` retains runtime dispatch, including actual empty keys.
+    ///
+    /// # Errors
+    /// Returns the same force/growth refusal as `get_prehashed`.
+    #[inline(always)]
+    pub(crate) fn get_prehashed_width<const K: usize>(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        key: &[u64],
+        hash: u64,
+    ) -> Result<Option<Cursor>, crate::work::WorkError> {
+        self.probe_child_at_width::<K>(cursor, self.join_index(level), key, hash)
+    }
+
     #[inline(always)]
     pub(super) fn probe_child_at(
         &mut self,
@@ -30,7 +46,19 @@ impl Colt {
         key: &[u64],
         hash: u64,
     ) -> Result<Option<Cursor>, crate::work::WorkError> {
+        self.probe_child_at_width::<0>(cursor, level, key, hash)
+    }
+
+    #[inline(always)]
+    fn probe_child_at_width<const K: usize>(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        key: &[u64],
+        hash: u64,
+    ) -> Result<Option<Cursor>, crate::work::WorkError> {
         debug_assert_eq!(key.len(), self.arity_at(level));
+        debug_assert!(K == 0 || key.len() == K);
         match cursor {
             Cursor::Row(position) => Ok(self
                 .position_matches(level, position, key)
@@ -38,14 +66,15 @@ impl Colt {
             Cursor::Node(node) => {
                 let map = self.force(node, level)?;
                 let m = &self.maps[map as usize];
-                let (found, idx) = self.probe_hashed(m, key, hash);
+                let (found, idx) = if K == 0 {
+                    self.probe_hashed(m, key, hash)
+                } else {
+                    self.probe_walk::<K>(m, key, hash)
+                };
                 if !found {
                     return Ok(None);
                 }
-                Ok(match unpack_child(self.buckets[m.child_at(idx)]) {
-                    Slot::Single(position) => Some(Cursor::Row(position)),
-                    Slot::Node(child) => Some(Cursor::Node(child)),
-                })
+                Ok(Some(unpack_child(self.buckets[m.child_at(idx)])))
             }
         }
     }
@@ -74,7 +103,9 @@ impl Colt {
         }
     }
 
-    /// Scalar — the measured in-situ winner over a NEON sweep. A miss
+    /// Tag-gated scalar probing: a tag miss never loads the key block.
+    /// The unconditional NEON sweep won in isolation but lost under the
+    /// actual executor's cache displacement (bumblebench's in-situ record).
     #[inline(always)]
     fn probe_walk<const A: usize>(&self, m: &Map, key: &[u64], hash: u64) -> (bool, usize) {
         debug_assert_eq!(key.len(), A);

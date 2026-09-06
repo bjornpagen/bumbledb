@@ -124,11 +124,6 @@ pub(super) const READINGS: &[(u64, u64, i64)] = &[
 fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
     let fix = readings(READINGS);
     let mut prepared = fix.prepare(&fold_query(20)).expect("prepare");
-    assert_eq!(
-        prepared.latch.remaining(),
-        0,
-        "a plan-constant set is pre-resolved — it must not block the latch"
-    );
     let out = fix
         .execute(&mut prepared, &[] as &[BindValue])
         .expect("execute");
@@ -137,35 +132,15 @@ fn a_folded_plan_answers_and_keeps_the_latched_fast_path() {
         vec![210, 211, 220],
         "kinds 1 and 2 (rank 20)"
     );
+    let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
+        panic!("folded free join");
+    };
+    assert_eq!(rule.resolution, ResolutionState::Complete);
 
     let out = fix
         .execute(&mut prepared, &[] as &[BindValue])
         .expect("warm execute");
     assert_eq!(values_of(&out), vec![210, 211, 220]);
-}
-
-#[cfg(feature = "trace")]
-#[test]
-fn a_folded_occurrence_builds_no_image_and_binds_no_view() {
-    use crate::obs;
-
-    let fix = readings(READINGS);
-    let mut prepared = fix.prepare(&fold_query(20)).expect("prepare");
-    obs::start_capture();
-    fix.execute(&mut prepared, &[] as &[BindValue])
-        .expect("execute");
-    let events = obs::finish_capture();
-    let count = |name| events.iter().filter(|e| e.point() == name).count();
-    assert_eq!(
-        count(obs::names::VIEW_BUILD),
-        1,
-        "one view binds: the Reading occurrence — never the folded Kind"
-    );
-    assert_eq!(
-        count(obs::names::IMAGE_BUILD),
-        1,
-        "one image builds: Reading's — the sealed extension was read at prepare"
-    );
 }
 
 #[test]

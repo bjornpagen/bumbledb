@@ -134,6 +134,82 @@ fn strict_parser_rejects_truncation_duplicates_reordering_and_foreign_schema() {
 }
 
 #[test]
+fn ordered_pending_seals_identical_wire_with_one_retained_payload_charge() {
+    let schema = schema();
+    let mut builder = ChangeSet::builder(&schema, work());
+    builder.insert(RelationId(0), &[Value::U64(9)]).unwrap();
+    builder.delete(RelationId(0), &[Value::U64(3)]).unwrap();
+    builder.insert(RelationId(0), &[Value::U64(5)]).unwrap();
+    let expected = builder.finish().unwrap();
+    let pending: BTreeMap<_, _> = expected
+        .records()
+        .map(|record| ((record.relation, Box::from(record.row)), record.kind))
+        .collect();
+    let ctx = work();
+    let sealed = ChangeSet::from_ordered_rows(&schema, &pending, &ctx).unwrap();
+    assert_eq!(sealed.as_bytes(), expected.as_bytes());
+    assert_eq!(
+        ChangeSet::parse(&schema, sealed.as_bytes(), &work())
+            .unwrap()
+            .as_bytes(),
+        expected.as_bytes()
+    );
+    assert_eq!(
+        ctx.used(Resource::WorkingBytes),
+        (sealed.as_bytes().len() + std::mem::size_of::<Payload>()) as u64
+    );
+    let retained = sealed.clone();
+    drop(sealed);
+    assert!(ctx.used(Resource::WorkingBytes) > 0);
+    drop(retained);
+    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
+fn ordered_pending_refuses_bad_rows_and_exhaustion_without_retained_memory() {
+    let schema = schema();
+    let canonical = CanonicalRow::encode(
+        schema.relation(RelationId(0)).fields(),
+        &[Value::U64(1)],
+        &work(),
+    )
+    .unwrap();
+    let mut pending = BTreeMap::from([(
+        (RelationId(0), Box::<[u8]>::from(canonical.as_bytes())),
+        ChangeKind::Add,
+    )]);
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        ChangeSet::from_ordered_rows(&schema, &pending, &cancelled),
+        Err(ChangeError::Work(WorkError::Cancelled))
+    ));
+    let limited = work();
+    let held = limited
+        .reserve(ByteKind::Working, limited.limit(Resource::WorkingBytes))
+        .unwrap();
+    assert!(matches!(
+        ChangeSet::from_ordered_rows(&schema, &pending, &limited),
+        Err(ChangeError::Work(WorkError::Exhausted {
+            resource: Resource::WorkingBytes,
+            ..
+        }))
+    ));
+    drop(held);
+    assert_eq!(limited.used(Resource::WorkingBytes), 0);
+    pending.insert(
+        (RelationId(0), Box::from(&b"malformed"[..])),
+        ChangeKind::Add,
+    );
+    let ctx = work();
+    assert!(matches!(
+        ChangeSet::from_ordered_rows(&schema, &pending, &ctx),
+        Err(ChangeError::Row(_))
+    ));
+    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
+}
+
+#[test]
 fn failed_ingestion_spends_draft_and_releases_owned_memory() {
     let schema = schema();
     let ctx = work();

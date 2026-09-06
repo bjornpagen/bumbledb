@@ -108,15 +108,20 @@ fn a_dangling_membership_entry_is_a_typed_finding() {
     let store = db.integration_store();
     {
         let inner = &store.inner;
-        let mut wtxn = inner.env.write_txn().expect("fixture txn");
-        let fake = crate::storage::store::keys::membership_key(
-            ENTRY,
-            &[0xAB; crate::storage::store::FP_LEN],
-            crate::storage::store::RowId(9_999),
-        );
+        let mut wtxn = store
+            .gated_write_txn(&crate::api::db::test_operation().unwrap())
+            .expect("fixture txn");
+        let fake = inner
+            .keys
+            .membership_key(
+                ENTRY,
+                &[0xAB; crate::storage::store::FP_LEN],
+                crate::storage::store::RowId(9_999),
+            )
+            .expect("key");
         inner
             .data
-            .put(&mut wtxn, fake.as_slice(), &[])
+            .put(&mut wtxn.txn, fake.as_slice(), &[])
             .expect("fixture put");
         wtxn.commit().expect("fixture commit");
     }
@@ -156,29 +161,26 @@ fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
                 )
                 .expect("fixture iter");
             let (key, _) = iter.next().expect("one membership entry").expect("entry");
-            let mut fp = [0u8; crate::storage::store::FP_LEN];
-            fp.copy_from_slice(&key[5..5 + crate::storage::store::FP_LEN]);
-            (
-                crate::storage::store::keys::row_id_from_suffix(
-                    key,
-                    crate::storage::store::keys::MEMBERSHIP_KEY_LEN,
-                )
-                .expect("row id"),
-                fp,
-            )
+            let (_, fp, row_id) = inner.keys.decode_membership(key).expect("membership");
+            (row_id, fp)
         };
-        let mut wtxn = inner.env.write_txn().expect("fixture txn");
-        let real = crate::storage::store::keys::membership_key(ENTRY, &fp, row_id);
+        let mut wtxn = store
+            .gated_write_txn(&crate::api::db::test_operation().unwrap())
+            .expect("fixture txn");
+        let real = inner.keys.membership_key(ENTRY, &fp, row_id).expect("key");
         inner
             .data
-            .delete(&mut wtxn, real.as_slice())
+            .delete(&mut wtxn.txn, real.as_slice())
             .expect("fixture delete");
         let mut wrong = fp;
         wrong[0] ^= 0xFF;
-        let forged = crate::storage::store::keys::membership_key(ENTRY, &wrong, row_id);
+        let forged = inner
+            .keys
+            .membership_key(ENTRY, &wrong, row_id)
+            .expect("key");
         inner
             .data
-            .put(&mut wtxn, forged.as_slice(), &[])
+            .put(&mut wtxn.txn, forged.as_slice(), &[])
             .expect("fixture put");
         wtxn.commit().expect("fixture commit");
     }
@@ -214,12 +216,14 @@ fn a_stale_row_count_and_a_behind_ratchet_are_convicted() {
     let store = db.integration_store();
     {
         let inner = &store.inner;
-        let mut wtxn = inner.env.write_txn().expect("fixture txn");
+        let mut wtxn = store
+            .gated_write_txn(&crate::api::db::test_operation().unwrap())
+            .expect("fixture txn");
         // Stored count lies.
         inner
             .meta
             .put(
-                &mut wtxn,
+                &mut wtxn.txn,
                 crate::storage::store::format::row_count_key(ENTRY).as_slice(),
                 &7u64.to_be_bytes(),
             )
@@ -228,7 +232,7 @@ fn a_stale_row_count_and_a_behind_ratchet_are_convicted() {
         inner
             .meta
             .put(
-                &mut wtxn,
+                &mut wtxn.txn,
                 crate::storage::store::format::K_NEXT_ROW_ID,
                 &1u64.to_be_bytes(),
             )

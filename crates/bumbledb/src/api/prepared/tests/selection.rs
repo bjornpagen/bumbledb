@@ -73,11 +73,8 @@ fn selection_work_is_o_selected() {
     assert_eq!(out.len(), 4);
 }
 
-#[cfg(feature = "trace")]
 #[test]
 fn selection_params_rotate_without_view_rebuilds() {
-    use crate::obs;
-
     // Epoch memoization is a store behavior: heap ticks rebuild per
     // execution by design, so this suite runs over one committed store.
     let fix = posting_store(
@@ -91,47 +88,33 @@ fn selection_params_rotate_without_view_rebuilds() {
     );
     let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
 
-    let mut view_builds = 0;
-    let mut memo_hits = 0;
+    let mut initial_binding = None;
     for _cycle in 0..3 {
-        for m in ["m0", "m1", "m2"] {
-            obs::start_capture();
-            let out = fix.execute(&mut prepared, &memo_param(m)).expect("execute");
-            let events = obs::finish_capture();
-            assert!(!out.is_empty());
-            view_builds += events
-                .iter()
-                .filter(|e| e.point() == obs::names::VIEW_BUILD)
-                .count();
-            memo_hits += events
-                .iter()
-                .filter(|e| e.point() == obs::names::VIEW_MEMO_HIT)
-                .count();
-            let probe = events
-                .iter()
-                .find(|e| e.point() == obs::names::SELECT_PROBE)
-                .expect("every execution probes");
-            assert_eq!(probe.a1(), 1, "present keys hit");
+        for text in ["m0", "m1", "m2", "never-stored"] {
+            let out = fix
+                .execute(&mut prepared, &memo_param(text))
+                .expect("execute");
+            assert_eq!(
+                out.len(),
+                match text {
+                    "m0" => 2,
+                    "never-stored" => 0,
+                    _ => 1,
+                }
+            );
+            let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
+                panic!("free join fixture")
+            };
+            let Binding::Bound(bound) = &rule.memo.occs[0].active else {
+                panic!("executed binding")
+            };
+            let state = (bound.epoch, bound.last_used);
+            assert_eq!(
+                state,
+                *initial_binding.get_or_insert(state),
+                "selection changes reuse the original binding"
+            );
+            assert!(rule.memo.occs[0].parked.iter().all(Option::is_none));
         }
     }
-    assert_eq!(view_builds, 1, "one view build per generation");
-    assert_eq!(memo_hits, 8, "every later execution memo-hits");
-
-    // A never-stored text now binds to a fresh interner token (interning
-    // never misses); the selection probe runs, misses, and the join never
-    // starts — the empty verdict is a probe miss, not a bind short-circuit.
-    obs::start_capture();
-    let out = fix
-        .execute(&mut prepared, &memo_param("never-stored"))
-        .expect("execute");
-    let events = obs::finish_capture();
-    assert!(out.is_empty());
-    let names: Vec<obs::TracePoint> = events.iter().map(|e| e.point()).collect();
-    assert!(!names.contains(&obs::names::VIEW_BUILD), "{names:?}");
-    let probe = events
-        .iter()
-        .find(|e| e.point() == obs::names::SELECT_PROBE)
-        .expect("the probe runs against the fresh token");
-    assert_eq!(probe.a1(), 0, "absent keys miss");
-    assert!(!names.contains(&obs::names::JOIN), "{names:?}");
 }

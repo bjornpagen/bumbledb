@@ -21,6 +21,10 @@ struct CollectSink {
 }
 
 impl Sink for CollectSink {
+    fn may_use_distinct_traversal() -> bool {
+        true
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         let row: Vec<u64> = (0..bindings.slot_count())
             .map(|s| bindings.get(s))

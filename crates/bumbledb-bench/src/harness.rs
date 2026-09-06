@@ -1,6 +1,5 @@
-//! precisely defined cold protocol.
+//! Ordinary benchmark timing, parameter rotation, and allocation diagnostics.
 use bumbledb::Value;
-use bumbledb::obs::TraceEvent;
 
 mod cold;
 mod measure;
@@ -8,16 +7,14 @@ mod rotation;
 mod stats;
 #[cfg(test)]
 mod tests;
-mod traced;
 mod work;
 
 pub use cold::{measure_cold, org_touch};
 pub use measure::{measure, measure_batched, measure_interleaved};
 pub use stats::{normalized_p50, stats};
-pub use traced::{traced_cold_sample, traced_sample};
 pub use work::{bench_policy, bench_work, capped_work_units};
 
-/// The warmup/measure protocol. Warm reads use [`Protocol::WARM`]; writes
+/// Warmup and measured sample counts. Each family selects its protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Protocol {
     pub warmups: u32,
@@ -55,19 +52,20 @@ pub struct Measurement {
     pub p50_norm: Option<u64>,
 
     pub alloc: Option<bumbledb::alloc_counter::AllocSnapshot>,
-
-    pub trace: Option<(u64, Vec<TraceEvent>)>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Modes {
     pub alloc_window: bool,
-    pub trace: bool,
     /// Record an effective-GHz proxy reading after EVERY sample:
     pub proxy_per_rep: bool,
 }
 
 pub const QUANTUM_FLOOR_NS: u64 = 500;
+
+/// Existing automatic batching ceiling; overrides do not amplify the
+/// protocol beyond its current maximum operations per timed sample.
+pub const MAX_READ_BATCH: u32 = 16;
 
 #[must_use]
 #[expect(

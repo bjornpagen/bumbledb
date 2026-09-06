@@ -18,112 +18,56 @@ fn rotating_rows() -> Vec<(u64, u64, &'static str, i64)> {
         .collect()
 }
 
-#[cfg(feature = "trace")]
 #[test]
 fn same_generation_executions_memo_hit_and_new_generations_rebuild() {
-    use crate::obs;
-
     let fix = posting_store("view-memo-generations", &rotating_rows());
     let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
 
     let run = |fix: &StoreFix, prepared: &mut PreparedQuery<T>, memo: &str| {
-        obs::start_capture();
         let out = fix.execute(prepared, &memo_param(memo)).expect("execute");
-        let events = obs::finish_capture();
-        let builds = events
-            .iter()
-            .filter(|e| e.point() == obs::names::VIEW_BUILD)
-            .count();
-        let hits = events
-            .iter()
-            .filter(|e| e.point() == obs::names::VIEW_MEMO_HIT)
-            .count();
-        (out.len(), builds, hits)
+        let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
+            panic!("free join fixture")
+        };
+        let Binding::Bound(bound) = &rule.memo.occs[0].active else {
+            panic!("executed binding")
+        };
+        (out.len(), bound.epoch, bound.last_used)
     };
 
-    let (rows_a, builds, _) = run(&fix, &mut prepared, "m0");
+    let (rows_a, epoch, built_at) = run(&fix, &mut prepared, "m0");
     assert!(rows_a > 0);
-    assert_eq!(builds, 1, "the first execution builds the view");
-    let (_, builds, hits) = run(&fix, &mut prepared, "m0");
-    assert_eq!(builds, 0, "the second execution rebuilds nothing");
-    assert_eq!(hits, 1, "the second execution memo-hits");
-
-    // A write advances the generation: the next execution rebuilds.
+    assert_eq!(run(&fix, &mut prepared, "m0"), (rows_a, epoch, built_at));
     fix.insert_dyn(POSTING, &posting_rows(&[(1000, 0, "m0", 999)]));
-    let (rows_b, builds, _) = run(&fix, &mut prepared, "m0");
-    assert_eq!(builds, 1, "the new generation pays one rebuild");
-    assert_eq!(rows_b, rows_a + 1, "and reads the fresh row");
+    let (rows_b, next_epoch, rebuilt_at) = run(&fix, &mut prepared, "m0");
+    assert_ne!(next_epoch, epoch);
+    assert!(rebuilt_at > built_at);
+    assert_eq!(rows_b, rows_a + 1);
 }
 
-#[cfg(feature = "trace")]
 #[test]
-fn rotating_range_bindings_park_and_return_without_rebuilds() {
-    use crate::obs;
-
-    // A range-param query re-binds different residual filters against one
-    // epoch-stable source: parked COLTs return without a rebuild scan.
-    let fix = posting_store("view-memo-parked", &rotating_rows());
-    let query = by_account_query();
-    let mut prepared = fix.prepare(&query).expect("prepare");
-
-    let run = |fix: &StoreFix, prepared: &mut PreparedQuery<T>, floor: i64| {
-        obs::start_capture();
+fn heap_executions_use_fresh_view_epochs_without_resident_cache_entries() {
+    let fix = postings(&[(1, 7, "a", 10)]);
+    let mut prepared = fix.prepare(&by_memo_query()).expect("prepare");
+    let mut epochs = Vec::new();
+    for _ in 0..2 {
         let out = fix
-            .execute(prepared, &[BindValue::U64(0), BindValue::I64(floor)])
+            .execute(&mut prepared, &memo_param("a"))
             .expect("execute");
-        let events = obs::finish_capture();
-        let builds = events
-            .iter()
-            .filter(|e| e.point() == obs::names::VIEW_BUILD)
-            .count();
-        let hits = events
-            .iter()
-            .filter(|e| e.point() == obs::names::VIEW_MEMO_HIT)
-            .count();
-        (out.len(), builds, hits)
-    };
-
-    // Two distinct bindings, then the rotation repeats them.
-    let (_, first_builds, _) = run(&fix, &mut prepared, -100);
-    assert_eq!(first_builds, 1, "cold build");
-    let (_, second_builds, _) = run(&fix, &mut prepared, 0);
-    assert!(
-        second_builds <= 1,
-        "a second residual binding builds at most one filtered view"
-    );
-    let mut rebuilds = 0;
-    for _ in 0..3 {
-        for floor in [-100, 0] {
-            let (_, builds, hits) = run(&fix, &mut prepared, floor);
-            rebuilds += builds;
-            assert!(builds == 0 || hits == 0 || builds + hits >= 1);
-        }
+        assert_eq!(amounts_of(&out), [10]);
+        let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
+            panic!("free join fixture");
+        };
+        let Binding::Bound(bound) = &rule.memo.occs[0].active else {
+            panic!("executed heap binding");
+        };
+        assert!(matches!(bound.epoch, crate::image::ViewEpoch::Heap(_)));
+        epochs.push(bound.epoch);
+        assert_eq!(prepared.cache.image_count(), 0);
     }
-    assert_eq!(
-        rebuilds, 0,
-        "repeated bindings hit the active or parked slot — never a rebuild"
+    assert_ne!(
+        epochs[0], epochs[1],
+        "heap executions cannot hit an old view"
     );
-}
-
-#[test]
-fn heap_executions_never_reuse_a_previous_instances_views() {
-    // Heap instances carry no durable identity: each execution rebuilds
-    // from the instance it was handed, so answers always track the actual
-    // instance — never a stale memo of another one's rows.
-    let rows_a: &[(u64, u64, &str, i64)] = &[(1, 7, "a", 10)];
-    let fix_a = postings(rows_a);
-    let mut prepared = fix_a.prepare(&by_memo_query()).expect("prepare");
-    let out = fix_a
-        .execute(&mut prepared, &memo_param("a"))
-        .expect("execute");
-    assert_eq!(out.len(), 1);
-
-    // The same prepared query against the SAME instance again (fresh
-    // tick): identical answers, no stale carry.
-    let out = fix_a
-        .execute(&mut prepared, &memo_param("a"))
-        .expect("re-execute");
-    assert_eq!(out.len(), 1);
 }
 
 #[test]
@@ -145,4 +89,203 @@ fn trim_drops_parked_views_and_preserves_answers() {
     prepared.trim();
     let after = answers_of(&fix.execute(&mut prepared, &params).expect("re-execute"));
     assert_eq!(before, after, "trim changes cost, never answers");
+}
+
+fn memo_operation(units: u64) -> crate::work::WorkContext {
+    crate::work::ExecutionPolicy {
+        input_bytes: u64::MAX,
+        working_bytes: u64::MAX,
+        scratch_bytes: u64::MAX,
+        result_bytes: u64::MAX,
+        rows: u64::MAX,
+        work_units: units,
+        timeout: std::time::Duration::from_secs(3600),
+    }
+    .start()
+    .expect("valid memo operation")
+}
+
+fn memo_window(draw: u64) -> [FilterPredicate; 2] {
+    [
+        FilterPredicate::Compare {
+            field: FieldId(0).into(),
+            op: crate::ir::WordCmp::Ge,
+            value: Const::Word(draw * 64),
+        },
+        FilterPredicate::Compare {
+            field: FieldId(0).into(),
+            op: crate::ir::WordCmp::Lt,
+            value: Const::Word((draw + 1) * 64),
+        },
+    ]
+}
+
+fn rebuild_memo_window(
+    memo: &mut ViewMemo,
+    image: &Arc<crate::image::RelationImage>,
+    epoch: crate::image::ViewEpoch,
+    draw: u64,
+) {
+    let filters = memo_window(draw);
+    let buffer = std::mem::take(memo.spare_mut(0));
+    let view = crate::image::view::apply(
+        image,
+        &filters,
+        &[],
+        buffer,
+        image.generation().text_eq(None),
+    )
+    .expect("numeric window");
+    *memo.spare_mut(0) = memo.colts[0].reset(view).recycle();
+    memo.set_bound(0, epoch, &filters, None);
+}
+
+/// The operation context belongs to the active execution slot, whereas
+/// cached contents and retained pool reservations travel through the LRU.
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table-driven activation protocol checks all context and reservation outcomes"
+)]
+fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
+    use crate::image::view::View;
+    use crate::schema::ValidateDescriptor as _;
+    use crate::work::{Resource, WorkError};
+
+    let schema = descriptor().validate().expect("fixture schema");
+    let rows: Vec<_> = (0..320).map(|id| (id, 0, "m", 0)).collect();
+    let source =
+        crate::image::testsupport::TestSource::new(&schema, &[(POSTING, posting_rows(&rows))]);
+    let (_cache, image) = source.image_with_cache(POSTING);
+    let epoch =
+        crate::image::ViewEpoch::Store(crate::storage::store::RelationVersion::from_storage(1));
+
+    for activation in ["bound-hit", "unbound-hit", "lru-miss"] {
+        for refusal in ["cancelled-prior", "cancelled-current", "no-current-units"] {
+            let mut memo = ViewMemo::new();
+            memo.push(
+                Colt::new(View::Unbound, &[], vec![vec![0]]),
+                Binding::Unbound,
+            );
+            let mut owners = Vec::new();
+            for draw in 0..4 {
+                let work = memo_operation(u64::MAX);
+                memo.colts[0].bind(Some(&work));
+                memo.tick += 1;
+                assert!(!memo.bind(0, epoch, &memo_window(draw), &[]));
+                owners.push(work);
+                // Model a real aborted fourth build: bind has already
+                // parked the active COLT and installed its fresh sibling.
+                if activation == "unbound-hit" && draw == 3 {
+                    assert!(matches!(memo.occs[0].active, Binding::Unbound));
+                    break;
+                }
+                rebuild_memo_window(&mut memo, &image, epoch, draw);
+                memo.colts[0].force_root().expect("warm actual trie");
+            }
+            assert_eq!(
+                memo.occs[0].parked.iter().flatten().count(),
+                3,
+                "all three parked slots are populated"
+            );
+            let before: Vec<_> = owners
+                .iter()
+                .map(|work| work.used(Resource::WorkingBytes))
+                .collect();
+            assert!(before.iter().take(3).all(|&bytes| bytes > 0));
+            if refusal == "cancelled-prior" {
+                for work in &owners {
+                    work.cancel();
+                }
+            }
+            let current = memo_operation(if refusal == "no-current-units" {
+                0
+            } else {
+                u64::MAX
+            });
+            if refusal == "cancelled-current" {
+                current.cancel();
+            }
+
+            // This is run_join's pre-force binding order. No execute-time
+            // rebind is allowed to repair a stale context after this point.
+            memo.colts[0].bind(Some(&current));
+            memo.tick += 1;
+            let draw = if activation == "lru-miss" { 4 } else { 0 };
+            let hit = memo.bind(0, epoch, &memo_window(draw), &[]);
+            assert_eq!(hit, activation != "lru-miss", "{activation}");
+            assert_eq!(
+                owners
+                    .iter()
+                    .map(|work| work.used(Resource::WorkingBytes))
+                    .collect::<Vec<_>>(),
+                before,
+                "activation transfers no reservation to a different ledger"
+            );
+            if hit {
+                // Rebuild the same cached view in retained pools: an already
+                // forced hit must not hide a stale/cancelled operation binding.
+                let view = memo.colts[0].reset(View::Unbound);
+                drop(memo.colts[0].reset(view));
+            } else {
+                rebuild_memo_window(&mut memo, &image, epoch, draw);
+            }
+
+            let result = memo.colts[0].force_root();
+            match refusal {
+                "cancelled-prior" => {
+                    result.unwrap_or_else(|error| panic!(
+                        "{activation}: parked prior context leaked into fresh operation: {error:?}"
+                    ));
+                    assert_eq!(memo.colts[0].key_count(Colt::root()).magnitude(), 64);
+                    assert!(
+                        memo.colts[0]
+                            .get_prehashed(
+                                Colt::root(),
+                                0,
+                                &[draw * 64],
+                                crate::exec::colt::hash_key(&[draw * 64])
+                            )
+                            .unwrap()
+                            .is_some()
+                    );
+                    assert!(current.used(Resource::WorkUnits) >= 64);
+                }
+                "cancelled-current" => {
+                    assert_eq!(result, Err(WorkError::Cancelled), "{activation}");
+                }
+                "no-current-units" => assert!(
+                    matches!(
+                        result,
+                        Err(WorkError::Exhausted {
+                            resource: Resource::WorkUnits,
+                            ..
+                        })
+                    ),
+                    "{activation}: cached rich context bypassed current allowance: {result:?}"
+                ),
+                _ => unreachable!(),
+            }
+            assert_eq!(
+                owners
+                    .iter()
+                    .map(|work| work.used(Resource::WorkingBytes))
+                    .collect::<Vec<_>>(),
+                before,
+                "retained pools keep their original reservation owners"
+            );
+            assert_eq!(
+                current.used(Resource::WorkingBytes),
+                0,
+                "retained pools do not grow"
+            );
+            drop(memo);
+            assert!(
+                owners
+                    .iter()
+                    .all(|work| work.used(Resource::WorkingBytes) == 0),
+                "dropping active and parked pools refunds their owners"
+            );
+        }
+    }
 }
