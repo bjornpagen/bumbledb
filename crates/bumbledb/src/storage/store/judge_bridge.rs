@@ -299,22 +299,24 @@ fn visit_compiled_bucket(
 ) -> Result<Option<()>, StoreError> {
     let projected = super::det_index::determinant_bytes(compiled, determinant, view.work)?;
     let fields = view.schema.relation(compiled.relation).fields();
+    // The bucket visit, not each row, owns decode capacity. Nested visits
+    // allocate their own workspace and cannot overwrite this borrowed row.
+    let mut decode = DecodeScratch::new(view.work);
     view.state
         .visit_determinant_bucket(compiled.id, &projected, view.work, &mut |id, bytes| {
-            let decoded = crate::canonical::decode(fields, bytes, view.work)?;
-            if determinant.len() == compiled.scalar_positions.len()
-                && compiled
-                    .scalar_positions
-                    .iter()
-                    .zip(determinant)
-                    .all(|(&position, expected)| {
-                        &decoded.values()[usize::from(compiled.projection[position].0)] == expected
-                    })
-            {
-                visit(id.0, decoded.values())
-            } else {
-                Ok(true)
-            }
+            decode.with_decoded(fields, bytes, |values| {
+                if determinant.len() == compiled.scalar_positions.len()
+                    && compiled.scalar_positions.iter().zip(determinant).all(
+                        |(&position, expected)| {
+                            &values[usize::from(compiled.projection[position].0)] == expected
+                        },
+                    )
+                {
+                    visit(id.0, values)
+                } else {
+                    Ok(true)
+                }
+            })
         })?;
     Ok(Some(()))
 }
@@ -514,6 +516,49 @@ mod tests {
             "bucket rank is the retained full-state row identity"
         );
         assert_ranked_visit_stopping(&view, compiled, &determinant, expected[0].0);
+        assert_ranked_visit_reentrant(&view, compiled, &determinant, &expected);
+    }
+
+    fn assert_ranked_visit_reentrant(
+        view: &CandidateView<'_, '_, '_>,
+        compiled: &crate::schema::compiled::CompiledProjection,
+        determinant: &[Value],
+        expected: &[(u64, Vec<Value>)],
+    ) {
+        use crate::work::Resource;
+        let before = view.work.used(Resource::WorkingBytes);
+        let mut outer = 0;
+        view.visit_ranked_compiled_group(compiled, determinant, &mut |rank, row| {
+            let retained = row.to_vec();
+            let mut nested = Vec::new();
+            view.visit_ranked_compiled_group(compiled, determinant, &mut |inner_rank, inner| {
+                nested.push((inner_rank, inner.to_vec()));
+                Ok(true)
+            })?;
+            assert_eq!(nested, expected);
+            assert_eq!(
+                row, retained,
+                "nested decode cannot reuse a live outer workspace"
+            );
+            assert_eq!((rank, retained), expected[outer]);
+            outer += 1;
+            Ok(true)
+        })
+        .unwrap();
+        assert_eq!(outer, expected.len());
+        assert_eq!(view.work.used(Resource::WorkingBytes), before);
+
+        let cancelled = work();
+        let cancel_view = CandidateView::new(view.state, view.schema, &cancelled);
+        let mut calls = 0;
+        let result = cancel_view.visit_ranked_compiled_group(compiled, determinant, &mut |_, _| {
+            calls += 1;
+            cancelled.cancel();
+            Ok(true)
+        });
+        assert_eq!(result, Err(StoreError::Work(crate::WorkError::Cancelled)));
+        assert_eq!(calls, 1, "reused decode cannot bypass cancellation");
+        assert_eq!(cancelled.used(Resource::WorkingBytes), 0);
     }
 
     fn assert_ranked_visit_stopping(

@@ -529,6 +529,63 @@ fn d03_order_log_shares_one_env() {
     assert_eq!(out, b"row-key");
 }
 
+#[test]
+fn lookup_walk_visits_inline_and_bucketed_keys_once_and_stops_exactly() {
+    for ram_bytes in [usize::MAX, 0] {
+        let context = work();
+        let mut scratch = ScratchRelation::new(&context, ram_bytes);
+        let keys = [
+            b"small".to_vec(),
+            vec![0; super::MAX_INLINE_KEY + 1],
+            vec![255; super::MAX_INLINE_KEY + 1],
+        ];
+        let mut append = ScratchAppend::new(&mut scratch);
+        for key in &keys {
+            append
+                .append(ScratchMapId::Default, key, b"row")
+                .expect("row");
+            append
+                .append(ScratchMapId::TokenToGroup, key, b"header")
+                .expect("lookup");
+        }
+        append.finish().expect("commit");
+        let mut seen = std::collections::BTreeSet::new();
+        let mut header = Vec::new();
+        scratch
+            .visit_with_lookup(ScratchMapId::Default, &mut |lookup, key, value| {
+                assert!(
+                    seen.insert(key.to_vec()),
+                    "a wide key must advance physically"
+                );
+                assert_eq!(value, b"row");
+                assert!(lookup.get(ScratchMapId::TokenToGroup, key, &mut header)?);
+                assert_eq!(header, b"header");
+                Ok(true)
+            })
+            .expect("complete walk");
+        assert_eq!(seen, keys.into_iter().collect());
+        let mut visits = 0;
+        scratch
+            .visit_with_lookup(ScratchMapId::Default, &mut |_, _, _| {
+                visits += 1;
+                Ok(false)
+            })
+            .expect("early stop");
+        assert_eq!(visits, 1);
+        visits = 0;
+        let error = crate::error::Error::ResultBytesOverflow;
+        let result = scratch.visit_with_lookup(ScratchMapId::Default, &mut |_, _, _| {
+            visits += 1;
+            Err(error.clone())
+        });
+        assert!(matches!(
+            result,
+            Err(crate::error::Error::ResultBytesOverflow)
+        ));
+        assert_eq!(visits, 1);
+    }
+}
+
 /// Public commit: `MapFull` after reserve / before txn commit, then retry,
 /// charges once.
 #[test]

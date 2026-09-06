@@ -6,11 +6,15 @@ fn finalize_mixed_test_rows(
     rows: &[[u64; 4]],
     out: &mut Answers,
     charged: bool,
+    dense: bool,
 ) -> crate::error::Result<()> {
     use crate::exec::run::{Bindings, Sink};
     use crate::ir::validate::SignatureColumn;
 
     let mut projection = ProjectionSink::new(vec![0, 1, 2, 3]);
+    if dense {
+        projection.elide_output_hashing(mixed_output_witness());
+    }
     let mut bindings = Bindings::new(4);
     for row in rows {
         for (slot, word) in row.iter().enumerate() {
@@ -39,8 +43,54 @@ fn finalize_mixed_test_rows(
     )
 }
 
+fn mixed_output_witness() -> crate::plan::fj::ProjectionDistinctWitness {
+    use crate::schema::ValidateDescriptor as _;
+    let schema = SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            name: "mixed".into(),
+            fields: [
+                ValueType::U64,
+                ValueType::FixedBytes { len: 9 },
+                ValueType::F64,
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(field, value_type)| FieldDescriptor {
+                name: format!("field{field}").into(),
+                value_type,
+            })
+            .collect(),
+            extension: None,
+        }],
+        statements: vec![],
+    }
+    .validate()
+    .unwrap();
+    let query = Query::single(Rule {
+        finds: (0..3).map(|var| FindTerm::Var(VarId(var))).collect(),
+        atoms: vec![Atom {
+            source: AtomSource::Edb(RelationId(0)),
+            bindings: (0..3)
+                .map(|field| (FieldId(field), Term::Var(VarId(field))))
+                .collect(),
+        }],
+        negated: vec![],
+        conditions: vec![],
+    });
+    let validated = crate::ir::validate::validate(&schema, &query).unwrap();
+    let normalized = crate::ir::normalize::normalize_rules(&schema, &[], validated.rules());
+    crate::plan::fj::provably_distinct_projection(&normalized[0], &schema, &query.rules()[0].finds)
+        .unwrap()
+}
+
 #[test]
 fn bulk_finalize_keeps_initialized_prefix_on_error_and_matches_rowwise_retry() {
+    for dense in [false, true] {
+        assert_bulk_finalize_prefix_and_retry(dense);
+    }
+}
+
+fn assert_bulk_finalize_prefix_and_retry(dense: bool) {
     let bytes = [1, 2, 3, 4, 5, 6, 7, 8, 9];
     let rows = [
         [
@@ -63,7 +113,7 @@ fn bulk_finalize_keeps_initialized_prefix_on_error_and_matches_rowwise_retry() {
     out.push_value(&AnswerValue::U64(99));
     out.push_value(&AnswerValue::FixedBytes(&bytes));
     out.push_value(&AnswerValue::F64(crate::F64::from(3.0)));
-    let failed = finalize_mixed_test_rows(&bad, &mut out, false);
+    let failed = finalize_mixed_test_rows(&bad, &mut out, false, dense);
     assert!(matches!(failed, Err(Error::Corruption(_))));
     assert_eq!(
         out.len(),
@@ -78,7 +128,7 @@ fn bulk_finalize_keeps_initialized_prefix_on_error_and_matches_rowwise_retry() {
     // find between single-word finds and reuse after a failed bulk fill.
     for charged in [false, true, false] {
         out.begin(3);
-        finalize_mixed_test_rows(&rows, &mut out, charged).unwrap();
+        finalize_mixed_test_rows(&rows, &mut out, charged, dense).unwrap();
         assert_eq!(out.len(), 2);
         for (row, id, value) in [(0, 7, 1.0), (1, 8, 2.0)] {
             assert_eq!(out.get(row, 0), AnswerValue::U64(id));
@@ -86,6 +136,9 @@ fn bulk_finalize_keeps_initialized_prefix_on_error_and_matches_rowwise_retry() {
             assert_eq!(out.get(row, 2), AnswerValue::F64(crate::F64::from(value)));
         }
     }
+    out.begin(3);
+    finalize_mixed_test_rows(&[], &mut out, false, dense).unwrap();
+    assert!(out.is_empty());
 }
 
 #[test]
@@ -171,6 +224,68 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
     assert!(out.cells.capacity() >= cells_cap);
     assert!(out.text.capacity() >= text_cap);
     assert_eq!(first.len(), 3);
+}
+
+#[test]
+fn batched_result_spill_resolves_shared_text_across_carrier_resets() {
+    use super::super::result::{ResultCharge, ResultIdentity};
+    use super::super::source::{PinnedSource, QuerySource};
+
+    let texts = ["shared", "a-much-longer-shared-text", ""];
+    let facts: Vec<_> = (0..514u64)
+        .map(|id| {
+            (
+                id,
+                7,
+                texts[usize::try_from(id % 3).unwrap()],
+                id.cast_signed(),
+            )
+        })
+        .collect();
+    let fix = posting_store("result-batch-text", &facts);
+    let mut prepared = fix.prepare(&by_account_query()).unwrap();
+    let mut expected: Vec<_> = facts
+        .iter()
+        .map(|(_, _, text, n)| ((*text).to_owned(), *n))
+        .collect();
+    expected.sort();
+    let params = [BindValue::U64(7), BindValue::I64(-1)];
+    for fallback in [false, true] {
+        prepared.force_cursor_fallback(fallback);
+        for ram_allowance in [0, 128, usize::MAX] {
+            let mut complete = fix
+                .db
+                .read(crate::api::db::test_operation().unwrap(), |instance| {
+                    let context = instance.work();
+                    let source = QuerySource::store(instance.snapshot(), context);
+                    let mut carrier = Answers::new();
+                    let mut charge = ResultCharge::new(context, ram_allowance);
+                    prepared.execute_source_charged(
+                        &source,
+                        &params,
+                        &mut carrier,
+                        Some(&mut charge),
+                    )?;
+                    charge.seal(
+                        carrier,
+                        ResultIdentity {
+                            source: PinnedSource::Store(instance.snapshot().identity()),
+                            generation: Some(instance.snapshot().generation()),
+                        },
+                    )
+                })
+                .unwrap();
+            assert_eq!(complete.len(), 514);
+            let rows = complete
+                .collect_with_work(514, &crate::api::db::test_operation().unwrap(), u64::MAX)
+                .unwrap();
+            assert_eq!(
+                answers_of(&rows),
+                expected,
+                "fallback={fallback}, allowance={ram_allowance}"
+            );
+        }
+    }
 }
 
 #[test]

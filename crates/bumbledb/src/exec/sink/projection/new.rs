@@ -2,8 +2,8 @@ use crate::error::Result;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
 use crate::exec::sink::{
-    FindSpec, ProjectionSink, ProjectionSources, SinkBudget, SinkSpec, SpillSet, StageRowVisit,
-    encode_stage_row, sources_of,
+    FindSpec, ProjectionSink, ResidentRows, SinkBudget, SpillSet, StageRowVisit, encode_stage_row,
+    extend_sources, sources_of,
 };
 #[cfg(test)]
 use crate::work::WorkContext;
@@ -26,22 +26,20 @@ impl ProjectionSink {
     #[cfg(test)]
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
-        Self::with_capacity_hint_sources(ProjectionSources::Plain(slots), 0)
+        let slot_count = slots.iter().max().map_or(0, |slot| slot + 1);
+        Self::with_capacity_hint_sources(slots, slot_count, 0)
     }
 
     #[must_use]
-    fn with_capacity_hint_sources(sources: ProjectionSources, hint: usize) -> Self {
-        let arity = match &sources {
-            ProjectionSources::Plain(slots) => slots.len(),
-        };
+    fn with_capacity_hint_sources(sources: Vec<usize>, slot_count: usize, hint: usize) -> Self {
+        let arity = sources.len();
         Self {
             finds: Vec::new(),
             sources,
             seen: SpillSet::with_capacity_hint(arity, hint, true),
             scratch: vec![0; arity],
-            batch_sources: vec![crate::exec::run::LeafSource::Outer; arity],
-            scan_sources: Vec::with_capacity(arity),
-            scan_outer: Vec::with_capacity(arity),
+            batch_route: super::ProjectionRoute::new(arity, slot_count),
+            scan_route: super::ProjectionRoute::new(arity, slot_count),
             scan_rows: Vec::new(),
             scan_count: 0,
         }
@@ -51,29 +49,18 @@ impl ProjectionSink {
     pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
         let parsed = parse_finds(finds, slot_count);
         let sources = sources_of(&parsed);
-        let mut sink = Self::with_capacity_hint_sources(sources, hint);
+        let mut sink = Self::with_capacity_hint_sources(sources, slot_count, hint);
         sink.finds = parsed;
         sink
     }
 
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
-        self.scan_sources.clear();
-        self.scan_outer.clear();
+        self.scan_route.clear();
+        self.batch_route.clear();
         parse_finds_into(finds, slot_count, &mut self.finds);
-        match &mut self.sources {
-            ProjectionSources::Plain(slots) => {
-                slots.clear();
-                for find in &self.finds {
-                    if let SinkSpec::Var { slot, width } = find {
-                        slots.extend(*slot..slot + width);
-                    }
-                }
-            }
-        }
+        extend_sources(&self.finds, &mut self.sources);
         debug_assert_eq!(
-            match &self.sources {
-                ProjectionSources::Plain(slots) => slots.len(),
-            },
+            self.sources.len(),
             self.scratch.len(),
             "one head, fixed word arity"
         );
@@ -85,7 +72,10 @@ impl ProjectionSink {
     /// allowance drain through [`Self::for_each_answer`]/
     /// [`Self::drain_since`], never this iterator — callers branch on
     /// [`Self::spilled`] first.
-    pub fn answers(&self) -> impl Iterator<Item = &[u64]> {
+    pub fn answers(
+        &self,
+    ) -> ResidentRows<impl Iterator<Item = &[u64]> + Clone, impl Iterator<Item = &[u64]> + Clone>
+    {
         self.seen.ram_iter_since(0)
     }
 

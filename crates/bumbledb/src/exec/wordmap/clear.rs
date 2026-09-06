@@ -21,7 +21,7 @@ impl<V: Copy> WordMap<V> {
         self.iter_since(0)
     }
 
-    pub fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> {
+    pub fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> + Clone {
         self.dense[since.min(self.dense.len())..]
             .iter()
             .map(move |&idx| {

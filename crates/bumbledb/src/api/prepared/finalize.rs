@@ -4,7 +4,7 @@ use super::result::ResultCharge;
 use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
 use crate::error::Result;
-use crate::exec::sink::ProjectionSink;
+use crate::exec::sink::{ProjectionSink, ResidentRows};
 use crate::image::NonresidentTextStore;
 use crate::image::intern::InternerHandle;
 use crate::ir::validate::SignatureColumn;
@@ -129,28 +129,49 @@ fn drain_spilled_answers(
     })
 }
 
+fn fill_resolved_answers(
+    out: &mut Answers,
+    interner: &InternerHandle<'_>,
+    store: Option<&mut NonresidentTextStore>,
+    memo: &mut ResolveMemo,
+    columns: &[SignatureColumn],
+    sink: &ProjectionSink,
+) -> Result<()> {
+    // Dense results must remain a linear walk. Select the representation
+    // once, not on every `next()` of every output column. Hash-backed rows
+    // keep their insertion order and exact-key deduplication unchanged.
+    match sink.answers() {
+        ResidentRows::Dense(answers) => {
+            fill_resident_rows(out, interner, store, memo, columns, sink.len(), &answers)
+        }
+        ResidentRows::Hashed(answers) => {
+            fill_resident_rows(out, interner, store, memo, columns, sink.len(), &answers)
+        }
+    }
+}
+
 #[expect(
     unsafe_code,
     reason = "Publish the reserved cells only after every column initialized every row"
 )]
-fn fill_resolved_answers(
+fn fill_resident_rows<'a>(
     out: &mut Answers,
     interner: &InternerHandle<'_>,
     mut store: Option<&mut NonresidentTextStore>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
-    sink: &ProjectionSink,
+    rows: usize,
+    answers: &(impl Iterator<Item = &'a [u64]> + Clone),
 ) -> Result<()> {
     let arity = columns.len();
     let base = out.cells.len();
-    let rows = sink.len();
     let additional = rows.checked_mul(arity).expect("answer cell count");
     out.cells.reserve(additional);
     let mut word = 0;
     for (col, column) in columns.iter().enumerate() {
         word += match column.ty() {
             ValueType::String => {
-                let mut answers = sink.answers();
+                let mut answers = answers.clone();
                 for row in 0..rows {
                     let answer = answers.next().expect("resident sink length");
                     let (start, len) =
@@ -162,7 +183,7 @@ fn fill_resolved_answers(
             }
             ValueType::FixedBytes { len } => {
                 let width = crate::encoding::fixed_bytes_words(*len);
-                let mut answers = sink.answers();
+                let mut answers = answers.clone();
                 for row in 0..rows {
                     let answer = answers.next().expect("resident sink length");
                     let cell = out.fixed_bytes_cell(*len, &answer[word..word + width]);
@@ -176,7 +197,7 @@ fn fill_resolved_answers(
                 col,
                 ty,
                 word,
-                sink,
+                answers.clone(),
             )?,
         };
     }
@@ -189,15 +210,14 @@ fn fill_resolved_answers(
     Ok(())
 }
 
-fn fill_fixed_column(
+fn fill_fixed_column<'a>(
     cells: &mut [MaybeUninit<Cell>],
     arity: usize,
     col: usize,
     ty: &ValueType,
     word: usize,
-    sink: &ProjectionSink,
+    mut answers: impl Iterator<Item = &'a [u64]>,
 ) -> Result<usize> {
-    let mut answers = sink.answers();
     let rows = cells
         .chunks_exact_mut(arity)
         .map(|slots| (slots, answers.next().expect("resident sink length")));

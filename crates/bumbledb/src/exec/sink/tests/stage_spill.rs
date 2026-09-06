@@ -478,6 +478,27 @@ fn bulk_unique_set(allowance: usize, scratch: u64, units: u64) -> SpillSet {
     set
 }
 
+impl SpillSet {
+    #[expect(
+        unsafe_code,
+        reason = "The test writer initializes every word from its input"
+    )]
+    fn insert_unique_rows(&mut self, words: &[u64]) {
+        let arity = self.ram.arity();
+        assert_eq!(words.len() % arity, 0);
+        let mut scratch = vec![0; arity];
+        // SAFETY: every target word is initialized from the corresponding
+        // source word, including allocation/poll/spill boundary rows.
+        unsafe {
+            self.insert_unique_with(words.len() / arity, &mut scratch, |offset, out| {
+                for (target, &word) in out.iter_mut().zip(&words[offset * arity..]) {
+                    target.write(word);
+                }
+            });
+        }
+    }
+}
+
 fn assert_bulk_unique_state(actual: &SpillSet, expected: &SpillSet) {
     assert_eq!(actual.len(), expected.len());
     assert_eq!(actual.spilled(), expected.spilled());
@@ -631,6 +652,35 @@ fn bulk_unique_append_observes_cancellation_at_the_same_poll_row() {
     assert_eq!(bulk.len(), 255);
     assert_eq!(bulk.pending_steps, 0);
     assert_eq!(bulk.progress(), SinkProgress::Stop);
+}
+
+#[test]
+#[expect(
+    unsafe_code,
+    reason = "The interrupted writer only initializes, never deinitializes, words"
+)]
+fn generated_unique_rows_do_not_publish_an_unfinished_span_on_panic() {
+    let mut set = bulk_unique_set(usize::MAX, 1 << 20, 1 << 20);
+    set.insert_unique_rows(&[1, 2]);
+    set.unique_rows.as_mut().unwrap().words.reserve(4);
+    let pending = set.pending_steps;
+    let mut scratch = [0; 2];
+    let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // SAFETY: the callback only writes initialized words and never
+        // returns; the partially filled spare span must remain unpublished.
+        unsafe {
+            set.insert_unique_with(2, &mut scratch, |_, out| {
+                out[0].write(999);
+                panic!("interrupted gather");
+            });
+        }
+    }));
+    assert!(failed.is_err());
+    assert_eq!(set.len(), 1);
+    assert_eq!(set.pending_steps, pending);
+    assert_eq!(set.unique_rows.as_ref().unwrap().words, [1, 2]);
+    set.insert_unique_rows(&[3, 4, 5, 6]);
+    assert_eq!(set.unique_rows.as_ref().unwrap().words, [1, 2, 3, 4, 5, 6]);
 }
 
 #[test]

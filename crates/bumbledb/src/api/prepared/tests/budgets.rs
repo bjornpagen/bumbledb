@@ -406,8 +406,8 @@ fn a_result_budget_refuses_before_whole_set_materialization() {
                 "past the allowance the construction streams into scratch"
             );
             assert!(
-                out.is_empty(),
-                "streamed rows never accumulate in the RAM carrier"
+                out.len() < crate::exec::sink::STEP_QUANTUM as usize,
+                "streamed rows retain at most one bounded batch before seal"
             );
             let identity = crate::api::prepared::result::ResultIdentity {
                 source: crate::api::prepared::source::PinnedSource::Store(

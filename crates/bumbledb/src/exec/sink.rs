@@ -169,7 +169,9 @@ struct UniqueRows {
 
 /// Resident rows have exactly one representation. Keeping the iterator's
 /// alternatives exclusive avoids a flatten/chain state machine per result.
-enum ResidentRows<Dense, Hashed> {
+/// Bulk consumers select the alternative once before entering their loops.
+#[derive(Clone)]
+pub(crate) enum ResidentRows<Dense, Hashed> {
     Dense(Dense),
     Hashed(Hashed),
 }
@@ -378,23 +380,36 @@ impl SpillSet {
         }
     }
 
-    /// Copy already-gathered unique rows without changing single-row
-    /// allocation, polling or spill boundaries. Only the proved projection
-    /// scan calls this; every boundary still goes through `insert`.
-    fn insert_unique_rows(&mut self, mut words: &[u64]) {
+    /// Generate proved-unique rows directly in their retained allocation.
+    /// Only prefixes before the next allocation, poll or spill boundary
+    /// are bulk-filled. Boundary rows use the ordinary insertion path.
+    ///
+    /// # Safety
+    /// `write(offset, words)` must initialize EVERY word before returning,
+    /// with consecutive rows beginning at `offset`. It must only initialize
+    /// slots, never deinitialize an existing value, including on unwind.
+    /// The projection route proves output-slot coverage; the distinctness
+    /// witness installed on this set independently licenses eliding
+    /// duplicate lookup.
+    #[expect(unsafe_code, reason = "Publish only fully initialized generated rows")]
+    unsafe fn insert_unique_with(
+        &mut self,
+        len: usize,
+        scratch: &mut [u64],
+        mut write: impl FnMut(usize, &mut [std::mem::MaybeUninit<u64>]),
+    ) {
         let arity = self.ram.arity();
         debug_assert!(self.unique_rows.is_some() && arity != 0);
-        debug_assert_eq!(words.len() % arity, 0);
-        while !words.is_empty() && self.error.is_none() {
-            if self.spilled.is_some() {
-                for row in words.chunks_exact(arity) {
-                    self.insert(row);
-                }
-                return;
-            }
+        assert_eq!(scratch.len(), arity);
+        let mut offset = 0;
+        while offset < len && self.error.is_none() {
             let rows = self.unique_rows.as_mut().expect("proved projection");
             let spare = (rows.words.capacity() - rows.words.len()) / arity;
-            let mut count = (words.len() / arity).min(spare);
+            let mut count = if self.spilled.is_some() {
+                0
+            } else {
+                (len - offset).min(spare)
+            };
             if let Some(budget) = &self.budget {
                 let admitted = (budget.ram_bytes / (arity * 8 + 16)).saturating_sub(rows.len);
                 // The polling row itself must use insert: append its
@@ -404,16 +419,27 @@ impl SpillSet {
                 count = count.min(admitted).min(before_poll);
             }
             if count == 0 {
-                self.insert(&words[..arity]);
-                words = &words[arity..];
+                // SAFETY: u64 and MaybeUninit<u64> have identical layout.
+                // `write` restores every initialized word before scratch
+                // is read again; it cannot invalidate a drop-bearing value.
+                let uninit =
+                    unsafe { std::slice::from_raw_parts_mut(scratch.as_mut_ptr().cast(), arity) };
+                write(offset, uninit);
+                self.insert_inner::<true>(scratch);
+                offset += 1;
             } else {
                 let width = count * arity;
-                rows.words.extend_from_slice(&words[..width]);
+                let base = rows.words.len();
+                write(offset, &mut rows.words.spare_capacity_mut()[..width]);
+                // SAFETY: `spare` bounds the reserved extent; the writer
+                // initialized every slot. On panic the old length remains
+                // valid and no partially generated row is published.
+                unsafe { rows.words.set_len(base + width) };
                 rows.len += count;
                 if self.budget.is_some() {
                     self.pending_steps += u32::try_from(count).expect("less than a work quantum");
                 }
-                words = &words[width..];
+                offset += count;
             }
         }
     }
@@ -528,7 +554,8 @@ impl SpillSet {
     pub(in crate::exec::sink) fn ram_iter_since(
         &self,
         since: usize,
-    ) -> impl Iterator<Item = &[u64]> {
+    ) -> ResidentRows<impl Iterator<Item = &[u64]> + Clone, impl Iterator<Item = &[u64]> + Clone>
+    {
         debug_assert!(!self.spilled(), "spilled sets drain through for_each_since");
         match &self.unique_rows {
             Some(rows) => {
@@ -658,33 +685,18 @@ fn i64_to_word(value: i64) -> u64 {
     u64::from_be_bytes(encode_i64(value))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProjSource {
-    Slot(usize),
-}
-
-#[derive(Debug)]
-enum ProjectionSources {
-    Plain(Vec<usize>),
-}
-
-fn sources_of(finds: &[SinkSpec]) -> ProjectionSources {
+fn sources_of(finds: &[SinkSpec]) -> Vec<usize> {
     let mut sources = Vec::new();
     extend_sources(finds, &mut sources);
-    ProjectionSources::Plain(
-        sources
-            .into_iter()
-            .map(|ProjSource::Slot(slot)| slot)
-            .collect(),
-    )
+    sources
 }
 
-fn extend_sources(finds: &[SinkSpec], out: &mut Vec<ProjSource>) {
+fn extend_sources(finds: &[SinkSpec], out: &mut Vec<usize>) {
     out.clear();
     for spec in finds {
         match spec {
             SinkSpec::Var { slot, width } => {
-                out.extend((*slot..slot + width).map(ProjSource::Slot));
+                out.extend(*slot..slot + width);
             }
             SinkSpec::Agg(_) | SinkSpec::Pack { .. } => {}
         }
@@ -697,16 +709,15 @@ fn extend_sources(finds: &[SinkSpec], out: &mut Vec<ProjSource>) {
 #[derive(Debug)]
 pub struct ProjectionSink {
     finds: Vec<SinkSpec>,
-    sources: ProjectionSources,
+    sources: Vec<usize>,
     seen: SpillSet,
     scratch: Vec<u64>,
-    batch_sources: Vec<crate::exec::run::LeafSource>,
+    batch_route: projection::ProjectionRoute,
     /// Scan routing is independent of batch routing: pinned batches may
     /// temporarily use a combined outer-plus-leaf key-slot layout. Both
     /// routing capacities are reserved at construction, bounded by the
     /// fixed projection arity; preparation and group entry never grow them.
-    scan_sources: Vec<crate::exec::run::LeafSource>,
-    scan_outer: Vec<(usize, usize)>,
+    scan_route: projection::ProjectionRoute,
     scan_rows: Vec<u64>,
     scan_count: u64,
 }

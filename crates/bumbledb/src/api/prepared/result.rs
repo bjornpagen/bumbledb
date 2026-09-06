@@ -20,9 +20,9 @@
 use super::source::PinnedSource;
 use super::{AnswerValue, Answers, ResolveMemo};
 use crate::error::{Error, Result};
-use crate::exec::scratch::ScratchRelation;
+use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
 use crate::storage::GenerationId;
-use crate::work::{ByteKind, ByteReservation, WorkContext};
+use crate::work::{ByteKind, ByteReservation, ChargedBuffer, WorkContext, WorkError};
 
 /// The result RAM allowance before rows move to the scratch tier. A
 /// tuning default (measured at F3), never a row-count or size cap: the
@@ -58,10 +58,146 @@ enum Backing {
 pub struct CompleteResult {
     identity: ResultIdentity,
     backing: Backing,
-    /// The sealed rows' byte charges, held until disposal (one post-hoc
-    /// reservation on the compatibility [`Self::seal`] path; the streamed
-    /// construction path accumulates bounded-quantum reservations).
-    charges: Vec<ByteReservation>,
+    /// One growing reservation follows the sealed backing until disposal.
+    charge: Option<ByteReservation>,
+}
+
+/// A row borrowed from the sealed backing. Scratch decoding consumes the
+/// mapped bytes in the same read transaction that admitted their size.
+enum SealedRow<'a> {
+    Ram(super::Answer<'a>),
+    Encoded { bytes: &'a [u8], arity: usize },
+}
+
+impl SealedRow<'_> {
+    fn encoded_len(&self) -> u64 {
+        match self {
+            Self::Ram(row) => (0..row.buffer.arity())
+                .map(|column| encoded_value_len(&row.get(column)))
+                .sum(),
+            Self::Encoded { bytes, .. } => bytes.len() as u64,
+        }
+    }
+
+    fn copy_to(self, out: &mut Answers) -> Result<()> {
+        match self {
+            Self::Ram(row) => {
+                for column in 0..row.buffer.arity() {
+                    out.push_value(&row.get(column));
+                }
+                Ok(())
+            }
+            Self::Encoded { bytes, arity } => decode_row(bytes, arity, out),
+        }
+    }
+}
+
+impl Backing {
+    /// Visit a bounded sequence in one read transaction, stopping before
+    /// the next row when the consumer has enough. Every expected ordinal
+    /// must exist; exhaustion of corrupt storage is never successful EOF.
+    fn visit_rows(
+        &mut self,
+        start: u64,
+        end: u64,
+        mut visit: impl FnMut(SealedRow<'_>) -> Result<bool>,
+    ) -> Result<()> {
+        if start >= end {
+            return Ok(());
+        }
+        match self {
+            Self::Ram(answers) => {
+                if end > answers.len() as u64 {
+                    return Err(missing_row());
+                }
+                for row in answers
+                    .answers()
+                    .skip(usize::try_from(start).map_err(|_| missing_row())?)
+                    .take(usize::try_from(end - start).map_err(|_| missing_row())?)
+                {
+                    if !visit(SealedRow::Ram(row))? {
+                        break;
+                    }
+                }
+            }
+            Self::Scratch { rows, arity, count } => {
+                if end > *count {
+                    return Err(missing_row());
+                }
+                let mut index = start;
+                let mut stopped = false;
+                rows.visit_from(&start.to_be_bytes(), &mut |key: &[u8], bytes: &[u8]| {
+                    if key != index.to_be_bytes() {
+                        return Err(missing_row());
+                    }
+                    if !visit(SealedRow::Encoded {
+                        bytes,
+                        arity: *arity,
+                    })? {
+                        stopped = true;
+                        return Ok(false);
+                    }
+                    index += 1;
+                    Ok(index < end)
+                })?;
+                if !stopped && index != end {
+                    return Err(missing_row());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn reserve_result(
+    charge: &mut Option<ByteReservation>,
+    work: &WorkContext,
+    bytes: u64,
+) -> Result<()> {
+    if let Some(charge) = charge {
+        charge.resize(bytes).map_err(super::source::work_error)
+    } else {
+        *charge = Some(
+            work.reserve(ByteKind::Result, bytes)
+                .map_err(super::source::work_error)?,
+        );
+        Ok(())
+    }
+}
+
+fn delivery_overflow(work: &WorkContext, requested: u64, limit: u64) -> Error {
+    super::source::work_error(crate::work::WorkError::Exhausted {
+        resource: crate::work::Resource::ResultBytes,
+        used: work.used(crate::work::Resource::ResultBytes),
+        requested,
+        limit,
+    })
+}
+
+/// Reuse the scratch substrate's bounded, charged staging. The input
+/// carrier survives until all batches commit; a failure publishes nothing.
+fn append_answers(
+    rows: &mut ScratchRelation,
+    answers: &Answers,
+    start: u64,
+    encoded: &mut ChargedBuffer,
+) -> Result<u64> {
+    let mut append = ScratchAppend::new(rows);
+    let mut bytes = 0;
+    for (index, answer) in answers.answers().enumerate() {
+        encoded.clear();
+        for column in 0..answers.arity() {
+            encode_value(&answer.get(column), encoded).map_err(super::source::work_error)?;
+        }
+        append.append(
+            ScratchMapId::Default,
+            &(start + index as u64).to_be_bytes(),
+            encoded.as_slice(),
+        )?;
+        bytes += encoded.len() as u64;
+    }
+    append.finish()?;
+    Ok(bytes)
 }
 
 /// The logical bytes one RAM answer set retains: the cell array plus its
@@ -98,7 +234,7 @@ impl CompleteResult {
             return Ok(Self {
                 identity,
                 backing: Backing::Ram(answers),
-                charges: vec![charge],
+                charge: Some(charge),
             });
         }
         // Beyond the allowance: the sealed backing is the scratch map
@@ -108,20 +244,15 @@ impl CompleteResult {
         let mut rows = ScratchRelation::new(work, 0);
         rows.force_spill()?;
         let arity = answers.arity();
-        let mut encoded = Vec::new();
-        for (index, answer) in answers.answers().enumerate() {
-            encoded.clear();
-            for column in 0..arity {
-                encode_value(&answer.get(column), &mut encoded);
-            }
-            rows.put(&(index as u64).to_be_bytes(), &encoded)?;
-        }
+        let mut encoded = ChargedBuffer::with_capacity(work, ByteKind::Working, 0)
+            .map_err(super::source::work_error)?;
+        append_answers(&mut rows, &answers, 0, &mut encoded)?;
         let count = answers.len() as u64;
         drop(answers);
         Ok(Self {
             identity,
             backing: Backing::Scratch { rows, arity, count },
-            charges: vec![charge],
+            charge: Some(charge),
         })
     }
 
@@ -156,7 +287,7 @@ impl CompleteResult {
     /// accounting reads this).
     #[must_use]
     pub fn byte_len(&self) -> u64 {
-        self.charges.iter().map(ByteReservation::bytes).sum()
+        self.charge.as_ref().map_or(0, ByteReservation::bytes)
     }
 
     /// Re-home a RETAINED result's scratch reads onto `work` — the
@@ -215,36 +346,21 @@ impl CompleteResult {
         let mut out = Answers::new();
         out.begin(self.arity());
         let mut used = 0u64;
-        let mut encoded = Vec::new();
-        for index in 0..self.len() {
-            let row_bytes = match &mut self.backing {
-                Backing::Ram(answers) => ram_encoded_row_len(answers, index)?,
-                Backing::Scratch { rows, .. } => {
-                    if !rows.get(&index.to_be_bytes(), &mut encoded)? {
-                        return Err(missing_row());
-                    }
-                    encoded.len() as u64
-                }
-            };
+        let mut charge = None;
+        self.backing.visit_rows(0, self.len(), |row| {
+            let row_bytes = row.encoded_len();
             if used.saturating_add(row_bytes) > byte_allowance {
-                return Err(super::source::work_error(
-                    crate::work::WorkError::Exhausted {
-                        resource: crate::work::Resource::ResultBytes,
-                        used: work.used(crate::work::Resource::ResultBytes),
-                        requested: used.saturating_add(row_bytes),
-                        limit: byte_allowance,
-                    },
+                return Err(delivery_overflow(
+                    work,
+                    used.saturating_add(row_bytes),
+                    byte_allowance,
                 ));
             }
-            match &self.backing {
-                Backing::Ram(answers) => ram_push_row(answers, index, &mut out)?,
-                Backing::Scratch { arity, .. } => decode_row(&encoded, *arity, &mut out)?,
-            }
             used = used.saturating_add(row_bytes);
-        }
-        let _delivery = work
-            .reserve(ByteKind::Result, used)
-            .map_err(super::source::work_error)?;
+            reserve_result(&mut charge, work, used)?;
+            row.copy_to(&mut out)?;
+            Ok(true)
+        })?;
         Ok(out)
     }
 
@@ -257,7 +373,7 @@ impl CompleteResult {
         ResultCursor {
             identity: self.identity,
             backing: self.backing,
-            charges: self.charges,
+            charge: self.charge,
             page_rows: page_rows.max(1),
             next_row: 0,
             done: false,
@@ -279,7 +395,7 @@ pub(super) struct ResultCharge<'w> {
     ram_allowance: usize,
     /// Logical result bytes already reserved.
     charged: u64,
-    reservations: Vec<ByteReservation>,
+    charge: Option<ByteReservation>,
     /// Rows appended since the last charge (bounded by the quantum).
     pending_rows: u32,
     /// Encoded bytes moved into the scratch tier so far.
@@ -290,7 +406,7 @@ pub(super) struct ResultCharge<'w> {
 struct ResultSpill {
     rows: ScratchRelation,
     count: u64,
-    encoded: Vec<u8>,
+    encoded: ChargedBuffer,
 }
 
 impl<'w> ResultCharge<'w> {
@@ -299,7 +415,7 @@ impl<'w> ResultCharge<'w> {
             work,
             ram_allowance,
             charged: 0,
-            reservations: Vec::new(),
+            charge: None,
             pending_rows: 0,
             spilled_bytes: 0,
             spill: None,
@@ -321,33 +437,21 @@ impl<'w> ResultCharge<'w> {
     /// callers batch the deltas).
     fn charge_to(&mut self, target: u64) -> Result<()> {
         if target > self.charged {
-            let reservation = self
-                .work
-                .reserve(ByteKind::Result, target - self.charged)
-                .map_err(super::source::work_error)?;
-            self.reservations.push(reservation);
+            reserve_result(&mut self.charge, self.work, target)?;
             self.charged = target;
         }
         Ok(())
     }
 
-    /// Move every row currently in `out` into the scratch tier and clear
-    /// the carrier (the memo's text ranges point into the cleared heap, so
-    /// it resets with it).
-    fn drain_to_scratch(&mut self, out: &mut Answers, memo: &mut ResolveMemo) -> Result<()> {
+    /// Move a bounded carrier into scratch. Its caller invalidates the
+    /// resolve memo whenever this clears the referenced text heap.
+    fn drain_to_scratch(&mut self, out: &mut Answers) -> Result<()> {
+        self.charge_to(self.total_bytes(out))?;
         let spill = self.spill.as_mut().expect("drain under an open spill");
-        let arity = out.arity();
-        for answer in out.answers() {
-            spill.encoded.clear();
-            for column in 0..arity {
-                encode_value(&answer.get(column), &mut spill.encoded);
-            }
-            spill.rows.put(&spill.count.to_be_bytes(), &spill.encoded)?;
-            spill.count += 1;
-            self.spilled_bytes += spill.encoded.len() as u64;
-        }
+        self.spilled_bytes +=
+            append_answers(&mut spill.rows, out, spill.count, &mut spill.encoded)?;
+        spill.count += out.len() as u64;
         out.clear();
-        memo.clear();
         Ok(())
     }
 
@@ -358,12 +462,7 @@ impl<'w> ResultCharge<'w> {
         if out.arity() == 0 {
             return Ok(());
         }
-        if self.spill.is_some() {
-            // Streaming regime: the carrier holds exactly the one row just
-            // appended; move it over (its encoded bytes are the charge
-            // basis from here on).
-            self.drain_to_scratch(out, memo)?;
-        } else if logical_bytes(out) > self.ram_allowance as u64 {
+        if self.spill.is_none() && logical_bytes(out) > self.ram_allowance as u64 {
             // Crossing the allowance: true-up the charge BEFORE the copy,
             // then continue in the scratch backing during construction.
             self.charge_to(self.total_bytes(out))?;
@@ -372,9 +471,20 @@ impl<'w> ResultCharge<'w> {
             self.spill = Some(ResultSpill {
                 rows,
                 count: 0,
-                encoded: Vec::new(),
+                encoded: ChargedBuffer::with_capacity(self.work, ByteKind::Working, 0)
+                    .map_err(super::source::work_error)?,
             });
-            self.drain_to_scratch(out, memo)?;
+            self.drain_to_scratch(out)?;
+            memo.clear();
+        } else if self.spill.is_some()
+            && (out.len() >= crate::exec::sink::STEP_QUANTUM as usize
+                || logical_bytes(out) >= RESULT_RAM_BYTES as u64)
+        {
+            // Retain at most one polling quantum (or one RAM allowance,
+            // plus the crossing row). Reuse both the carrier and text memo
+            // across rows, and commit once per batch, never once per row.
+            self.drain_to_scratch(out)?;
+            memo.clear();
         }
         self.pending_rows += 1;
         if self.pending_rows >= crate::exec::sink::STEP_QUANTUM {
@@ -393,16 +503,19 @@ impl<'w> ResultCharge<'w> {
     }
 
     /// Seal the constructed set: the final true-up charge plus the backing
-    /// the construction already chose. `answers` holds the complete RAM
-    /// set when nothing spilled, and is empty otherwise.
+    /// the construction already chose. Flush the final partial carrier
+    /// before exposing any scratch-backed result.
     pub(super) fn seal(
         mut self,
-        answers: Answers,
+        mut answers: Answers,
         identity: ResultIdentity,
     ) -> Result<CompleteResult> {
+        if self.spill.is_some() && !answers.is_empty() {
+            self.drain_to_scratch(&mut answers)?;
+        }
         self.charge_to(self.total_bytes(&answers))?;
         let Self {
-            reservations,
+            charge,
             spill,
             ram_allowance,
             work,
@@ -410,10 +523,7 @@ impl<'w> ResultCharge<'w> {
         } = self;
         match spill {
             Some(spill) => {
-                debug_assert!(
-                    answers.is_empty(),
-                    "a spilled construction drains every row as it lands"
-                );
+                debug_assert!(answers.is_empty(), "sealed spill drains its final batch");
                 Ok(CompleteResult {
                     identity,
                     backing: Backing::Scratch {
@@ -421,7 +531,7 @@ impl<'w> ResultCharge<'w> {
                         arity: answers.arity(),
                         count: spill.count,
                     },
-                    charges: reservations,
+                    charge,
                 })
             }
             // Rows that bypassed the noted appends (the key-probe direct
@@ -429,13 +539,13 @@ impl<'w> ResultCharge<'w> {
             // copy. `seal` re-charges, so hand it no reservations twice —
             // drop ours after it owns the set.
             None if logical_bytes(&answers) > ram_allowance as u64 => {
-                drop(reservations);
+                drop(charge);
                 CompleteResult::seal(answers, identity, work, ram_allowance)
             }
             None => Ok(CompleteResult {
                 identity,
                 backing: Backing::Ram(answers),
-                charges: reservations,
+                charge,
             }),
         }
     }
@@ -470,9 +580,6 @@ pub struct DeliveryTicket<'cursor> {
     cursor: &'cursor mut ResultCursor,
     preview: Option<Answers>,
     preview_charge: Option<ByteReservation>,
-    scratch: Vec<u8>,
-    scratch_charge: Option<ByteReservation>,
-    scratch_charged: usize,
     pending: Option<PendingAdvance>,
     committed: bool,
     closed: bool,
@@ -485,9 +592,6 @@ impl<'cursor> DeliveryTicket<'cursor> {
             cursor,
             preview: None,
             preview_charge: None,
-            scratch: Vec::new(),
-            scratch_charge: None,
-            scratch_charged: 0,
             pending: None,
             committed: false,
             closed: false,
@@ -519,11 +623,11 @@ impl<'cursor> DeliveryTicket<'cursor> {
     /// Copy the next admitted page without advancing the cursor.
     ///
     /// Fit is decided from the sealed representation before any preview
-    /// growth: RAM cell/heap lengths, or a scoped borrowed scratch
-    /// lookup (`ScratchRelation::visit_from`) for one row's encoded
-    /// size. There is no resident per-row length directory. Admitted
-    /// rows reserve result bytes, then copy. A later row that does not
-    /// fit a nonempty page ends the page successfully. An oversized
+    /// growth: RAM cell/heap lengths, or mapped scratch values visited
+    /// in one page-scoped read transaction. There is no per-row length
+    /// directory or intermediate encoded copy. Admitted rows reserve
+    /// result bytes, then decode from that same borrow. A later row that
+    /// does not fit a nonempty page ends the page successfully. An oversized
     /// first row refuses with the cursor unchanged and no preview
     /// allocation. Resource refusal / cancellation aborts this pull
     /// without poisoning the cursor. Terminal backing corruption stays
@@ -558,59 +662,46 @@ impl<'cursor> DeliveryTicket<'cursor> {
         if self.cursor.done {
             return Ok(None);
         }
+        // A new attempt invalidates a previous preview even if admission
+        // itself refuses. It must not leave an old advance to commit.
+        self.discard_preview();
+        self.pending = None;
         work.step(1).map_err(super::source::work_error)?;
         work.checkpoint().map_err(super::source::work_error)?;
         self.cursor.rebind_work(work);
-        self.preview = None;
-        self.preview_charge = None;
-        self.pending = None;
         let mut rows = Answers::new();
         rows.begin(self.cursor.arity());
         let mut used = 0u64;
+        let mut retained = 0u64;
         let start = self.cursor.next_row;
         let mut index = start;
         let total = self.cursor.len();
         let row_cap = self.cursor.page_rows as u64;
-        let scratch_backing = self.cursor.backing_is_scratch();
-        while index < total && (index - start) < row_cap {
-            let row_bytes = match self.cursor.row_fit_bytes(index) {
-                Ok(bytes) => bytes,
-                Err(error) => return Err(self.surface_preview_error(error)),
-            };
+        let end = start.saturating_add(row_cap).min(total);
+        let charge = &mut self.preview_charge;
+        let copied = self.cursor.backing.visit_rows(start, end, |row| {
+            let row_bytes = row.encoded_len();
             let delivery_bytes = delivery_cost(row_bytes);
             if delivery_bytes < row_bytes {
-                return Err(self.abort_pull(Error::ResultBytesOverflow));
+                return Err(Error::ResultBytesOverflow);
             }
             if used.saturating_add(delivery_bytes) > byte_allowance {
                 if rows.is_empty() {
-                    return Err(self.abort_pull(super::source::work_error(
-                        crate::work::WorkError::Exhausted {
-                            resource: crate::work::Resource::ResultBytes,
-                            used: work.used(crate::work::Resource::ResultBytes),
-                            requested: delivery_bytes,
-                            limit: byte_allowance,
-                        },
-                    )));
+                    return Err(delivery_overflow(work, delivery_bytes, byte_allowance));
                 }
-                break;
+                return Ok(false);
             }
-            if let Err(error) = self.charge_row(work, row_bytes) {
-                return Err(self.abort_pull(error));
-            }
-            if scratch_backing {
-                if let Err(error) = self.ensure_scratch(work, row_bytes) {
-                    return Err(self.abort_pull(error));
-                }
-                self.scratch.clear();
-                if let Err(error) = self.cursor.load_scratch_row(index, &mut self.scratch) {
-                    return Err(self.surface_preview_error(error));
-                }
-            }
-            if let Err(error) = self.cursor.copy_fit_row(index, &self.scratch, &mut rows) {
-                return Err(self.surface_preview_error(error));
-            }
+            retained = retained
+                .checked_add(row_bytes)
+                .ok_or(Error::ResultBytesOverflow)?;
+            reserve_result(charge, work, retained)?;
+            row.copy_to(&mut rows)?;
             used = used.saturating_add(delivery_bytes);
             index += 1;
+            Ok(true)
+        });
+        if let Err(error) = copied {
+            return Err(self.surface_preview_error(error));
         }
         self.pending = Some(PendingAdvance {
             next_row: index,
@@ -662,49 +753,6 @@ impl<'cursor> DeliveryTicket<'cursor> {
         self.pending = None;
     }
 
-    fn charge_row(&mut self, work: &WorkContext, row_bytes: u64) -> Result<()> {
-        if row_bytes == 0 {
-            return Ok(());
-        }
-        let reservation = work
-            .reserve(ByteKind::Result, row_bytes)
-            .map_err(super::source::work_error)?;
-        match &mut self.preview_charge {
-            Some(owned) => owned.join(reservation),
-            None => self.preview_charge = Some(reservation),
-        }
-        Ok(())
-    }
-
-    fn ensure_scratch(&mut self, work: &WorkContext, row_bytes: u64) -> Result<()> {
-        let need = usize::try_from(row_bytes).unwrap_or(usize::MAX);
-        if need <= self.scratch_charged {
-            return Ok(());
-        }
-        let extra = (need - self.scratch_charged) as u64;
-        let reservation = work
-            .reserve(ByteKind::Result, extra)
-            .map_err(super::source::work_error)?;
-        let additional = need.saturating_sub(self.scratch.len());
-        if additional > 0 && self.scratch.try_reserve(additional).is_err() {
-            drop(reservation);
-            return Err(super::source::work_error(
-                crate::work::WorkError::Exhausted {
-                    resource: crate::work::Resource::ResultBytes,
-                    used: work.used(crate::work::Resource::ResultBytes),
-                    requested: extra,
-                    limit: work.limit(crate::work::Resource::ResultBytes),
-                },
-            ));
-        }
-        match &mut self.scratch_charge {
-            Some(owned) => owned.join(reservation),
-            None => self.scratch_charge = Some(reservation),
-        }
-        self.scratch_charged = need;
-        Ok(())
-    }
-
     fn discard_preview(&mut self) {
         self.preview = None;
         self.preview_charge = None;
@@ -719,7 +767,7 @@ impl<'cursor> DeliveryTicket<'cursor> {
     }
 
     fn surface_preview_error(&mut self, error: Error) -> Error {
-        if is_resource_refusal(&error) {
+        if is_resource_refusal(&error) || matches!(error, Error::ResultBytesOverflow) {
             self.abort_pull(error)
         } else {
             self.fail_backing(error)
@@ -776,7 +824,7 @@ struct PendingAdvance {
 pub struct ResultCursor {
     identity: ResultIdentity,
     backing: Backing,
-    charges: Vec<ByteReservation>,
+    charge: Option<ByteReservation>,
     page_rows: usize,
     next_row: u64,
     done: bool,
@@ -815,53 +863,11 @@ impl ResultCursor {
         self.len() == 0
     }
 
-    fn backing_is_scratch(&self) -> bool {
-        matches!(self.backing, Backing::Scratch { .. })
-    }
-
-    /// Encoded delivery size of `index`. RAM reads cell/heap lengths;
-    /// scratch measures one borrowed value via
-    /// [`ScratchRelation::visit_from`] — neither path serializes an
-    /// oversized row into an uncharged buffer, and scratch keeps no
-    /// resident per-row length directory.
-    fn row_fit_bytes(&mut self, index: u64) -> Result<u64> {
-        match &mut self.backing {
-            Backing::Ram(answers) => ram_encoded_row_len(answers, index),
-            Backing::Scratch { rows, count, .. } => {
-                if index >= *count {
-                    return Err(missing_row());
-                }
-                scratch_row_encoded_len(rows, index)
-            }
-        }
-    }
-
-    fn load_scratch_row(&mut self, index: u64, out: &mut Vec<u8>) -> Result<()> {
-        match &mut self.backing {
-            Backing::Scratch { rows, .. } => {
-                if !rows.get(&index.to_be_bytes(), out)? {
-                    return Err(missing_row());
-                }
-                Ok(())
-            }
-            Backing::Ram(_) => Ok(()),
-        }
-    }
-
-    /// Copy a row already admitted by [`Self::row_fit_bytes`]. Scratch
-    /// reuses that load; RAM copies from the sealed cells.
-    fn copy_fit_row(&mut self, index: u64, scratch: &[u8], out: &mut Answers) -> Result<()> {
-        match &mut self.backing {
-            Backing::Ram(answers) => ram_push_row(answers, index, out),
-            Backing::Scratch { arity, .. } => decode_row(scratch, *arity, out),
-        }
-    }
-
     /// The transferred rows' byte charge, held until the cursor drops (the
     /// retained-byte accounting twin of [`CompleteResult::byte_len`]).
     #[must_use]
     pub fn byte_len(&self) -> u64 {
-        self.charges.iter().map(ByteReservation::bytes).sum()
+        self.charge.as_ref().map_or(0, ByteReservation::bytes)
     }
 
     /// As [`CompleteResult::rebind_work`]: re-home a retained cursor's
@@ -933,20 +939,6 @@ fn is_resource_refusal(error: &Error) -> bool {
     )
 }
 
-/// Borrowed scratch lookup of one sealed row's encoded length. Stops
-/// after the first key ≥ `index`; does not retain a length table.
-fn scratch_row_encoded_len(rows: &mut ScratchRelation, index: u64) -> Result<u64> {
-    let key = index.to_be_bytes();
-    let mut found = None;
-    rows.visit_from(&key, &mut |k: &[u8], value: &[u8]| {
-        if k == key.as_slice() {
-            found = Some(value.len() as u64);
-        }
-        Ok(false)
-    })?;
-    found.ok_or_else(missing_row)
-}
-
 /// Encoded length of one cell — the delivery-fit basis — without writing
 /// an uncharged buffer.
 fn encoded_value_len(value: &AnswerValue<'_>) -> u64 {
@@ -962,77 +954,57 @@ fn encoded_value_len(value: &AnswerValue<'_>) -> u64 {
     }
 }
 
-fn ram_encoded_row_len(answers: &Answers, index: u64) -> Result<u64> {
-    let row = usize::try_from(index).expect("64-bit usize");
-    if row >= answers.len() {
-        return Err(missing_row());
-    }
-    let mut bytes = 0u64;
-    for column in 0..answers.arity() {
-        bytes = bytes.saturating_add(encoded_value_len(&answers.get(row, column)));
-    }
-    Ok(bytes)
-}
-
-fn ram_push_row(answers: &Answers, index: u64, out: &mut Answers) -> Result<()> {
-    let row = usize::try_from(index).expect("64-bit usize");
-    if row >= answers.len() {
-        return Err(missing_row());
-    }
-    for column in 0..answers.arity() {
-        out.push_value(&answers.get(row, column));
-    }
-    Ok(())
-}
-
-fn encode_value(value: &AnswerValue<'_>, out: &mut Vec<u8>) {
+fn encode_value(
+    value: &AnswerValue<'_>,
+    out: &mut ChargedBuffer,
+) -> std::result::Result<(), WorkError> {
     match value {
         AnswerValue::Bool(v) => {
-            out.push(0);
-            out.push(u8::from(*v));
+            out.try_extend_from_slice(&[0, u8::from(*v)])?;
         }
         AnswerValue::U64(v) => {
-            out.push(1);
-            out.extend_from_slice(&v.to_be_bytes());
+            out.try_extend_from_slice(&[1])?;
+            out.try_extend_from_slice(&v.to_be_bytes())?;
         }
         AnswerValue::I64(v) => {
-            out.push(2);
-            out.extend_from_slice(&v.to_be_bytes());
+            out.try_extend_from_slice(&[2])?;
+            out.try_extend_from_slice(&v.to_be_bytes())?;
         }
         AnswerValue::F64(v) => {
-            out.push(3);
-            out.extend_from_slice(&v.to_be_bytes());
+            out.try_extend_from_slice(&[3])?;
+            out.try_extend_from_slice(&v.to_be_bytes())?;
         }
         AnswerValue::String(text) => {
-            out.push(4);
-            out.extend_from_slice(&(text.len() as u64).to_be_bytes());
-            out.extend_from_slice(text.as_bytes());
+            out.try_extend_from_slice(&[4])?;
+            out.try_extend_from_slice(&(text.len() as u64).to_be_bytes())?;
+            out.try_extend_from_slice(text.as_bytes())?;
         }
         AnswerValue::FixedBytes(bytes) => {
-            out.push(5);
-            out.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
-            out.extend_from_slice(bytes);
+            out.try_extend_from_slice(&[5])?;
+            out.try_extend_from_slice(&(bytes.len() as u64).to_be_bytes())?;
+            out.try_extend_from_slice(bytes)?;
         }
         AnswerValue::IntervalU64(interval) => {
-            out.push(6);
-            out.extend_from_slice(&interval.start().to_be_bytes());
-            out.extend_from_slice(&interval.end().to_be_bytes());
+            out.try_extend_from_slice(&[6])?;
+            out.try_extend_from_slice(&interval.start().to_be_bytes())?;
+            out.try_extend_from_slice(&interval.end().to_be_bytes())?;
         }
         AnswerValue::IntervalI64(interval) => {
-            out.push(7);
-            out.extend_from_slice(&interval.start().to_be_bytes());
-            out.extend_from_slice(&interval.end().to_be_bytes());
+            out.try_extend_from_slice(&[7])?;
+            out.try_extend_from_slice(&interval.start().to_be_bytes())?;
+            out.try_extend_from_slice(&interval.end().to_be_bytes())?;
         }
         AnswerValue::Uuid(id) => {
-            out.push(8);
-            out.extend_from_slice(id.as_bytes());
+            out.try_extend_from_slice(&[8])?;
+            out.try_extend_from_slice(id.as_bytes())?;
         }
         AnswerValue::IntervalF64(interval) => {
-            out.push(9);
-            out.extend_from_slice(&interval.start().to_be_bytes());
-            out.extend_from_slice(&interval.end().to_be_bytes());
+            out.try_extend_from_slice(&[9])?;
+            out.try_extend_from_slice(&interval.start().to_be_bytes())?;
+            out.try_extend_from_slice(&interval.end().to_be_bytes())?;
         }
     }
+    Ok(())
 }
 
 fn decode_row(mut bytes: &[u8], arity: usize, out: &mut Answers) -> Result<()> {
@@ -1153,9 +1125,9 @@ impl<S> super::PreparedQuery<S> {
     ) -> Result<CompleteResult> {
         let mut answers = Answers::new();
         // Result bytes charge DURING construction (bounded quanta) and
-        // past-allowance rows stream into the scratch backing as they
-        // land — a tiny result budget refuses before the whole set
-        // materializes, and a failure here seals nothing (Q-ATOMIC).
+        // past-allowance rows stream into scratch in bounded batches —
+        // a tiny result budget refuses before the whole set materializes,
+        // and a failure here seals nothing (Q-ATOMIC).
         let mut charge = ResultCharge::new(work, RESULT_RAM_BYTES);
         let source = super::source::QuerySource::store(instance.snapshot(), work);
         self.execute_source_charged(&source, params, &mut answers, Some(&mut charge))?;

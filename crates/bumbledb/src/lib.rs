@@ -257,6 +257,7 @@ pub mod __private {
 pub(crate) mod testutil {
 
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     use crate::error::{Admission, Result, Violations};
 
@@ -271,24 +272,41 @@ pub(crate) mod testutil {
         }
     }
 
-    pub struct TempDir(PathBuf);
+    pub struct TempDir {
+        root: PathBuf,
+        path: PathBuf,
+    }
 
     impl TempDir {
         pub fn new(tag: &str) -> Self {
-            let path =
-                std::env::temp_dir().join(format!("bumbledb-test-{tag}-{}", std::process::id()));
-            let _ = std::fs::remove_dir_all(&path);
-            Self(path)
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            // Tests may share both a tag and a process. Exclusively claim
+            // the parent; the store path itself must not exist at create.
+            loop {
+                let id = NEXT.fetch_add(1, Ordering::Relaxed);
+                let root = std::env::temp_dir()
+                    .join(format!("bumbledb-test-{tag}-{}-{id}", std::process::id()));
+                match std::fs::create_dir(&root) {
+                    Ok(()) => {
+                        return Self {
+                            path: root.join("store"),
+                            root,
+                        };
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("create test directory: {error}"),
+                }
+            }
         }
 
         pub fn path(&self) -> &Path {
-            &self.0
+            &self.path
         }
     }
 
     impl Drop for TempDir {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_dir_all(&self.root);
         }
     }
 }

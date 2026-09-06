@@ -1,12 +1,12 @@
 use crate::exec::colt::SuffixRun;
-use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, LeafSource, ScanOffer, Sink};
-use crate::exec::sink::{ProjectionSink, ProjectionSources};
+use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
+use crate::exec::sink::ProjectionSink;
 use crate::image::ColumnView;
+use std::mem::MaybeUninit;
 
 impl Sink for ProjectionSink {
     fn emit(&mut self, bindings: &Bindings) -> Flow {
-        let ProjectionSources::Plain(sources) = &self.sources;
-        for (i, source) in sources.iter().enumerate() {
+        for (i, source) in self.sources.iter().enumerate() {
             self.scratch[i] = bindings.get(*source);
         }
         self.seen.insert(&self.scratch);
@@ -29,89 +29,73 @@ impl Sink for ProjectionSink {
     }
 
     fn prepare_scan(&mut self, key_slots: &[usize]) {
-        let ProjectionSources::Plain(sources) = &self.sources;
-        self.scan_sources.clear();
-        self.scan_outer.clear();
-        for (i, slot) in sources.iter().enumerate() {
-            let source = key_slots
-                .iter()
-                .position(|k| k == slot)
-                .map_or(LeafSource::Outer, LeafSource::Key);
-            self.scan_sources.push(source);
-            if matches!(source, LeafSource::Outer) {
-                self.scan_outer.push((i, *slot));
-            }
-        }
+        self.scan_route.prepare(key_slots, &self.sources);
     }
 
     fn begin_scan(&mut self, scan: &LeafScan<'_>) -> ScanOffer {
         // Unprepared direct callers, or a changed aim, use the ordinary
         // batch path until the executor installs this rule's scan layout.
-        if self.scan_sources.len() != self.scratch.len() {
+        if !self.scan_route.matches(scan.key_slots, self.scratch.len()) {
             return ScanOffer::Declined;
         }
-        for &(output, slot) in &self.scan_outer {
+        for &(output, slot) in &self.scan_route.outer {
             self.scratch[output] = scan.bindings.get(slot);
         }
         self.scan_count = 0;
         ScanOffer::Open
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "The prepared route initializes each output slot exactly once"
+    )]
     fn scan_run(&mut self, scan: &LeafScan<'_>, run: SuffixRun<'_>) {
         self.scan_count += run.len() as u64;
 
         let seen = &mut self.seen;
         let scratch = &mut self.scratch;
-        let sources = &self.scan_sources;
-        if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD {
-            let arity = sources.len();
-            let rows = &mut self.scan_rows;
-            rows.resize(run.len() * arity, 0);
-            for (i, source) in sources.iter().enumerate() {
-                if let LeafSource::Key(word) = *source {
-                    match (scan.colt.suffix_column(scan.level, word), run) {
-                        (ColumnView::Words(w), SuffixRun::Identity { start, len }) => {
-                            for (k, value) in w[start..start + len].iter().enumerate() {
-                                rows[k * arity + i] = *value;
-                            }
-                        }
-                        (ColumnView::Words(w), SuffixRun::Positions(positions)) => {
-                            for (k, position) in positions.iter().enumerate() {
-                                rows[k * arity + i] = w[*position as usize];
-                            }
-                        }
-                        (ColumnView::Bytes(bytes), SuffixRun::Identity { start, len }) => {
-                            for (k, value) in bytes[start..start + len].iter().enumerate() {
-                                rows[k * arity + i] = u64::from(*value);
-                            }
-                        }
-                        (ColumnView::Bytes(bytes), SuffixRun::Positions(positions)) => {
-                            for (k, position) in positions.iter().enumerate() {
-                                rows[k * arity + i] = u64::from(bytes[*position as usize]);
-                            }
-                        }
-                    }
-                } else {
-                    let word = scratch[i];
-                    for row in rows.chunks_exact_mut(arity) {
-                        row[i] = word;
-                    }
-                }
-            }
+        let route = &self.scan_route;
+        if run.len() >= crate::exec::SCAN_HOIST_THRESHOLD && !scratch.is_empty() {
+            let arity = scratch.len();
+            assert_eq!(
+                route.keys.len() + route.outer.len(),
+                arity,
+                "prepared scan route"
+            );
             if seen.unique_rows.is_some() {
-                seen.insert_unique_rows(rows);
-            } else {
-                seen.insert_hashed_rows(rows);
+                // SAFETY: prepare_scan partitions every output slot into
+                // exactly one key or outer route. The gather only writes
+                // initialized words, including when a source check panics.
+                unsafe {
+                    seen.insert_unique_with(run.len(), scratch, |offset, out| {
+                        gather_scan_rows(scan, run, route, arity, offset, out);
+                    });
+                }
+                return;
             }
+            let rows = &mut self.scan_rows;
+            let words = run.len() * arity;
+            rows.clear();
+            rows.reserve(words);
+            gather_scan_rows(
+                scan,
+                run,
+                route,
+                arity,
+                0,
+                &mut rows.spare_capacity_mut()[..words],
+            );
+            // SAFETY: the prepared route covers every slot in every row.
+            // Publish only after all columns initialize successfully.
+            unsafe { rows.set_len(words) };
+            seen.insert_hashed_rows(rows);
         } else {
             run_positions(run, &mut |position: u32| {
-                for (i, source) in sources.iter().enumerate() {
-                    if let LeafSource::Key(word) = source {
-                        scratch[i] = match scan.colt.suffix_column(scan.level, *word) {
-                            ColumnView::Words(w) => w[position as usize],
-                            ColumnView::Bytes(b) => u64::from(b[position as usize]),
-                        };
-                    }
+                for &(i, word) in &route.keys {
+                    scratch[i] = match scan.colt.suffix_column(scan.level, word) {
+                        ColumnView::Words(w) => w[position as usize],
+                        ColumnView::Bytes(b) => u64::from(b[position as usize]),
+                    };
                 }
                 seen.insert(scratch);
             });
@@ -133,27 +117,60 @@ impl Sink for ProjectionSink {
 
 impl ProjectionSink {
     fn prepare_plain_batch_sources(&mut self, batch: &LeafBatch<'_>) {
-        let ProjectionSources::Plain(sources) = &self.sources;
-        for (i, source) in sources.iter().enumerate() {
-            self.batch_sources[i] = batch.source_of(*source);
+        if !self
+            .batch_route
+            .matches(batch.key_slots, self.sources.len())
+        {
+            self.batch_route.prepare(batch.key_slots, &self.sources);
         }
-        for (i, source) in sources.iter().enumerate() {
-            if matches!(self.batch_sources[i], LeafSource::Outer) {
-                self.scratch[i] = batch.bindings.get(*source);
-            }
+        for &(output, slot) in &self.batch_route.outer {
+            self.scratch[output] = batch.bindings.get(slot);
         }
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "The prepared route initializes every generated output slot"
+    )]
     fn project_batch(&mut self, batch: &LeafBatch<'_>) -> Flow {
         self.prepare_plain_batch_sources(batch);
-        let batch_sources = &self.batch_sources[..];
+        let route = &self.batch_route;
+        let keys = &route.keys;
         let scratch = &mut self.scratch[..];
         let seen = &mut self.seen;
+        if seen.unique_rows.is_some() && batch.survivors.len() >= crate::exec::SCAN_HOIST_THRESHOLD
+        {
+            let arity = scratch.len();
+            assert_eq!(
+                route.keys.len() + route.outer.len(),
+                arity,
+                "prepared batch route"
+            );
+            // SAFETY: prepare enumerates each output exactly once. Both
+            // loops only initialize slots, and cover the whole target.
+            unsafe {
+                seen.insert_unique_with(batch.survivors.len(), scratch, |offset, out| {
+                    // Batch keys are row-major, unlike a scan's columns.
+                    // Preserve that locality while filling the final rows.
+                    for (row, &entry) in out.chunks_exact_mut(arity).zip(&batch.survivors[offset..])
+                    {
+                        for &(output, word) in keys {
+                            row[output].write(batch.key(entry, word));
+                        }
+                    }
+                    for &(output, slot) in &route.outer {
+                        let word = batch.bindings.get(slot);
+                        for row in out.chunks_exact_mut(arity) {
+                            row[output].write(word);
+                        }
+                    }
+                });
+            }
+            return Flow::Continue;
+        }
         for &entry in batch.survivors {
-            for (i, source) in batch_sources.iter().enumerate() {
-                if let LeafSource::Key(word) = source {
-                    scratch[i] = batch.key(entry, *word);
-                }
+            for &(output, word) in keys {
+                scratch[output] = batch.key(entry, word);
             }
             seen.insert(scratch);
         }
@@ -163,19 +180,64 @@ impl ProjectionSink {
     /// Licensed-projection first-emit unwind. `SkipSuffix` after the first
     fn project_batch_until_skip(&mut self, batch: &LeafBatch<'_>) -> Flow {
         self.prepare_plain_batch_sources(batch);
-        let batch_sources = &self.batch_sources[..];
+        let keys = &self.batch_route.keys;
         let scratch = &mut self.scratch[..];
         let seen = &mut self.seen;
         let Some(&entry) = batch.survivors.first() else {
             return Flow::Continue;
         };
-        for (i, source) in batch_sources.iter().enumerate() {
-            if let LeafSource::Key(word) = source {
-                scratch[i] = batch.key(entry, *word);
-            }
+        for &(output, word) in keys {
+            scratch[output] = batch.key(entry, word);
         }
         seen.insert(scratch);
         Flow::SkipSuffix
+    }
+}
+
+/// Column-major gather into either the retained dense result or the one
+/// reusable hash-input batch. No zero fill or intermediate row copy.
+/// `ProjectionRoute::prepare` covers each output exactly once; this writer
+/// only initializes words and leaves already initialized words valid on panic.
+fn gather_scan_rows(
+    scan: &LeafScan<'_>,
+    run: SuffixRun<'_>,
+    route: &super::ProjectionRoute,
+    arity: usize,
+    offset: usize,
+    out: &mut [MaybeUninit<u64>],
+) {
+    debug_assert_eq!(route.keys.len() + route.outer.len(), arity);
+    let len = out.len() / arity;
+    for &(i, word) in &route.keys {
+        let rows = out.chunks_exact_mut(arity);
+        match (scan.colt.suffix_column(scan.level, word), run) {
+            (ColumnView::Words(words), SuffixRun::Identity { start, .. }) => {
+                for (row, &word) in rows.zip(&words[start + offset..][..len]) {
+                    row[i].write(word);
+                }
+            }
+            (ColumnView::Words(words), SuffixRun::Positions(positions)) => {
+                for (row, &position) in rows.zip(&positions[offset..][..len]) {
+                    row[i].write(words[position as usize]);
+                }
+            }
+            (ColumnView::Bytes(bytes), SuffixRun::Identity { start, .. }) => {
+                for (row, &byte) in rows.zip(&bytes[start + offset..][..len]) {
+                    row[i].write(u64::from(byte));
+                }
+            }
+            (ColumnView::Bytes(bytes), SuffixRun::Positions(positions)) => {
+                for (row, &position) in rows.zip(&positions[offset..][..len]) {
+                    row[i].write(u64::from(bytes[position as usize]));
+                }
+            }
+        }
+    }
+    for &(i, slot) in &route.outer {
+        let word = scan.bindings.get(slot);
+        for row in out.chunks_exact_mut(arity) {
+            row[i].write(word);
+        }
     }
 }
 

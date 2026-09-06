@@ -384,6 +384,14 @@ impl ScratchRelation {
     }
 
     #[cfg(test)]
+    pub(crate) fn committed_txn_for_test(&self) -> Option<usize> {
+        match &self.tier {
+            Tier::Ram { .. } => None,
+            Tier::Lmdb(env) => Some(env.env.info().last_txn_id),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn logical_bytes(&self) -> usize {
         match &self.tier {
             Tier::Ram { bytes, .. } => *bytes,
@@ -689,46 +697,22 @@ impl ScratchRelation {
     ) -> Result<()> {
         self.work.checkpoint().map_err(work_error)?;
         match &self.tier {
-            Tier::Ram { .. } => {
-                let mut resume: Option<Box<[u8]>> = None;
-                loop {
-                    let (key, value) = {
-                        let Tier::Ram { maps, .. } = &self.tier else {
-                            break;
-                        };
-                        let map = &maps[name.index()];
-                        let next = match resume.as_deref() {
-                            None => map.iter().next(),
-                            Some(start) => map
-                                .range::<[u8], _>((
-                                    std::ops::Bound::Excluded(start),
-                                    std::ops::Bound::Unbounded,
-                                ))
-                                .next(),
-                        };
-                        match next {
-                            Some((key, value)) => (key.clone(), value.clone()),
-                            None => break,
-                        }
-                    };
+            Tier::Ram { maps, .. } => {
+                // All access during this visit is shared. Keep one walk
+                // and borrow its entries; neither a cloned resume key nor
+                // a fresh tree search is needed for the next row.
+                for (key, value) in &maps[name.index()] {
                     self.work.step(1).map_err(work_error)?;
-                    let lookup = match &self.tier {
-                        Tier::Ram { maps, .. } => ScratchLookup {
-                            inner: ScratchLookupInner::Ram { maps },
-                        },
-                        Tier::Lmdb(_) => unreachable!("tier stable during RAM visit"),
+                    let lookup = ScratchLookup {
+                        inner: ScratchLookupInner::Ram { maps },
                     };
-                    if !visitor(lookup, &key, &value)? {
+                    if !visitor(lookup, key, value)? {
                         return Ok(());
                     }
-                    resume = Some(key);
                 }
                 Ok(())
             }
-            Tier::Lmdb(env) => {
-                let work = self.work.clone();
-                env.visit_with_lookup(&work, name, visitor)
-            }
+            Tier::Lmdb(env) => env.visit_with_lookup(&self.work, name, visitor),
         }
     }
 
@@ -1378,43 +1362,22 @@ impl ScratchEnv {
         visitor: &mut impl FnMut(ScratchLookup<'_>, &[u8], &[u8]) -> Result<bool>,
     ) -> Result<()> {
         let rtxn = self.env.read_txn().map_err(Error::from)?;
-        let mut resume: Option<Vec<u8>> = None;
-        loop {
-            let (key, value) = {
-                let mut lower = Vec::with_capacity(1 + resume.as_ref().map_or(0, Vec::len));
-                lower.push(0x00);
-                if let Some(start) = &resume {
-                    lower.extend_from_slice(&start[..start.len().min(MAX_INLINE_KEY)]);
-                }
-                let start_bound = if resume.is_some() {
-                    std::ops::Bound::Excluded(lower.as_slice())
-                } else {
-                    std::ops::Bound::Included(lower.as_slice())
-                };
-                let bounds = (start_bound, std::ops::Bound::Unbounded);
-                let mut range = self.db(map).range(&rtxn, &bounds).map_err(Error::from)?;
-                match range.next() {
-                    None => break,
-                    Some(entry) => {
-                        let (physical, raw) = entry.map_err(Error::from)?;
-                        match physical.first() {
-                            Some(0x00) => (physical[1..].to_vec(), raw.to_vec()),
-                            Some(0xFF) => {
-                                let (key, payload) = split_bucket_value(raw)?;
-                                (key.to_vec(), payload.to_vec())
-                            }
-                            _ => {
-                                return Err(Error::Corruption(
-                                    crate::error::CorruptionError::MalformedValue(
-                                        "scratch key tag",
-                                    ),
-                                ));
-                            }
-                        }
-                    }
+        // Advance the physical cursor, not a reconstructed logical lower
+        // bound. Wide keys live in hash buckets, so their logical bytes
+        // cannot serve as a continuation key for the physical map.
+        let range = self.db(map).iter(&rtxn).map_err(Error::from)?;
+        for entry in range {
+            work.step(1).map_err(work_error)?;
+            let (physical, raw) = entry.map_err(Error::from)?;
+            let (key, value) = match physical.first() {
+                Some(0x00) => (&physical[1..], raw),
+                Some(0xFF) => split_bucket_value(raw)?,
+                _ => {
+                    return Err(Error::Corruption(
+                        crate::error::CorruptionError::MalformedValue("scratch key tag"),
+                    ));
                 }
             };
-            work.step(1).map_err(work_error)?;
             let lookup = ScratchLookup {
                 inner: ScratchLookupInner::Lmdb {
                     env: self,
@@ -1422,10 +1385,9 @@ impl ScratchEnv {
                     work,
                 },
             };
-            if !visitor(lookup, &key, &value)? {
+            if !visitor(lookup, key, value)? {
                 return Ok(());
             }
-            resume = Some(key);
         }
         Ok(())
     }

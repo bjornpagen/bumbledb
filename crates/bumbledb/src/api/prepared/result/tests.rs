@@ -773,7 +773,8 @@ fn spilled_results_stay_within_working_memory_envelope() {
 
 #[test]
 fn encoded_value_len_matches_the_codec() {
-    let mut buf = Vec::new();
+    let mut buf =
+        ChargedBuffer::with_capacity(&work(), ByteKind::Working, 0).expect("encode buffer");
     let values = [
         AnswerValue::Bool(true),
         AnswerValue::U64(7),
@@ -784,11 +785,201 @@ fn encoded_value_len_matches_the_codec() {
     ];
     for value in values {
         buf.clear();
-        super::encode_value(&value, &mut buf);
+        super::encode_value(&value, &mut buf).expect("encode cell");
         assert_eq!(
             buf.len() as u64,
             super::encoded_value_len(&value),
             "fit length must match the codec for {value:?}"
         );
+    }
+}
+
+#[test]
+fn construction_batches_transactions_and_seals_the_partial_tail() {
+    let execute = work();
+    let expected = sample_answers(514);
+    let mut carrier = Answers::new();
+    carrier.begin(expected.arity());
+    let mut memo = ResolveMemo::new();
+    let mut charge = ResultCharge::new(&execute, 0);
+    let mut first_txn = 0;
+    for (index, row) in expected.answers().enumerate() {
+        for column in 0..expected.arity() {
+            carrier.push_value(&row.get(column));
+        }
+        charge.note_row(&mut carrier, &mut memo).expect("append");
+        let spill = charge.spill.as_mut().expect("streaming spill");
+        if index == 0 {
+            first_txn = spill.rows.committed_txn_for_test().expect("LMDB");
+            // An aborted MapFull attempt must not duplicate rows/charges.
+            spill.rows.inject_map_full_after_reserve(1);
+        }
+        assert_eq!(
+            spill.rows.committed_txn_for_test(),
+            Some(first_txn + index / crate::exec::sink::STEP_QUANTUM as usize),
+            "only a complete carrier commits during construction"
+        );
+        assert!(carrier.len() < crate::exec::sink::STEP_QUANTUM as usize);
+    }
+    assert_eq!(carrier.len(), 1, "seal must flush the trailing row");
+    let path = charge.spill.as_ref().unwrap().rows.scratch_path().unwrap();
+    let mut sealed = charge.seal(carrier, heap_identity()).expect("seal tail");
+    let Backing::Scratch { rows, count, .. } = &sealed.backing else {
+        panic!("scratch backing");
+    };
+    assert_eq!(*count, 514);
+    assert_eq!(rows.len(), 514);
+    assert_eq!(rows.committed_txn_for_test(), Some(first_txn + 3));
+    let collected = sealed
+        .collect_with_work(514, &work(), u64::MAX)
+        .expect("collect");
+    assert_rows(&collected, 514);
+    assert_eq!(
+        execute.used(crate::work::Resource::ResultBytes),
+        sealed.byte_len()
+    );
+    drop(sealed);
+    for resource in [
+        crate::work::Resource::ResultBytes,
+        crate::work::Resource::WorkingBytes,
+        crate::work::Resource::ScratchBytes,
+    ] {
+        assert_eq!(
+            execute.used(resource),
+            0,
+            "all owners refunded: {resource:?}"
+        );
+    }
+    assert!(!path.exists(), "scratch closes before cleanup");
+}
+
+#[test]
+fn cancelled_partial_result_batch_cannot_seal_and_refunds_its_owners() {
+    let execute = work();
+    let mut carrier = Answers::new();
+    carrier.begin(1);
+    let mut charge = ResultCharge::new(&execute, 0);
+    let mut memo = ResolveMemo::new();
+    for i in 0..3 {
+        carrier.push_value(&AnswerValue::U64(i));
+        charge.note_row(&mut carrier, &mut memo).expect("append");
+    }
+    assert_eq!(carrier.len(), 2);
+    let path = charge.spill.as_ref().unwrap().rows.scratch_path().unwrap();
+    execute.cancel();
+    assert!(charge.seal(carrier, heap_identity()).is_err());
+    assert!(!path.exists());
+    for resource in [
+        crate::work::Resource::ResultBytes,
+        crate::work::Resource::WorkingBytes,
+        crate::work::Resource::ScratchBytes,
+    ] {
+        assert_eq!(execute.used(resource), 0);
+    }
+}
+
+#[test]
+fn borrowed_scratch_pages_need_one_visit_per_row_and_no_encoded_copy() {
+    let execute = work();
+    let mut answers = Answers::new();
+    answers.begin(1);
+    for i in 0..3 {
+        answers.push_value(&AnswerValue::U64(i));
+    }
+    let mut cursor = CompleteResult::seal(answers, heap_identity(), &execute, 0)
+        .expect("seal")
+        .into_cursor(2);
+    let delivery = crate::work::ExecutionPolicy {
+        result_bytes: 18,
+        work_units: 3,
+        ..UNBOUNDED_POLICY
+    }
+    .start()
+    .expect("exact first-page allowance");
+    let first = cursor
+        .next_page_with_work(&delivery, 18)
+        .expect("page")
+        .expect("rows");
+    assert_eq!(first.rows.get(0, 0), AnswerValue::U64(0));
+    assert_eq!(first.rows.get(1, 0), AnswerValue::U64(1));
+    assert!(!first.terminal);
+    assert_eq!(first.charged_bytes(), 18);
+    assert_eq!(delivery.used(crate::work::Resource::WorkUnits), 3);
+    drop(first);
+    assert_eq!(delivery.used(crate::work::Resource::ResultBytes), 0);
+    let last = cursor
+        .next_page_with_work(&work(), 9)
+        .expect("tail")
+        .expect("row");
+    assert_eq!(last.rows.get(0, 0), AnswerValue::U64(2));
+    assert!(last.terminal);
+}
+
+#[test]
+fn repeated_preview_refusal_discards_the_old_pending_advance() {
+    for ram_allowance in [usize::MAX, 0] {
+        let mut cursor =
+            CompleteResult::seal(sample_answers(3), heap_identity(), &work(), ram_allowance)
+                .expect("seal")
+                .into_cursor(2);
+        let execute = work();
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        ticket
+            .preview_page(&execute, u64::MAX)
+            .expect("first preview");
+        assert_eq!(ticket.previewed_rows(), 2);
+        execute.cancel();
+        assert!(ticket.preview_page(&execute, u64::MAX).is_err());
+        assert_eq!(ticket.previewed_rows(), 0);
+        assert_eq!(ticket.preview_charged_bytes(), 0);
+        ticket.commit();
+        assert_eq!(
+            cursor.debug_next_row(),
+            0,
+            "refusal cannot commit a stale preview"
+        );
+        assert_rows(
+            &cursor
+                .next_page_with_work(&work(), u64::MAX)
+                .unwrap()
+                .unwrap()
+                .rows,
+            2,
+        );
+    }
+}
+
+#[test]
+fn scratch_sequence_holes_and_corrupt_rows_are_sticky_not_eof() {
+    for corruption in ["hole", "tail", "codec"] {
+        let execute = work();
+        let mut rows = ScratchRelation::new(&execute, 0);
+        rows.force_spill().expect("scratch");
+        let valid = [1, 0, 0, 0, 0, 0, 0, 0, 42];
+        rows.put(&0u64.to_be_bytes(), &valid).expect("first");
+        match corruption {
+            "hole" => rows.put(&2u64.to_be_bytes(), &valid).expect("gap"),
+            "codec" => rows.put(&1u64.to_be_bytes(), &[1]).expect("truncated cell"),
+            _ => {}
+        }
+        let mut cursor = CompleteResult {
+            identity: heap_identity(),
+            backing: Backing::Scratch {
+                rows,
+                arity: 1,
+                count: 3,
+            },
+            charge: None,
+        }
+        .into_cursor(3);
+        let delivery = work();
+        for _ in 0..2 {
+            assert!(matches!(
+                cursor.next_page_with_work(&delivery, u64::MAX),
+                Err(Error::Corruption(_))
+            ));
+            assert_eq!(cursor.debug_next_row(), 0);
+            assert_eq!(delivery.used(crate::work::Resource::ResultBytes), 0);
+        }
     }
 }
