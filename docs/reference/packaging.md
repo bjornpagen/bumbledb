@@ -75,6 +75,14 @@ longer self-provide), a second addon-unavailable project
 green). D07 tiny collect must refuse. That gate is not registry
 publication proof.
 
+The default invocation requires all three release-platform binaries.
+The everyday battery uses `scripts/packed-import.sh --host-only`: it requires
+the current host's real binary, installs the same packed core/log packages,
+and runs the same consumer assertions. Across CI this executes on Apple
+Silicon, Linux ARM64, and Linux x64; one host passing is not all-platform
+qualification. The Notes history is generated in the isolated temporary
+consumer before testing the routes; the checkout is never modified.
+
 ## Deletion inventory (PKG-06)
 
 `node ts/scripts/absence-gate.ts` is the affirmative check that the

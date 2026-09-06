@@ -75,6 +75,8 @@ jobs:
             nodejs24-npm
           alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
+      - name: Trust this checkout inside the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install rustup
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
@@ -212,6 +214,8 @@ jobs:
             nodejs24-npm
           alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
+      - name: Trust this checkout inside the container
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install rustup
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal

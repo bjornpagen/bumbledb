@@ -67,9 +67,9 @@ export function requestPolicy(_request: Request): ExecutionPolicy {
 
 /** The admin job budget (migrations can be expensive; still bounded). */
 export const adminWork: ExecutionPolicy = {
-	inputBytes: 64_000_000n,
-	workingBytes: 512_000_000n,
-	scratchBytes: 1_024_000_000n,
+	inputBytes: 16_000_000n,
+	workingBytes: 64_000_000n,
+	scratchBytes: 64_000_000n,
 	resultBytes: 16_000_000n,
 	rows: 5_000_000n,
 	workUnits: 500_000_000n,

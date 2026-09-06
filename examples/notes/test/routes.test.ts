@@ -9,11 +9,12 @@
  * Verification: NotRun until F3 (campaign phase rule).
  */
 import assert from "node:assert/strict"
-import { randomBytes } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { before, test } from "node:test"
+import { inspect } from "node:util"
 
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-notes-test-"))
 process.env.SESSION_SECRET = "test-secret-test-secret-test-secret!"
@@ -25,7 +26,7 @@ const TENANT_A = "student-a"
 const TENANT_B = "student-b"
 
 function hex(): string {
-	return Buffer.from(randomBytes(16)).toString("hex")
+	return randomUUID()
 }
 
 async function jsonObject(response: Response): Promise<Record<string, unknown>> {
@@ -80,7 +81,7 @@ async function provision(tenantId: string): Promise<void> {
 			)
 			.pipe(Effect.provide(NativeRuntime.layer(policy.runtimePolicy.native)))
 	)
-	assert.equal(outcome.kind, "completed", "initialization completes")
+	assert.equal(outcome.kind, "completed", `initialization completes: ${inspect(outcome, { depth: 6 })}`)
 	if (outcome.kind !== "completed") {
 		return
 	}
@@ -106,6 +107,16 @@ before(async () => {
 	const expires = Math.floor(Date.now() / 1000) + 3600
 	token = signSession(TENANT_A, expires)
 	tokenB = signSession(TENANT_B, expires)
+	const { Effect, Exit } = await import("effect")
+	const { appRuntime, Databases } = await import("../src/db/server.ts")
+	const { bindingFor } = await import("../src/db/bindings.ts")
+	const { maintenanceWork } = await import("../src/db/runtime-policy.ts")
+	const opened = await appRuntime.runPromiseExit(Effect.scoped(Effect.gen(function* () {
+		const binding = yield* bindingFor(TENANT_A)
+		const databases = yield* Databases
+		yield* databases.acquire(binding, maintenanceWork)
+	})))
+	assert.ok(Exit.isSuccess(opened), inspect(opened, { depth: 10 }))
 })
 
 function request(method: string, url: string, auth: string | null, body?: unknown): Request {
@@ -131,7 +142,7 @@ test("create is idempotent under the client-supplied id", async () => {
 	const routes = await import("../app/api/notes/route.ts")
 	const noteId = hex()
 	const first = await routes.POST(request("POST", "/api/notes", token, { id: noteId, text: "hello" }))
-	assert.equal(first.status, 200)
+	assert.equal(first.status, 200, await first.clone().text())
 	const firstBody = await jsonObject(first)
 	assert.equal(firstBody.outcome, "committed")
 	assert.equal(typeof firstBody.command, "string")
@@ -147,7 +158,7 @@ test("reads see committed notes; tenants are isolated", async () => {
 	const routes = await import("../app/api/notes/route.ts")
 	const noteId = hex()
 	const created = await routes.POST(request("POST", "/api/notes", token, { id: noteId, text: "mine" }))
-	assert.equal(created.status, 200)
+	assert.equal(created.status, 200, await created.clone().text())
 	const list = await routes.GET(request("GET", "/api/notes", token))
 	assert.equal(list.status, 200)
 	const rows = await list.json()
@@ -167,7 +178,7 @@ test("witnessed pin toggles and a missing note is 404", async () => {
 	const item = await import("../app/api/notes/[id]/route.ts")
 	const noteId = hex()
 	const created = await collection.POST(request("POST", "/api/notes", token, { id: noteId, text: "pin me" }))
-	assert.equal(created.status, 200)
+	assert.equal(created.status, 200, await created.clone().text())
 	const patched = await item.PATCH(
 		request("PATCH", `/api/notes/${noteId}`, token, { requestKey: hex(), pinned: true }),
 		{ params: Promise.resolve({ id: noteId }) }

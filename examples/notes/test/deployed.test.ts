@@ -16,7 +16,7 @@
  * Verification: NotRun until F3.
  */
 import assert from "node:assert/strict"
-import { randomBytes } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { test } from "node:test"
 
 const base = process.env.DEPLOYED_URL
@@ -37,7 +37,7 @@ async function jsonObject(response: Response): Promise<Record<string, unknown>> 
 }
 
 function hex(): string {
-	return Buffer.from(randomBytes(16)).toString("hex")
+	return randomUUID()
 }
 
 async function call(method: string, path: string, body?: unknown, auth?: string | null): Promise<Response> {

@@ -10,13 +10,13 @@
  * Ids are minted ONCE for an original intent and persisted by the caller;
  * a retry reuses the recorded value, never a fresh one.
  */
-import { randomBytes } from "node:crypto"
+import { randomUUID } from "node:crypto"
 import { signSession } from "../src/auth.ts"
 
 const [command, tenantId] = process.argv.slice(2)
 
 if (command === "id") {
-	console.log(Buffer.from(randomBytes(16)).toString("hex"))
+	console.log(randomUUID())
 } else if (command === "token" && tenantId !== undefined) {
 	const expires = Math.floor(Date.now() / 1000) + 3600
 	console.log(signSession(tenantId, expires))

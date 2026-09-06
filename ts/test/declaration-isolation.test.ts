@@ -52,7 +52,8 @@ describe("declaration specifier rewrite", function suite() {
 			fs.mkdirSync(path.join(dir, "query"))
 			fs.writeFileSync(path.join(dir, "index.d.ts"), 'export type { V } from "#db.ts";\n')
 			fs.writeFileSync(path.join(dir, "db.d.ts"), 'import type { X } from "#query/atom.ts";\nexport type V = X;\n')
-			fs.writeFileSync(path.join(dir, "query/atom.d.ts"), "export type X = string;\n")
+			fs.writeFileSync(path.join(dir, "query/atom.d.ts"), 'export type X = import("#db.ts").V | import("../db").V;\n')
+			assert.throws(() => assertDeclarationsAreIsolated(dir), /must not import # specifiers/)
 			rewriteDeclarationImports(dir)
 			assert.equal(fs.readFileSync(path.join(dir, "index.d.ts"), "utf8"), 'export type { V } from "./db.js";\n')
 			assert.equal(
@@ -60,6 +61,10 @@ describe("declaration specifier rewrite", function suite() {
 				'import type { X } from "./query/atom.js";\nexport type V = X;\n'
 			)
 			assertDeclarationsAreIsolated(dir)
+			assert.equal(
+				fs.readFileSync(path.join(dir, "query/atom.d.ts"), "utf8"),
+				'export type X = import("../db.js").V | import("../db.js").V;\n'
+			)
 		} finally {
 			fs.rmSync(dir, { recursive: true, force: true })
 		}

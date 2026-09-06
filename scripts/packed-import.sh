@@ -10,6 +10,8 @@ set -eu
 # the native addon unavailable. Rust consumer and Notes specimens/routes
 # run in this path; missing Notes migrations fail, never skip green.
 # Local packing is not PKG-07B.
+# Default: require every release platform. --host-only: require this host's
+# real binary for per-host CI; never substitute another platform's binary.
 
 unset NODE_OPTIONS NODE_PATH
 
@@ -23,10 +25,16 @@ EFFECT="$(node -p "require('$ROOT/ts/package.json').peerDependencies.effect")"
 TYPESCRIPT="$(node -p "require('$ROOT/ts-log/package.json').devDependencies.typescript")"
 NODE_TYPES="$(node -p "require('$ROOT/ts-log/package.json').devDependencies['@types/node']")"
 STORE="$(cd "$ROOT/ts-log" && pnpm store path --silent)"
+PLATFORMS="darwin-arm64 linux-arm64 linux-x64"
+case "${1:-}" in
+  --host-only) PLATFORMS="$(node -p '`${process.platform}-${process.arch}`')" ;;
+  "") ;;
+  *) echo "usage: packed-import.sh [--host-only]" >&2; exit 1 ;;
+esac
 
 cp "$ROOT/ts/package.json" "$TMP/core-package.before.json"
 cp "$ROOT/ts-log/package.json" "$TMP/log-package.before.json"
-node "$ROOT/ts/scripts/stage.ts" --out "$TMP"
+node "$ROOT/ts/scripts/stage.ts" --out "$TMP" "$@"
 node "$ROOT/ts-log/scripts/stage.ts" --out "$TMP"
 cmp -s "$ROOT/ts/package.json" "$TMP/core-package.before.json" || {
   echo "packed-import: FAIL — staging mutated ts/package.json" >&2
@@ -37,18 +45,21 @@ cmp -s "$ROOT/ts-log/package.json" "$TMP/log-package.before.json" || {
   exit 1
 }
 
-for tgz in \
-  "bjornpagen-bumbledb-$V.tgz" \
-  "bjornpagen-bumbledb-log-$V.tgz" \
-  "bjornpagen-bumbledb-darwin-arm64-$V.tgz" \
-  "bjornpagen-bumbledb-linux-arm64-$V.tgz" \
-  "bjornpagen-bumbledb-linux-x64-$V.tgz"; do
+TARBALLS="bjornpagen-bumbledb-$V.tgz bjornpagen-bumbledb-log-$V.tgz"
+for platform in $PLATFORMS; do
+  TARBALLS="$TARBALLS bjornpagen-bumbledb-$platform-$V.tgz"
+done
+for tgz in $TARBALLS; do
   if [ ! -f "$TMP/$tgz" ]; then
     echo "packed-import: FAIL — expected tarball missing: $tgz (platform binaries must be built)" >&2
     exit 1
   fi
   tar -tzf "$TMP/$tgz" | grep -q '^package/package.json$' || {
     echo "packed-import: FAIL — $tgz carries no package.json" >&2
+    exit 1
+  }
+  tar -tzf "$TMP/$tgz" | grep -q '^package/pack-provenance.json$' || {
+    echo "packed-import: FAIL — $tgz carries no pack provenance" >&2
     exit 1
   }
 done
@@ -59,10 +70,6 @@ tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/dist/index.js
 }
 tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/pack-provenance.json$' || {
   echo "packed-import: FAIL — the ts-log tarball does not carry pack provenance" >&2
-  exit 1
-}
-tar -tzf "$TMP/bjornpagen-bumbledb-darwin-arm64-$V.tgz" | grep -q '^package/pack-provenance.json$' || {
-  echo "packed-import: FAIL — the darwin-arm64 tarball does not carry pack provenance" >&2
   exit 1
 }
 PROVENANCE="$(tar -xzOf "$TMP/bjornpagen-bumbledb-$V.tgz" package/pack-provenance.json)"
@@ -105,10 +112,10 @@ cat > "$TMP/consumer/pnpm-workspace.yaml" <<YAML
 packages:
   - "."
 overrides:
-  "@bjornpagen/bumbledb-darwin-arm64": "file:../bjornpagen-bumbledb-darwin-arm64-$V.tgz"
-  "@bjornpagen/bumbledb-linux-arm64": "file:../bjornpagen-bumbledb-linux-arm64-$V.tgz"
-  "@bjornpagen/bumbledb-linux-x64": "file:../bjornpagen-bumbledb-linux-x64-$V.tgz"
 YAML
+for platform in $PLATFORMS; do
+  printf '  "@bjornpagen/bumbledb-%s": "file:../bjornpagen-bumbledb-%s-%s.tgz"\n' "$platform" "$platform" "$V" >> "$TMP/consumer/pnpm-workspace.yaml"
+done
 
 cp "$ROOT/scripts/packed-consumer.ts" "$TMP/consumer/packed-consumer.ts"
 mkdir -p "$TMP/consumer/core-ts" "$TMP/consumer/log-ts" "$TMP/consumer/native-ledger"
@@ -161,7 +168,9 @@ for plat in darwin-arm64 linux-arm64 linux-x64; do
     exit 1
   fi
 done
-(cd "$TMP/pure" && pnpm exec tsc --strict --exactOptionalPropertyTypes --target es2024 \
+# TypeScript 7's executable is itself an optional native dependency. Use
+# the isolated consumer's compiler; the pure project still has no addon.
+(cd "$TMP/pure" && ../consumer/node_modules/.bin/tsc --strict --exactOptionalPropertyTypes --target es2024 \
   --module nodenext --types node --allowImportingTsExtensions \
   --declaration --emitDeclarationOnly --outDir declarations \
   packed-pure-authoring.ts)
@@ -170,7 +179,11 @@ done
 # Rust consumer lives in this packed-import path (D07 tiny collect refuses).
 cargo run --manifest-path "$ROOT/examples/consumers/rust/Cargo.toml"
 
-# Notes specimens + routes: missing generated migrations FAIL, never skip green.
-(cd "$ROOT/examples/notes" && node --test test/specimens.test.ts test/routes.test.ts)
+# Run the actual Notes app against the same packed dependencies in isolation.
+# Generate the migration history before exercising its real route handlers.
+mkdir -p "$TMP/consumer/examples"
+git ls-files -z examples/notes examples/consumers | tar --null -T - -cf - | (cd "$TMP/consumer" && tar -xf -)
+(cd "$TMP/consumer" && pnpm add --ignore-scripts next@16.1.1 react@19.2.0 react-dom@19.2.0 server-only@0.0.1 @aws-sdk/client-s3@3.955.0)
+(cd "$TMP/consumer/examples/notes" && node --conditions react-server scripts/generate-history.ts && node --conditions react-server --test test/specimens.test.ts test/routes.test.ts)
 
-echo "packed-import: OK — 5 staged tarballs; ManagedRuntime consumer; D07 tiny collect refuses; D27 addon-unavailable authoring; Rust + Notes fail-closed at $V (not PKG-07B)"
+echo "packed-import: OK — platforms: $PLATFORMS; ManagedRuntime consumer; D07 tiny collect refuses; D27 addon-unavailable authoring; Rust + Notes fail-closed at $V (not PKG-07B)"

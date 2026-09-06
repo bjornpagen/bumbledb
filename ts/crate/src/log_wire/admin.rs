@@ -27,9 +27,10 @@ use bumbledb_log::history::{
 };
 use bumbledb_log::manifest::RootPolicy;
 use bumbledb_log::migration::executor::{
-    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationStatus, StepInput,
-    SuffixRequest, activate_target, initialize,
+    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationError, MigrationStatus,
+    StepInput, SuffixRequest, activate_target, initialize,
 };
+use bumbledb_log::migration::lock::TargetNamespace;
 use bumbledb_log::migration::manifest::{Manifest, parse_manifest, prefix_at};
 use bumbledb_log::migration::plan::parse_plan;
 use bumbledb_log::recovery::{self, RecoveryError};
@@ -1979,7 +1980,10 @@ fn migrate(
             })),
         ),
         Ok(MigrateOutcome::ReadyToSwitch { activation_ref, .. }) => {
-            let deployment = root.join(uuid_text(activation_ref.target.incarnation_id.as_core()));
+            let deployment = TargetNamespace::new(&root, activation_ref.target.incarnation_id)
+                .map_err(MigrationError::from)
+                .map_err(fail_of_migration)?
+                .target_dir();
             Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
                 MigrateOwned::ReadyToSwitch {
                     deployment_directory: deployment.to_string_lossy().into_owned(),
@@ -2060,21 +2064,25 @@ fn migration_initialize(
         target_incarnation,
     };
     let outcome = initialize(&root, &request, LIMITS, context).map_err(fail_of_migration)?;
+    let target_descriptor = &steps.last().expect("nonempty steps").to_descriptor;
     let activation_ref = match outcome {
         MigrateOutcome::ReadyToSwitch { activation_ref, .. } => activation_ref,
         MigrateOutcome::AlreadyActivated { .. } | MigrateOutcome::UpToDate { .. } => {
             // Idempotent completion: adopt the recorded evidence below.
-            return finish_initialize(binding, operation, &root, None, context);
+            return finish_initialize(binding, operation, &root, target_descriptor, None, context);
         }
     };
-    let target_descriptor = steps
-        .last()
-        .map(|step| step.to_descriptor.clone())
-        .expect("nonempty steps");
-    let report = activate_target(&root, &activation_ref, &target_descriptor, LIMITS, context)
+    let report = activate_target(&root, &activation_ref, target_descriptor, LIMITS, context)
         .map_err(fail_of_migration)?;
     let _ = report;
-    finish_initialize(binding, operation, &root, Some(activation_ref), context)
+    finish_initialize(
+        binding,
+        operation,
+        &root,
+        target_descriptor,
+        Some(activation_ref),
+        context,
+    )
 }
 
 /// Installs the activated initialization target as the tenant's ready
@@ -2085,12 +2093,16 @@ fn finish_initialize(
     binding: &BindingSpec,
     operation: OperationId,
     root: &Path,
+    descriptor: &SchemaDescriptor,
     activation: Option<ActivationRef>,
     context: &WorkContext,
 ) -> MachineResult<AdminOwned> {
     let _ = operation;
     let target_incarnation = binding.identity.incarnation_id;
-    let target_dir = root.join(uuid_text(target_incarnation.as_core()));
+    let target_dir = TargetNamespace::new(root, target_incarnation)
+        .map_err(MigrationError::from)
+        .map_err(fail_of_migration)?
+        .target_dir();
     let ready = recovery::materialization_path(Path::new(&binding.directory));
     if !ready.exists() {
         if !target_dir.exists() {
@@ -2099,6 +2111,20 @@ fn finish_initialize(
                 "no published initialization target to install",
             ));
         }
+        // Initialization builds a generic migration target. Attach the
+        // application's verified local origin before exposing it to the
+        // tenant-cache open path, which rightly refuses unidentified stores.
+        let target = bumbledb::Db::open(&target_dir, descriptor.clone(), context.clone())
+            .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
+        bumbledb_log::admin::verify_local_identity(
+            &target,
+            binding.identity,
+            LIMITS.envelope_bytes,
+        )
+        .map_err(fail_of_admin)?;
+        recovery::write_binding(&target, &expected_binding(binding), context)
+            .map_err(super::fail_of_recovery)?;
+        drop(target);
         std::fs::rename(&target_dir, &ready)
             .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
     }

@@ -93,6 +93,9 @@ jobs:
             nodejs24-npm
           alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
+      - name: Trust this checkout inside the container
+        if: matrix.os == 'ubuntu-latest'
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install rustup
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -252,6 +255,9 @@ jobs:
             nodejs24-npm
           alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
+      - name: Trust this checkout inside the container
+        if: matrix.os == 'ubuntu-latest'
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install rustup
         if: matrix.os == 'ubuntu-latest'
         run: |

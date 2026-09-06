@@ -18,8 +18,14 @@ function relativeFromHash(fromFile: string, hashSpecifier: string, distDir: stri
 function rewriteDeclarationImports(distDir: string): void {
 	for (const file of declarationFiles(distDir)) {
 		const source = fs.readFileSync(file, "utf8")
-		const rewritten = source.replace(/from "(#[^"]+\.ts)"/g, function relative(_match, specifier: string) {
-			return `from "${relativeFromHash(file, specifier, distDir)}"`
+		const rewritten = source.replace(/(from |import\()"([^"]+)"/g, (_match, prefix: string, specifier: string) => {
+			let relative = specifier
+			if (specifier.startsWith("#")) {
+				relative = relativeFromHash(file, specifier, distDir)
+			} else if (specifier.startsWith(".") && path.extname(specifier) === "") {
+				relative = `${specifier}.js`
+			}
+			return `${prefix}"${relative}"`
 		})
 		if (rewritten !== source) {
 			fs.writeFileSync(file, rewritten)
@@ -30,7 +36,7 @@ function rewriteDeclarationImports(distDir: string): void {
 function assertDeclarationsAreIsolated(distDir: string): void {
 	const leaked: string[] = []
 	for (const file of declarationFiles(distDir)) {
-		if (fs.readFileSync(file, "utf8").includes('from "#')) {
+		if (/(?:from |import\()"#/.test(fs.readFileSync(file, "utf8"))) {
 			leaked.push(path.relative(distDir, file))
 		}
 	}

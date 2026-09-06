@@ -4,7 +4,7 @@ import { createRequire } from "node:module"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
-import { Db, DbError, Uuid, internalBlake3 } from "@bjornpagen/bumbledb"
+import { Db, DbError } from "@bjornpagen/bumbledb"
 import { ProtocolError, protocolErrorCodes } from "@bjornpagen/bumbledb-log"
 import { AuthoringError } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
@@ -31,11 +31,13 @@ const log = createRequire(consumer.resolve("@bjornpagen/bumbledb-log"))
 assert.equal(log.resolve("@bjornpagen/bumbledb"), consumer.resolve("@bjornpagen/bumbledb"))
 assert.equal(core.resolve("effect"), consumer.resolve("effect"))
 assert.equal(log.resolve("effect"), consumer.resolve("effect"))
-assert.equal(internalBlake3(new Uint8Array()).length, 32)
 
 assert.equal(incrementUnits.kind, "add")
 assert.equal(incrementUnits.result, "unresolved")
-assert.equal(incrementUnitsAsF64.kind, "toF64")
+assert.equal(incrementUnitsAsF64.kind, "cast")
+if (incrementUnitsAsF64.kind === "cast") {
+	assert.equal(incrementUnitsAsF64.cast, "toF64")
+}
 const convertUnits = incrementUnitsIntent.entries[0]
 assert.equal(convertUnits?.kind, "convert")
 assert.equal(convertUnits && "field" in convertUnits ? convertUnits.field : "", "units")
@@ -81,8 +83,8 @@ try {
 	const d07 = await runtime.runPromise(
 		Effect.scoped(
 			Effect.gen(function* () {
-				const studentId = yield* Uuid.random()
-				const attemptId = yield* Uuid.random()
+				const studentId = crypto.randomUUID()
+				const attemptId = crypto.randomUUID()
 				const store = path.join(dir, "d07")
 				const db = yield* Db.create(store, Learning, work)
 				const changes = yield* newAttempt(studentId, attemptId, work)
@@ -115,7 +117,7 @@ try {
 
 	const intent = await runtime.runPromise(mintIntent)
 	assert.ok(intent.studentId)
-	const command = await runtime.runPromise(mintCommand)
+	const command = await runtime.runPromise(mintCommand(crypto.randomUUID()))
 	assert.ok(command.requestId)
 	assert.ok(command.receiptEpoch)
 	assert.ok(intent.commandId.requestId)

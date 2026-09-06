@@ -66,7 +66,9 @@ function writePackProvenance(stagedDir: string, provenance: PackProvenance): voi
  * consume these tarballs; `pnpm publish` publishes the staged tarball,
  * never the live checkout. Local packing is not PKG-07B.
  *
- * CLI: `node scripts/stage.ts --out <dir> [--skip-binary]`
+ * CLI: `node scripts/stage.ts --out <dir> [--skip-binary | --host-only]`
+ *   `--host-only` requires and packs only this host's native package;
+ *   the default requires all release platforms. Neither option publishes.
  *   Stages and packs the main package plus every `npm/<target>` platform
  *   package whose binary is present. `--skip-binary` permits platform
  *   packages without a built `bumbledb.node` to be skipped (source-only
@@ -249,12 +251,13 @@ function main(): void {
 	}
 	const outDir = path.resolve(args[outFlag + 1] as string)
 	const skipBinary = args.includes("--skip-binary")
+	const platforms = args.includes("--host-only") ? [`${process.platform}-${process.arch}`] : PUBLISH_PLATFORMS
 	fs.mkdirSync(outDir, { recursive: true })
 	const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-stage-"))
 	try {
 		const mainTarball = stageMainPackage(packageRoot, stagingDir, outDir)
 		console.log(`staged: ${path.basename(mainTarball)}`)
-		for (const platform of PUBLISH_PLATFORMS) {
+		for (const platform of platforms) {
 			const tarball = stagePlatformPackage(packageRoot, platform, stagingDir, outDir, skipBinary)
 			if (tarball === null) {
 				console.log(`skipped: ${platform} (no built binary)`)

@@ -190,7 +190,7 @@ export const drainPages = (reader: QueryReader<typeof Learning>, student: Uuid, 
 		Effect.gen(function* () {
 			const result = yield* reader.execute(attemptsFor, { student }, work)
 			return yield* result.pages({ pageBytes: 65_536n }, delivery).pipe(
-				Stream.runFold(0, (rows, page) => rows + page.length)
+				Stream.runFold(() => 0, (rows, page) => rows + page.length)
 			)
 		})
 	)

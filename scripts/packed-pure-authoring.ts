@@ -10,11 +10,13 @@ const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
 assert.equal(incrementUnits.kind, "add")
 assert.equal(incrementUnits.result, "unresolved")
 const nested = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
-assert.equal(nested.kind, "toF64")
-assert.equal(nested.result, "unresolved")
+assert.equal(nested.kind, "cast")
+if (nested.kind === "cast") assert.equal(nested.cast, "toF64")
+assert.equal(nested.result, "f64")
 
 let refused = false
 try {
+	// @ts-expect-error Deliberately exercise the runtime refusal for untyped callers.
 	Scalar.add(Scalar.i64(1n), Scalar.u64(1n))
 } catch {
 	refused = true

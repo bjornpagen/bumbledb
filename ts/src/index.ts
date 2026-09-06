@@ -101,7 +101,7 @@ export type { FindColumn } from "#query/atom.ts"
 export { ALLEN } from "#query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"
 export { Compute } from "#query/compute.ts"
-export type { Agg } from "#query/find.ts"
+export type { Agg, RowOfFind } from "#query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -122,6 +122,7 @@ export type {
 export { lowerQuery, query } from "#query/lower.ts"
 export type {
 	ClassedField,
+	Flatten,
 	MatchFields,
 	MatchOwner,
 	Param,
@@ -165,7 +166,7 @@ export type {
 	ScalarValue
 } from "#scalar.ts"
 export { Scalar } from "#scalar.ts"
-export type { AnySchema, SchemaRelation, SchemaRelations } from "#schema.ts"
+export type { AnySchema, Schema as SchemaDeclaration, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"
 export type { Key, QueryTemplate, Rel } from "#shape.ts"
 export type {

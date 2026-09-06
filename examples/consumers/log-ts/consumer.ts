@@ -274,6 +274,7 @@ export const parsedIdentityIsBounded: boolean = Result.isFailure(parseDatabaseId
 /** Known-invalid literals refuse at authoring — not after native load. */
 export const knownInvalidMixRefuses: boolean = (() => {
 	try {
+		// @ts-expect-error Deliberately exercise the runtime refusal for untyped callers.
 		Scalar.add(Scalar.i64(1n), Scalar.u64(1n))
 		return false
 	} catch {

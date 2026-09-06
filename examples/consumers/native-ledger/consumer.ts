@@ -60,7 +60,7 @@ export interface Observation {
 	readonly reportToken: string
 }
 
-export const mintCommand = Effect.gen(function* (attempt: Uuid) {
+export const mintCommand = (attempt: Uuid) => Effect.gen(function* () {
 	const requestSource = yield* Effect.sync(() => crypto.randomUUID())
 	const requestId = yield* Effect.fromResult(RequestId.from(requestSource))
 	const receiptEpoch = yield* Effect.fromResult(ReceiptEpoch.from(1n))

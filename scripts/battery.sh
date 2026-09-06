@@ -66,11 +66,11 @@ echo "==> ts/ (test, typecheck, lint; no second native rebuild)"
 (cd ts && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)
 
 echo "==> ts-log/ (test, typecheck, lint; no second native rebuild)"
-(cd ts-log && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)
+(cd ts-log && pnpm run build && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)
 
 echo "==> packed-tarball import gate (scripts/packed-import.sh)"
 # Rust consumer, D07 tiny-collect refusal, D27 addon-unavailable
 # authoring, and Notes specimens/routes run inside packed-import.
-scripts/packed-import.sh
+scripts/packed-import.sh --host-only
 
 echo "==> battery complete for this host — not all-platform qualification; evidence remains NotRun until pre-promotion validates real cells"
