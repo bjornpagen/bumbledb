@@ -1,7 +1,7 @@
 # Publishing @bjornpagen/bumbledb
 
 The owner-run release runbook for the successor packaging design
-(immutable staging; see `docs/reference/packaging.md`). Publication is
+(immutable staging via `ts/scripts/stage.ts` and `ts-log/scripts/stage.ts`). Publication is
 OWNER CEREMONY under a separate authorization — no agent, CI job or
 implementation campaign publishes or tags. Historical 0.x release notes
 live in git history of this file; none of their compatibility claims

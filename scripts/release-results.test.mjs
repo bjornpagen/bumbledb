@@ -57,11 +57,12 @@ test('selected inventory remains complete, not a vacuous match',()=>{
   assert.equal(actual.priorReview.length,78); assert.equal(actual.discriminators.length,29)
   assert.equal(actual.qualificationCells.length,8)
 })
-test('inventory lives in docs/reference and no longer scrapes proposal markdown',()=>{
+test('inventory retains historical provenance without depending on deleted documentation',()=>{
   const doc=loadInventoryDocument()
   assert.equal(doc.format,1)
   assert.ok(doc.generatedFrom.length)
-  assert.ok(doc.generatedFrom.every(entry=>entry.startsWith('docs/reference/')))
+  assert.match(doc.sourceRevision,/^[0-9a-f]{40}$/)
+  assert.ok(doc.generatedFrom.every(entry=>entry.startsWith(`git:${doc.sourceRevision}:docs/reference/`)))
   assert.ok(doc.generatedFrom.every(entry=>!entry.startsWith('final-solution/')))
   assert.ok(doc.parentGates.includes('G16'))
   assert.ok(doc.childFamilies.includes('APP-MAGIC'))

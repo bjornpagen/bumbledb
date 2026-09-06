@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url"
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const read = name => fs.readFileSync(path.join(root, name), "utf8")
 
-const INVENTORY_PATH = "docs/reference/obligation-inventory.json"
-const RESULTS_PATH = "docs/reference/release-results.json"
+const INVENTORY_PATH = ".config/obligation-inventory.json"
+const RESULTS_PATH = ".config/release-results.json"
 
 const CANDIDATE_EXCLUDES = [
-  /^docs\/reference\/release-results\.json$/,
+  /^\.config\/release-results\.json$/,
   /^target\//,
   /^ts\/dist\//,
   /^ts\/node_modules\//,

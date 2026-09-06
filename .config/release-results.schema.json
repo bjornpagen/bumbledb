@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://bumbledb.dev/reference/release-results.schema.json",
   "title": "Bumbledb release qualification index",
-  "description": "Small checked index at docs/reference/release-results.json. Actual reports and raw runs live in CI/release artifacts only. The index excludes itself from the candidate source digest.",
+  "description": "Small checked index at .config/release-results.json. Actual reports and raw runs live in CI/release artifacts only. The index excludes itself from the candidate source digest.",
   "type": "object",
   "required": [
     "format",
@@ -20,12 +20,12 @@
     "candidateSourceDigest": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
-      "description": "SHA-256 of the deterministic tracked+untracked source inventory (path/kind/mode/payload; docs/reference/release-gates.md)."
+      "description": "SHA-256 of the deterministic tracked+untracked source inventory (path/kind/mode/payload; scripts/release-results.mjs)."
     },
     "specificationRevision": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$",
-      "description": "SHA-256 of docs/reference/obligation-inventory.json canonical content."
+      "description": "SHA-256 of .config/obligation-inventory.json canonical requirements."
     },
     "sourceRevision": {
       "type": "string",

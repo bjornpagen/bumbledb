@@ -30,8 +30,6 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 TARGET_DIR="${CARGO_TARGET_DIR:-$REPO/target}"
 BIN="$TARGET_DIR/release/bumbledb-bench"
-OBS_TARGET="$REPO/target/bench-obs"
-OBS_BIN="$OBS_TARGET/release/bumbledb-bench"
 LOCK="${BUMBLEDB_MEASURE_LOCK:-/tmp/bumbledb.measure.lock}"
 
 OUT_ARG=$1
@@ -56,7 +54,6 @@ esac
 # timing jobs are not default qualification. verify + storage are semantic;
 # app-perf timing is G15-only on a quiet host. Three-way / C-* cargo tests
 # live in the bench crate (not scripts/lean.sh) and stay NotRun here.
-PROBED=" storage "
 
 lane_table() {
     cat <<EOF
@@ -67,6 +64,7 @@ three-way-conformance|PREREQ|echo "NotRun: cargo test -p bumbledb-bench three_wa
 storage|$OUT/storage/storage-report.json|"$BIN" storage --scales S,M --out "$OUT/storage"
 app-perf-warm|$OUT/app-perf-warm/app-perf.json|"$BIN" app-perf --regimes warm --out "$OUT/app-perf-warm"
 app-perf-cold|$OUT/app-perf-cold/app-perf.json|"$BIN" app-perf --regimes cold-open,post-write --out "$OUT/app-perf-cold"
+app-perf-large-result|$OUT/app-perf-large-result/app-perf.json|"$BIN" app-perf --regimes large-result --out "$OUT/app-perf-large-result"
 app-perf-tenants|$OUT/app-perf-tenants/app-perf.json|"$BIN" app-perf --regimes tenant-churn --out "$OUT/app-perf-tenants"
 hash-probe|$OUT/hash-probe/hash-probe.json|"$BIN" hash-probe --out "$OUT/hash-probe"
 hosted-decision|PREREQ|echo "NotRun: real S3/IAM required (PERF-003); see app-perf --plan"
@@ -76,18 +74,6 @@ x86-node|PREREQ|echo "NotRun unless this host is linux-x86-64 Node with the nati
 EOF
 }
 
-is_probed() {
-    case "$PROBED" in
-        *" $1 "*) return 0 ;;
-    esac
-    return 1
-}
-
-lane_available() {
-    "$BIN" help 2>/dev/null | awk '/^COMMANDS:/,/^$/' \
-        | grep -qE "^[[:space:]]+$1([[:space:]]|\$)"
-}
-
 nonsetup_status() { 
     if [ "$2" = "PREREQ" ]; then
         echo "NOTRUN-PREREQ"
@@ -95,8 +81,6 @@ nonsetup_status() {
     fi
     if [ -e "$2" ]; then
         echo "SKIP-EXISTING"
-    elif is_probed "$1" && ! lane_available "$1"; then
-        echo "SKIP-UNAVAILABLE"
     else
         echo "RUN"
     fi
@@ -135,8 +119,6 @@ fi
 
 if [ "$PLAN" -eq 0 ]; then
     (cd "$REPO" && cargo build --release -p bumbledb-bench)
-    (cd "$REPO" && CARGO_TARGET_DIR="$OBS_TARGET" \
-        cargo build --release -p bumbledb-bench --features obs)
 fi
 
 ANY_RUN=0
@@ -204,6 +186,10 @@ while IFS='|' read -r id artifact command; do
         else
             status="RUN-FAIL(exit=$rc)"
             FAILED=$((FAILED + 1))
+            if [ "$artifact" = "SETUP" ]; then
+                echo "bench-night: refusing timing after failed setup/verification ($id)" >&2
+                exit "$rc"
+            fi
         fi
     else
         echo "[$(date '+%Y-%m-%dT%H:%M:%S')] === lane $id $status"
@@ -225,7 +211,7 @@ CHARTS=$( (ls "$OUT"/*.svg 2>/dev/null || true) | wc -l | tr -d ' ')
     printf '%s' "$LANE_LINES"
     echo "charts: $CHARTS svg"
     if [ "$FAILED" -eq 0 ]; then
-        echo "night: COMPLETE"
+        echo "night: LOCAL LANES COMPLETE — external prerequisites are not qualified"
     else
         echo "night: INCOMPLETE ($FAILED lanes failed)"
     fi

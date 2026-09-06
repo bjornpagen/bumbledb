@@ -1,24 +1,66 @@
 # bumbledb
 
-Bumbledb is an embedded relational database for Rust and TypeScript. It
-replaces SQL strings with typed schemas and queries, checks cross-row
-constraints before each commit, and executes complex reads with Free Join over
-LMDB-backed data.
+An embedded, set-semantic relational database for application data. Rust does
+the database work; TypeScript uses Effect. LMDB provides durable storage and
+snapshot isolation, and Free Join executes the joins.
 
-UUID is a first-class, ordered scalar: 16 bytes in the engine, standard
-`uuid::Uuid` in Rust, and structural template-literal UUID strings in TypeScript.
-Generate IDs in the host (including UUIDv7); declare uniqueness with a key.
-Entity-specific Rust newtypes and TypeScript brands never enter the storage
-model. See [value semantics](docs/reference/semantics.md).
+The bet is simple: a good data model, a good backend, and a performance-aware
+core. The target is a database per user or tenant—not an analytics warehouse
+or a SQL compatibility layer.
 
-The database runs in the application process. Schemas are declared in code,
-records are ordinary Rust structs or TypeScript objects, and prepared queries
-run without parsing or interpreting SQL. Relations use set semantics, so a
-record is either present or absent: duplicate inserts are harmless, deletes
-are idempotent, and query results do not need a separate deduplication step.
+## The model
 
-Here is a complete Rust example. Operations take an explicit finite
-`WorkContext`. There is no write/read callback and no unlimited work twin.
+Relations are sets: inserting an existing fact and deleting an absent fact
+are idempotent. Schemas declare keys, containment, interval relationships, and
+capacity constraints. Writes are judged against their final state.
+
+Rust macros and TypeScript builders construct schemas and query ASTs directly.
+There is no SQL parser. Prepared queries support joins, negation, aggregates,
+and reachability, with reusable execution buffers for the warmed fast path.
+
+Values include integers, floats, booleans, text, fixed-size bytes, UUIDs, and
+intervals, including float endpoints. UUIDs occupy 16 bytes and sort by their
+unsigned bytes. Rust uses `uuid::Uuid`; TypeScript uses structural UUID
+strings. Generate IDs in the application, including UUIDv7. Host-language
+newtypes do not become nominal engine types.
+
+LMDB supports databases larger than RAM. Performance is best with the working
+set in memory; disk, address-space, and explicit work limits still apply.
+The embedded database has concurrent snapshot readers and a serialized writer.
+Set semantics do not make arbitrary concurrent writes conflict-free.
+
+## Rust and TypeScript
+
+The public surfaces are Rust core, TypeScript core, and TypeScript
+`bumbledb-log`. There is no C API or public Rust log SDK.
+
+TypeScript schema/query construction is synchronous metadata. Database work
+is lazy Effect with scoped ownership and explicit budgets; there is no
+parallel Promise or synchronous database API. The current packages require
+**Node 24+** and pin **Effect 4.0.0-rc.112**.
+
+Start with the [TypeScript guide](ts/README.md), the
+[log guide](ts-log/README.md), or the executable
+[Rust and TypeScript consumers](examples/consumers/README.md).
+The [cookbook](docs/cookbook.md) contains thirty-two worked schemas.
+
+Rust source consumers can use:
+
+```toml
+[dependencies]
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", branch = "main" }
+```
+
+Build with the repository's pinned nightly. For reproducible deployments,
+replace the moving branch with a tested `rev`. The working-tree version is
+**0.20.3**; this checkout is being prepared for 1.0, not advertised as an
+already-qualified 1.0 release. Published packages must not be assumed to
+contain unreleased changes on `main`.
+
+## A Rust model
+
+This example admits related facts together and explicitly releases its
+snapshot. Its code is compiled and exercised by the README tests.
 
 ```rust
 use bumbledb::{ApplyExpected, ApplyOutcome, ChangeSet, ChangeSetBuilder, CloseReport, Db, Fact, WorkContext};
@@ -83,94 +125,7 @@ fn pin_and_close(db: &Db<Ledger>, work: &WorkContext) -> Result<CloseReport, Box
 }
 ```
 
-`HolderId` and `AccountId` are different Rust types. Passing an account ID
-where a holder ID is expected is a compile error, and a record from one schema
-cannot be written to a database opened with another schema.
-
-The equivalent TypeScript API is available as
-[`@bjornpagen/bumbledb`](ts/README.md). Both language surfaces build the same
-schema description and query representation before calling the same engine.
-
-## Installation
-
-Crate publication is not authorized. A downstream Rust consumer uses a path
-dependency the way `examples/consumers/rust` does.
-
-```toml
-[dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", branch = "codex/bumbledb-1-0" }
-```
-
-TypeScript packages require Effect `4.0.0-rc.112` exactly and Node 24+:
-
-```sh
-pnpm add @bjornpagen/bumbledb @bjornpagen/bumbledb-log effect
-```
-
-Packed-consumer qualification uses freshly staged tarballs, not workspace
-aliases. That gate is **NotRun** until the final campaign.
-
-## Packages and supported platforms
-
-- Rust: the `bumbledb` core crate (source consumers; crate publication is
-  not yet authorized). The internal log crate is not a public Rust API.
-- TypeScript: `@bjornpagen/bumbledb` (core) and `@bjornpagen/bumbledb-log`
-  (durable named commands, backup/restore, generated migrations), both
-  Effect-native with an exact `effect@4.0.0-rc.112` peer.
-- One prebuilt native package per platform, shared by both TS packages:
-  `darwin-arm64` (macOS 14+), `linux-arm64` and `linux-x64`
-  (glibc 2.34 / Amazon Linux 2023 floor). Node 24 is the deployment
-  baseline. Edge/browser/mobile runtimes are unsupported.
-
-See `docs/reference/packaging.md` for the staging/pin design.
-The worked application example lives in `examples/notes`; packed
-consumers live in `examples/consumers`. Next.js/Alchemy is Node-only;
-there is no Edge/browser/mobile promise.
-
-## What the database provides
-
-Bumbledb is intended for normalized, read-heavy application data: ledgers,
-calendars, graphs, scheduling systems, and other models with many narrow
-relations and frequent joins. It provides:
-
-- typed schemas, records, IDs, keys, parameters, and result rows;
-- joins, negation, comparisons, parameter sets, aggregates, and recursive
-  reachability;
-- first-class half-open intervals, including point lookup, overlap tests, all
-  thirteen Allen relationships, and merging adjacent ranges;
-- unique keys, references, conditional references, exact one-to-one
-  relationships, interval exclusions, and count, sum, or duration limits;
-- MVCC snapshots with concurrent readers and one serialized writer;
-- durable and non-durable stores, structured constraint failures, and explicit
-  export/import for schema changes;
-- prepared queries that reuse plans, buffers, and indexes under an explicit
-  `WorkContext`; large results, new text, and spill paths remain bounded.
-
-There is no server process and no network protocol. Bumbledb opens an LMDB
-store directly. Query work runs in the caller's thread for the embedded API;
-hosted log and native bridge paths schedule bounded work through their runtime
-executors without claiming a separate database server.
-
-## Constraints are part of the schema
-
-SQL databases expose related integrity rules through several separate
-features: unique indexes, foreign keys, checks, exclusion constraints, and
-triggers. Bumbledb expresses the supported forms as statements between
-relations and checks them against the transaction's final state.
-
-`R(id) -> R` declares a unique key. `A(x) <= B(y)` says that every `x` in
-`A` must match an existing `y` in `B`. Filters on either side make the
-reference conditional. `A(x) == B(y)` requires the relationship in both
-directions, which is useful for representing sum types as a parent record and
-one exact variant record.
-
-Intervals participate in the same rules. If the last field of a unique key is
-an interval, records with the same preceding fields may not overlap. A
-reference between intervals means that the source interval must be completely
-covered by the target intervals. Capacity constraints can limit a related
-count, sum, or total duration.
-
-Fixed sets can carry data as well as names:
+Closed relations can also carry fixed data. Inside a schema declaration:
 
 ```rust
 closed relation Status as StatusId = { Open, Frozen, Closed };
@@ -188,114 +143,85 @@ Attempt(kind) <= Kind(id);
 Certificate(kind) <= Kind(id | mastered == true);
 ```
 
-`Kind` behaves like an enum in application code, while its `mastered` and
-`rank` columns remain available to schemas and queries. The final statement
-allows certificates to refer only to kinds whose `mastered` value is true.
-These fixed records live in the schema and occupy no rows in the store.
+The `as NewType` declarations provide host-language nominal safety. The engine
+sees structural value types and relational constraints.
 
-Writes are accumulated in memory and checked once before LMDB is modified.
-This means an update can delete an old record and insert its replacement in
-either order. If the finished transaction satisfies the schema, it commits. If
-not, nothing is written and the returned error identifies the constraint and
-records involved.
+## Durable application commands
 
-The [cookbook](docs/cookbook.md) contains thirty-two worked schemas covering
-sum types, optional attributes, vocabularies, trees, graphs, state machines,
-calendars, effective-dated configuration, tax brackets, ledgers, derived data,
-recursive closure, point reads, and resource limits. Every example is compiled
-as part of the test suite.
+`bumbledb-log` adds named, retryable commands, retained outcomes, checkpoints,
+backup/restore, and generated migration workflows above the core. Local
+history uses durable local storage; hosted history uses S3 authority and an
+LMDB materialization. It reuses the core schema, changes, queries, and runtime.
 
-## Measurement
+The [Notes example](examples/notes/README.md) exercises a server-side Next.js
+application with tenant isolation. Node deployments are the target; browser
+and Edge runtimes are unsupported.
 
-1.0 qualification measures the successor tree on Apple Silicon, real
-Graviton ARM64, and x86 Node. Historical 0.17.0 night numbers are not 1.0
-evidence and are not restated here. L20 owns the measurement inputs;
-execution is **NotRun** until that campaign.
+**Release limitation:** generated migration execution is local-only through
+the TypeScript/native bridge. Hosted migration orchestration remains
+unfinished. A hosted cache must never be treated as the authoritative
+database for a local migration.
 
-## Schemas and queries
+## Next benchmark round
 
-The schema macro supports six stored value representations plus fixed
-relations:
+There are no fresh 1.0 benchmark claims here. Historical charts in
+[`assets/`](assets/) are not measurements of the current code.
 
-| Type | Use | Comparisons and operations |
-|---|---|---|
-| `u64` | IDs, counts, and unsigned values | equality, ordering, parameter sets, numeric aggregates |
-| `i64` | signed values, timestamps, and money under a host type | equality, ordering, parameter sets, numeric aggregates |
-| `bool` | true or false | equality |
-| `str` | UTF-8 text that may repeat | equality and parameter sets |
-| `bytes<N>` | fixed-size hashes and binary identities | equality and parameter sets |
-| `interval<E>` | nonempty half-open ranges | point membership, overlap and Allen relationships, merging |
-| `interval<E, w>` | fixed-width half-open ranges | the same interval operations |
-| `closed relation` | a fixed enum-like set, optionally with columns | equality, parameter sets, filtered references, joins |
+The implementation is [`crates/bumbledb-bench/`](crates/bumbledb-bench/).
+The [measurement runbook](docs/perf/measurement-plan.md) covers correctness,
+warm reads, cold opens, first reads after writes, large results, tenant churn,
+storage cost, and hash probes.
 
-Text stays inline in durable values. Fixed-size byte values stay inline.
-Intervals store ordered endpoints and may use the largest endpoint to
-represent an open-ended range.
+Preview the runner without building or timing anything:
 
-The `as NewType` field modifier emits a Rust newtype for nominal safety.
-Entity and record IDs are application-owned values declared in the schema;
-the engine does not mint or reserve identifiers.
-
-Queries are plain data after macro or builder expansion. They can be stored,
-composed, prepared once, and executed repeatedly with different parameters.
-The engine supports multiple rules whose results are combined as a set,
-negated records, comparisons, set-valued parameters, `Count`, `Sum`, `Min`,
-`Max`, interval merging, named intermediate results, and one linear recursive
-query for reachability.
-
-The raw query representation remains public for language bindings and tools.
-The Rust `query!` macro and TypeScript builder are conveniences over that same
-representation rather than separate query engines.
-
-## Architecture
-
-The laws live in the code at the site each governs; decision history
-lives in git. Worked schemas are [`docs/cookbook.md`](docs/cookbook.md).
-
-The implementation of Free Join follows Wang, Willsey, and Suciu,
-*Free Join: Unifying Worst-Case Optimal and Traditional Joins* (SIGMOD 2023),
-with the engine's differences documented alongside the code.
-
-The Rust engine and TypeScript packages use the shared schema and query
-definitions in this repository. [`lean/`](lean/README.md) contains an
-executable specification of the admitted language. Correspondence with
-current Rust is a qualification obligation, not a claim that this tree
-already passed.
-
-## Qualification
-
-Discriminators for D01–D29 and G00–G16 are authored now and executed only
-in the final post-retirement campaign. A successful local import is not
-all-platform evidence. Missing real S3 or Graviton cells remain **NotRun**.
-
-Public specimens: `examples/notes` (Next.js + Alchemy, Node only) and
-`examples/consumers` (Rust / core TS / log TS / native-ledger).
-
-## Repository layout
-
-```text
-crates/bumbledb/               database engine
-crates/bumbledb-log/           durable command / lifecycle crate
-ts/                            TypeScript core package and native bridge
-ts-log/                        TypeScript log package
-examples/notes/                Next.js + Alchemy application
-examples/consumers/            packed Rust / TS / native-ledger specimens
-lean/                          executable specification
-docs/                          architecture, cookbook, and references
-scripts/                       qualification runners
+```sh
+scripts/bench-night.sh bench-out/next-round --plan
 ```
 
-## Current target
+Once builds, tests, and other CPU-heavy work have stopped, run on a quiet host
+with a **new** output directory:
 
-Branch `codex/bumbledb-1-0` targets **1.0**: application-owned entity IDs,
-Effect-only TypeScript operations, generated migrations, no public C API,
-and no public Rust log SDK. Predecessor 0.17.0 tags are not this product.
+```sh
+scripts/bench-night.sh bench-out/quiet-round-YYYYMMDD-HHMM
+```
 
-Bumbledb uses one writer and concurrent snapshot readers. The embedded API
-owns no server port. Schema changes within the selected format family use
-generated migrations; incompatible predecessor stores refuse before mutation.
+The measurement lock serializes benchmark processes; it does **not** establish
+that the machine is idle. Do not use `--shared` for the quiet-host baseline.
+A successful local run is not Graviton, x86, real-S3, or larger-than-memory
+qualification. Preserve raw reports and refusals, not just winning charts.
+
+Apple Silicon is the first performance target. Linux ARM64/Graviton and Linux
+x64 Node deployments must be measured separately. Correctness gates and a
+zero-allocation test do not prove a throughput improvement.
+
+## Development
+
+```sh
+(cd ts && pnpm install --frozen-lockfile)
+(cd ts-log && pnpm install --frozen-lockfile)
+scripts/battery.sh
+```
+
+The battery checks Rust, the native bridge, TypeScript, Lean correspondence,
+and isolated packaged consumers. It is not a benchmark or permission to
+publish. Machine-readable release requirements live in
+[`.config/obligation-inventory.json`](.config/obligation-inventory.json);
+[`scripts/release-results.mjs`](scripts/release-results.mjs) checks evidence.
+Missing required evidence remains missing.
+
+## Repository
+
+- `crates/bumbledb/`: embedded engine.
+- Theory, macro, and query crates: structural language.
+- `crates/bumbledb-log/`: internal durable-history implementation.
+- `ts/`, `ts-log/`: Effect SDKs and the shared native bridge.
+- `crates/bumbledb-bench/`, `docs/perf/`, `assets/`: benchmarks and historical charts.
+- `examples/`: runnable consumers and the Notes application.
+- `lean/`: executable specification and correspondence checks.
+
+Historical audits, proposals, and design discussions belong in Git history,
+not parallel specifications beside the code.
 
 ## License
 
-[0BSD](LICENSE). Use Bumbledb for any purpose without an attribution
-requirement.
+[0BSD](LICENSE).

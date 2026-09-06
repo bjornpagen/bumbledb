@@ -96,7 +96,7 @@ impl Environment {
             let mut mxcsr = 0_u32;
             // SAFETY: stmxcsr stores exactly four bytes into this valid local.
             unsafe {
-                core::arch::asm!("stmxcsr [{ptr}]", ptr = in(reg) &mut mxcsr, options(nostack));
+                core::arch::asm!("stmxcsr [{ptr}]", ptr = in(reg) &raw mut mxcsr, options(nostack));
             }
             Self { mxcsr }
         }
@@ -117,7 +117,7 @@ impl Environment {
         // bits remain clear. SSE2 is baseline on x86_64. We execute no x87 code,
         // so x87 state is unrelated and remains untouched.
         unsafe {
-            core::arch::asm!("ldmxcsr [{ptr}]", ptr = in(reg) &self.mxcsr, options(nostack));
+            core::arch::asm!("ldmxcsr [{ptr}]", ptr = in(reg) &raw const self.mxcsr, options(nostack));
         }
     }
 }

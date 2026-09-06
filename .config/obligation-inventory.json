@@ -1,12 +1,13 @@
 {
   "format": 1,
+  "sourceRevision": "cea037afa984a0e5e0b04088e24edddd4ade8bad",
   "generatedFrom": [
-    "docs/reference/behavioral-obligations.md",
-    "docs/reference/release-gates.md",
-    "docs/reference/semantics.md",
-    "docs/reference/api.md",
-    "docs/reference/performance.md",
-    "docs/reference/qualification-checklist.md"
+    "git:cea037afa984a0e5e0b04088e24edddd4ade8bad:docs/reference/behavioral-obligations.md",
+    "git:cea037afa984a0e5e0b04088e24edddd4ade8bad:docs/reference/release-gates.md",
+    "git:cea037afa984a0e5e0b04088e24edddd4ade8bad:docs/reference/semantics.md",
+    "git:cea037afa984a0e5e0b04088e24edddd4ade8bad:docs/reference/api.md",
+    "git:cea037afa984a0e5e0b04088e24edddd4ade8bad:docs/reference/performance.md",
+    "git:cea037afa984a0e5e0b04088e24edddd4ade8bad:docs/reference/qualification-checklist.md"
   ],
   "audit": [
     "REP-001",

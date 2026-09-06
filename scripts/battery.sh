@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Everyday/static/fault spine. Exit 0 is not all-platform qualification.
 # Required S3/Graviton/G15 cells stay NotRun until they actually execute
-# against the post-retirement candidate. See docs/reference/release-gates.md.
+# against the candidate. See .config/obligation-inventory.json.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
