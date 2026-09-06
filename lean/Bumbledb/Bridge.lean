@@ -534,7 +534,7 @@ def ledger : List Obligation := [
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
     "The reach driver computes those answers when it terminates. DerivedBudgetExceeded is incompleteness vs evalQuery (interior tables and reachDen on one ledger) — not vs a fueled Lean evaluator (there isn't one)."
     "run_reach (crates/bumbledb/src/api/prepared/reach.rs); Error::DerivedBudgetExceeded (crates/bumbledb/src/error.rs)"
-    "a_tight_derived_budget_trips_under_reach (crates/bumbledb/tests/api.rs)",
+    "reach_budgets_are_exact_and_refusal_does_not_poison_reuse (crates/bumbledb/src/api/prepared/tests/reach.rs)",
 
   .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
     "Interior DAG once, then either main rulesAnswers or reachDen plus main — listed by evalQueryList."
@@ -553,8 +553,8 @@ def ledger : List Obligation := [
 
   .row @Query.semi_naive_agrees.{0} `Bumbledb.Query.semi_naive_agrees
     "One delta occurrence per rec arm walks the naive chain; the spanning seen-set absorbs re-derivation."
-    "RecArm (crates/bumbledb/src/api/prepared.rs); WordMap::iter_since (crates/bumbledb/src/exec/wordmap/clear.rs); TransientImage (crates/bumbledb/src/image/build.rs); drain_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
-    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs)",
+    "ReachDriver (crates/bumbledb/src/api/prepared/reach.rs); next_frontier (crates/bumbledb/src/api/prepared/reach.rs); TransientImage (crates/bumbledb/src/image/build.rs); drain_since (crates/bumbledb/src/exec/sink/projection/new.rs)"
+    "tree_closure_matches_the_hand_answer_on_every_oracle (crates/bumbledb-bench/src/differential/tests/recursive.rs); recursive_arms_share_one_immutable_frontier_and_one_exact_set (crates/bumbledb/src/api/prepared/tests/reach.rs)",
 
   .row @holdsB_iff_holds `Bumbledb.holdsB_iff_holds
     "On row-listed finite instances the whole-theory judgment is decided by the executable checker, statement by statement, under the closed-roster merge — the write-side third oracle's license."
