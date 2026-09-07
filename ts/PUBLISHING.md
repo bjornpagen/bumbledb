@@ -103,7 +103,9 @@ globally as part of a database install.
 The 1.0.x production scope is the embedded core and local log. Hosted generated
 migration orchestration remains unsupported through the TypeScript/native
 bridge. Real-S3/IAM and Graviton qualification remain explicitly deferred by
-the owner, not passed. Existing benchmark evidence describes its recorded
-engine revision, not the unmeasured 1.0.1 cleanup.
+the owner, not passed. The September 7, 2026 full local benchmark measured
+1.0.1 source `5e83ee60`; the evidence retains that revision even when later
+documentation-only commits produce the final release revision. See the
+[full benchmark report](../docs/perf/results.md) for coverage and regressions.
 Release notes must state these limitations. A published release is not a
 claim that all 1.0 gates have been met.

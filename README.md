@@ -13,12 +13,12 @@ Rust and Effect TypeScript APIs. Hosted history APIs are available, but real
 S3/IAM and AWS Graviton qualification are deferred. Generated migrations are
 local-only. Those hosted paths are not included in the production-ready claim.
 
-[1.0 release](https://github.com/bjornpagen/bumbledb/releases/tag/v1.0.0)
+[Releases](https://github.com/bjornpagen/bumbledb/releases)
 · [Release notes](docs/release-1.0.md)
 · [Benchmark results](docs/perf/results.md)
 
-This source tree prepares **1.0.1**. Its version pins below are the release
-candidate; publication waits for exact-revision correctness and CI checks.
+This source tree is version **1.0.1**. Release artifacts are published only
+after exact-revision correctness and CI checks pass; npm publication is separate.
 
 ## The model
 
@@ -182,35 +182,42 @@ a local migration.
 
 ## Performance
 
-The September 6, 2026 full local suite completed on an **Apple M2 Max**:
-32 read families, 34 scenario queries, durable writes, constraints, storage,
-scale curves, lifecycle costs, and two 10,000-cycle churn workloads.
-Its independent pre-timing oracle checked 2,879 cases.
+The **September 7, 2026** full local suite measured **1.0.1** on an
+**Apple M2 Max**: all **15 lanes**, **32 read families**, **34 scenario queries**,
+durable writes, constraints, storage, S/M/L scaling, lifecycle costs, and two
+**10,000-cycle churn workloads**. Its independent pre-timing oracle passed
+**2,879 cases**.
 
 Selected full-suite medians: point lookup **0.50 µs**, range query **4.83 µs**,
-warm application query **1.75 µs**, and complete construction/delivery of a
-100,000-row native result **69.34 ms**. Separate alternating comparisons
-measured that large-result path at **65–66 ms**, versus **796–801 ms** on the
-previous measured checkpoint, with the same output work.
+warm application query **1.71 µs**, triangle join **1.51 ms**, and complete
+construction/delivery of a **100,000-row native result in 63.86 ms**.
+The main read panel reports lower medians than indexed SQLite in all 32
+families. That is a read-panel result, not an all-workload victory.
 
 ![Read latency against indexed SQLite](assets/bench-vs-sqlite.svg)
+
+![Read-family median ratios against SQLite](assets/bench-speedup.svg)
 
 ![Compacted database storage](assets/bench-storage.svg)
 
 These are **shared-host, scheduler-boosted measurements**, not quiet-host
-guarantees. The measured engine is `3ed3303e`, immediately before the 1.0
-version/documentation/package cutover; raw reports retain its `0.20.3`
-version label. Not every workload meets the informational latency budget,
-and this run does not establish a win over every historical engine benchmark.
+guarantees. The frozen measured source is `5e83ee60`, version **1.0.1**.
+Compared with the single run published for 1.0.0, 22 of 32 read-family and
+21 of 34 scenario medians are lower. Triangle and aggregate-statistics
+medians fell 19% and 12%; the large-result median fell 8%. Some results
+are worse: temporal-overlap and tenant-activation medians rose 29% and 30%,
+and several scenario tails increased. These are observations, not a
+controlled causal comparison. Not every workload meets the informational
+latency budget, and durable writes and law refusals include SQLite wins.
+
 Compacted stores occupy **1.67–1.80× indexed SQLite** in the measured S/M
-ledger/calendar workloads. There is no claim of cross-target or
+ledger/calendar workloads, unchanged from 1.0.0. The scaling panel reaches
+**25.3 million ledger facts**. There is no claim of cross-target or
 larger-than-memory performance qualification.
 
-The 1.0.1 cleanup has not been benchmarked; these numbers do not measure its
-changes or establish a new speedup.
-
-The [complete results and caveats](docs/perf/results.md) include the chart
-catalog and evidence coverage. The [measurement runbook](docs/perf/measurement-plan.md)
+The [complete results and caveats](docs/perf/results.md) include every
+repository image: **27 measured charts**, full result tables, and two clearly
+labeled synthetic renderer fixtures. The [measurement runbook](docs/perf/measurement-plan.md)
 explains reproducible runs and profiling. Apple Silicon is the first performance
 target; Linux ARM64 and x64 have correctness CI, not equivalent performance evidence.
 

@@ -1,11 +1,11 @@
 # Bumbledb 1.0
 
-## 1.0.1 candidate
+## 1.0.1 patch release
 
-The next patch release consolidates the post-1.0 cleanup. Public SDKs,
+The patch release consolidates the post-1.0 cleanup. Public SDKs,
 persisted formats, hash widths and the production scope below are unchanged.
 All five npm packages and their exact dependency pins advance together to
-1.0.1. This candidate is not published until its exact-revision checks pass.
+1.0.1. Publication requires all exact-revision checks to pass.
 
 - Reuse compiled cursor routes and physical source layouts, including
   positive and negated interval probes, when the join cover is unchanged.
@@ -19,10 +19,11 @@ All five npm packages and their exact dependency pins advance together to
   crash-test protocol buffering and child ownership, and limit compiler
   fixture searches to directories that actually contain libraries.
 
-These changes are correctness- and allocation-tested, not newly benchmarked.
-The performance reports below still describe the frozen 1.0 engine source;
-they do not establish a speedup for 1.0.1. No new timings or profiles have
-been collected for this patch candidate.
+These changes passed correctness, allocation, cross-platform and Miri checks
+before the complete local benchmark suite ran on September 7, 2026. All 15
+benchmark lanes completed, and all 27 measured charts were refreshed. The
+performance report embeds every repository image, with synthetic fixtures
+clearly distinguished from measured evidence. No new profiles were captured.
 
 ## 1.0 baseline
 
@@ -32,7 +33,7 @@ COLT and Free Join. It targets a database per application user or tenant.
 
 ## What ships
 
-- Rust core, macros and query builders, distributed from the `v1.0.0` Git tag.
+- Rust core, macros and query builders, distributed from the `v1.0.1` Git tag.
 - Effect-only TypeScript core and log APIs, with synchronous pure authoring
   and lazy, scoped native database work.
 - Native packages for Apple Silicon macOS, Linux ARM64 and Linux x64.
@@ -85,18 +86,23 @@ revision, including the manually dispatched Miri workflow. CI links and
 artifact hashes accompany the GitHub release. Skipped or deferred external
 checks do not become successful evidence because their workflow is green.
 
-The full local benchmark completed on September 6, 2026: 32 read families,
+The full local benchmark completed on September 7, 2026: 32 read families,
 34 scenario queries and all ordinary storage, lifecycle, mutation, scale,
 churn, heap and Primer-shaped lanes. Results are from the Apple M2 Max on a
 shared, scheduler-boosted host. The engine revision measured was
-`3ed3303eb226de6c98955ab75c296887eaf7704b`, before the version/package/docs
-cutover; raw reports correctly retain `0.20.3`.
+`5e83ee60c4e5d88e8ca395daa3de4d92a0c03186`, version **1.0.1**. Subsequent
+documentation commits do not change that measurement identity.
 
-The [performance report](perf/results.md) includes exact coverage, completed
-controls, regressions, clock caveats and storage costs. There is no claim
+The [performance report](perf/results.md) includes exact coverage, comparison
+with the last published run, regressions, clock caveats and storage costs.
+The 100,000-row native result median was 63.86 ms versus 69.34 ms in the
+previous full suite; triangle-join and aggregate-statistics medians fell
+19% and 12%. Temporal-overlap and tenant-activation medians rose 29% and 30%.
+These are single shared-host observations, not controlled causal estimates.
+Compacted storage sizes are unchanged. There is no claim
 that this release beats every historical query or has zero storage overhead.
-Supplemental native86 profiling was stopped before capture when release
-preparation was requested; older profiles are not relabeled as fresh ones.
+Older reports and profiles retain their original identities; no new profiles
+were collected in this release round.
 
 ## Distribution
 
@@ -104,7 +110,7 @@ The GitHub release and npm publication are separate steps. The release
 carries the five verified, immutable npm tarballs, native/duty artifacts,
 benchmark evidence and `SHA256SUMS`. The owner publishes the platform packages
 first, then `@bjornpagen/bumbledb`, then `@bjornpagen/bumbledb-log`, all at
-**1.0.0**. Until that command runs, a GitHub release does not imply npm
+**1.0.1**. Until that command runs, a GitHub release does not imply npm
 availability. The final publishing command verifies the downloaded hashes
 before publication; it does not rebuild from a moving checkout.
 

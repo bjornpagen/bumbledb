@@ -1305,14 +1305,14 @@ def chart_warmth(inputs, out):
             ax.text(x + 0.2, t * 1.12, fmt_us(t), ha="center", fontsize=8,
                     color=DIM, family="monospace")
             xticks.append(x)
-            xlabels.append(f"{family['name']}\n{phase}" if pi == 1 else phase)
+            xlabels.append(f"{phase}\n{family['name']}" if pi == 1 else phase)
     ax.set_yscale("log")
     if values:
         ax.set_ylim(min(values) * 0.3, max(values) * 4)
     ax.yaxis.set_major_formatter(FuncFormatter(fmt_us))
     ax.set_xticks(xticks, xlabels, fontsize=9, family="monospace", color=FG)
     ax.grid(axis="y", color=GRID, linewidth=0.6, zorder=0)
-    ax.set_title("warmth · cold (process-fresh reopen, OS-warm) → warm → memoized · "
+    ax.set_title("warmth · cold (handle-fresh reopen, OS-warm) → warm → memoized · "
                  "p50, both engines",
                  fontsize=12, loc="left", pad=14, family="monospace")
     ax.legend(loc="upper right", facecolor=BG, edgecolor=GRID,
@@ -1415,7 +1415,8 @@ def chart_adversarial_dnf(inputs, out):
                        Patch(color=THEIRS, label="SQLite"),
                        Patch(facecolor="none", edgecolor=THEIRS, hatch="///",
                              label="SQLite timed out — drawn to the limit")],
-              loc="lower right", facecolor=BG, edgecolor=GRID,
+              loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=3,
+              facecolor=BG, edgecolor=GRID,
               labelcolor=FG, fontsize=8)
     ax.set_title("queries that timed out in SQLite · median latency · "
                  "timeouts drawn at the limit",
