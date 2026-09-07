@@ -23,6 +23,7 @@ impl Executor {
         arity: usize,
         fill: usize,
         scratch: &mut NodeScratch,
+        below: &mut [NodeScratch],
         colts: &mut [Colt],
         bindings: &mut Bindings,
         sink: &mut S,
@@ -97,12 +98,8 @@ impl Executor {
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
 
-        for (r_idx, spec) in self.precompute[node_idx]
-            .allen_residual_slots
-            .iter()
-            .enumerate()
-        {
-            let mask = self.precompute[node_idx].allen_masks[r_idx];
+        for spec in &self.precompute[node_idx].allen_residual_slots {
+            let mask = spec.mask;
             let cover_vars = &node.subatoms[cover_sub].vars;
             let lhs_word = super::word_base(cover_vars, spec.lhs, |v| self.width_of(v));
             let rhs_word = super::word_base(cover_vars, spec.rhs, |v| self.width_of(v));
@@ -554,7 +551,15 @@ impl Executor {
                     let occ = usize::from(probe.occ.0);
                     self.cursors[occ] = (assemble(occ), tables.entry_level[node_idx + 1][occ]);
                 }
-                let flow = self.run_node(plan, node_idx + 1, colts, bindings, sink, counters);
+                let flow = self.run_node(
+                    plan,
+                    node_idx + 1,
+                    &mut below[0],
+                    colts,
+                    bindings,
+                    sink,
+                    counters,
+                );
                 if flow.is_terminal() {
                     self.poison(match flow {
                         super::Flow::Stop => super::Poison::SinkStop,
@@ -576,7 +581,7 @@ impl Executor {
                 }
             } else {
                 let cover_slots = &self.slot_map[node_idx][cover_sub];
-                let child = &mut self.scratch[node_idx + 1];
+                let child = &mut below[0];
                 let start = child.pending_bindings.len();
                 child.pending_bindings.extend_from_slice(
                     &scratch.pending_bindings[parent * slot_count..(parent + 1) * slot_count],
@@ -594,10 +599,17 @@ impl Executor {
         scratch.parents.clear();
         scratch.element_origins.clear();
 
-        // plus one pass's appends before the next check). The 2×-batch
-
-        if !leaf && self.scratch[node_idx + 1].pending_len >= self.batch {
-            self.pump(tables, plan, node_idx + 1, colts, bindings, sink, counters);
+        if !leaf && below[0].pending_len >= self.batch {
+            self.pump(
+                tables,
+                plan,
+                node_idx + 1,
+                below,
+                colts,
+                bindings,
+                sink,
+                counters,
+            );
         }
     }
 

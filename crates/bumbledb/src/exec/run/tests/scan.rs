@@ -537,7 +537,7 @@ fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
             }
             let mut executor = Executor::new(&plan);
             executor.begin_work(&work, &mut colts);
-            assert!(executor.note_explored(pending, &colts));
+            assert!(executor.note_explored(pending));
             let mut bindings = Bindings::new(plan.slot_count());
             let mut sink = FusedScanSink::new(&plan);
             let mut counters = ScanCounters {

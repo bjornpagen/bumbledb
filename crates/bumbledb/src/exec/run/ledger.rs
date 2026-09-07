@@ -23,21 +23,14 @@ impl Executor {
         });
     }
 
-    /// Flush any sub-quantum explored work, then drop the ledger and
-    /// refund this execution's growth reservations (the pools stay resident
-    /// with the prepared query; the charges are per-execution live-byte
-    /// accounting, like the image build's transient slab charge).
-    pub(super) fn end_work(&mut self, colts: &[Colt]) {
+    /// Flush sub-quantum explored work and release the execution ledger.
+    /// Reusable pool reservations stay with the COLTs that own the memory.
+    pub(super) fn end_work(&mut self) {
         if let Some(ledger) = &mut self.ledger
             && ledger.pending > 0
             && let Err(error) = poll(ledger)
         {
             self.poison(Poison::Work(error));
-        }
-        for colt in colts {
-            // Reusable pool charges stay on the COLT; dropping the
-            // execution ledger must not refund retained capacity.
-            let _ = colt.charged_bytes();
         }
         self.ledger = None;
     }
@@ -47,7 +40,7 @@ impl Executor {
     /// charge COLT pool growth. Returns `false` after poisoning the
     /// drive — callers unwind, and `execute` surfaces the typed error.
     #[inline]
-    pub(super) fn note_explored(&mut self, yielded: usize, _colts: &[Colt]) -> bool {
+    pub(super) fn note_explored(&mut self, yielded: usize) -> bool {
         let Some(ledger) = &mut self.ledger else {
             return true;
         };

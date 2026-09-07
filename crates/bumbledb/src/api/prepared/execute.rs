@@ -349,7 +349,6 @@ impl<S> PreparedQuery<S> {
                     if self.nonresident.is_some() {
                         use_fallback = true;
                     } else if resolved {
-                        rule.executor.bind_allen_masks(&self.resolved_params);
                         let work = images.source().work();
                         let joined = match &mut self.sink {
                             super::EitherSink::Computed(s) => run_join(

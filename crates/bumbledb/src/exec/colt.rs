@@ -351,6 +351,7 @@ impl Colt {
         self.work = work.cloned();
     }
 
+    #[cfg(test)]
     pub(crate) fn charged_bytes(&self) -> u64 {
         self.charges
             .iter()

@@ -43,7 +43,7 @@ impl Executor {
             else {
                 continue;
             };
-            let mask = self.precompute[node_idx].allen_masks[r_idx];
+            let mask = self.precompute[node_idx].allen_residual_slots[r_idx].mask;
             let mask = if matches!(lhs, Source::Slot(_)) {
                 mask.converse()
             } else {

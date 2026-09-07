@@ -390,8 +390,6 @@ struct NodePrecompute {
     word_residual_slots: Vec<WordResidualSpec>,
     allen_residual_slots: Vec<AllenResidualSpec>,
 
-    /// [`Executor::bind_allen_masks`] before every execution.
-    allen_masks: Vec<crate::allen::AllenMask>,
     point_probes: Vec<PointProbeSpec>,
     anti_probes: Vec<AntiProbeSpec>,
 }

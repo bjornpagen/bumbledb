@@ -1,7 +1,7 @@
 //! The leaf pass over one node's cover batch (single-node and last-node).
 use super::anti_probe::anti_probe_pass;
 use super::{
-    BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, KeyCount, LeafBatch,
+    BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, KeyCount, LeafBatch, NodeScratch,
     PREFETCH_WIDTH_FLOOR, Sink, Source, ValidatedPlan, better_cover, grow_scratch,
 };
 
@@ -10,10 +10,15 @@ impl Executor {
         clippy::too_many_lines,
         reason = "the linear table or protocol is clearer kept together"
     )]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the current node's disjoint scratch borrow stays explicit"
+    )]
     pub(super) fn run_node<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
         node_idx: usize,
+        scratch: &mut NodeScratch,
         colts: &mut [Colt],
         bindings: &mut Bindings,
         sink: &mut S,
@@ -52,8 +57,6 @@ impl Executor {
         let arity = self.slot_map[node_idx][cover_sub].len();
 
         let gate_cover = arity == 0 && !self.point_probed[cover_occ];
-        let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
-
         let cover_vars = &plan.nodes()[node_idx].subatoms[cover_sub].vars;
         for (sub_idx, subatom) in plan.nodes()[node_idx].subatoms.iter().enumerate() {
             scratch.sources[sub_idx].clear();
@@ -157,7 +160,7 @@ impl Executor {
             // The bounded-quantum ledger poll on binding exploration:
             // cancellation/deadline and COLT growth charges fire here even
             // when no row survives to the sink.
-            if !self.note_explored(yielded, &*colts) {
+            if !self.note_explored(yielded) {
                 break 'outer;
             }
             scratch.survivors.clear();
@@ -209,7 +212,7 @@ impl Executor {
             }
 
             for (r_idx, (lhs_src, rhs_src)) in scratch.allen_sources.iter().enumerate() {
-                let mask = self.precompute[node_idx].allen_masks[r_idx];
+                let mask = self.precompute[node_idx].allen_residual_slots[r_idx].mask;
                 let n = scratch.survivors.len();
                 let filter_mask = match (*lhs_src, *rhs_src) {
                     (Source::Batch(lw), Source::Batch(rw)) => {
@@ -493,7 +496,6 @@ impl Executor {
             }
         }
 
-        self.scratch[node_idx] = scratch;
         flow
     }
 

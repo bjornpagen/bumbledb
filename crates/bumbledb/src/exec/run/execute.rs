@@ -126,12 +126,10 @@ impl NodePrecompute {
                 }
             })
             .collect();
-        let allen_masks = allen_residual_slots.iter().map(|spec| spec.mask).collect();
         Self {
             residual_slots,
             word_residual_slots,
             allen_residual_slots,
-            allen_masks,
             point_probes: point_probes_of(plan, node),
             anti_probes: anti_probes_of(plan, node),
         }
@@ -283,18 +281,6 @@ impl Executor {
         }
     }
 
-    pub fn bind_allen_masks(&mut self, _params: &[crate::image::view::Const]) {
-        for node in &mut self.precompute {
-            for (spec, mask) in node
-                .allen_residual_slots
-                .iter()
-                .zip(node.allen_masks.iter_mut())
-            {
-                *mask = spec.mask;
-            }
-        }
-    }
-
     pub(crate) fn set_physical_distinct(
         &mut self,
         witness: Option<crate::plan::fj::ScalarSetTraversal>,
@@ -311,8 +297,11 @@ impl Executor {
     }
 
     /// # Errors
+    /// Returns work, scratch, cardinality or sink refusals without publishing
+    /// them as successful empty results.
     /// # Panics
-    /// Only on programmer-invariant violations (sources not matching the
+    /// Only on programmer-invariant violations: the source roster and buffer
+    /// layout must match the validated plan used at construction.
     pub fn execute<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
@@ -336,12 +325,15 @@ impl Executor {
             sink.prepare_scan(&self.slot_map[plan.nodes().len() - 1][0]);
         }
 
+        // Move the buffer roster once, not each node's large scratch struct
+        // on every parent/batch. Recursive calls split disjoint suffix borrows.
+        let mut scratch = std::mem::take(&mut self.scratch);
         match &self.drive {
             Drive::Pipeline(_) => {
-                self.run_pipeline(plan, colts, bindings, sink, counters);
+                self.run_pipeline(plan, &mut scratch, colts, bindings, sink, counters);
             }
             Drive::Leaf => {
-                let flow = self.run_node(plan, 0, colts, bindings, sink, counters);
+                let flow = self.run_node(plan, 0, &mut scratch[0], colts, bindings, sink, counters);
                 if flow.is_terminal() {
                     self.poison(match flow {
                         super::Flow::Stop => super::Poison::SinkStop,
@@ -351,11 +343,10 @@ impl Executor {
             }
         }
 
-        // The execution ended: refund this execution's COLT growth
-        // reservations before surfacing any outcome (a working-byte
-        // refusal must not leave phantom charges in front of the one
-        // bounded fallback restart).
-        self.end_work(colts);
+        self.scratch = scratch;
+        // Flush explored work before surfacing any outcome. Reusable COLT
+        // allocations retain their reservations on their original owners.
+        self.end_work();
         match std::mem::replace(&mut self.drive_state, super::DriveState::Running) {
             super::DriveState::Poisoned(super::Poison::OriginOverflow) => Err(
                 crate::error::Error::Overflow(crate::error::OverflowKind::OriginCapacity),
@@ -380,6 +371,7 @@ impl Executor {
     fn run_pipeline<S: Sink, C: Counters>(
         &mut self,
         plan: &ValidatedPlan,
+        scratch: &mut [NodeScratch],
         colts: &mut [Colt],
         bindings: &mut Bindings,
         sink: &mut S,
@@ -390,26 +382,35 @@ impl Executor {
             Drive::Leaf => unreachable!("dispatched on Pipeline"),
         };
         let slot_count = bindings.slot_count();
-        for scratch in &mut self.scratch {
+        for scratch in &mut *scratch {
             scratch.pending_bindings.clear();
             scratch.pending_cursors.clear();
             scratch.pending_origins.clear();
             scratch.pending_len = 0;
         }
 
-        // origin and silently drop answers).
+        // Origin cancellation belongs to this execution, not the prior run.
         self.advance_cancel_epoch();
         self.next_origin = 0;
         self.drive_state = super::DriveState::Running;
 
-        self.scratch[0].pending_bindings.resize(slot_count, 0);
-        self.scratch[0].pending_len = 1;
-        self.scratch[0].pending_origins.push(0);
-        self.pump(&tables, plan, 0, colts, bindings, sink, counters);
+        scratch[0].pending_bindings.resize(slot_count, 0);
+        scratch[0].pending_len = 1;
+        scratch[0].pending_origins.push(0);
+        self.pump(&tables, plan, 0, scratch, colts, bindings, sink, counters);
 
         for i in 1..plan.nodes().len() - 1 {
-            if self.scratch[i].pending_len > 0 {
-                self.pump(&tables, plan, i, colts, bindings, sink, counters);
+            if scratch[i].pending_len > 0 {
+                self.pump(
+                    &tables,
+                    plan,
+                    i,
+                    &mut scratch[i..],
+                    colts,
+                    bindings,
+                    sink,
+                    counters,
+                );
             }
         }
     }

@@ -1,7 +1,7 @@
 //! The single in-order pass over a middle node's pending entries.
 use super::{
-    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, PipeTables, Sink, ValidatedPlan,
-    better_cover,
+    BatchToken, Bindings, Colt, Counters, Executor, KeyCount, NodeScratch, PipeTables, Sink,
+    ValidatedPlan, better_cover,
 };
 
 impl Executor {
@@ -18,6 +18,7 @@ impl Executor {
         tables: &PipeTables,
         plan: &ValidatedPlan,
         node_idx: usize,
+        buffers: &mut [NodeScratch],
         colts: &mut [Colt],
         bindings: &mut Bindings,
         sink: &mut S,
@@ -25,10 +26,8 @@ impl Executor {
     ) {
         let n_nodes = plan.nodes().len();
         debug_assert!(node_idx + 1 < n_nodes, "the leaf runs per parent");
-        let mut scratch = std::mem::take(&mut self.scratch[node_idx]);
+        let (scratch, below) = buffers.split_first_mut().expect("one buffer per plan node");
         let carried_w = tables.carried[node_idx].len();
-
-        // before ever being built: lifting batch means to ~128 is worth
 
         let node = &plan.nodes()[node_idx];
 
@@ -41,8 +40,6 @@ impl Executor {
             if !matches!(self.drive_state, super::DriveState::Running) {
                 break;
             }
-
-            // seed and must never be filtered. Cancellation fired during
 
             if below_absorb && self.origin_cancelled(scratch.pending_origins[entry]) {
                 continue;
@@ -76,17 +73,8 @@ impl Executor {
                 && fill > 0
             {
                 self.probe_pass(
-                    tables,
-                    plan,
-                    node_idx,
-                    open_sub,
-                    open_arity,
-                    fill,
-                    &mut scratch,
-                    colts,
-                    bindings,
-                    sink,
-                    counters,
+                    tables, plan, node_idx, open_sub, open_arity, fill, scratch, below, colts,
+                    bindings, sink, counters,
                 );
                 fill = 0;
             }
@@ -126,8 +114,6 @@ impl Executor {
                     break;
                 };
 
-                // the run_node twin breaks before counting; counting it
-
                 if yielded > 0 {
                     counters.batch(node_idx, yielded);
                 }
@@ -143,22 +129,13 @@ impl Executor {
                 // The bounded-quantum ledger poll on binding exploration
                 // (chapter 12 §7); a refusal poisons the drive and the
                 // Running checks above unwind every level.
-                if !self.note_explored(yielded, &*colts) {
+                if !self.note_explored(yielded) {
                     break;
                 }
                 if fill == self.batch {
                     self.probe_pass(
-                        tables,
-                        plan,
-                        node_idx,
-                        cover_sub,
-                        cur_arity,
-                        fill,
-                        &mut scratch,
-                        colts,
-                        bindings,
-                        sink,
-                        counters,
+                        tables, plan, node_idx, cover_sub, cur_arity, fill, scratch, below, colts,
+                        bindings, sink, counters,
                     );
                     fill = 0;
                     if !gate_cover && yielded == want {
@@ -174,17 +151,8 @@ impl Executor {
             && let Some((open_sub, open_arity, _, _)) = group
         {
             self.probe_pass(
-                tables,
-                plan,
-                node_idx,
-                open_sub,
-                open_arity,
-                fill,
-                &mut scratch,
-                colts,
-                bindings,
-                sink,
-                counters,
+                tables, plan, node_idx, open_sub, open_arity, fill, scratch, below, colts,
+                bindings, sink, counters,
             );
         }
         scratch.pending_len = 0;
@@ -193,6 +161,5 @@ impl Executor {
         scratch.pending_origins.clear();
         scratch.parents.clear();
         scratch.element_origins.clear();
-        self.scratch[node_idx] = scratch;
     }
 }

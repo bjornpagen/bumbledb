@@ -157,6 +157,78 @@ fn is_work_refusal(error: &crate::error::Error, expected: &WorkError) -> bool {
 }
 
 #[test]
+fn cancelled_leaf_and_pipeline_retain_scratch_and_resume_with_fresh_work() {
+    for relations in 1..=3u16 {
+        let schema = schema(usize::from(relations));
+        let normalized = normalized(
+            (0..relations)
+                .map(|r| occurrence(r, u32::from(r), &[(0, r), (1, r + 1)]))
+                .collect(),
+            vec![],
+        );
+        let order: Vec<_> = (0..relations).collect();
+        let plan = planned_with_sinks(&normalized, &schema, &order, &all_vars(&normalized));
+        let views = views_of(
+            &schema,
+            &(0..relations)
+                .map(|r| {
+                    (0..512)
+                        .map(|i| (i + u64::from(r), i + u64::from(r) + 1))
+                        .collect()
+                })
+                .collect::<Vec<_>>(),
+        );
+        let expected: BTreeSet<Vec<u64>> = (0..512)
+            .map(|i| {
+                let mut row = vec![0; plan.slot_count()];
+                for var in 0..=relations {
+                    row[plan.slot_of(VarId(var))] = i + u64::from(var);
+                }
+                row
+            })
+            .collect();
+        let mut executor = Executor::with_batch_size(&plan, 16);
+        let roster = executor.scratch.as_ptr();
+        let mut colts = colts_for(&plan, &views);
+        let mut bindings = Bindings::new(plan.slot_count());
+        let mut sink = CollectSink::default();
+
+        for cancel in [false, true, false] {
+            let work = bounded(u64::MAX);
+            executor.begin_work(&work, &mut colts);
+            sink.rows.clear();
+            let mut counters = CancelAfterBatches {
+                work,
+                batches: 0,
+                cancel_at: if cancel { 3 } else { usize::MAX },
+            };
+            let result =
+                executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
+            assert_eq!(
+                executor.scratch.as_ptr(),
+                roster,
+                "retain the buffer roster"
+            );
+            assert_eq!(executor.scratch.len(), plan.nodes().len());
+            assert!(
+                executor.ledger.is_none(),
+                "always release the execution ledger"
+            );
+            if cancel {
+                assert!(is_work_refusal(&result.unwrap_err(), &WorkError::Cancelled));
+                assert!(
+                    counters.batches >= 3,
+                    "cancellation happens during execution"
+                );
+            } else {
+                result.unwrap();
+                assert_eq!(sink.rows, expected, "relations {relations}");
+            }
+        }
+    }
+}
+
+#[test]
 fn physical_terminal_force_charges_refuses_and_releases_its_work() {
     let schema = schema(1);
     let normalized = normalized(vec![occurrence(0, 0, &[(0, 0)])], vec![]);

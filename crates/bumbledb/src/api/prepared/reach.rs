@@ -883,7 +883,6 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
         )?;
         return Ok(true);
     }
-    rule.executor.bind_allen_masks(ctx.resolved_params);
     if multi_unit {
         sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
     }
