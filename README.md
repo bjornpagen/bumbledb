@@ -1,8 +1,8 @@
 # bumbledb
 
-An embedded relational database for Rust and TypeScript, built for application
-data. LMDB provides durable storage and snapshot isolation; Free Join executes
-joins. Schemas and queries are written in Rust or TypeScript, without SQL.
+An embedded relational database for Rust and TypeScript, backed by LMDB.
+Relations have set semantics, joins use Free Join, and schemas and queries
+are defined in code rather than SQL. The project is under active development.
 
 [TypeScript guide](ts/README.md)
 · [Cookbook](docs/cookbook.md)
