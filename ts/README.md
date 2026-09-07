@@ -28,11 +28,13 @@ automatically during installation. Schema and query authoring do not load
 the addon. Attempting native database work on an unsupported platform fails
 with a diagnostic identifying the running platform and available binaries.
 Node 24 or newer is required; Edge and browser runtimes are unsupported.
+Linux artifacts target Amazon Linux 2023 / glibc 2.34 or newer. Their
+correctness CI is distinct from the Apple Silicon performance measurements.
 
 ## Install
 
 ```sh
-pnpm add @bjornpagen/bumbledb@0.20.3 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb@1.0.0 effect@4.0.0-rc.112
 ```
 
 ## Quick start

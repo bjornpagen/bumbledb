@@ -2,7 +2,7 @@
 
 Durable named application commands over
 [Bumbledb](https://github.com/bjornpagen/bumbledb): a thin peer of
-`@bjornpagen/bumbledb` (exact peer `0.20.3`). The package adds a durable
+`@bjornpagen/bumbledb` (exact peer `1.0.0`). The package adds a durable
 envelope around the exact core change/read machinery — it never duplicates
 the engine surface. Core types (`ChangeSet`, `QueryReader`,
 `ExecutionPolicy`, `DbError`, …) are the peer's own exports.
@@ -45,7 +45,7 @@ The surface is small:
 ## Install
 
 ```sh
-pnpm add @bjornpagen/bumbledb-log@0.20.3 @bjornpagen/bumbledb@0.20.3 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb-log@1.0.0 @bjornpagen/bumbledb@1.0.0 effect@4.0.0-rc.112
 ```
 
 ## Quick start: one durable round trip
@@ -271,7 +271,9 @@ runtime:
   **Current limitation:** these generated migration runner verbs target local
   authorities only. The TypeScript/native bridge refuses hosted migration
   execution; a hosted tenant's cache is not an authoritative local migration
-  target. Hosted migration orchestration remains a release blocker.
+  target. Hosted migration orchestration is not supported in 1.0; the
+  production-ready scope is local history. Real-S3 and Graviton qualification
+  remain deferred, not passed.
 - Field arithmetic such as `Scalar.add(Scalar.field("units"), Scalar.u64(1n))`
   is valid intent metadata. Native chain compilation binds it before any
   new manifest write or source freeze, including zero input rows.
@@ -281,6 +283,6 @@ runtime:
 
 The native engine arrives through the peer `@bjornpagen/bumbledb`
 (darwin-arm64, linux-arm64, linux-x64); this package ships TypeScript only
-and declares both peers exactly (`@bjornpagen/bumbledb 0.20.3`, `effect
+and declares both peers exactly (`@bjornpagen/bumbledb 1.0.0`, `effect
 4.0.0-rc.112`). Version lockstep across the package family is enforced in
 CI.

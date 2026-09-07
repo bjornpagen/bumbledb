@@ -159,6 +159,10 @@ OURS, THEIRS, FG, DIM, GRID, BG = (
     "#f0b429", "#8b949e", "#e6edf3", "#9da7b3", "#2d333b", "#0d1117",
 )
 
+# Left-aligned titles are distinct artists from ax.title. Give every title
+# the dark-theme foreground, including titles installed after dark(ax).
+plt.rcParams.update({"text.color": FG, "axes.titlecolor": FG})
+
 def _stats_p50(container, key, where):
     """One optional stats slot: absent or null is fine (drawn as
     nothing); present means a dict carrying a numeric "p50"."""
@@ -683,7 +687,7 @@ def dark(ax):
     ax.set_facecolor(BG)
     for spine in ax.spines.values():
         spine.set_color(GRID)
-    ax.tick_params(colors=DIM, labelsize=9)
+    ax.tick_params(which="both", colors=DIM, labelsize=9)
     ax.xaxis.label.set_color(DIM)
     ax.yaxis.label.set_color(DIM)
     ax.title.set_color(FG)
@@ -731,7 +735,7 @@ def chart_vs_sqlite(inputs, out):
              f"{inputs['host']} · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_speedup(inputs, out):
@@ -764,7 +768,7 @@ def chart_speedup(inputs, out):
     fig.text(0.01, 0.005, pool_note(inputs), fontsize=8, color=DIM,
              family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_tails(inputs, out):
@@ -799,7 +803,7 @@ def chart_tails(inputs, out):
              f"{pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_scenarios_lanes(rows, out):
@@ -852,7 +856,7 @@ def chart_scenarios_lanes(rows, out):
         title += f"\n{dnf} SQLite quer{'ies' if dnf != 1 else 'y'} timed out — excluded from ratios"
     ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_scenarios(inputs, out):
@@ -900,7 +904,7 @@ def chart_scenarios(inputs, out):
         title += f"\n{dnf} SQLite quer{'ies' if dnf != 1 else 'y'} timed out — excluded from ratios"
     ax.set_title(title, fontsize=12, loc="left", pad=14, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_worlds(inputs, out):
@@ -954,7 +958,7 @@ def chart_worlds(inputs, out):
                  fontsize=8, color=DIM, family="monospace")
         fig.tight_layout()
         outpath = out_dir / f"world-{world}.svg"
-        fig.savefig(outpath, facecolor=BG, bbox_inches="tight")
+        save_chart(fig, outpath)
         plt.close(fig)
         written.append(outpath)
     return written
@@ -1010,7 +1014,7 @@ def chart_ratio_waterfall(inputs, out):
         footer += " + additional workloads"
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_tails_fan(inputs, out):
@@ -1045,7 +1049,7 @@ def chart_tails_fan(inputs, out):
              f"log scale · line spans p50 → p99 · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_writes(inputs, out):
@@ -1065,7 +1069,7 @@ def chart_writes(inputs, out):
              f"shown as measured · {pool_note(inputs)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_storage(inputs, out):
@@ -1157,7 +1161,7 @@ def chart_storage(inputs, out):
              f"{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_writes_rates(inputs, out):
@@ -1204,7 +1208,7 @@ def chart_writes_rates(inputs, out):
              f"{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_curves(inputs, out):
@@ -1271,7 +1275,7 @@ def chart_curves(inputs, out):
     footer += prov_note(report)
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_warmth(inputs, out):
@@ -1318,7 +1322,7 @@ def chart_warmth(inputs, out):
              f"resolved-filter view slots — the memo effect explicit{prov_note(report)}",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_write_throughput(inputs, out):
@@ -1356,7 +1360,7 @@ def chart_write_throughput(inputs, out):
              + prov_note(inputs["write_throughput"]),
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def chart_adversarial_dnf(inputs, out):
@@ -1421,7 +1425,7 @@ def chart_adversarial_dnf(inputs, out):
              f"{cap_ms} ms per-sample cap — excluded from ratios, counted here",
              fontsize=8, color=DIM, family="monospace")
     fig.tight_layout()
-    fig.savefig(out, facecolor=BG, bbox_inches="tight")
+    save_chart(fig, out)
     plt.close(fig)
 
 def home_turf_render(key, world, regime, oracle_note):
@@ -1484,7 +1488,7 @@ def home_turf_render(key, world, regime, oracle_note):
                  f"faster{prov_note(report)}",
                  fontsize=8, color=DIM, family="monospace")
         fig.tight_layout()
-        fig.savefig(out, facecolor=BG, bbox_inches="tight")
+        save_chart(fig, out)
         plt.close(fig)
     return render
 
@@ -1530,7 +1534,7 @@ def chart_churn_series(inputs, out, stem, values_of, formatter, yscale, what):
                  color=DIM, family="monospace")
         fig.tight_layout()
         outpath = out_dir / f"{stem}-{run['name']}.svg"
-        fig.savefig(outpath, facecolor=BG, bbox_inches="tight")
+        save_chart(fig, outpath)
         plt.close(fig)
         written.append(outpath)
     return written
@@ -1633,7 +1637,7 @@ def chart_churn_latency(inputs, out):
                  color=DIM, family="monospace")
         fig.tight_layout(rect=(0, 0.015, 1, 0.97))
         outpath = out_dir / f"churn-latency-{run['name']}.svg"
-        fig.savefig(outpath, facecolor=BG, bbox_inches="tight")
+        save_chart(fig, outpath)
         plt.close(fig)
         written.append(outpath)
     return written

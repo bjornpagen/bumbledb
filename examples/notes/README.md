@@ -11,9 +11,10 @@ Do not treat this example as a qualified one-command hosted deployment.
 
 ## Local setup
 
-The example depends on matching `0.20.3` packages. Until those are published,
-use the repository's packed-consumer check, which installs local tarballs in
-isolation; an ordinary package install does not substitute unreleased code.
+The example pins matching `1.0.0` packages and Effect `4.0.0-rc.112`.
+Registry installation requires the npm publication step; the GitHub release
+also carries the exact staged tarballs. The repository's packed-consumer
+check installs those package shapes in isolation before publication.
 
 After installing the matching packages, from this directory:
 

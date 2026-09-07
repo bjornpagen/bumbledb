@@ -386,6 +386,11 @@ jobs:
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
       - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bumbledb.darwin-arm64.node
+          path: ts/npm/darwin-arm64/bumbledb.node
+          if-no-files-found: error
       - name: Gated S3 cell (NotRun without credentials)
         env:
           BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}

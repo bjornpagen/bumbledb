@@ -1,12 +1,21 @@
 # bumbledb
 
-An embedded, set-semantic relational database for application data. Rust does
+A production-ready embedded, set-semantic relational database for application data. Rust does
 the database work; TypeScript uses Effect. LMDB provides durable storage and
 snapshot isolation, and Free Join executes the joins.
 
 The bet is simple: a good data model, a good backend, and a performance-aware
 core. The target is a database per user or tenant—not an analytics warehouse
 or a SQL compatibility layer.
+
+**1.0 production scope:** the embedded core and local `bumbledb-log`, with
+Rust and Effect TypeScript APIs. Hosted history APIs are available, but real
+S3/IAM and AWS Graviton qualification are deferred. Generated migrations are
+local-only. Those hosted paths are not included in the production-ready claim.
+
+[1.0 release](https://github.com/bjornpagen/bumbledb/releases/tag/v1.0.0)
+· [Release notes](docs/release-1.0.md)
+· [Benchmark results](docs/perf/results.md)
 
 ## The model
 
@@ -48,14 +57,20 @@ Rust source consumers can use:
 
 ```toml
 [dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", branch = "main" }
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v1.0.0" }
 ```
 
-Build with the repository's pinned nightly. For reproducible deployments,
-replace the moving branch with a tested `rev`. The working-tree version is
-**0.20.3**; this checkout is being prepared for 1.0, not advertised as an
-already-qualified 1.0 release. Published packages must not be assumed to
-contain unreleased changes on `main`.
+Build with the repository's pinned `nightly-2026-08-15`. Rust is distributed
+from Git, not crates.io. TypeScript core, log, and all native packages use
+**1.0.0** in lockstep:
+
+```sh
+pnpm add @bjornpagen/bumbledb@1.0.0 @bjornpagen/bumbledb-log@1.0.0 effect@4.0.0-rc.112
+```
+
+The GitHub release carries the prepared npm tarballs. Registry installation
+requires their separate npm publication; a GitHub tag alone does not publish
+npm packages. See the [release notes](docs/release-1.0.md).
 
 ## A Rust model
 
@@ -157,42 +172,41 @@ The [Notes example](examples/notes/README.md) exercises a server-side Next.js
 application with tenant isolation. Node deployments are the target; browser
 and Edge runtimes are unsupported.
 
-**Release limitation:** generated migration execution is local-only through
-the TypeScript/native bridge. Hosted migration orchestration remains
-unfinished. A hosted cache must never be treated as the authoritative
-database for a local migration.
+**Hosted limitation:** generated migration execution is local-only through
+the TypeScript/native bridge. Hosted migration orchestration is not supported
+in 1.0. A hosted cache must never be treated as the authoritative database for
+a local migration.
 
-## Next benchmark round
+## Performance
 
-There are no fresh 1.0 benchmark claims here. Historical charts in
-[`assets/`](assets/) are not measurements of the current code.
+The September 6, 2026 full local suite completed on an **Apple M2 Max**:
+32 read families, 34 scenario queries, durable writes, constraints, storage,
+scale curves, lifecycle costs, and two 10,000-cycle churn workloads.
+Its independent pre-timing oracle checked 2,879 cases.
 
-The implementation is [`crates/bumbledb-bench/`](crates/bumbledb-bench/).
-The [measurement runbook](docs/perf/measurement-plan.md) covers correctness,
-warm reads, cold opens, first reads after writes, large results, tenant churn,
-storage cost, and hash probes.
+Selected full-suite medians: point lookup **0.50 µs**, range query **4.83 µs**,
+warm application query **1.75 µs**, and complete construction/delivery of a
+100,000-row native result **69.34 ms**. Separate alternating comparisons
+measured that large-result path at **65–66 ms**, versus **796–801 ms** on the
+previous measured checkpoint, with the same output work.
 
-Preview the runner without building or timing anything:
+![Read latency against indexed SQLite](assets/bench-vs-sqlite.svg)
 
-```sh
-scripts/bench-night.sh bench-out/next-round --full --plan
-```
+![Compacted database storage](assets/bench-storage.svg)
 
-Once builds, tests, and other CPU-heavy work have stopped, run on a quiet host
-with a **new** output directory:
+These are **shared-host, scheduler-boosted measurements**, not quiet-host
+guarantees. The measured engine is `3ed3303e`, immediately before the 1.0
+version/documentation/package cutover; raw reports retain its `0.20.3`
+version label. Not every workload meets the informational latency budget,
+and this run does not establish a win over every historical engine benchmark.
+Compacted stores occupy **1.67–1.80× indexed SQLite** in the measured S/M
+ledger/calendar workloads. There is no claim of cross-target or
+larger-than-memory performance qualification.
 
-```sh
-scripts/bench-night.sh bench-out/quiet-round-YYYYMMDD-HHMM --full
-```
-
-The measurement lock serializes benchmark processes; it does **not** establish
-that the machine is idle. Do not use `--shared` for the quiet-host baseline.
-A successful local run is not Graviton, x86, real-S3, or larger-than-memory
-qualification. Preserve raw reports and refusals, not just winning charts.
-
-Apple Silicon is the first performance target. Linux ARM64/Graviton and Linux
-x64 Node deployments must be measured separately. Correctness gates and a
-zero-allocation test do not prove a throughput improvement.
+The [complete results and caveats](docs/perf/results.md) include the chart
+catalog and evidence coverage. The [measurement runbook](docs/perf/measurement-plan.md)
+explains reproducible runs and profiling. Apple Silicon is the first performance
+target; Linux ARM64 and x64 have correctness CI, not equivalent performance evidence.
 
 For bottleneck analysis, use the [native profiling workflow](docs/perf/measurement-plan.md#native-stack-profiling).
 The `profiling` build retains release optimization plus full inline/source
@@ -220,10 +234,12 @@ scripts/battery.sh
 
 The battery checks Rust, the native bridge, TypeScript, Lean correspondence,
 and isolated packaged consumers. It is not a benchmark or permission to
-publish. Machine-readable release requirements live in
+publish. The historical machine-readable audit inventory lives in
 [`.config/obligation-inventory.json`](.config/obligation-inventory.json);
 [`scripts/release-results.mjs`](scripts/release-results.mjs) checks evidence.
-Missing required evidence remains missing.
+It is not a substitute for actual reports or a blanket statement that every
+historical audit obligation has been qualified. The [1.0 release scope](docs/release-1.0.md)
+records what ships and what remains deferred; missing evidence stays missing.
 
 ## Repository
 
@@ -231,7 +247,7 @@ Missing required evidence remains missing.
 - Theory, macro, and query crates: structural language.
 - `crates/bumbledb-log/`: internal durable-history implementation.
 - `ts/`, `ts-log/`: Effect SDKs and the shared native bridge.
-- `crates/bumbledb-bench/`, `docs/perf/`, `assets/`: benchmarks and historical charts.
+- `crates/bumbledb-bench/`, `docs/perf/`, `assets/`: benchmarks and current charts.
 - `examples/`: runnable consumers and the Notes application.
 - `lean/`: executable specification and correspondence checks.
 
