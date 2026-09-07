@@ -14,17 +14,20 @@
 //!   re-derives the SAME ready target by verified reuse and activates once;
 //!   a matching retry is evidence, not mutation.
 //!
-//! Child arms re-exec this binary (the `local_ownership.rs` harness
-//! pattern). Verification: `NotRun` (F2 authors, does not execute).
+//! Child arms re-exec this binary with owned subprocesses and protocol readers.
 
 #![cfg(unix)]
 
 #[path = "migration_support/mod.rs"]
 mod support;
 
-use std::io::{BufRead, BufReader, Write as _};
+#[path = "lane_support/process.rs"]
+mod process;
+
+use process::TestChild;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -59,51 +62,21 @@ fn fresh_root(name: &str) -> PathBuf {
     root
 }
 
-fn spawn_child(mode: &str, dir: &Path) -> Child {
-    ProcessCommand::new(std::env::current_exe().expect("test binary"))
-        .args([
-            "--exact",
-            "child_process_entry",
-            "--nocapture",
-            "--test-threads",
-            "1",
-        ])
-        .env(CHILD_ENV, mode)
-        .env(DIR_ENV, dir)
-        .stdout(Stdio::piped())
-        .stdin(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn child")
-}
-
-fn await_marker(child: &mut Child, marker: &str) {
-    let stdout = child.stdout.as_mut().expect("child stdout");
-    let mut reader = BufReader::new(stdout);
-    let start = Instant::now();
-    let mut line = String::new();
-    loop {
-        assert!(start.elapsed() < WAIT, "child never printed {marker}");
-        line.clear();
-        let read = reader.read_line(&mut line).expect("read child line");
-        assert!(read > 0, "child stdout closed before {marker}");
-        // Suffix match, not equality: libtest prints `test <name> ... `
-        // WITHOUT a trailing newline before the test body runs, so the
-        // child's FIRST marker glues onto that line. Markers are distinct
-        // uppercase tokens the children print alone, never suffixes of one
-        // another or of ordinary output.
-        if line.trim().ends_with(marker) {
-            return;
-        }
-    }
-}
-
-fn signal(child: &Child, name: &str) {
-    let status = ProcessCommand::new("kill")
-        .args([format!("-{name}"), child.id().to_string()])
-        .status()
-        .expect("kill runs");
-    assert!(status.success(), "kill -{name} failed");
+fn spawn_child(mode: &str, dir: &Path) -> TestChild {
+    TestChild::spawn(
+        ProcessCommand::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "child_process_entry",
+                "--ignored",
+                "--nocapture",
+                "--test-threads",
+                "1",
+            ])
+            .env(CHILD_ENV, mode)
+            .env(DIR_ENV, dir),
+        WAIT,
+    )
 }
 
 fn park() -> ! {
@@ -281,10 +254,9 @@ fn resume_and_activate(root: &Path) {
 
 /// The child arms.
 #[test]
+#[ignore = "subprocess entrypoint invoked by the parent crash tests"]
 fn child_process_entry() {
-    let Ok(mode) = std::env::var(CHILD_ENV) else {
-        return;
-    };
+    let mode = std::env::var(CHILD_ENV).expect("parent selects the child mode");
     let dir = PathBuf::from(std::env::var(DIR_ENV).expect("child dir"));
     match mode.as_str() {
         // Announce, then migrate; the parent kills us while staging (polled
@@ -327,7 +299,7 @@ fn child_process_entry() {
 fn a_kill_during_staging_leaves_a_frozen_resumable_source() {
     let root = fresh_root("stagekill");
     let mut child = spawn_child("migrate-and-park", &root);
-    await_marker(&mut child, "MIGRATING");
+    child.await_marker("MIGRATING");
     // Kill as soon as the target namespace materializes on disk (mid-work),
     // or after a bounded delay if the tiny fixture already finished — the
     // safety assertions below hold under either race outcome.
@@ -335,8 +307,8 @@ fn a_kill_during_staging_leaves_a_frozen_resumable_source() {
     while !root.join("targets").exists() && start.elapsed() < Duration::from_secs(5) {
         std::thread::sleep(Duration::from_millis(2));
     }
-    child.kill().expect("kill staging child");
-    let _ = child.wait().expect("reap");
+    child.process.kill().expect("kill staging child");
+    let _ = child.process.wait().expect("reap");
     resume_and_activate(&root);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -349,17 +321,17 @@ fn a_kill_during_staging_leaves_a_frozen_resumable_source() {
 fn a_killed_ready_to_switch_holder_resumes_to_one_activated_lineage() {
     let root = fresh_root("readykill");
     let mut child = spawn_child("ready-and-park", &root);
-    await_marker(&mut child, "READY");
+    child.await_marker("READY");
     // Suspended, not dead: the source store stays fenced (REP-005 shape).
-    signal(&child, "STOP");
+    child.signal("STOP");
     std::thread::sleep(Duration::from_millis(200));
     assert!(
         Db::open(&root.join("source"), base_schema(), work()).is_err(),
         "a paused ReadyToSwitch holder still owns its frozen source"
     );
-    signal(&child, "CONT");
-    child.kill().expect("kill ready child");
-    let _ = child.wait().expect("reap");
+    child.signal("CONT");
+    child.process.kill().expect("kill ready child");
+    let _ = child.process.wait().expect("reap");
     resume_and_activate(&root);
     let _ = std::fs::remove_dir_all(&root);
 }

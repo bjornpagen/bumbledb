@@ -1,6 +1,5 @@
 //! Allocation-refusal discriminators for fallible COLT force/growth.
-//! Verification: `NotRun`. Each gate consumes the production force, chunk,
-//! and resize boundaries — not a `type_name` / `size_of` / fn-ref claim.
+//! Exercises the production force, chunk and resize admission boundaries.
 
 use super::*;
 use crate::work::{ExecutionPolicy, Resource, WorkError};
@@ -53,7 +52,6 @@ fn iter_once(colt: &mut Colt, cursor: Cursor) -> Result<(usize, BatchToken), Wor
 }
 
 /// First map admission refuses before `maps[0]` can be indexed.
-/// Verification: `NotRun`.
 #[test]
 fn first_map_refusal_is_typed_and_does_not_index() {
     let schema = schema();
@@ -88,7 +86,6 @@ fn first_map_refusal_is_typed_and_does_not_index() {
 }
 
 /// First duplicate-key chunk refuses before `chunks[0]` can be indexed.
-/// Verification: `NotRun`.
 #[test]
 fn first_duplicate_chunk_refusal_is_typed() {
     let schema = schema();
@@ -124,7 +121,6 @@ fn first_duplicate_chunk_refusal_is_typed() {
 }
 
 /// A later `grow_map` resize refuses before ingest continues into a full table.
-/// Verification: `NotRun`.
 #[test]
 fn later_resize_refusal_is_typed_and_does_not_hang() {
     let schema = schema();
@@ -160,7 +156,6 @@ fn later_resize_refusal_is_typed_and_does_not_hang() {
 }
 
 /// Same-shaped re-execution reuses retained capacity and does not re-charge.
-/// Verification: `NotRun`.
 #[test]
 fn repeated_same_shape_executions_plateau_capacity_and_charges() {
     let schema = schema();
@@ -265,7 +260,6 @@ fn forced_probes_preserve_pools_and_work_until_reset_requires_construction() {
 }
 
 /// Rebinding a fresh ledger clears a cancelled prior context.
-/// Verification: `NotRun`.
 #[test]
 fn bind_resets_cancelled_work_without_poisoning_the_next_execution() {
     let schema = schema();

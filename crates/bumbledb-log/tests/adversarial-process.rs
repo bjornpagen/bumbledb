@@ -25,15 +25,18 @@
 //! Child arms re-exec this binary with a mode environment variable, exactly
 //! the repository's `local_ownership.rs` harness pattern. Each test owns an
 //! exclusive temporary tree and signals only its own children.
-//! Verification: `NotRun` (F2 authors, does not execute).
 
 #![cfg(unix)]
 
 mod lane_support;
 
-use std::io::{BufRead, BufReader, Write as _};
+#[path = "lane_support/process.rs"]
+mod process;
+
+use process::TestChild;
+use std::io::{BufRead as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -77,72 +80,27 @@ fn fresh_root(name: &str) -> PathBuf {
     root
 }
 
-fn spawn_child(mode: &str, dir: &Path) -> Child {
+fn spawn_child(mode: &str, dir: &Path) -> TestChild {
     spawn_child_in(mode, dir, None)
 }
 
-fn spawn_child_in(mode: &str, dir: &Path, tenant: Option<&str>) -> Child {
+fn spawn_child_in(mode: &str, dir: &Path, tenant: Option<&str>) -> TestChild {
     let mut command = ProcessCommand::new(std::env::current_exe().expect("test binary"));
     command
         .args([
             "--exact",
             "child_process_entry",
+            "--ignored",
             "--nocapture",
             "--test-threads",
             "1",
         ])
         .env(CHILD_ENV, mode)
-        .env(DIR_ENV, dir)
-        .stdout(Stdio::piped())
-        .stdin(Stdio::piped())
-        .stderr(Stdio::null());
+        .env(DIR_ENV, dir);
     if let Some(tenant) = tenant {
         command.env(TENANT_ENV, tenant);
     }
-    command.spawn().expect("spawn child")
-}
-
-fn await_marker(child: &mut Child, marker: &str) {
-    let stdout = child.stdout.as_mut().expect("child stdout");
-    let mut reader = BufReader::new(stdout);
-    let start = Instant::now();
-    let mut line = String::new();
-    loop {
-        assert!(start.elapsed() < WAIT, "child never printed {marker}");
-        line.clear();
-        let read = reader.read_line(&mut line).expect("read child line");
-        assert!(read > 0, "child stdout closed before {marker}");
-        // Suffix match, not equality: libtest prints `test <name> ... `
-        // WITHOUT a trailing newline before the test body runs, so the
-        // child's FIRST marker glues onto that line. Markers are distinct
-        // uppercase tokens the children print alone, never suffixes of one
-        // another or of ordinary output.
-        if line.trim().ends_with(marker) {
-            return;
-        }
-    }
-}
-
-/// Read exactly one line of child stdout (its declared outcome). Only used
-/// when the protocol guarantees exactly one further line; a closed pipe is a
-/// failed child.
-fn next_line(child: &mut Child) -> String {
-    let stdout = child.stdout.as_mut().expect("child stdout");
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    let read = reader
-        .read_line(&mut line)
-        .expect("read child outcome line");
-    assert!(read > 0, "child stdout closed before its outcome line");
-    line.trim().to_string()
-}
-
-fn signal(child: &Child, name: &str) {
-    let status = ProcessCommand::new("kill")
-        .args([format!("-{name}"), child.id().to_string()])
-        .status()
-        .expect("kill runs");
-    assert!(status.success(), "kill -{name} failed");
+    TestChild::spawn(&mut command, WAIT)
 }
 
 fn park() -> ! {
@@ -275,17 +233,15 @@ fn completed<T: std::fmt::Debug>(outcome: bumbledb_log::certainty::AdminCertaint
     }
 }
 
-/// The child arms. An ordinary run (no env) is an immediate no-op pass; a
-/// re-executed child performs its mode and never returns normally.
+/// Driver for the parent tests; each mode exercises a real crash schedule.
 #[test]
+#[ignore = "subprocess entrypoint invoked by the parent crash tests"]
 #[expect(
     clippy::too_many_lines,
     reason = "one flat child-mode dispatch; each arm is a distinct crash script"
 )]
 fn child_process_entry() {
-    let Ok(mode) = std::env::var(CHILD_ENV) else {
-        return;
-    };
+    let mode = std::env::var(CHILD_ENV).expect("parent selects the child mode");
     let dir = PathBuf::from(std::env::var(DIR_ENV).expect("child dir"));
     match mode.as_str() {
         // A full-stack LocalHistory owner: durable committed decision, then
@@ -508,7 +464,7 @@ fn child_process_entry() {
 fn a_suspended_history_owner_fences_successors_until_real_death() {
     let root = fresh_root("suspend");
     let mut child = spawn_child("hold-local-history", &root);
-    await_marker(&mut child, "READY");
+    child.await_marker("READY");
 
     // Refused while live, refused while merely SIGSTOPped: no lease expiry
     // mints ownership from wall-clock time.
@@ -516,7 +472,7 @@ fn a_suspended_history_owner_fences_successors_until_real_death() {
         Db::open(&root.join("db"), theory(), work()).is_err(),
         "live owner excludes"
     );
-    signal(&child, "STOP");
+    child.signal("STOP");
     std::thread::sleep(Duration::from_millis(200));
     assert!(
         Db::open(&root.join("db"), theory(), work()).is_err(),
@@ -524,9 +480,9 @@ fn a_suspended_history_owner_fences_successors_until_real_death() {
     );
 
     // Real death releases; the successor sees exactly the durable history.
-    signal(&child, "CONT");
-    child.kill().expect("kill");
-    let _ = child.wait().expect("reap");
+    child.signal("CONT");
+    child.process.kill().expect("kill");
+    let _ = child.process.wait().expect("reap");
     let start = Instant::now();
     let db = loop {
         match Db::open(&root.join("db"), theory(), work()) {
@@ -566,9 +522,9 @@ fn a_suspended_history_owner_fences_successors_until_real_death() {
 fn a_kill_at_the_publication_boundary_leaves_a_resolvable_decision() {
     let root = fresh_root("pubkill");
     let mut child = spawn_child("park-after-publish", &root);
-    await_marker(&mut child, "PUBLISHED");
-    child.kill().expect("kill published child");
-    let _ = child.wait().expect("reap");
+    child.await_marker("PUBLISHED");
+    child.process.kill().expect("kill published child");
+    let _ = child.process.wait().expect("reap");
 
     // Reopen the SAME local materialization (its LMDB never saw the commit)
     // over the SAME durable backend directory.
@@ -616,9 +572,9 @@ fn a_kill_at_the_publication_boundary_leaves_a_resolvable_decision() {
 fn a_kill_mid_sweep_resumes_to_a_converged_collection() {
     let root = fresh_root("gckill");
     let mut child = spawn_child("park-mid-sweep", &root);
-    await_marker(&mut child, "SWEEPCAS");
-    child.kill().expect("kill sweeping child");
-    let _ = child.wait().expect("reap");
+    child.await_marker("SWEEPCAS");
+    child.process.kill().expect("kill sweeping child");
+    let _ = child.process.wait().expect("reap");
 
     let store = FsStore::new(root.join("store"));
     // Resume under the SAME operation id the child's barrier recorded.
@@ -668,7 +624,7 @@ fn a_kill_mid_sweep_resumes_to_a_converged_collection() {
 fn a_kill_during_hydration_is_never_adopted_and_the_resume_completes() {
     let root = fresh_root("hydratekill");
     let mut child = spawn_child("hydrate-and-park", &root);
-    await_marker(&mut child, "HYDRATING");
+    child.await_marker("HYDRATING");
     // Kill as soon as an owned staging directory appears (mid-hydration), or
     // after a bounded delay if the small fixture already finished.
     let tenant = root.join("tenant");
@@ -684,8 +640,8 @@ fn a_kill_during_hydration_is_never_adopted_and_the_resume_completes() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    child.kill().expect("kill hydrating child");
-    let _ = child.wait().expect("reap");
+    child.process.kill().expect("kill hydrating child");
+    let _ = child.process.wait().expect("reap");
 
     let store = FsStore::new(root.join("store"));
     let start = Instant::now();
@@ -846,11 +802,11 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     // at their first chunk GET; SIGSTOP makes each a genuinely suspended
     // process, exactly the suspended-owner arm's shape.
     let mut resumed = spawn_child_in("hydrate-hold-revoked", &root, Some("tenant-a"));
-    await_marker(&mut resumed, "CHUNKPARK");
+    resumed.await_marker("CHUNKPARK");
     let mut killed = spawn_child_in("hydrate-hold-revoked", &root, Some("tenant-b"));
-    await_marker(&mut killed, "CHUNKPARK");
-    signal(&resumed, "STOP");
-    signal(&killed, "STOP");
+    killed.await_marker("CHUNKPARK");
+    resumed.signal("STOP");
+    killed.signal("STOP");
 
     // The head moves past the pinned closure while both hydrates are frozen:
     // after the second checkpoint, ONLY the hold protects what they read.
@@ -931,8 +887,11 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
 
     // Killed variant: real death while frozen mid-hydrate. Nothing was
     // adopted; the successor hydrates the CURRENT complete closure.
-    killed.kill().expect("kill the frozen hydrating child");
-    let _ = killed.wait().expect("reap killed child");
+    killed
+        .process
+        .kill()
+        .expect("kill the frozen hydrating child");
+    let _ = killed.process.wait().expect("reap killed child");
     let tenant_killed = root.join("tenant-b");
     assert!(
         !materialization_path(&tenant_killed).exists(),
@@ -947,19 +906,20 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     // deterministically collected before the gate opens, the outcome here is
     // the whole typed refusal.
     resumed
+        .process
         .stdin
         .as_mut()
         .expect("child stdin")
         .write_all(b"GO\n")
         .expect("gate opens");
-    let _ = resumed.stdin.as_mut().expect("child stdin").flush();
-    signal(&resumed, "CONT");
-    let outcome = next_line(&mut resumed);
+    let _ = resumed.process.stdin.as_mut().expect("child stdin").flush();
+    resumed.signal("CONT");
+    let outcome = resumed.next_line();
     assert_eq!(
         outcome, "REFUSED",
         "a hydrate whose closure was revoked refuses whole"
     );
-    let _ = resumed.wait().expect("reap resumed child");
+    let _ = resumed.process.wait().expect("reap resumed child");
     let tenant_resumed = root.join("tenant-a");
     assert!(
         !materialization_path(&tenant_resumed).exists(),

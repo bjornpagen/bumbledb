@@ -3,13 +3,17 @@
 //! old complete bytes — FS-01/02/04 and RUN-05 shapes (REP-005/009/010/017,
 //! SDK-006). Each test owns an exclusive temporary tree and signals only its
 //! own children. The child arms re-exec this test binary with a mode
-//! environment variable. Verification: `NotRun` (F1 authors, does not execute).
+//! environment variable.
 
 #![cfg(unix)]
 
-use std::io::{BufRead, BufReader, Write as _};
+#[path = "lane_support/process.rs"]
+mod process;
+
+use process::TestChild;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use bumbledb_log::store::fence::{acquire_directory, acquire_mutation};
@@ -33,64 +37,35 @@ fn fresh_root(name: &str) -> PathBuf {
     root
 }
 
-fn spawn_child(mode: &str, dir: &Path) -> Child {
-    Command::new(std::env::current_exe().expect("test binary"))
-        .args([
-            "--exact",
-            "child_process_entry",
-            "--nocapture",
-            "--test-threads",
-            "1",
-        ])
-        .env(CHILD_ENV, mode)
-        .env(DIR_ENV, dir)
-        .stdout(Stdio::piped())
-        .stdin(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn child")
+fn spawn_child(mode: &str, dir: &Path) -> TestChild {
+    TestChild::spawn(
+        Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--exact",
+                "child_process_entry",
+                "--ignored",
+                "--nocapture",
+                "--test-threads",
+                "1",
+            ])
+            .env(CHILD_ENV, mode)
+            .env(DIR_ENV, dir),
+        WAIT,
+    )
 }
 
-/// Wait for the child to print `marker` on stdout.
-fn await_marker(child: &mut Child, marker: &str) {
-    let stdout = child.stdout.as_mut().expect("child stdout");
-    let mut reader = BufReader::new(stdout);
-    let start = Instant::now();
-    let mut line = String::new();
-    loop {
-        assert!(start.elapsed() < WAIT, "child never printed {marker}");
-        line.clear();
-        let read = reader.read_line(&mut line).expect("read child line");
-        assert!(read > 0, "child stdout closed before {marker}");
-        // Suffix match, not equality: libtest prints `test <name> ... `
-        // WITHOUT a trailing newline before the test body runs, so the
-        // child's FIRST marker glues onto that line. Markers are distinct
-        // uppercase tokens the children print alone, never suffixes of one
-        // another or of ordinary output.
-        if line.trim().ends_with(marker) {
-            return;
-        }
-    }
-}
-
-fn signal(child: &Child, name: &str) {
-    let status = Command::new("kill")
-        .args([format!("-{name}"), child.id().to_string()])
-        .status()
-        .expect("kill runs");
-    assert!(status.success(), "kill -{name} failed");
-}
-
-/// The child arms. In an ordinary run (no env) this test is an immediate
-/// no-op pass; when re-executed by a parent test it performs its mode and
-/// never returns normally (the parent kills it).
+/// Driver for the parent tests, not an independent passing test.
 #[test]
+#[ignore = "subprocess entrypoint invoked by the parent crash tests"]
 fn child_process_entry() {
-    let Ok(mode) = std::env::var(CHILD_ENV) else {
-        return;
-    };
+    let mode = std::env::var(CHILD_ENV).expect("parent selects the child mode");
     let dir = PathBuf::from(std::env::var(DIR_ENV).expect("child dir"));
     match mode.as_str() {
+        "buffered-markers" => {
+            let mut stdout = std::io::stdout().lock();
+            stdout.write_all(b"FIRST\nSECOND\n").unwrap();
+            stdout.flush().unwrap();
+        }
         "hold-directory" => {
             let lock = acquire_directory(&dir.join("tenant")).expect("child owns");
             println!("LOCKED");
@@ -138,24 +113,51 @@ fn child_process_entry() {
 }
 
 #[test]
+fn child_protocol_preserves_read_ahead_and_reports_exit() {
+    let root = fresh_root("buffered-markers");
+    let mut child = spawn_child("buffered-markers", &root);
+    // Exit first so both lines are already available to the buffered reader.
+    assert!(child.process.wait().unwrap().success());
+    child.await_marker("FIRST");
+    child.await_marker("SECOND");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_panicking_parent_reaps_its_child_and_releases_the_lock() {
+    let root = fresh_root("parent-panic");
+    let mut child = spawn_child("hold-directory", &root);
+    child.await_marker("LOCKED");
+    assert!(acquire_directory(&root.join("tenant")).is_err());
+    let failure = std::panic::catch_unwind(move || {
+        let _child = child;
+        panic!("simulate a failed parent assertion");
+    });
+    assert!(failure.is_err());
+    let lock = acquire_directory(&root.join("tenant")).expect("unwind reaped the lock holder");
+    drop(lock);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn fs01_a_paused_holder_remains_owner_and_death_releases_the_directory() {
     let root = fresh_root("fs01");
     let mut child = spawn_child("hold-directory", &root);
-    await_marker(&mut child, "LOCKED");
+    child.await_marker("LOCKED");
     // A competing open refuses immediately while the child owns.
     let refused = acquire_directory(&root.join("tenant"));
     assert!(refused.is_err(), "the live owner excludes");
     // SIGSTOP: a merely paused process retains its lock; time mints nothing.
-    signal(&child, "STOP");
+    child.signal("STOP");
     std::thread::sleep(Duration::from_millis(200));
     let still = acquire_directory(&root.join("tenant"));
     assert!(still.is_err(), "a paused holder remains owner");
     // The refused opener changed nothing on disk.
     assert!(root.join("~lease/tenant/owner.lock").exists());
     // SIGCONT + SIGKILL: process death releases the kernel lock.
-    signal(&child, "CONT");
-    child.kill().expect("kill");
-    let _ = child.wait().expect("reap");
+    child.signal("CONT");
+    child.process.kill().expect("kill");
+    let _ = child.process.wait().expect("reap");
     let start = Instant::now();
     loop {
         match acquire_directory(&root.join("tenant")) {
@@ -171,7 +173,7 @@ fn fs01_a_paused_holder_remains_owner_and_death_releases_the_directory() {
 fn fs01b_a_held_mutation_lock_bounds_the_waiter_without_takeover() {
     let root = fresh_root("fs01b");
     let mut child = spawn_child("hold-mutation", &root);
-    await_marker(&mut child, "LOCKED");
+    child.await_marker("LOCKED");
     // The bounded waiter exhausts its wait and refuses; it never steals.
     let store = FsStore::new(&root);
     let started = Instant::now();
@@ -192,8 +194,8 @@ fn fs01b_a_held_mutation_lock_bounds_the_waiter_without_takeover() {
         ReceivedHead::Absent
     ));
     // Death releases; the same operation then succeeds.
-    child.kill().expect("kill");
-    let _ = child.wait().expect("reap");
+    child.process.kill().expect("kill");
+    let _ = child.process.wait().expect("reap");
     assert!(matches!(
         store.create_head("t/HEAD", b"contender").expect("create"),
         ConditionalOutcome::Published { .. }
@@ -205,9 +207,9 @@ fn fs01b_a_held_mutation_lock_bounds_the_waiter_without_takeover() {
 fn fs02_a_kill_mid_replacement_leaves_the_old_complete_head() {
     let root = fresh_root("fs02");
     let mut child = spawn_child("die-mid-replace", &root);
-    await_marker(&mut child, "STAGED");
-    child.kill().expect("kill staged child");
-    let _ = child.wait().expect("reap");
+    child.await_marker("STAGED");
+    child.process.kill().expect("kill staged child");
+    let _ = child.process.wait().expect("reap");
     // Reopen: the old complete bytes hold; the staged temp is owned scratch
     // under ~tmp, never a readable head; a fresh mutation succeeds.
     let store = FsStore::new(&root);
@@ -237,21 +239,21 @@ fn d28_successor_reuses_the_persistent_lock_inode_without_deleting_it() {
     let root = fresh_root("d28");
     let tenant = root.join("tenant");
     let mut child = spawn_child("hold-directory", &root);
-    await_marker(&mut child, "LOCKED");
+    child.await_marker("LOCKED");
     let lock_path = root.join("~lease/tenant/owner.lock");
     assert!(lock_path.exists(), "owner created the persistent inode");
     let meta = std::fs::metadata(&lock_path).expect("inode");
     let inode = (meta.dev(), meta.ino());
-    signal(&child, "STOP");
+    child.signal("STOP");
     std::thread::sleep(Duration::from_millis(100));
     assert!(
         acquire_repository_lock(&tenant).is_err(),
         "paused owner remains exclusive"
     );
     assert!(lock_path.exists(), "pause does not replace the inode");
-    signal(&child, "CONT");
-    child.kill().expect("kill");
-    let _ = child.wait().expect("reap");
+    child.signal("CONT");
+    child.process.kill().expect("kill");
+    let _ = child.process.wait().expect("reap");
     let start = Instant::now();
     let successor = loop {
         match acquire_repository_lock(&tenant) {
