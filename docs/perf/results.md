@@ -9,7 +9,7 @@ The full local suite completed on **September 6, 2026, at 20:01 CDT** on an
 
 This engine was measured before the 1.0 version/documentation/package cutover;
 its recorded crate version is `0.20.3`, not a separately benchmarked 1.0 binary.
-The same engine implementation ships in 1.0. The command was the full serial
+The same engine implementation ships in 1.0.0. The command was the full serial
 suite with a frozen executable, an isolated layout-7 corpus and `--shared`.
 The host was in active use; user-interactive scheduler boosting was enabled.
 Clock flags, load observations and tails are retained. These are shared-host
@@ -19,6 +19,9 @@ The [GitHub release](https://github.com/bjornpagen/bumbledb/releases/tag/v1.0.0)
 carries the report archive. It includes the complete manifest, JSON reports,
 logs and completed comparison blocks. Raw evidence remains unchanged; this
 page and the 27 charts in `assets/` replace the prior published chart set.
+
+The 1.0.1 cleanup has not been benchmarked. These measurements and charts
+remain evidence for the source above, not performance claims for 1.0.1.
 
 ## Coverage
 

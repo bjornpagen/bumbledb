@@ -228,15 +228,6 @@ impl Executor {
                 return;
             }
 
-            if scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
-                for (k, &e) in scratch.survivors.iter().enumerate() {
-                    let parent = scratch.parents[e as usize] as usize;
-                    let cursor = carried.map_or(start_cursor, |col| {
-                        scratch.pending_cursors[parent * carried_w + col]
-                    });
-                    colts[occ].prefetch_bucket(cursor, scratch.hashes[k]);
-                }
-            }
             counters.probe_batch(node_idx, sub_idx, n);
             grow_scratch(&mut scratch.mask, n);
 
@@ -312,14 +303,11 @@ impl Executor {
 
         // Membership checks use surviving bindings and their resolved cursors.
 
-        for spec in &self.precompute[node_idx].point_probes {
-            scratch.point_sources.clear();
-            for (start_col, end_col, slot, dense) in &spec.parts {
-                let src = Source::of(*slot, &self.slot_map[node_idx][cover_sub]);
-                scratch
-                    .point_sources
-                    .push((*start_col, *end_col, src, *dense));
-            }
+        for (spec, point_sources) in self.precompute[node_idx]
+            .point_probes
+            .iter()
+            .zip(&scratch.point_sources)
+        {
             let cursor_src = tables.outgoing[node_idx][spec.occ];
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
@@ -345,7 +333,7 @@ impl Executor {
                     continue;
                 }
                 scratch.point_checks.clear();
-                for &(start_col, end_col, src, dense) in &scratch.point_sources {
+                for &(start_col, end_col, src, dense) in point_sources {
                     let point = match src {
                         Source::Batch(base) => scratch.entry_keys[element * arity + base],
                         Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
@@ -366,7 +354,7 @@ impl Executor {
             if m > 0 {
                 grow_scratch(&mut scratch.allen_gather, 2 * m);
                 let (starts, ends) = scratch.allen_gather[..2 * m].split_at_mut(m);
-                for &(start_col, end_col, src, dense) in &scratch.point_sources {
+                for &(start_col, end_col, src, dense) in point_sources {
                     colts[spec.occ].gather_interval_pair(
                         start_col,
                         end_col,
@@ -404,7 +392,6 @@ impl Executor {
         if let Err(error) = anti_probe_pass(
             &self.precompute[node_idx].anti_probes,
             node_idx,
-            &self.slot_map[node_idx][cover_sub],
             arity,
             colts,
             &scratch.entry_keys,
@@ -414,7 +401,7 @@ impl Executor {
             &mut scratch.mask,
             &scratch.anti_sources,
             &mut scratch.point_checks,
-            &mut scratch.point_sources,
+            &scratch.anti_point_sources,
             |element, slot| {
                 let parent = scratch.parents[element] as usize;
                 scratch.pending_bindings[parent * slot_count + slot]
@@ -628,31 +615,53 @@ impl Executor {
         let hashes = &scratch.hashes[..n];
         let children = &mut scratch.children[sub_idx][..];
         let mask = &mut scratch.mask[..n];
-        for k in 0..n {
-            let element = usize::try_from(survivors[k]).expect("batch fits usize");
-            let cursor = carried.map_or(start_cursor, |col| {
-                let parent = parents[element] as usize;
-                pending_cursors[parent * carried_w + col]
-            });
-            // Each cursor may force a different node and reallocate COLT
-            // pools. No map or backing pointer survives this call.
+        let mut probe_one = |probe: &crate::exec::colt::Probe<'_>, k: usize, element: usize| {
             let key = &probe_keys[k * width..(k + 1) * width];
-            let result = if CHILDREN {
-                colt.get_prehashed_width::<K>(cursor, s_level, key, hashes[k])
-                    .map(|hit| {
-                        if let Some(child) = hit {
-                            children[element] = child;
-                        }
-                        hit.is_some()
-                    })
+            let hit = if CHILDREN {
+                let hit = probe.get_prehashed_width::<K>(key, hashes[k]);
+                if let Some(child) = hit {
+                    children[element] = child;
+                }
+                hit.is_some()
             } else {
-                colt.contains_prehashed_width::<K>(cursor, s_level, key, hashes[k])
-            };
-            let Some(hit) = self.colt_ok(result) else {
-                break;
+                probe.contains_prehashed_width::<K>(key, hashes[k])
             };
             counters.probe(node_idx, sub_idx, hit);
             mask[k] = u8::from(hit);
+        };
+        if let Some(col) = carried {
+            let cursor_at = |element: usize| {
+                let parent = parents[element] as usize;
+                pending_cursors[parent * carried_w + col]
+            };
+            if n >= PREFETCH_WIDTH_FLOOR {
+                for (k, &element) in survivors.iter().enumerate() {
+                    colt.prefetch_bucket_with_children::<CHILDREN>(
+                        cursor_at(element as usize),
+                        hashes[k],
+                    );
+                }
+            }
+            for (k, &element) in survivors.iter().enumerate() {
+                let element = element as usize;
+                // A carried cursor may force a different node. Drop its
+                // borrowed view before preparing the next cursor's probe.
+                let Some(probe) = self.colt_ok(colt.prepare_probe(cursor_at(element), s_level))
+                else {
+                    break;
+                };
+                probe_one(&probe, k, element);
+            }
+        } else {
+            let Some(probe) = self.colt_ok(colt.prepare_probe(start_cursor, s_level)) else {
+                return;
+            };
+            if n >= PREFETCH_WIDTH_FLOOR {
+                probe.prefetch_batch(hashes, CHILDREN);
+            }
+            for (k, &element) in survivors.iter().enumerate() {
+                probe_one(&probe, k, element as usize);
+            }
         }
     }
 }

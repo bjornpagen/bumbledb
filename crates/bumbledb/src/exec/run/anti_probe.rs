@@ -2,7 +2,8 @@
 //! binding. A hit rejects the binding. The negated trie holds all its key
 //! variables at one level: this checks existence, not a continuation to emit.
 use super::{
-    AntiProbeForm, AntiProbeSpec, Colt, Counters, PREFETCH_WIDTH_FLOOR, Source, grow_scratch,
+    AntiProbeForm, AntiProbeSpec, Colt, Counters, PREFETCH_WIDTH_FLOOR, PointSource, Source,
+    grow_scratch,
 };
 use crate::work::WorkError;
 
@@ -17,7 +18,6 @@ use crate::work::WorkError;
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
     node_idx: usize,
-    cover_slots: &[usize],
     arity: usize,
     colts: &mut [Colt],
     entry_keys: &[u64],
@@ -27,7 +27,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
     mask: &mut Vec<u8>,
     anti_sources: &[Vec<Source>],
     point_checks: &mut Vec<(usize, usize, u64)>,
-    point_sources: &mut Vec<(usize, usize, Source, bool)>,
+    anti_point_sources: &[Vec<PointSource>],
     read_slot: impl Fn(usize, usize) -> u64,
     counters: &mut C,
 ) -> Result<(), WorkError> {
@@ -37,11 +37,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
         }
         let n = survivors.len();
 
-        point_sources.clear();
-        for (start_col, end_col, slot, dense) in &spec.point_parts {
-            let src = Source::of(*slot, cover_slots);
-            point_sources.push((*start_col, *end_col, src, *dense));
-        }
+        let point_sources = &anti_point_sources[a_idx];
 
         match &spec.form {
             AntiProbeForm::Gate if spec.point_parts.is_empty() => {
@@ -60,7 +56,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 for k in 0..n {
                     let element = usize::try_from(survivors[k]).expect("batch fits usize");
                     point_checks.clear();
-                    for &(start_col, end_col, src, dense) in point_sources.iter() {
+                    for &(start_col, end_col, src, dense) in point_sources {
                         let point = match src {
                             Source::Batch(base) => entry_keys[element * arity + base],
                             Source::Slot(slot) => read_slot(element, slot),
@@ -84,7 +80,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
             AntiProbeForm::Keyed { key_words, .. } => {
                 let sources = &anti_sources[a_idx];
                 let start = colts[spec.occ].start();
-                colts[spec.occ].ensure_forced(start, 0)?;
+                let probe = colts[spec.occ].prepare_probe(start, 0)?;
 
                 let kw = key_words.get();
                 grow_scratch(hashes, n);
@@ -104,9 +100,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 }
 
                 if n >= PREFETCH_WIDTH_FLOOR {
-                    for &hash in &hashes[..n] {
-                        colts[spec.occ].prefetch_bucket(start, hash);
-                    }
+                    probe.prefetch_batch(&hashes[..n], !spec.point_parts.is_empty());
                 }
 
                 grow_scratch(mask, n);
@@ -116,12 +110,10 @@ pub(super) fn anti_probe_pass<C: Counters>(
                     let mask = &mut mask[..n];
                     if spec.point_parts.is_empty() {
                         for k in 0..n {
-                            let hit = colts[spec.occ].contains_prehashed_width::<0>(
-                                start,
-                                0,
+                            let hit = probe.contains_prehashed_width::<0>(
                                 &probe_keys[k * kw..(k + 1) * kw],
                                 hashes[k],
-                            )?;
+                            );
                             counters.anti_probe(node_idx, hit);
                             mask[k] = u8::from(!hit);
                         }
@@ -130,17 +122,13 @@ pub(super) fn anti_probe_pass<C: Counters>(
                     }
                     for k in 0..n {
                         let element = usize::try_from(survivors[k]).expect("batch fits usize");
-                        let child = colts[spec.occ].get_prehashed(
-                            start,
-                            0,
-                            &probe_keys[k * kw..(k + 1) * kw],
-                            hashes[k],
-                        )?;
+                        let child = probe
+                            .get_prehashed_width::<0>(&probe_keys[k * kw..(k + 1) * kw], hashes[k]);
                         let hit = match child {
                             None => false,
                             Some(child) => {
                                 point_checks.clear();
-                                for &(start_col, end_col, src, dense) in point_sources.iter() {
+                                for &(start_col, end_col, src, dense) in point_sources {
                                     let point = match src {
                                         Source::Batch(base) => entry_keys[element * arity + base],
                                         Source::Slot(slot) => read_slot(element, slot),
@@ -153,7 +141,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                                     };
                                     point_checks.push((start_col, end_col, point));
                                 }
-                                colts[spec.occ].any_position_matches(child, point_checks)
+                                probe.any_position_matches(child, point_checks)
                             }
                         };
                         counters.anti_probe(node_idx, hit);

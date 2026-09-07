@@ -447,6 +447,7 @@ mod iter;
 mod new;
 mod prefetch;
 mod probe;
+pub(crate) use probe::Probe;
 mod select;
 
 use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask};

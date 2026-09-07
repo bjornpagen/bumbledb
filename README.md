@@ -17,6 +17,9 @@ local-only. Those hosted paths are not included in the production-ready claim.
 · [Release notes](docs/release-1.0.md)
 · [Benchmark results](docs/perf/results.md)
 
+This source tree prepares **1.0.1**. Its version pins below are the release
+candidate; publication waits for exact-revision correctness and CI checks.
+
 ## The model
 
 Relations are sets: inserting an existing fact and deleting an absent fact
@@ -57,15 +60,15 @@ Rust source consumers can use:
 
 ```toml
 [dependencies]
-bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v1.0.0" }
+bumbledb = { git = "https://github.com/bjornpagen/bumbledb", tag = "v1.0.1" }
 ```
 
 Build with the repository's pinned `nightly-2026-08-15`. Rust is distributed
 from Git, not crates.io. TypeScript core, log, and all native packages use
-**1.0.0** in lockstep:
+**1.0.1** in lockstep:
 
 ```sh
-pnpm add @bjornpagen/bumbledb@1.0.0 @bjornpagen/bumbledb-log@1.0.0 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb@1.0.1 @bjornpagen/bumbledb-log@1.0.1 effect@4.0.0-rc.112
 ```
 
 The GitHub release carries the prepared npm tarballs. Registry installation
@@ -202,6 +205,9 @@ and this run does not establish a win over every historical engine benchmark.
 Compacted stores occupy **1.67–1.80× indexed SQLite** in the measured S/M
 ledger/calendar workloads. There is no claim of cross-target or
 larger-than-memory performance qualification.
+
+The 1.0.1 cleanup has not been benchmarked; these numbers do not measure its
+changes or establish a new speedup.
 
 The [complete results and caveats](docs/perf/results.md) include the chart
 catalog and evidence coverage. The [measurement runbook](docs/perf/measurement-plan.md)

@@ -172,6 +172,26 @@ impl NodeScratch {
                 debug_assert_eq!(sources.len(), key_words.get(), "key widths add up");
             }
         }
+        for (sources, parts) in self
+            .point_sources
+            .iter_mut()
+            .chain(&mut self.anti_point_sources)
+            .zip(
+                pre.point_probes
+                    .iter()
+                    .map(|spec| spec.parts.as_slice())
+                    .chain(
+                        pre.anti_probes
+                            .iter()
+                            .map(|spec| spec.point_parts.as_slice()),
+                    ),
+            )
+        {
+            sources.clear();
+            sources.extend(parts.iter().map(|&(start, end, slot, dense)| {
+                (start, end, Source::of(slot, cover_slots), dense)
+            }));
+        }
         self.source_cover = Some(cover);
     }
 }
@@ -296,7 +316,8 @@ impl Executor {
                     allen_codes: Vec::new(),
                     anti_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
                     point_checks: Vec::new(),
-                    point_sources: Vec::new(),
+                    point_sources: pre.point_probes.iter().map(|_| Vec::new()).collect(),
+                    anti_point_sources: pre.anti_probes.iter().map(|_| Vec::new()).collect(),
                     point_rows: Vec::new(),
                     point_row_ks: Vec::new(),
                     mask: Vec::with_capacity(batch),

@@ -1071,6 +1071,43 @@ fn changes_preserve_cancellation_and_resource_errors_through_the_bridge() {
 }
 
 #[test]
+fn input_row_allocation_requires_admission_without_double_charging_cells() {
+    use bumbledb::work::Resource;
+
+    let context = ExecutionPolicy {
+        input_bytes: 32,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    assert!(matches!(
+        super::codec::reserve_input_rows(1 << 40, 1, &context),
+        Err(RuntimeError::Work(WorkError::Exhausted {
+            resource: Resource::InputBytes,
+            used: 0,
+            requested,
+            limit: 32,
+        })) if requested == 8 << 40
+    ));
+    assert_eq!(context.used(Resource::InputBytes), 0);
+    let mut rows = super::codec::reserve_input_rows(2, 1, &context).unwrap();
+    assert!(rows.capacity() >= 2);
+    for value in [Value::U64(7), Value::U64(9)] {
+        context
+            .input(value_bytes(&value) - INPUT_VALUE_BASE)
+            .unwrap();
+        rows.push(vec![value]);
+    }
+    assert_eq!(context.used(Resource::InputBytes), 32);
+    assert_eq!(rows, vec![vec![Value::U64(7)], vec![Value::U64(9)]]);
+    context.cancel();
+    assert!(matches!(
+        super::codec::reserve_input_rows(0, 1, &context),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+}
+
+#[test]
 fn d01_answers_out_charges_empty_page_without_escaping() {
     let ctx = ExecutionPolicy {
         input_bytes: 16,

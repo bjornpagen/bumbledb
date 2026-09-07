@@ -11,7 +11,7 @@ Do not treat this example as a qualified one-command hosted deployment.
 
 ## Local setup
 
-The example pins matching `1.0.0` packages and Effect `4.0.0-rc.112`.
+The example pins matching `1.0.1` packages and Effect `4.0.0-rc.112`.
 Registry installation requires the npm publication step; the GitHub release
 also carries the exact staged tarballs. The repository's packed-consumer
 check installs those package shapes in isolation before publication.

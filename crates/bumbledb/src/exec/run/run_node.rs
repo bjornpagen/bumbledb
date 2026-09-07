@@ -2,7 +2,7 @@
 use super::anti_probe::anti_probe_pass;
 use super::{
     BatchToken, Bindings, Colt, Counters, Cursor, Executor, Flow, KeyCount, LeafBatch, NodeScratch,
-    PREFETCH_WIDTH_FLOOR, Sink, Source, ValidatedPlan, better_cover, grow_scratch,
+    Sink, Source, ValidatedPlan, better_cover, grow_scratch,
 };
 
 impl Executor {
@@ -285,12 +285,6 @@ impl Executor {
                     }
                 }
 
-                if !pinned && scratch.survivors.len() >= PREFETCH_WIDTH_FLOOR {
-                    for &hash in &scratch.hashes[..n] {
-                        colts[occ].prefetch_bucket(s_cursor, hash);
-                    }
-                }
-
                 counters.probe_batch(node_idx, sub_idx, n);
                 grow_scratch(&mut scratch.mask, n);
                 self.probe_sibling_batch::<0, C>(
@@ -313,14 +307,11 @@ impl Executor {
 
             // Only surviving sibling matches need interval membership checks.
 
-            for spec in &self.precompute[node_idx].point_probes {
-                scratch.point_sources.clear();
-                for (start_col, end_col, slot, dense) in &spec.parts {
-                    let src = Source::of(*slot, &self.slot_map[node_idx][cover_sub]);
-                    scratch
-                        .point_sources
-                        .push((*start_col, *end_col, src, *dense));
-                }
+            for (spec, point_sources) in self.precompute[node_idx]
+                .point_probes
+                .iter()
+                .zip(&scratch.point_sources)
+            {
                 let sub_idx = plan.nodes()[node_idx]
                     .subatoms
                     .iter()
@@ -331,7 +322,7 @@ impl Executor {
                     let e = scratch.survivors[k];
                     let entry = usize::try_from(e).expect("batch fits usize");
                     scratch.point_checks.clear();
-                    for &(start_col, end_col, src, dense) in &scratch.point_sources {
+                    for &(start_col, end_col, src, dense) in point_sources {
                         let point = match src {
                             Source::Batch(base) => scratch.entry_keys[entry * arity + base],
                             Source::Slot(slot) => bindings.get(slot),
@@ -358,7 +349,6 @@ impl Executor {
             if let Err(error) = anti_probe_pass(
                 &self.precompute[node_idx].anti_probes,
                 node_idx,
-                &self.slot_map[node_idx][cover_sub],
                 arity,
                 colts,
                 &scratch.entry_keys,
@@ -368,7 +358,7 @@ impl Executor {
                 &mut scratch.mask,
                 &scratch.anti_sources,
                 &mut scratch.point_checks,
-                &mut scratch.point_sources,
+                &scratch.anti_point_sources,
                 |_, slot| bindings.get(slot),
                 counters,
             ) {

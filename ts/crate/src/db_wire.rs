@@ -224,15 +224,19 @@ pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
     }
 }
 
+const INPUT_VALUE_BASE: u64 = 8;
+
 pub(crate) fn value_bytes(value: &Value) -> u64 {
-    8 + match value {
-        Value::String(text) => text.len() as u64,
-        Value::FixedBytes(bytes) => bytes.len() as u64,
-        Value::Uuid(_) | Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
-            16
+    INPUT_VALUE_BASE
+        + match value {
+            Value::String(text) => text.len() as u64,
+            Value::FixedBytes(bytes) => bytes.len() as u64,
+            Value::Uuid(_)
+            | Value::IntervalU64(_)
+            | Value::IntervalI64(_)
+            | Value::IntervalF64(_) => 16,
+            _ => 8,
         }
-        _ => 8,
-    }
 }
 
 // ---------------------------------------------------------------------------

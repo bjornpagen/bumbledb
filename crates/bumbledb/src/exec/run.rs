@@ -294,6 +294,8 @@ enum Operand<'a> {
 
 const PREFETCH_WIDTH_FLOOR: usize = 4;
 
+type PointSource = (usize, usize, Source, bool);
+
 /// Retained per-node execution buffers. Source layouts depend only on the
 /// selected cover; data buffers change per batch and execution.
 #[derive(Default)]
@@ -326,7 +328,9 @@ struct NodeScratch {
 
     point_checks: Vec<(usize, usize, u64)>,
 
-    point_sources: Vec<(usize, usize, Source, bool)>,
+    point_sources: Vec<Vec<PointSource>>,
+
+    anti_point_sources: Vec<Vec<PointSource>>,
 
     point_rows: Vec<u32>,
 

@@ -223,6 +223,56 @@ fn reused_executor_follows_reordered_dynamic_covers() {
 }
 
 #[test]
+fn point_source_layouts_follow_reordered_covers_without_retaining_values() {
+    let pre = NodePrecompute {
+        residual_slots: vec![],
+        allen_residual_slots: vec![],
+        point_probes: vec![PointProbeSpec {
+            occ: 0,
+            parts: vec![(0, 1, 2, false), (2, 3, 7, true)],
+        }],
+        anti_probes: vec![AntiProbeSpec {
+            occ: 1,
+            form: AntiProbeForm::Gate,
+            point_parts: vec![(4, 5, 5, true), (6, 7, 2, false)],
+        }],
+    };
+    let mut scratch = NodeScratch {
+        sources: vec![vec![], vec![]],
+        point_sources: vec![vec![]],
+        anti_sources: vec![vec![]],
+        anti_point_sources: vec![vec![]],
+        ..NodeScratch::default()
+    };
+    let slots = [vec![2, 5], vec![5, 2]];
+    for (round, cover) in [0, 1, 1, 0].into_iter().enumerate() {
+        scratch.prepare_sources(&slots, &pre, cover);
+        let values: Vec<_> = (0..8).map(|slot| (round * 100 + slot) as u64).collect();
+        let batch: Vec<_> = slots[cover].iter().map(|&slot| values[slot]).collect();
+        let resolve = |sources: &[PointSource]| -> Vec<_> {
+            sources
+                .iter()
+                .map(|&(start, end, source, dense)| {
+                    let point = match source {
+                        Source::Batch(word) => batch[word],
+                        Source::Slot(slot) => values[slot],
+                    };
+                    (start, end, point, dense)
+                })
+                .collect()
+        };
+        assert_eq!(
+            resolve(&scratch.point_sources[0]),
+            vec![(0, 1, values[2], false), (2, 3, values[7], true)]
+        );
+        assert_eq!(
+            resolve(&scratch.anti_point_sources[0]),
+            vec![(4, 5, values[5], true), (6, 7, values[2], false)]
+        );
+    }
+}
+
+#[test]
 fn dynamic_cover_prefers_the_forced_small_side() {
     let schema = schema(2);
 

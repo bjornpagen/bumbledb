@@ -100,8 +100,10 @@ globally as part of a database install.
 
 ## Release scope
 
-This remains a 0.x release. Hosted generated migration orchestration is
-unfinished through the TypeScript/native bridge, and local benchmark results
-do not satisfy the independent remote/backend qualification requirements.
+The 1.0.x production scope is the embedded core and local log. Hosted generated
+migration orchestration remains unsupported through the TypeScript/native
+bridge. Real-S3/IAM and Graviton qualification remain explicitly deferred by
+the owner, not passed. Existing benchmark evidence describes its recorded
+engine revision, not the unmeasured 1.0.1 cleanup.
 Release notes must state these limitations. A published release is not a
 claim that all 1.0 gates have been met.

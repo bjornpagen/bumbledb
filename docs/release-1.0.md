@@ -1,5 +1,31 @@
 # Bumbledb 1.0
 
+## 1.0.1 candidate
+
+The next patch release consolidates the post-1.0 cleanup. Public SDKs,
+persisted formats, hash widths and the production scope below are unchanged.
+All five npm packages and their exact dependency pins advance together to
+1.0.1. This candidate is not published until its exact-revision checks pass.
+
+- Reuse compiled cursor routes and physical source layouts, including
+  positive and negated interval probes, when the join cover is unchanged.
+- Borrow a forced trie for each shared-cursor probe batch; load or prefetch
+  child data only when a current or later query consumer needs it.
+- Share probe hashing and aggregate reductions, borrow executor scratch,
+  and remove redundant native row-codec copies and operand paths.
+- Preserve queued output reservations and admit the minimum input-byte
+  cost before reserving a native row array from a supplied row count.
+- Check word-map capacity arithmetic, narrow unsafe boundaries, preserve
+  crash-test protocol buffering and child ownership, and limit compiler
+  fixture searches to directories that actually contain libraries.
+
+These changes are correctness- and allocation-tested, not newly benchmarked.
+The performance reports below still describe the frozen 1.0 engine source;
+they do not establish a speedup for 1.0.1. No new timings or profiles have
+been collected for this patch candidate.
+
+## 1.0 baseline
+
 Bumbledb 1.0 is the production-ready release of the embedded core and local
 durable-history layer: a set-semantic application database built on LMDB,
 COLT and Free Join. It targets a database per application user or tenant.

@@ -1,6 +1,6 @@
 {
 	"name": "@bjornpagen/bumbledb-log",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Durable named application commands over bumbledb: LocalHistory, HostedHistory, sealed commands with retained refs, published snapshots, one native TenantCache, and explicit maintenance/migration operations (Effect-only)",
 	"type": "module",
 	"exports": {
@@ -56,7 +56,7 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"peerDependencies": {
-		"@bjornpagen/bumbledb": "1.0.0",
+		"@bjornpagen/bumbledb": "1.0.1",
 		"effect": "4.0.0-rc.112"
 	},
 	"devDependencies": {

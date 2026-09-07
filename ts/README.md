@@ -34,7 +34,7 @@ correctness CI is distinct from the Apple Silicon performance measurements.
 ## Install
 
 ```sh
-pnpm add @bjornpagen/bumbledb@1.0.0 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb@1.0.1 effect@4.0.0-rc.112
 ```
 
 ## Quick start

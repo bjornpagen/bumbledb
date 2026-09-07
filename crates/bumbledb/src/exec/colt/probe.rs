@@ -9,6 +9,83 @@ enum KeyHit {
     Bucket(usize),
 }
 
+enum ProbeTarget<'a> {
+    Row(u32),
+    Map(&'a Map),
+}
+
+/// A resolved cursor borrowed for a probe batch. Construction performs any
+/// fallible force; subsequent lookups cannot mutate or relocate COLT pools.
+pub(crate) struct Probe<'a> {
+    colt: &'a Colt,
+    level: usize,
+    target: ProbeTarget<'a>,
+}
+
+impl Probe<'_> {
+    /// The batch selects its key width once. `K == 0` dispatches the runtime
+    /// width, including empty keys; fixed widths use the same probe walk.
+    #[inline(always)]
+    pub(crate) fn get_prehashed_width<const K: usize>(
+        &self,
+        key: &[u64],
+        hash: u64,
+    ) -> Option<Cursor> {
+        self.key_hit::<K>(key, hash).map(|hit| match hit {
+            KeyHit::Row(position) => Cursor::Row(position),
+            KeyHit::Bucket(index) => unpack_child(self.colt.buckets[index]),
+        })
+    }
+
+    #[inline(always)]
+    pub(crate) fn contains_prehashed_width<const K: usize>(&self, key: &[u64], hash: u64) -> bool {
+        self.key_hit::<K>(key, hash).is_some()
+    }
+
+    #[inline(always)]
+    fn key_hit<const K: usize>(&self, key: &[u64], hash: u64) -> Option<KeyHit> {
+        debug_assert_eq!(key.len(), self.colt.arity_at(self.level));
+        debug_assert!(K == 0 || key.len() == K);
+        match self.target {
+            ProbeTarget::Row(position) => self
+                .colt
+                .position_matches(self.level, position, key)
+                .then_some(KeyHit::Row(position)),
+            ProbeTarget::Map(m) => {
+                let (found, idx) = if K == 0 {
+                    self.colt.probe_hashed(m, key, hash)
+                } else {
+                    self.colt.probe_walk::<K>(m, key, hash)
+                };
+                found.then(|| KeyHit::Bucket(m.child_at(idx)))
+            }
+        }
+    }
+
+    pub(crate) fn prefetch_batch(&self, hashes: &[u64], children: bool) {
+        let ProbeTarget::Map(m) = self.target else {
+            return;
+        };
+        if children {
+            for &hash in hashes {
+                self.colt.prefetch_map::<true>(m, hash);
+            }
+        } else {
+            for &hash in hashes {
+                self.colt.prefetch_map::<false>(m, hash);
+            }
+        }
+    }
+
+    pub(crate) fn any_position_matches(
+        &self,
+        child: Cursor,
+        checks: &[(usize, usize, u64)],
+    ) -> bool {
+        self.colt.any_position_matches(child, checks)
+    }
+}
+
 impl Colt {
     #[cfg(test)]
     pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
@@ -16,9 +93,7 @@ impl Colt {
             .expect("test COLT has no refusing work ledger")
     }
 
-    /// # Errors
-    /// Returns the force/growth refusal. A miss is `Ok(None)`, never an error.
-    #[inline(always)]
+    #[cfg(test)]
     pub fn get_prehashed(
         &mut self,
         cursor: Cursor,
@@ -26,38 +101,9 @@ impl Colt {
         key: &[u64],
         hash: u64,
     ) -> Result<Option<Cursor>, crate::work::WorkError> {
-        self.probe_child_at(cursor, self.join_index(level), key, hash)
-    }
-
-    /// The sibling batch has already selected its fixed key width.
-    /// `K == 0` retains runtime dispatch, including actual empty keys.
-    ///
-    /// # Errors
-    /// Returns the same force/growth refusal as `get_prehashed`.
-    #[inline(always)]
-    pub(crate) fn get_prehashed_width<const K: usize>(
-        &mut self,
-        cursor: Cursor,
-        level: usize,
-        key: &[u64],
-        hash: u64,
-    ) -> Result<Option<Cursor>, crate::work::WorkError> {
-        self.probe_child_at_width::<K>(cursor, self.join_index(level), key, hash)
-    }
-
-    /// Key existence with the same forcing and admission as `get_prehashed`,
-    /// but no child load or decoding. `K == 0` dispatches the runtime width.
-    #[inline(always)]
-    pub(crate) fn contains_prehashed_width<const K: usize>(
-        &mut self,
-        cursor: Cursor,
-        level: usize,
-        key: &[u64],
-        hash: u64,
-    ) -> Result<bool, crate::work::WorkError> {
         Ok(self
-            .probe_key_at_width::<K>(cursor, self.join_index(level), key, hash)?
-            .is_some())
+            .prepare_probe(cursor, level)?
+            .get_prehashed_width::<0>(key, hash))
     }
 
     #[inline(always)]
@@ -68,53 +114,40 @@ impl Colt {
         key: &[u64],
         hash: u64,
     ) -> Result<Option<Cursor>, crate::work::WorkError> {
-        self.probe_child_at_width::<0>(cursor, level, key, hash)
-    }
-
-    #[inline(always)]
-    fn probe_child_at_width<const K: usize>(
-        &mut self,
-        cursor: Cursor,
-        level: usize,
-        key: &[u64],
-        hash: u64,
-    ) -> Result<Option<Cursor>, crate::work::WorkError> {
         Ok(self
-            .probe_key_at_width::<K>(cursor, level, key, hash)?
-            .map(|hit| match hit {
-                KeyHit::Row(position) => Cursor::Row(position),
-                KeyHit::Bucket(index) => unpack_child(self.buckets[index]),
-            }))
+            .prepare_probe_at(cursor, level)?
+            .get_prehashed_width::<0>(key, hash))
     }
 
+    /// Resolve one cursor after fallible force, then keep its map borrowed for
+    /// any number of read-only probes. A pinned row needs no force or hash.
     #[inline(always)]
-    fn probe_key_at_width<const K: usize>(
+    pub(crate) fn prepare_probe(
         &mut self,
         cursor: Cursor,
         level: usize,
-        key: &[u64],
-        hash: u64,
-    ) -> Result<Option<KeyHit>, crate::work::WorkError> {
-        debug_assert_eq!(key.len(), self.arity_at(level));
-        debug_assert!(K == 0 || key.len() == K);
-        match cursor {
-            Cursor::Row(position) => Ok(self
-                .position_matches(level, position, key)
-                .then_some(KeyHit::Row(position))),
+    ) -> Result<Probe<'_>, crate::work::WorkError> {
+        self.prepare_probe_at(cursor, self.join_index(level))
+    }
+
+    #[inline(always)]
+    fn prepare_probe_at(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+    ) -> Result<Probe<'_>, crate::work::WorkError> {
+        let target = match cursor {
+            Cursor::Row(position) => ProbeTarget::Row(position),
             Cursor::Node(node) => {
                 let map = self.force(node, level)?;
-                let m = &self.maps[map as usize];
-                let (found, idx) = if K == 0 {
-                    self.probe_hashed(m, key, hash)
-                } else {
-                    self.probe_walk::<K>(m, key, hash)
-                };
-                if !found {
-                    return Ok(None);
-                }
-                Ok(Some(KeyHit::Bucket(m.child_at(idx))))
+                ProbeTarget::Map(&self.maps[map as usize])
             }
-        }
+        };
+        Ok(Probe {
+            colt: self,
+            level,
+            target,
+        })
     }
 
     /// # Errors

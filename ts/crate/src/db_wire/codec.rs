@@ -8,7 +8,27 @@ use bumbledb::{ChangeSet, RelationId, Value};
 use crate::marshal::{ValueOut, output_vec, row_out};
 use crate::runtime::{QueuedBytes, QueuedOutput, RuntimeError};
 
-use super::{change_error, value_bytes};
+use super::{INPUT_VALUE_BASE, change_error, value_bytes};
+
+/// Admit the unavoidable per-cell input charge before trusting the stated
+/// row count as an allocation size. The payload remainder is charged after
+/// decoding each row, so successful ingestion keeps its exact old byte cost.
+pub(super) fn reserve_input_rows(
+    stated: u64,
+    arity: usize,
+    context: &WorkContext,
+) -> Result<Vec<Vec<Value>>, RuntimeError> {
+    let count = usize::try_from(stated).map_err(|_| RuntimeError::InvalidArgument)?;
+    let base = stated
+        .checked_mul(arity as u64)
+        .and_then(|cells| cells.checked_mul(INPUT_VALUE_BASE))
+        .ok_or(RuntimeError::InvalidArgument)?;
+    context.input(base)?;
+    let mut rows = Vec::new();
+    rows.try_reserve_exact(count)
+        .map_err(|_| RuntimeError::Internal)?;
+    Ok(rows)
+}
 
 /// Own and charge the same host row shape for change drafts and encoding.
 /// The worker receives these values without another input copy or charge.
@@ -37,9 +57,8 @@ pub(crate) fn parse_input_rows(
         };
         return Ok((rows, 0));
     }
-    let mut rows = Vec::new();
-    rows.try_reserve_exact(usize::try_from(stated).map_err(|_| RuntimeError::InvalidArgument)?)
-        .map_err(|_| RuntimeError::Internal)?;
+    let mut rows = reserve_input_rows(stated, arity, context)?;
+    let row_base = (arity as u64) * INPUT_VALUE_BASE;
     let mut bytes = 0u64;
     for start in (0..cells.len()).step_by(arity) {
         let mut row = Vec::with_capacity(arity);
@@ -58,7 +77,7 @@ pub(crate) fn parse_input_rows(
             row_bytes = row_bytes.saturating_add(value_bytes(&value));
             row.push(value);
         }
-        context.input(row_bytes)?;
+        context.input(row_bytes - row_base)?;
         bytes = bytes.saturating_add(row_bytes);
         rows.push(row);
     }

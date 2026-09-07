@@ -35,7 +35,8 @@ fn join_colt(view: &std::sync::Arc<crate::image::RelationImage>) -> Colt {
 fn iter_once(colt: &mut Colt, cursor: Cursor) -> Result<(usize, BatchToken), WorkError> {
     let probe = colt.get_prehashed(cursor, 0, &[0], hash_key(&[0]));
     assert_eq!(
-        colt.contains_prehashed_width::<0>(cursor, 0, &[0], hash_key(&[0])),
+        colt.prepare_probe(cursor, 0)
+            .map(|probe| probe.contains_prehashed_width::<0>(&[0], hash_key(&[0]))),
         probe.map(|child| child.is_some()),
         "presence retains force, growth and chunk refusals"
     );
@@ -221,15 +222,17 @@ fn forced_probes_preserve_pools_and_work_until_reset_requires_construction() {
     let charged = colt.charged_bytes();
     let units = work.used(Resource::WorkUnits);
     let bytes = work.used(Resource::WorkingBytes);
-    for _ in 0..32 {
-        assert_eq!(
-            colt.get_prehashed(root, 0, &[7], hash_key(&[7])).unwrap(),
-            hit
-        );
-        assert_eq!(
-            colt.get_prehashed(root, 0, &[99], hash_key(&[99])).unwrap(),
-            None
-        );
+    {
+        let probe = colt.prepare_probe(root, 0).unwrap();
+        let hashes = [hash_key(&[7]), hash_key(&[99])];
+        for _ in 0..32 {
+            probe.prefetch_batch(&hashes, true);
+            probe.prefetch_batch(&hashes, false);
+            assert_eq!(probe.get_prehashed_width::<1>(&[7], hashes[0]), hit);
+            assert_eq!(probe.get_prehashed_width::<1>(&[99], hashes[1]), None);
+            assert!(probe.contains_prehashed_width::<1>(&[7], hashes[0]));
+            assert!(!probe.contains_prehashed_width::<1>(&[99], hashes[1]));
+        }
     }
     assert_eq!(lengths(&colt), before);
     assert_eq!(colt.retained_bytes(), retained);
@@ -245,7 +248,10 @@ fn forced_probes_preserve_pools_and_work_until_reset_requires_construction() {
     let stopped = working(u64::MAX);
     stopped.cancel();
     colt.bind(Some(&stopped));
-    assert_eq!(colt.force_root(), Err(WorkError::Cancelled));
+    assert_eq!(
+        colt.prepare_probe(root, 0).map(|_| ()),
+        Err(WorkError::Cancelled)
+    );
     assert!(colt.forced_capacity(root).is_none());
     let resumed = working(u64::MAX);
     colt.bind(Some(&resumed));

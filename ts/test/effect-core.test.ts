@@ -57,6 +57,7 @@ test("native row codecs return owned canonical values and typed capacity refusal
 		assert.deepEqual(decoded, [first, second], "decoded values do not alias the input buffer")
 		const fresh = await rt.runPromise(encodeRows(shape, [first], work))
 		for (const operation of [
+			encodeRows(shape, [first], { ...work, inputBytes: 0n }).pipe(Effect.asVoid),
 			encodeRows(shape, [first], { ...work, resultBytes: 0n }).pipe(Effect.asVoid),
 			decodeRows(shape, fresh, { ...work, resultBytes: 0n }).pipe(Effect.asVoid)
 		]) {
