@@ -60,6 +60,8 @@ fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves
     let mut colts = colts_for(&plan, &images);
     let mut executor = Executor::new(&plan);
     executor.set_physical_distinct(Some(witness));
+    let sentinel = Cursor::Row(u32::MAX);
+    executor.scratch.last_mut().unwrap().children.fill(sentinel);
     let mut bindings = Bindings::new(plan.slot_count());
     for _ in 0..2 {
         let mut sink = RawRows::default();
@@ -76,6 +78,16 @@ fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves
         assert_eq!(
             sink.0,
             vec![vec![7, 11], vec![7, 12], vec![8, 11], vec![8, 12]]
+        );
+        assert!(
+            executor
+                .scratch
+                .last()
+                .unwrap()
+                .children
+                .iter()
+                .all(|&child| child == sentinel),
+            "a distinct leaf without membership probes never writes child cursors"
         );
     }
 }

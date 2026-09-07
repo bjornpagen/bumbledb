@@ -147,7 +147,7 @@ pub(super) fn overlap_gather(
     arity: usize,
     hits: &[u32],
     keys_out: &mut [u64],
-    children_out: &mut [Cursor],
+    children_out: Option<&mut [Cursor]>,
 ) {
     for word in 0..arity {
         match colt.suffix_column(level, word) {
@@ -163,7 +163,9 @@ pub(super) fn overlap_gather(
             }
         }
     }
-    for (k, &position) in hits.iter().enumerate() {
-        children_out[k] = Cursor::Row(position);
+    if let Some(children_out) = children_out {
+        for (k, &position) in hits.iter().enumerate() {
+            children_out[k] = Cursor::Row(position);
+        }
     }
 }

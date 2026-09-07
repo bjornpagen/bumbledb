@@ -35,15 +35,21 @@ fn join_colt(view: &std::sync::Arc<crate::image::RelationImage>) -> Colt {
 
 fn iter_once(colt: &mut Colt, cursor: Cursor) -> Result<(usize, BatchToken), WorkError> {
     let mut keys = vec![0u64; 8];
+    let keys_only = colt.iter_keys_batch(cursor, 0, BatchToken::default(), &mut keys, 8);
     let mut children = vec![Cursor::Row(0); 8];
-    colt.iter_batch(
+    let with_children = colt.iter_batch(
         cursor,
         0,
         BatchToken::default(),
         &mut keys,
         &mut children,
         8,
-    )
+    );
+    assert_eq!(
+        keys_only, with_children,
+        "child output never changes admission"
+    );
+    with_children
 }
 
 /// First map admission refuses before `maps[0]` can be indexed.

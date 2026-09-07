@@ -47,34 +47,62 @@ fn wide_iteration_image(width: usize) -> Arc<crate::image::RelationImage> {
         .1
 }
 
-fn drain_guarded_map(colt: &mut Colt, width: usize, size: usize) -> Vec<(Vec<u64>, Cursor)> {
-    let root = Colt::root();
+fn drain_guarded_batches(
+    colt: &mut Colt,
+    cursor: Cursor,
+    level: usize,
+    size: usize,
+) -> Vec<(Vec<u64>, Cursor)> {
+    let width = colt.arity(level);
     let sentinel = Cursor::Row(u32::MAX);
     let mut keys = vec![u64::MAX; width * size + 5];
+    let mut keys_only = keys.clone();
     let mut children = vec![sentinel; size + 3];
+    let empty_keys = colt
+        .iter_keys_batch(cursor, level, BatchToken::default(), &mut keys_only, 0)
+        .expect("zero-sized key batch");
     let (empty, mut token) = colt
-        .iter_batch(root, 0, BatchToken::default(), &mut keys, &mut children, 0)
+        .iter_batch(
+            cursor,
+            level,
+            BatchToken::default(),
+            &mut keys,
+            &mut children,
+            0,
+        )
         .expect("zero-sized batch");
+    assert_eq!(empty_keys, (empty, token));
     assert_eq!(empty, 0);
+    assert_eq!(keys_only, keys);
     assert!(keys.iter().all(|&word| word == u64::MAX));
     assert!(children.iter().all(|&child| child == sentinel));
     let mut observed = Vec::new();
     loop {
         keys.fill(u64::MAX);
+        keys_only.fill(u64::MAX);
         children.fill(sentinel);
+        let key_batch = colt
+            .iter_keys_batch(cursor, level, token, &mut keys_only, size)
+            .expect("key batch");
         let (n, next) = colt
-            .iter_batch(root, 0, token, &mut keys, &mut children, size)
-            .expect("forced-map batch");
+            .iter_batch(cursor, level, token, &mut keys, &mut children, size)
+            .expect("key and child batch");
+        assert_eq!(key_batch, (n, next), "identical count and resume token");
+        assert_eq!(keys_only, keys, "identical keys and untouched guard words");
         assert!(n <= size);
         assert!(keys[n * width..].iter().all(|&word| word == u64::MAX));
         assert!(children[n..].iter().all(|&child| child == sentinel));
         for (index, &child) in children[..n].iter().enumerate() {
             let key = keys[index * width..(index + 1) * width].to_vec();
-            assert_eq!(colt.get(root, 0, &key), Some(child));
             observed.push((key, child));
         }
         if n == 0 {
-            assert_eq!(next, token, "exhaustion remains stable");
+            assert_eq!(
+                colt.iter_keys_batch(cursor, level, next, &mut keys_only, size)
+                    .unwrap(),
+                (0, next),
+                "exhaustion remains stable"
+            );
             break;
         }
         token = next;
@@ -100,6 +128,7 @@ fn fixed_and_wide_map_iteration_preserves_keys_children_and_batch_boundaries() {
         assert_eq!(baseline.len(), model.len());
         let mut actual = HashMap::new();
         for (key, child) in &baseline {
+            assert_eq!(colt.get(Colt::root(), 0, key), Some(*child));
             let mut values: Vec<_> = drain(&mut colt, *child, 1)
                 .into_iter()
                 .map(|(row, _)| row[0])
@@ -135,12 +164,12 @@ fn fixed_and_wide_map_iteration_preserves_keys_children_and_batch_boundaries() {
         );
         for size in [1, 7, 8, 9, 127, 128, 129, 1024] {
             assert_eq!(
-                drain_guarded_map(&mut colt, width, size),
+                drain_guarded_batches(&mut colt, Colt::root(), 0, size),
                 baseline,
                 "width {width}, batch {size}"
             );
             assert_eq!(
-                drain_guarded_map(&mut cloned, width, size),
+                drain_guarded_batches(&mut cloned, Colt::root(), 0, size),
                 baseline,
                 "cloned width {width}, batch {size}"
             );
@@ -277,47 +306,19 @@ fn bucket_probes_match_the_model_under_adversarial_keys() {
 
 #[test]
 fn hoisted_gathers_match_the_per_position_reference() {
-    let schema = SchemaDescriptor {
-        relations: vec![RelationDescriptor {
-            extension: None,
-            name: "R".into(),
-            fields: vec![
-                FieldDescriptor {
-                    name: "k".into(),
-                    value_type: ValueType::U64,
-                },
-                FieldDescriptor {
-                    name: "v".into(),
-                    value_type: ValueType::U64,
-                },
-                FieldDescriptor {
-                    name: "b".into(),
-                    value_type: ValueType::Bool,
-                },
-            ],
-        }],
-        statements: vec![],
-    }
-    .validate()
-    .expect("valid fixture");
-
     let mut rows: Vec<(u64, u64, bool)> = (0..200u64)
         .map(|i| (if i % 3 == 0 { 0 } else { i % 7 }, i * 31 % 191, i % 2 == 0))
         .collect();
     rows.sort_unstable();
     rows.dedup();
-    let facts: Vec<Vec<crate::ir::Value>> = rows
-        .iter()
-        .map(|(k, v, b)| {
-            vec![
-                crate::ir::Value::U64(*k),
-                crate::ir::Value::U64(*v),
-                crate::ir::Value::Bool(*b),
-            ]
-        })
-        .collect();
-    let source = crate::image::testsupport::TestSource::new(&schema, &[(R, facts)]);
-    let (_cache, image) = source.image_with_cache(R);
+    let words: Vec<[u64; 3]> = rows.iter().map(|&(k, v, b)| [k, v, u64::from(b)]).collect();
+    let mut transient = crate::image::TransientImage::default();
+    let image = transient.refill(
+        &[ValueType::U64, ValueType::U64, ValueType::Bool],
+        words.len(),
+        &crate::image::test_generation(),
+        words.iter().map(|row| &row[..]),
+    );
 
     let k_col: Vec<u64> = image.column_words(0).to_vec();
     let v_col: Vec<u64> = image.column_words(1).to_vec();
@@ -329,30 +330,9 @@ fn hoisted_gathers_match_the_per_position_reference() {
     let n_rows = k_col.len();
     assert_eq!(n_rows, rows.len());
 
-    let drain_at = |colt: &mut Colt, cursor: Cursor, level: usize, size: usize| {
-        let arity = colt.arity(level);
-        let mut keys = vec![0u64; size * arity.max(1)];
-        let mut children = vec![Cursor::Row(0); size];
-        let mut token = BatchToken::default();
-        let mut out = Vec::new();
-        loop {
-            let (n, next) = colt
-                .iter_batch(cursor, level, token, &mut keys, &mut children, size)
-                .expect("iter");
-            if n == 0 {
-                break;
-            }
-            for i in 0..n {
-                out.push((keys[i * arity..(i + 1) * arity].to_vec(), children[i]));
-            }
-            token = next;
-        }
-        out
-    };
-
     for &size in &[1usize, 3, 8, 64, 128] {
         let mut colt = Colt::new(all(&image), &[], vec![vec![0, 2]]);
-        let got = drain_at(&mut colt, Colt::root(), 0, size);
+        let got = drain_guarded_batches(&mut colt, Colt::root(), 0, size);
         let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
             .map(|pos| {
                 (
@@ -363,12 +343,51 @@ fn hoisted_gathers_match_the_per_position_reference() {
             .collect();
         assert_eq!(got, expected, "identity root, batch {size}");
 
+        let positions: Vec<_> = (0..n_rows)
+            .step_by(3)
+            .map(|pos| u32::try_from(pos).unwrap())
+            .collect();
+        colt.reset(View::Bound(BoundView::Survivors {
+            image: Arc::clone(&image),
+            positions,
+        }));
+        assert_eq!(
+            drain_guarded_batches(&mut colt, Colt::root(), 0, size),
+            expected.iter().step_by(3).cloned().collect::<Vec<_>>(),
+            "survivor root, batch {size}"
+        );
+        assert_eq!(
+            drain_guarded_batches(&mut colt, Cursor::Row(0), 0, size),
+            expected[..1],
+            "pinned row, batch {size}"
+        );
+        colt.reset(View::Bound(BoundView::Survivors {
+            image: Arc::clone(&image),
+            positions: Vec::new(),
+        }));
+        assert!(drain_guarded_batches(&mut colt, Colt::root(), 0, size).is_empty());
+
+        let mut gate = Colt::new(all(&image), &[], vec![vec![]]);
+        let raw = drain_guarded_batches(&mut gate, Colt::root(), 0, size);
+        assert_eq!(
+            raw.len(),
+            n_rows,
+            "zero-width positions retain multiplicity"
+        );
+        assert!(raw.iter().all(|(key, _)| key.is_empty()));
+        gate.force_distinct_iteration(Colt::root(), 0).unwrap();
+        assert_eq!(
+            drain_guarded_batches(&mut gate, Colt::root(), 0, size).len(),
+            1,
+            "only an explicit distinct force removes projected duplicates"
+        );
+
         let mut colt = Colt::new(all(&image), &[], vec![vec![0], vec![1, 2]]);
         for key in 0..7u64 {
             let Some(child) = colt.get(Colt::root(), 0, &[key]) else {
                 continue;
             };
-            let got = drain_at(&mut colt, child, 1, size);
+            let got = drain_guarded_batches(&mut colt, child, 1, size);
             let expected: Vec<(Vec<u64>, Cursor)> = (0..n_rows)
                 .filter(|&pos| k_col[pos] == key)
                 .map(|pos| {

@@ -32,12 +32,33 @@ impl Colt {
         children_out: &mut [Cursor],
         max: usize,
     ) -> Result<(usize, BatchToken), crate::work::WorkError> {
-        self.iter_batch_at(
+        self.iter_batch_at::<true>(
             cursor,
             self.join_index(level),
             token,
             keys_out,
             children_out,
+            max,
+        )
+    }
+
+    /// The same key stream and resume tokens as `iter_batch`, without loading
+    /// or materializing child cursors. Leaf sinks consume keys alone unless
+    /// an interval-membership probe needs the underlying positions.
+    pub(crate) fn iter_keys_batch(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        token: BatchToken,
+        keys_out: &mut [u64],
+        max: usize,
+    ) -> Result<(usize, BatchToken), crate::work::WorkError> {
+        self.iter_batch_at::<false>(
+            cursor,
+            self.join_index(level),
+            token,
+            keys_out,
+            &mut [],
             max,
         )
     }
@@ -55,7 +76,7 @@ impl Colt {
         token.0 & !TOKEN_EPOCH_MASK
     }
 
-    fn iter_batch_at(
+    fn iter_batch_at<const CHILDREN: bool>(
         &mut self,
         cursor: Cursor,
         level: usize,
@@ -68,7 +89,8 @@ impl Colt {
         // Caller-buffer contract — a plan-shape invariant, never data:
 
         let key_words = max.checked_mul(arity).expect("iteration key buffer extent");
-        assert!(keys_out.len() >= key_words && children_out.len() >= max);
+        assert!(keys_out.len() >= key_words);
+        assert!(!CHILDREN || children_out.len() >= max);
         match cursor {
             Cursor::Row(position) => {
                 let payload = self.token_payload(token);
@@ -79,28 +101,33 @@ impl Colt {
                 for (i, col) in self.schema_columns[level].iter().enumerate() {
                     keys_out[i] = self.word_at(*col, position);
                 }
-                children_out[0] = Cursor::Row(position);
+                if CHILDREN {
+                    children_out[0] = Cursor::Row(position);
+                }
                 Ok((1, BatchToken(1 | self.epoch_bits())))
             }
             Cursor::Node(node) => {
                 let is_suffix = level + 1 == self.schema_columns.len();
-                match self.nodes[node.0 as usize] {
+                let map = match self.nodes[node.0 as usize] {
                     NodeState::Unforced(_) if is_suffix => {
-                        Ok(self.iter_positions(node, level, token, keys_out, children_out, max))
+                        return Ok(self.iter_positions::<CHILDREN>(
+                            node,
+                            level,
+                            token,
+                            keys_out,
+                            children_out,
+                            max,
+                        ));
                     }
-                    NodeState::Unforced(_) => {
-                        let map = self.force(node, level)?;
-                        Ok(self.iter_map(map, level, token, keys_out, children_out, max))
-                    }
-                    NodeState::Forced { map } => {
-                        Ok(self.iter_map(map, level, token, keys_out, children_out, max))
-                    }
-                }
+                    NodeState::Unforced(_) => self.force(node, level)?,
+                    NodeState::Forced { map } => map,
+                };
+                Ok(self.iter_map::<CHILDREN>(map, level, token, keys_out, children_out, max))
             }
         }
     }
 
-    fn iter_positions(
+    fn iter_positions<const CHILDREN: bool>(
         &mut self,
         node: NodeRef,
         level: usize,
@@ -124,10 +151,18 @@ impl Colt {
                 match &self.view {
                     View::Bound(BoundView::Survivors { positions, .. }) => {
                         let segment = &positions[index..index + take];
-                        self.gather_segment(level, segment, keys_out, children_out, 0);
+                        self.gather_segment::<CHILDREN>(level, segment, keys_out, children_out, 0);
                     }
 
-                    _ => self.gather_identity(level, index, take, keys_out, children_out),
+                    _ => {
+                        self.gather_identity::<CHILDREN>(
+                            level,
+                            index,
+                            take,
+                            keys_out,
+                            children_out,
+                        );
+                    }
                 }
                 (take, BatchToken((index + take) as u64 | epoch_bits))
             }
@@ -162,7 +197,13 @@ impl Colt {
                     }
                     let take = (len - offset).min(max - yielded);
                     let segment = &self.chunk_positions[c.start as usize + offset..][..take];
-                    self.gather_segment(level, segment, keys_out, children_out, yielded);
+                    self.gather_segment::<CHILDREN>(
+                        level,
+                        segment,
+                        keys_out,
+                        children_out,
+                        yielded,
+                    );
                     yielded += take;
                     offset += take;
                 }
@@ -174,7 +215,7 @@ impl Colt {
         }
     }
 
-    fn iter_map(
+    fn iter_map<const CHILDREN: bool>(
         &self,
         map: u32,
         level: usize,
@@ -199,15 +240,14 @@ impl Colt {
 
         if take > 0 {
             let keys = &mut keys_out[..take * arity];
-            let children = &mut children_out[..take];
             // Match construction/probing's fixed-width kernels. Dispatch once
             // per batch; bucket pitch and the per-key copy are then constants.
             match arity {
-                1 => self.copy_map_batch::<1>(m, start, keys, children),
-                2 => self.copy_map_batch::<2>(m, start, keys, children),
-                3 => self.copy_map_batch::<3>(m, start, keys, children),
-                4 => self.copy_map_batch::<4>(m, start, keys, children),
-                _ => self.copy_map_batch::<0>(m, start, keys, children),
+                1 => self.copy_map_batch::<1, CHILDREN>(m, start, take, keys, children_out),
+                2 => self.copy_map_batch::<2, CHILDREN>(m, start, take, keys, children_out),
+                3 => self.copy_map_batch::<3, CHILDREN>(m, start, take, keys, children_out),
+                4 => self.copy_map_batch::<4, CHILDREN>(m, start, take, keys, children_out),
+                _ => self.copy_map_batch::<0, CHILDREN>(m, start, take, keys, children_out),
             }
         }
         (
@@ -218,11 +258,12 @@ impl Colt {
 
     /// One checked view of this map's pools, shared by fixed and dynamic
     /// widths. `A == 0` retains general keys, including actual zero-width
-    /// keys; the child stream, not the key slice, determines row count.
-    fn copy_map_batch<const A: usize>(
+    /// keys. Row count stays explicit even without keys or child output.
+    fn copy_map_batch<const A: usize, const CHILDREN: bool>(
         &self,
         map: &Map,
         start: usize,
+        take: usize,
         keys_out: &mut [u64],
         children_out: &mut [Cursor],
     ) {
@@ -231,9 +272,9 @@ impl Colt {
         let stride = 8 * (arity + 1);
         let len = usize::try_from(map.len).expect("64-bit usize");
         let dense = &self.dense[map.dense_start..][..len];
-        let slots = &dense[start..][..children_out.len()];
+        let slots = &dense[start..][..take];
         let buckets = &self.buckets[map.bucket_start..][..map.nbuckets * stride];
-        for (k, (&slot, child)) in slots.iter().zip(children_out).enumerate() {
+        for (k, &slot) in slots.iter().enumerate() {
             let dense_idx = start + k;
             if dense_idx + 8 < len {
                 let ahead = usize::try_from(dense[dense_idx + 8]).expect("64-bit usize");
@@ -245,7 +286,9 @@ impl Colt {
             for word in 0..arity {
                 keys_out[k * arity + word] = buckets[base + word * 8 + lane];
             }
-            *child = unpack_child(buckets[base + 8 * arity + lane]);
+            if CHILDREN {
+                children_out[k] = unpack_child(buckets[base + 8 * arity + lane]);
+            }
         }
     }
 }

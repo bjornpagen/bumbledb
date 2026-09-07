@@ -159,7 +159,7 @@ impl Colt {
         }
     }
 
-    pub(super) fn gather_segment(
+    pub(super) fn gather_segment<const CHILDREN: bool>(
         &self,
         level: usize,
         segment: &[u32],
@@ -168,8 +168,10 @@ impl Colt {
         out_base: usize,
     ) {
         self.gather_keys(level, segment, keys_out, out_base);
-        for (k, &position) in segment.iter().enumerate() {
-            children_out[out_base + k] = Cursor::Row(position);
+        if CHILDREN {
+            for (k, &position) in segment.iter().enumerate() {
+                children_out[out_base + k] = Cursor::Row(position);
+            }
         }
     }
 
@@ -211,7 +213,7 @@ impl Colt {
         }
     }
 
-    pub(super) fn gather_identity(
+    pub(super) fn gather_identity<const CHILDREN: bool>(
         &self,
         level: usize,
         start: usize,
@@ -240,8 +242,10 @@ impl Colt {
                 }
             }
         }
-        for (k, position) in (start..start + take).enumerate() {
-            children_out[k] = Cursor::Row(u32::try_from(position).expect("positions fit u32"));
+        if CHILDREN {
+            for (k, position) in (start..start + take).enumerate() {
+                children_out[k] = Cursor::Row(u32::try_from(position).expect("positions fit u32"));
+            }
         }
     }
 }

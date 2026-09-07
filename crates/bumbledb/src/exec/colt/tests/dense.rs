@@ -1,5 +1,25 @@
 use super::*;
 
+fn assert_stale_token(colt: &mut Colt, cursor: Cursor, token: BatchToken, reason: &str) {
+    for keys_only in [false, true] {
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut keys = [0; 8];
+            if keys_only {
+                colt.iter_keys_batch(cursor, 1, token, &mut keys, 8)
+            } else {
+                colt.iter_batch(cursor, 1, token, &mut keys, &mut [Cursor::Row(0); 8], 8)
+            }
+        }))
+        .expect_err("the stale token must be refused");
+        let message = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .expect("string panic payload");
+        assert!(message.contains(reason), "{message}");
+    }
+}
+
 #[test]
 #[should_panic(expected = "iteration key buffer extent")]
 fn iteration_refuses_wrapping_caller_buffer_extents() {
@@ -148,18 +168,7 @@ fn a_token_that_outlives_a_force_is_refused() {
     assert_eq!(n, 8, "two positions batches drained");
 
     colt.ensure_forced(child, 1).expect("force");
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut keys = vec![0u64; 8];
-        let mut children = vec![Cursor::Row(0); 8];
-        colt.iter_batch(child, 1, stale, &mut keys, &mut children, 8)
-    }))
-    .expect_err("the stale token must be refused");
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .expect("string panic payload");
-    assert!(message.contains("outlived a force"), "{message}");
+    assert_stale_token(&mut colt, child, stale, "outlived a force");
 
     let entries = drain(&mut colt, child, 1);
     assert_eq!(entries.len(), 200);
@@ -188,18 +197,7 @@ fn a_token_that_outlives_a_reset_is_refused() {
 
     let _ = colt.reset(all(&view));
     let child = colt.get(Colt::root(), 0, &[7]).expect("key 7 exists again");
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut keys = vec![0u64; 8];
-        let mut children = vec![Cursor::Row(0); 8];
-        colt.iter_batch(child, 1, stale, &mut keys, &mut children, 8)
-    }))
-    .expect_err("the stale token must be refused");
-    let message = panic
-        .downcast_ref::<String>()
-        .map(String::as_str)
-        .or_else(|| panic.downcast_ref::<&str>().copied())
-        .expect("string panic payload");
-    assert!(message.contains("outlived a reset"), "{message}");
+    assert_stale_token(&mut colt, child, stale, "outlived a reset");
 
     let entries = drain(&mut colt, child, 1);
     assert_eq!(entries.len(), 200);

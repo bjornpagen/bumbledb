@@ -55,6 +55,12 @@ impl Executor {
         );
 
         let arity = self.slot_map[node_idx][cover_sub].len();
+        // Leaves do not recurse. Only a membership probe on this cover can
+        // consume its children; all other work reads the batch's key words.
+        let needs_children = self.precompute[node_idx]
+            .point_probes
+            .iter()
+            .any(|spec| spec.occ == cover_occ);
 
         let gate_cover = arity == 0 && !self.point_probed[cover_occ];
         scratch.prepare_sources(
@@ -87,19 +93,31 @@ impl Executor {
                     arity,
                     &self.overlap_hits[overlap_drained..overlap_drained + take],
                     &mut scratch.entry_keys,
-                    &mut scratch.children,
+                    needs_children.then_some(scratch.children.as_mut_slice()),
                 );
                 overlap_drained += take;
                 (take, token)
             } else {
-                let Some(batch) = self.colt_ok(colts[cover_occ].iter_batch(
-                    cover_cursor,
-                    cover_level,
-                    token,
-                    &mut scratch.entry_keys,
-                    &mut scratch.children,
-                    if gate_cover { 1 } else { self.batch },
-                )) else {
+                let max = if gate_cover { 1 } else { self.batch };
+                let batch = if needs_children {
+                    colts[cover_occ].iter_batch(
+                        cover_cursor,
+                        cover_level,
+                        token,
+                        &mut scratch.entry_keys,
+                        &mut scratch.children,
+                        max,
+                    )
+                } else {
+                    colts[cover_occ].iter_keys_batch(
+                        cover_cursor,
+                        cover_level,
+                        token,
+                        &mut scratch.entry_keys,
+                        max,
+                    )
+                };
+                let Some(batch) = self.colt_ok(batch) else {
                     break 'outer;
                 };
                 batch
@@ -219,7 +237,7 @@ impl Executor {
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
 
-            // there. Extracting the shared pass was refused: the bodies
+            // Probe siblings only for bindings that survived the residuals.
 
             let value_of = |sources: &[Source],
                             entry_keys: &[u64],
