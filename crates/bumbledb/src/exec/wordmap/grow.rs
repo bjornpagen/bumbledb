@@ -49,6 +49,10 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "old dense indices identify initialized Copy values"
+    )]
     fn rehash_core<const K: usize>(&mut self, old_keys: &[u64], old_values: &[MaybeUninit<V>]) {
         for i in 0..self.dense.len() {
             let old_idx = self.dense[i] as usize;
@@ -65,6 +69,10 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "old dense indices identify initialized Copy values"
+    )]
     fn rehash_dyn(&mut self, old_keys: &[u64], old_values: &[MaybeUninit<V>]) {
         for i in 0..self.dense.len() {
             let old_idx = self.dense[i] as usize;

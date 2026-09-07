@@ -80,6 +80,10 @@ impl<V: Copy> WordMap<V> {
     }
 
     #[inline(always)]
+    #[expect(
+        unsafe_code,
+        reason = "only matched or fully published live values are returned"
+    )]
     fn entry_hashed_core<const K: usize>(
         &mut self,
         key: &[u64],
@@ -108,6 +112,10 @@ impl<V: Copy> WordMap<V> {
         (unsafe { self.values[idx].assume_init_mut() }, !found)
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "only matched or fully published live values are returned"
+    )]
     pub(super) fn entry_dyn(
         &mut self,
         key: &[u64],

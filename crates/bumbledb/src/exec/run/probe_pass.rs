@@ -654,8 +654,7 @@ fn gather_hash_core<const K: usize, C: Counters>(
     sub_idx: usize,
     counters: &mut C,
 ) {
-    // The width is a dispatch invariant; the array view kills the
-
+    // Validate the fixed-width route once, before gathering any batch rows.
     let sources: &[Source; K] = sources.try_into().unwrap_or_else(|_| {
         panic!(
             "hash dispatch width K={K} does not match sources.len()={}",

@@ -21,6 +21,10 @@ impl<V: Copy> WordMap<V> {
         self.iter_since(0)
     }
 
+    #[expect(
+        unsafe_code,
+        reason = "the dense list contains only initialized live values"
+    )]
     pub fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> + Clone {
         self.dense[since.min(self.dense.len())..]
             .iter()
@@ -29,7 +33,8 @@ impl<V: Copy> WordMap<V> {
                 debug_assert_ne!(self.ctrl[idx], 0, "dense entries are occupied");
                 (
                     &self.keys[idx * self.arity..(idx + 1) * self.arity],
-                    // SAFETY: dense lists only occupied slots; occupied slots
+                    // SAFETY: dense lists only initialized live slots, and
+                    // clear empties that list before advancing generation.
                     unsafe { self.values[idx].assume_init_ref() },
                 )
             })

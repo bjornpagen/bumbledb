@@ -18,6 +18,8 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
+    /// # Panics
+    /// If the hinted backing's key-word count cannot be represented.
     #[must_use]
     pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);
@@ -28,8 +30,11 @@ impl<V: Copy> WordMap<V> {
 
     fn allocate(&mut self, capacity: usize) {
         debug_assert!(capacity.is_power_of_two() && capacity >= WINDOW);
+        let words = capacity
+            .checked_mul(self.arity)
+            .expect("WordMap key capacity overflow");
         self.ctrl = vec![0; capacity + WINDOW - 1];
-        self.keys = vec![0; capacity * self.arity];
+        self.keys = vec![0; words];
         self.values = std::iter::repeat_with(MaybeUninit::uninit)
             .take(capacity)
             .collect();

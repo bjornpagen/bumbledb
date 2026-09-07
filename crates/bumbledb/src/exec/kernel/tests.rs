@@ -60,7 +60,7 @@ fn u8_kernel_matches_the_scalar_reference() {
     }
 }
 
-/// (the 00-product unsafe policy): the membership filter compositions —
+/// The membership filter compositions —
 /// `PointIn` and `AnyPointIn` — are bit-identical to the scalar reference
 /// across the boundary shapes: empty, single, odd lengths, lane ±1.
 #[test]

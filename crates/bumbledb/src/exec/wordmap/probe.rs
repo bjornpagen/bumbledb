@@ -38,8 +38,8 @@ impl<V: Copy> WordMap<V> {
         let wanted = ctrl_tag(hash);
         let mut idx = usize::try_from(hash).expect("64-bit usize") & mask;
         loop {
-            // invariant the slice type cannot carry, because windows
-
+            // The mirrored tail keeps a whole SWAR window contiguous even
+            // when its slots wrap past the end of the logical table.
             let window = u64::from_le_bytes(
                 *self.ctrl[idx..]
                     .first_chunk::<WINDOW>()
@@ -56,8 +56,8 @@ impl<V: Copy> WordMap<V> {
                     return (false, slot);
                 }
 
-                // ahead of it — every slot before it was live-occupied or
-
+                // A new key with this tag would have reused this stale slot.
+                // No live match for the key can lie farther down the chain.
                 if self.stamps[slot] != self.generation {
                     return (false, slot);
                 }

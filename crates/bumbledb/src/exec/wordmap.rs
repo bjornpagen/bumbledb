@@ -1,16 +1,10 @@
-//! An open-addressed map over inline u64 word tuples: the sink
-//! machinery's seen-sets and group maps. A tag-byte-controlled
-//! single-probe-line map: a control byte per slot
-//! (0 = empty, else `0x80 | top-7-hash-bits`) means a probe step
-//! usually touches ONE ctrl line, key words load only on a tag match
-//! (~1/128 of collisions falsely), and values are uninitialized until
-#![allow(unsafe_code)] // 00-product unsafe policy: this module is allowlisted
+//! Open-addressed word tuples for seen sets and aggregate groups.
+//! Control bytes gate key reads; generation stamps distinguish live slots
+//! from retained stale tags. The dense list contains only initialized live
+//! values. `V: Copy` permits recycling and rehashing without drop state.
+//! Unsafe value access is confined to the entry, rehash and iteration sites
+//! that establish or consume those invariants.
 #![allow(clippy::inline_always)]
-//! `MaybeUninit` reads are gated by ctrl-byte occupancy, and the probe
-//! indices are masked to the power-of-two capacity — both invariants
-//! stated at the sites. `V: Copy` keeps the uninitialized-slot story
-//! `unsafe` per the 00-product policy (this module is allowlisted): the
-//! drop-free (both users store `Copy` values).
 use std::mem::MaybeUninit;
 
 /// Ctrl bytes scanned per probe step (one SWAR word).
@@ -29,7 +23,7 @@ pub struct WordMap<V> {
 
     stamps: Vec<u8>,
 
-    /// forces the physical reset before a stamp value is ever reused,
+    /// `clear` resets control bytes before a generation value is reused.
     generation: u8,
 
     stale: usize,

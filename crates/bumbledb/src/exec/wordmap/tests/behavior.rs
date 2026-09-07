@@ -16,6 +16,14 @@ fn growth_layout_refuses_unrepresentable_slots_and_words_before_allocation() {
     for (capacity, arity) in [(final_capacity, 1), (usize::MAX, 1), (8, usize::MAX)] {
         assert!(std::panic::catch_unwind(|| growth_layout(capacity, arity)).is_err());
     }
+    // In an optimized build this product used to wrap to zero and construct
+    // a map whose key backing could not hold even one declared-width key.
+    assert!(
+        std::panic::catch_unwind(|| {
+            WordMap::<()>::with_capacity_hint(usize::MAX / WINDOW + 1, 2)
+        })
+        .is_err()
+    );
 }
 
 #[test]
