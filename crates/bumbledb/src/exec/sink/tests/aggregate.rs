@@ -159,6 +159,183 @@ fn sorted_aggregate_rows(sink: &mut AggregateSink) -> Vec<Vec<u64>> {
 }
 
 #[test]
+fn shared_batch_reductions_follow_selection_and_layout_changes() {
+    use crate::exec::run::{Bindings, LeafBatch, Sink as _};
+    use bumbledb_theory::F64;
+
+    let fold = |op, slot| {
+        FindSpec::Agg(AggSpec::Fold {
+            op,
+            slot,
+            width: 1,
+            signed: slot == 1,
+        })
+    };
+    let finds = [
+        FindSpec::Var { slot: 0, width: 1 },
+        fold(FoldOp::Min, 1),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Sum,
+            slot: 2,
+        }),
+        fold(FoldOp::Max, 1),
+        fold(FoldOp::Sum, 1),
+        fold(FoldOp::Min, 1),
+        FindSpec::Agg(AggSpec::Float {
+            op: FoldOp::Mean,
+            slot: 2,
+        }),
+        fold(FoldOp::Max, 2),
+        FindSpec::Agg(AggSpec::Count),
+    ];
+    let f = |x| F64::from(x).to_order_key();
+    let keys = [
+        i64_to_word(-7),
+        f(1e16),
+        i64_to_word(999),
+        f(99.0),
+        i64_to_word(-3),
+        f(1.0),
+        i64_to_word(5),
+        f(-1e16),
+    ];
+    for ram_bytes in [usize::MAX, 0] {
+        let mut sink = AggregateSink::new(&finds, 3);
+        let mut reference = AggregateSink::new(&finds, 3);
+        sink.begin(Some(SinkBudget {
+            work: crate::api::db::test_operation().unwrap(),
+            ram_bytes,
+        }));
+        let mut feed = |key_slots: &[usize], keys: &[u64], survivors: &[u32], outer: [u64; 3]| {
+            feed_batch_and_reference(
+                &mut sink,
+                &mut reference,
+                key_slots,
+                keys,
+                survivors,
+                &outer,
+            );
+        };
+        // Endpoints alone falsely call this dense: row 1 must stay excluded.
+        feed(&[1, 2], &keys, &[0, 3, 2], [0, 0, 0]);
+        feed(&[1, 2], &keys, &[0, 3, 2], [0, 0, 0]); // dedup and cached layout
+        feed(&[1, 2], &keys, &[2, 1, 0], [1, 0, 0]); // descending selection
+        feed(
+            &[2, 1],
+            &[f(8.0), i64_to_word(-4), f(7.0), i64_to_word(9)],
+            &[0, 1],
+            [0, 0, 0],
+        );
+        feed(
+            &[0, 1, 2],
+            &[2, i64_to_word(11), f(2.0), 3, i64_to_word(-12), f(3.0)],
+            &[0, 1],
+            [0, 0, 0],
+        );
+        feed(&[], &[], &[0], [4, i64_to_word(-1), f(6.0)]);
+        assert_eq!(
+            sorted_aggregate_rows(&mut sink),
+            sorted_aggregate_rows(&mut reference)
+        );
+        sink.reset();
+        let reversed: Vec<_> = finds.iter().rev().cloned().collect();
+        sink.aim(&reversed, 3, &[]);
+        reference = AggregateSink::new(&reversed, 3);
+        let mut bindings = Bindings::new(3);
+        for (slot, word) in [0, i64_to_word(13), f(2.0)].into_iter().enumerate() {
+            bindings.set(slot, word);
+        }
+        reference.emit(&bindings);
+        sink.emit_batch(&LeafBatch {
+            keys: &[],
+            arity: 0,
+            survivors: &[0],
+            key_slots: &[],
+            bindings: &bindings,
+        });
+        assert_eq!(
+            sorted_aggregate_rows(&mut sink),
+            sorted_aggregate_rows(&mut reference)
+        );
+    }
+}
+
+fn feed_batch_and_reference(
+    sink: &mut AggregateSink,
+    reference: &mut AggregateSink,
+    key_slots: &[usize],
+    keys: &[u64],
+    survivors: &[u32],
+    outer: &[u64],
+) {
+    use crate::exec::run::{Bindings, LeafBatch, LeafSource, Sink as _};
+    let mut bindings = Bindings::new(outer.len());
+    for (slot, &word) in outer.iter().enumerate() {
+        bindings.set(slot, word);
+    }
+    let batch = LeafBatch {
+        keys,
+        arity: key_slots.len(),
+        key_slots,
+        survivors,
+        bindings: &bindings,
+    };
+    for &entry in survivors {
+        let mut row = Bindings::new(outer.len());
+        for slot in 0..outer.len() {
+            row.set(
+                slot,
+                match batch.source_of(slot) {
+                    LeafSource::Outer => bindings.get(slot),
+                    LeafSource::Key(word) => batch.key(entry, word),
+                },
+            );
+        }
+        reference.emit(&row);
+    }
+    sink.emit_batch(&batch);
+}
+
+#[test]
+fn union_reaim_invalidates_fold_sources_even_with_the_same_leaf_layout() {
+    use crate::exec::run::{Bindings, LeafBatch, Sink as _};
+    let finds = |min_slot, max_slot| {
+        [
+            FindSpec::Agg(AggSpec::Fold {
+                op: FoldOp::Min,
+                slot: min_slot,
+                width: 1,
+                signed: false,
+            }),
+            FindSpec::Agg(AggSpec::Fold {
+                op: FoldOp::Max,
+                slot: max_slot,
+                width: 1,
+                signed: false,
+            }),
+        ]
+    };
+    let bindings = Bindings::new(2);
+    let mut sink = AggregateSink::for_union(&finds(0, 1), 2, 0);
+    sink.emit_batch(&LeafBatch {
+        keys: &[100, 1],
+        arity: 2,
+        survivors: &[0],
+        key_slots: &[0, 1],
+        bindings: &bindings,
+    });
+    sink.aim(&finds(1, 0), 2, &[]);
+    sink.emit_batch(&LeafBatch {
+        keys: &[200, 2],
+        arity: 2,
+        survivors: &[0],
+        key_slots: &[0, 1],
+        bindings: &bindings,
+    });
+    assert_eq!(sink.into_answers().unwrap(), vec![vec![2, 200]]);
+}
+
+#[test]
 fn constant_group_batches_fold_once_per_run() {
     let schema = schema();
 
@@ -225,18 +402,18 @@ fn constant_group_batches_fold_once_per_run() {
         execute(&mut sink);
         if distinct && batch == 128 {
             // One sum/extrema kernel per column, one probe per group.
-            assert_eq!(sink.scan_inputs.len(), 4);
+            assert_eq!(sink.fold_inputs.len(), 4);
             assert_eq!(sink.group_probes, 8);
         }
         let rows = sorted_aggregate_rows(&mut sink);
 
-        let capacity = sink.scan_inputs.capacity();
+        let capacity = sink.fold_inputs.capacity();
         sink.reset();
         let mut reversed = finds(&plan);
         reversed.reverse();
         sink.aim(&reversed, plan.slot_count(), &[]);
         execute(&mut sink);
-        assert_eq!(sink.scan_inputs.capacity(), capacity);
+        assert_eq!(sink.fold_inputs.capacity(), capacity);
         let mut expected: Vec<Vec<_>> = rows
             .iter()
             .map(|row| row.iter().copied().rev().collect())

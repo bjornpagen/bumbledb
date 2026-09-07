@@ -1,12 +1,10 @@
 use crate::exec::colt::SuffixRun;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
-use crate::exec::sink::{
-    Acc, AggSpec, AggregateSink, DedupState, FoldOp, GroupState, SinkSpec, word_to_i64,
-};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, DedupState, GroupState, SinkSpec};
 use crate::image::ColumnView;
 
 use super::super::FoldSource;
-use super::scan::{ScanInput, ScanPartial};
+use super::reduce::{Partial, merge};
 
 impl Sink for AggregateSink {
     #[inline]
@@ -40,52 +38,18 @@ impl Sink for AggregateSink {
             return ScanOffer::Declined;
         }
 
-        if self
-            .group_spans
-            .iter()
-            .any(|(slot, width)| (*slot..slot + width).any(|word| scan.key_slots.contains(&word)))
-        {
+        self.refresh_shape_cache(scan.key_slots);
+        if !self.cached_constant_group {
             return ScanOffer::Declined;
         }
-        self.scan_sources.clear();
-        self.scan_inputs.clear();
-        for find in &self.finds {
-            let SinkSpec::Agg(spec) = find else {
-                continue;
-            };
-            let AggSpec::Fold { slot, .. } = spec else {
-                continue;
-            };
-            let source = match scan.key_slots.iter().position(|k| *k == *slot) {
-                Some(word) => {
-                    if !matches!(
-                        scan.colt.suffix_column(scan.level, word),
-                        ColumnView::Words(_)
-                    ) {
-                        return ScanOffer::Declined;
-                    }
-                    let partial = ScanPartial::seed(*spec);
-                    let input = self
-                        .scan_inputs
-                        .iter()
-                        .position(|input| input.word == word && input.partial.same_kernel(partial))
-                        .unwrap_or_else(|| {
-                            let index = self.scan_inputs.len();
-                            self.scan_inputs.push(ScanInput { word, partial });
-                            index
-                        });
-                    FoldSource::Column(input)
-                }
-                None => FoldSource::Outer,
-            };
-            self.scan_sources.push(source);
-        }
-
-        self.acc_scratch.clear();
-        for find in &self.finds {
-            if let SinkSpec::Agg(spec) = find {
-                self.acc_scratch.push(spec.seed_acc());
+        for input in &mut self.fold_inputs {
+            if !matches!(
+                scan.colt.suffix_column(scan.level, input.word),
+                ColumnView::Words(_)
+            ) {
+                return ScanOffer::Declined;
             }
+            input.partial.reset();
         }
         self.scan_count = 0;
         super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
@@ -103,11 +67,11 @@ impl Sink for AggregateSink {
             return;
         };
         self.scan_count = count;
-        for input in &mut self.scan_inputs {
+        for input in &mut self.fold_inputs {
             let ColumnView::Words(column) = scan.colt.suffix_column(scan.level, input.word) else {
                 unreachable!("begin_scan declined byte columns")
             };
-            input.partial.fold(column, run);
+            input.partial.fold(column, 1, 0, run);
         }
     }
 
@@ -123,14 +87,17 @@ impl Sink for AggregateSink {
             return 0;
         }
 
-        let mut acc_i = 0;
+        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
+            unreachable!("scan merge is the Folds arm");
+        };
+        let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
+        let mut accumulators = accs[range].iter_mut();
         let mut fold_i = 0;
         for find in &self.finds {
             let SinkSpec::Agg(spec) = find else {
                 continue;
             };
-            let acc = &mut self.acc_scratch[acc_i];
-            acc_i += 1;
+            let acc = accumulators.next().expect("one accumulator per aggregate");
             match spec {
                 AggSpec::Float { .. } => unreachable!("float scans use the batch path"),
                 AggSpec::Count => {
@@ -139,47 +106,20 @@ impl Sink for AggregateSink {
                     };
                     *n = n.saturating_add(count);
                 }
-                AggSpec::Fold { op, slot, .. } => {
-                    let source = self.scan_sources[fold_i];
+                AggSpec::Fold { slot, .. } => {
+                    let source = self.fold_sources[fold_i];
                     fold_i += 1;
-                    if let FoldSource::Column(input) = source {
-                        *acc = self.scan_inputs[input].partial.output(*spec, count);
-                        continue;
-                    }
-                    match (op, acc) {
-                        (FoldOp::Sum, Acc::SumSigned(total)) => {
-                            *total += i128::from(word_to_i64(scan.bindings.get(*slot)))
-                                * i128::from(count);
+                    let partial = match source {
+                        FoldSource::Column(input) => self.fold_inputs[input].partial,
+                        FoldSource::Outer => {
+                            Partial::seed(*spec).repeated(scan.bindings.get(*slot), count)
                         }
-                        (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                            *total += u128::from(scan.bindings.get(*slot)) * u128::from(count);
-                        }
-                        (FoldOp::Min, Acc::Min(best)) => {
-                            *best = (*best).min(scan.bindings.get(*slot));
-                        }
-                        (FoldOp::Max, Acc::Max(best)) => {
-                            *best = (*best).max(scan.bindings.get(*slot));
-                        }
-                        _ => unreachable!("accumulators are seeded per op"),
-                    }
+                    };
+                    merge(acc, partial.output(*spec, count));
                 }
             }
         }
 
-        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
-            unreachable!("scan merge is the Folds arm");
-        };
-        let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
-        for (acc, partial) in accs[range].iter_mut().zip(&self.acc_scratch) {
-            match (acc, partial) {
-                (Acc::SumSigned(t), Acc::SumSigned(p)) => *t += p,
-                (Acc::SumUnsigned(t), Acc::SumUnsigned(p)) => *t += p,
-                (Acc::Min(t), Acc::Min(p)) => *t = (*t).min(*p),
-                (Acc::Max(t), Acc::Max(p)) => *t = (*t).max(*p),
-                (Acc::Count(t), Acc::Count(p)) => *t = t.saturating_add(*p),
-                _ => unreachable!("partials are seeded from the same finds"),
-            }
-        }
         count
     }
 
@@ -188,7 +128,7 @@ impl Sink for AggregateSink {
             return Flow::from_sink_progress(AggregateSink::progress(self));
         }
 
-        self.refresh_shape_cache(batch);
+        self.refresh_shape_cache(batch.key_slots);
 
         if matches!(self.group_state, GroupState::Pack { .. }) {
             self.fold_batch_rows(batch);

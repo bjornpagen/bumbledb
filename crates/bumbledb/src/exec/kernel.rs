@@ -1,11 +1,7 @@
-//! The explicit-SIMD and unrolled-fold kernels:
-//! fixed-width predicate scans,
-//! survivor compaction, the configuration kernel (Allen mask
-//! [`allen_filter_batch`]), and the fold/accumulate kernels behind the
-//! aggregate sink's batch path, all behind scalar-identical signatures.
-//! **The portable/intrinsic split is measured, not stylistic**
-//! intrinsic dual and most of the layer's `unsafe`, and are
-//! unsafe module): its 64-byte `tbl4` signature table has no `std::simd`
+//! SIMD and unrolled kernels for predicate scans, survivor compaction,
+//! Allen interval masks and aggregate reductions, checked against scalar
+//! references. Predicate and fold kernels use portable SIMD; aarch64 Allen
+//! classification uses NEON's 64-byte table lookup (`tbl4`).
 mod allen;
 mod compact;
 mod filter;
@@ -26,7 +22,7 @@ pub mod reference;
 #[expect(
     unsafe_code,
     reason = "the localized unsafe operation has a documented safety invariant"
-)] // the 40-execution doc: the one sanctioned unsafe module
+)]
 mod neon;
 
 pub use allen::{
@@ -37,12 +33,9 @@ pub use compact::compact_u32_by_mask;
 pub use filter::{
     filter_any_point_in_u64, filter_eq_u8, filter_eq_u64, filter_point_in_u64, filter_range_u64,
 };
-pub use fold::{fold_min_max_u64, fold_sum_biased_i64, fold_sum_u64};
-pub use gather::{fold_min_max_u64_idx, fold_sum_biased_i64_idx, fold_sum_u64_idx};
+pub use fold::{fold_min_max_u64, fold_sum_u64};
+pub use gather::{fold_min_max_u64_idx, fold_sum_u64_idx};
 pub use prefetch::prefetch_read;
-
-#[cfg(test)]
-use gather::biased_to_i64;
 
 #[cfg(test)]
 mod tests;

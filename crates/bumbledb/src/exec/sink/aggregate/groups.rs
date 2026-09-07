@@ -1,4 +1,3 @@
-use crate::exec::run::{LeafBatch, LeafSource};
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, GroupState, GroupTable, SinkSpec};
 
 pub(super) fn load_group_key(
@@ -27,18 +26,26 @@ impl AggregateSink {
         true
     }
 
-    pub(super) fn refresh_shape_cache(&mut self, batch: &LeafBatch<'_>) {
+    pub(super) fn refresh_shape_cache(&mut self, key_slots: &[usize]) {
+        if self.cached_slot_count == Some(self.real_slots) && self.cached_key_slots == key_slots {
+            return;
+        }
+        self.cached_slot_count = Some(self.real_slots);
+        self.cached_key_slots.clear();
+        self.cached_key_slots.extend_from_slice(key_slots);
         self.cached_outer_slots.clear();
 
         for slot in 0..self.real_slots {
-            if matches!(batch.source_of(slot), LeafSource::Outer) {
+            if !key_slots.contains(&slot) {
                 self.cached_outer_slots.push(slot);
             }
         }
 
-        self.cached_constant_group = self.group_spans.iter().all(|(slot, width)| {
-            (*slot..slot + width).all(|word| matches!(batch.source_of(word), LeafSource::Outer))
-        });
+        self.cached_constant_group = self
+            .group_spans
+            .iter()
+            .all(|(slot, width)| (*slot..slot + width).all(|word| !key_slots.contains(&word)));
+        self.prepare_fold_inputs(key_slots);
     }
 
     pub(super) fn probe_group(&mut self) -> usize {

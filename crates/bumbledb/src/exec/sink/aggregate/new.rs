@@ -229,11 +229,12 @@ impl AggregateSink {
             key_scratch: vec![0; key_words],
             binding_scratch: vec![0; scratch_words],
             union_scratch: vec![0; union_words],
-            acc_scratch: Vec::with_capacity(n_aggs),
             dedup_survivors: Vec::new(),
-            scan_sources: Vec::with_capacity(n_aggs),
-            scan_inputs: Vec::with_capacity(n_aggs),
+            fold_sources: Vec::with_capacity(n_aggs),
+            fold_inputs: Vec::with_capacity(n_aggs),
             scan_count: 0,
+            cached_slot_count: None,
+            cached_key_slots: Vec::new(),
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
             #[cfg(test)]
@@ -249,6 +250,7 @@ impl AggregateSink {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
 
         parse_finds_into(finds, &mut self.finds);
+        self.cached_slot_count = None;
         self.real_slots = slot_count;
         self.group_spans.clear();
         self.group_spans
@@ -382,6 +384,7 @@ impl AggregateSink {
     }
 
     pub fn reset(&mut self) {
+        self.cached_slot_count = None;
         self.physical_distinct = None;
         self.groups.clear();
         self.float_accs.clear();

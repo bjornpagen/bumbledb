@@ -4,7 +4,7 @@ mod fold_batch;
 mod fold_row;
 mod groups;
 mod new;
-pub(in crate::exec::sink) mod scan;
+pub(in crate::exec::sink) mod reduce;
 mod sink;
 pub(in crate::exec::sink) mod spill;
 

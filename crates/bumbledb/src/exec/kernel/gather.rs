@@ -1,10 +1,5 @@
 use std::simd::prelude::*;
 
-#[inline]
-pub(super) fn biased_to_i64(word: u64) -> i64 {
-    (word ^ (1 << 63)).cast_signed()
-}
-
 const IDX_LANES: usize = 4;
 
 /// The invariant the callers owe (checked in debug builds): every strided index
@@ -36,22 +31,6 @@ pub(super) fn gather_words(
         let address = (index as usize).wrapping_mul(stride).wrapping_add(offset);
         *values.get(address).unwrap_or(&0)
     }))
-}
-
-/// Sum of sign-flip-decoded i64 words at the indexed positions — exact
-/// i128, bit-identical to the naive fold: `Σ value = Σ word −
-/// count·2^63` exactly (the bias identity, as in the dense fold).
-#[must_use]
-pub fn fold_sum_biased_i64_idx(
-    values: &[u64],
-    stride: usize,
-    offset: usize,
-    indices: &[u32],
-) -> i128 {
-    let total = fold_sum_u64_idx(values, stride, offset, indices);
-    let bias = u128::from(indices.len() as u64) << 63;
-    i128::try_from(total).expect("sum of u32-counted words fits i128")
-        - i128::try_from(bias).expect("bias fits i128")
 }
 
 /// Sum of u64 words at the indexed positions — exact u128 via carry

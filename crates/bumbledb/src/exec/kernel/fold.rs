@@ -1,7 +1,5 @@
 use std::simd::prelude::*;
 
-use super::gather::biased_to_i64;
-
 /// The strided extent guard the fold kernels' `get_unchecked` bodies cite:
 /// `(count − 1) · stride + offset < len`, computed checked so the guard is
 /// total over the input type — a wrapping product cannot forge an in-bounds
@@ -16,52 +14,12 @@ fn strided_extent_in(len: usize, stride: usize, offset: usize, count: usize) -> 
         })
 }
 
-/// Contiguous strided sum of biased-i64 words over
-/// `values[offset], values[offset + stride],..` for `count` elements —
-/// the dense-survivor fast form (no index loads). Stride 1 takes the
-/// lane carry-count path through the bias identity:
-/// each biased word is `value + 2^63 (mod 2^64)`, so
-/// `Σ value = Σ word − count·2^63` exactly in i128.
+/// Sum `values[offset + i * stride]` for `count` elements without index
+/// loads. Stride 1 uses the SIMD lane carry-count path. Signed sums use
+/// these same raw totals and subtract the encoding bias once at the sink.
 /// # Panics
+/// Only on a programmer-invariant violation: zero stride or an extent
 /// exceeding `values`.
-/// Only on a programmer-invariant violation: the strided extent
-#[must_use]
-#[expect(
-    unsafe_code,
-    reason = "the localized unsafe operation has a documented safety invariant"
-)]
-pub fn fold_sum_biased_i64(values: &[u64], stride: usize, offset: usize, count: usize) -> i128 {
-    assert!(strided_extent_in(values.len(), stride, offset, count));
-    if stride == 1 {
-        let total = fold_sum_u64_dense(&values[offset..offset + count]);
-        let bias = u128::from(count as u64) << 63;
-
-        return i128::try_from(total).expect("sum of u32-counted words fits i128")
-            - i128::try_from(bias).expect("bias fits i128");
-    }
-    let mut acc = [0i128; 4];
-    let mut i = 0;
-    while i + 4 <= count {
-        for (lane, slot) in acc.iter_mut().enumerate() {
-            // SAFETY: the extent assert above covers every index.
-            let word = unsafe { *values.get_unchecked((i + lane) * stride + offset) };
-            *slot += i128::from(biased_to_i64(word));
-        }
-        i += 4;
-    }
-    while i < count {
-        let word = unsafe { *values.get_unchecked(i * stride + offset) };
-        acc[0] += i128::from(biased_to_i64(word));
-        i += 1;
-    }
-    acc[0] + acc[1] + acc[2] + acc[3]
-}
-
-/// Contiguous strided sum of u64 words (see [`fold_sum_biased_i64`]).
-/// Stride 1 takes the lane carry-count path.
-/// # Panics
-/// exceeding `values`.
-/// Only on a programmer-invariant violation: the strided extent
 #[must_use]
 #[expect(
     unsafe_code,
@@ -105,7 +63,7 @@ pub fn fold_min_max_u64(values: &[u64], stride: usize, offset: usize, count: usi
     fold_min_max_u64_strided(values, stride, offset, count)
 }
 
-/// The W5 gravestone commit carries the full protocol.
+/// Count carries per SIMD lane to retain the exact u128 sum.
 fn fold_sum_u64_dense(values: &[u64]) -> u128 {
     let mut lows = [Simd::<u64, 2>::splat(0); 4];
     let mut carries = [Simd::<u64, 2>::splat(0); 4];

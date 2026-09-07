@@ -147,16 +147,7 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
                 }
 
                 let at = |i: u32| values[i as usize * stride + offset];
-                let naive_sum_i: i128 = indices
-                    .iter()
-                    .map(|&i| i128::from(super::biased_to_i64(at(i))))
-                    .sum();
                 let naive_sum_u: u128 = indices.iter().map(|&i| u128::from(at(i))).sum();
-                assert_eq!(
-                    fold_sum_biased_i64_idx(&values, stride, offset, &indices),
-                    naive_sum_i,
-                    "len {len} stride {stride} offset {offset}"
-                );
                 assert_eq!(
                     fold_sum_u64_idx(&values, stride, offset, &indices),
                     naive_sum_u
@@ -170,16 +161,9 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
                     );
                 }
 
-                let naive_dense_i: i128 = (0..len)
-                    .map(|i| i128::from(super::biased_to_i64(values[i * stride + offset])))
-                    .sum();
                 let naive_dense_u: u128 = (0..len)
                     .map(|i| u128::from(values[i * stride + offset]))
                     .sum();
-                assert_eq!(
-                    fold_sum_biased_i64(&values, stride, offset, len),
-                    naive_dense_i
-                );
                 assert_eq!(fold_sum_u64(&values, stride, offset, len), naive_dense_u);
                 if len > 0 {
                     let dmin = (0..len)
@@ -205,13 +189,6 @@ fn fold_kernels_match_the_naive_folds_bit_for_bit() {
 #[should_panic(expected = "assertion failed")]
 fn fold_extent_guard_refuses_wrapping_extents() {
     let _ = fold_sum_u64(&[0u64; 1], 1usize << 63, 0, 3);
-}
-
-/// The wrapping-extent refusal's twins on the other two fold kernels.
-#[test]
-#[should_panic(expected = "assertion failed")]
-fn fold_biased_extent_guard_refuses_wrapping_extents() {
-    let _ = fold_sum_biased_i64(&[0u64; 1], 1usize << 63, 0, 3);
 }
 
 #[test]
@@ -256,13 +233,13 @@ fn scalar_gather_preserves_vector_wrapping_addresses_and_default_lanes() {
 }
 
 #[test]
-fn gather_folds_pin_the_overflow_and_sign_edges() {
+fn gather_folds_pin_carries_tails_and_word_order_extrema() {
     let values = vec![u64::MAX; 1024];
     let mut indices: Vec<u32> = (0..1024).collect();
     indices.extend(std::iter::repeat_n(7u32, 9));
     // Every tail length, repeated carries, and both executor quantum and
     // larger chunk boundaries. The existing randomized fold test separately
-    // spans strided/offset layouts and mixed signs.
+    // spans strided/offset layouts and arbitrary word values.
     for len in [
         0, 1, 2, 3, 4, 5, 7, 8, 9, 255, 256, 257, 1023, 1024, 1025, 1033,
     ] {
@@ -270,10 +247,6 @@ fn gather_folds_pin_the_overflow_and_sign_edges() {
         assert_eq!(
             fold_sum_u64_idx(&values, 1, 0, selected),
             u128::from(u64::MAX) * len as u128
-        );
-        assert_eq!(
-            fold_sum_biased_i64_idx(&values, 1, 0, selected),
-            i128::from(i64::MAX) * i128::try_from(len).expect("small test length")
         );
     }
     assert_eq!(
@@ -283,9 +256,6 @@ fn gather_folds_pin_the_overflow_and_sign_edges() {
 
     let words = [0u64, u64::MAX, 1 << 63, 0, u64::MAX, 1 << 63, 0];
     let indices: Vec<u32> = (0..7).collect();
-    let naive: i128 = words.iter().map(|&w| i128::from(biased_to_i64(w))).sum();
-    assert_eq!(fold_sum_biased_i64_idx(&words, 1, 0, &indices), naive);
-    assert_eq!(naive, 3 * i128::from(i64::MIN) + 2 * i128::from(i64::MAX));
     assert_eq!(fold_min_max_u64_idx(&words, 1, 0, &indices), (0, u64::MAX));
 }
 
@@ -705,9 +675,6 @@ fn fold_throughput_contiguous_sum() {
         println!("{label}: {rate:.2} rows/ns (sink {sink})");
         rate
     };
-    let biased = rate_of("fold_sum_biased_i64 dense", &mut || {
-        fold_sum_biased_i64(&values, 1, 0, values.len())
-    });
     let unsigned = rate_of("fold_sum_u64 dense", &mut || {
         #[expect(
             clippy::cast_possible_wrap,
@@ -717,10 +684,6 @@ fn fold_throughput_contiguous_sum() {
             fold_sum_u64(&values, 1, 0, values.len()) as i128
         }
     });
-    assert!(
-        biased >= 7.0,
-        "exact biased dense sum ≥7 rows/ns, got {biased:.2}"
-    );
     assert!(
         unsigned >= 7.0,
         "exact u64 dense sum ≥7 rows/ns, got {unsigned:.2}"

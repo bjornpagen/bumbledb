@@ -1,5 +1,8 @@
+use crate::exec::colt::SuffixRun;
 use crate::exec::run::{LeafBatch, LeafSource};
-use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
+use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldSource, GroupState, SinkSpec};
+
+use super::reduce::{Partial, merge};
 
 impl AggregateSink {
     pub(super) fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
@@ -66,11 +69,7 @@ impl AggregateSink {
         self.fold_constant_group(batch, survivors.len() as u64, survivors);
     }
 
-    /// every `Key` arm below asserts it non-empty before gathering.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the per-accumulator fold arms are one linear table"
-    )]
+    /// Count-only folds may omit survivors; key reductions require them.
     fn fold_constant_group(&mut self, batch: &LeafBatch<'_>, count: u64, survivors: &[u32]) {
         self.maybe_spill_groups();
         if self.error.is_some() || self.cardinality_overflow {
@@ -85,23 +84,25 @@ impl AggregateSink {
             return;
         }
 
-        let n_aggs = match &self.group_state {
-            GroupState::Folds { accs, n_aggs } => {
-                let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
-                self.acc_scratch.clear();
-                self.acc_scratch.extend_from_slice(&accs[range]);
-                *n_aggs
+        if !self.fold_inputs.is_empty() {
+            debug_assert!(!survivors.is_empty(), "count-only folds never gather");
+            let run = batch_run(survivors);
+            for input in &mut self.fold_inputs {
+                input.partial.reset();
+                input.partial.fold(batch.keys, batch.arity, input.word, run);
             }
-            GroupState::Pack { .. } => unreachable!("constant-group fold is the Folds arm"),
+        }
+        let GroupState::Folds { accs, n_aggs } = &mut self.group_state else {
+            unreachable!("constant-group fold is the Folds arm");
         };
-        let range = group_idx * n_aggs..(group_idx + 1) * n_aggs;
-        let mut cursor = 0;
+        let range = group_idx * *n_aggs..(group_idx + 1) * *n_aggs;
+        let mut accumulators = accs[range].iter_mut();
+        let mut fold_i = 0;
         for find in &self.finds {
             let SinkSpec::Agg(spec) = find else {
                 continue;
             };
-            let acc = &mut self.acc_scratch[cursor];
-            cursor += 1;
+            let acc = accumulators.next().expect("one accumulator per aggregate");
             match spec {
                 AggSpec::Float { slot, .. } => {
                     let Acc::Float { index, primary } = acc else {
@@ -138,121 +139,35 @@ impl AggregateSink {
                     };
                     *n = n.saturating_add(count);
                 }
-                AggSpec::Fold {
-                    op, slot, signed, ..
-                } => match (op, acc) {
-                    (FoldOp::Sum, Acc::SumSigned(total)) => {
-                        debug_assert!(*signed);
-                        *total += match batch.source_of(*slot) {
-                            LeafSource::Outer => {
-                                i128::from(word_to_i64(batch.bindings.get(*slot)))
-                                    * i128::from(count)
-                            }
-                            LeafSource::Key(word) => {
-                                debug_assert!(
-                                    !survivors.is_empty(),
-                                    "count-only folds never gather"
-                                );
-                                gather_sum_signed(batch.keys, batch.arity, word, survivors)
-                            }
-                        };
-                    }
-                    (FoldOp::Sum, Acc::SumUnsigned(total)) => {
-                        *total += match batch.source_of(*slot) {
-                            LeafSource::Outer => {
-                                u128::from(batch.bindings.get(*slot)) * u128::from(count)
-                            }
-                            LeafSource::Key(word) => {
-                                debug_assert!(
-                                    !survivors.is_empty(),
-                                    "count-only folds never gather"
-                                );
-                                gather_sum_unsigned(batch.keys, batch.arity, word, survivors)
-                            }
-                        };
-                    }
-                    (FoldOp::Min, Acc::Min(best)) => {
-                        let word = match batch.source_of(*slot) {
-                            LeafSource::Outer => batch.bindings.get(*slot),
-                            LeafSource::Key(word) => {
-                                debug_assert!(
-                                    !survivors.is_empty(),
-                                    "count-only folds never gather"
-                                );
-                                gather_min(batch.keys, batch.arity, word, survivors)
-                            }
-                        };
-                        *best = (*best).min(word);
-                    }
-                    (FoldOp::Max, Acc::Max(best)) => {
-                        let word = match batch.source_of(*slot) {
-                            LeafSource::Outer => batch.bindings.get(*slot),
-                            LeafSource::Key(word) => {
-                                debug_assert!(
-                                    !survivors.is_empty(),
-                                    "count-only folds never gather"
-                                );
-                                gather_max(batch.keys, batch.arity, word, survivors)
-                            }
-                        };
-                        *best = (*best).max(word);
-                    }
-                    _ => unreachable!("accumulators are seeded per op"),
-                },
+                AggSpec::Fold { slot, .. } => {
+                    let partial = match self.fold_sources[fold_i] {
+                        FoldSource::Column(input) => self.fold_inputs[input].partial,
+                        FoldSource::Outer => {
+                            Partial::seed(*spec).repeated(batch.bindings.get(*slot), count)
+                        }
+                    };
+                    fold_i += 1;
+                    merge(acc, partial.output(*spec, count));
+                }
             }
         }
-        let GroupState::Folds { accs, .. } = &mut self.group_state else {
-            unreachable!("constant-group fold is the Folds arm");
-        };
-        accs[range].copy_from_slice(&self.acc_scratch);
     }
 }
 
-fn dense_run(survivors: &[u32]) -> Option<u32> {
-    let (first, last) = (survivors[0], survivors[survivors.len() - 1]);
-    (last as usize - first as usize + 1 == survivors.len()).then_some(first)
-}
-
-fn gather_sum_signed(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> i128 {
-    match dense_run(survivors) {
-        Some(first) => crate::exec::kernel::fold_sum_biased_i64(
-            keys,
-            arity,
-            first as usize * arity + word,
-            survivors.len(),
-        ),
-        None => crate::exec::kernel::fold_sum_biased_i64_idx(keys, arity, word, survivors),
-    }
-}
-
-fn gather_sum_unsigned(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u128 {
-    match dense_run(survivors) {
-        Some(first) => crate::exec::kernel::fold_sum_u64(
-            keys,
-            arity,
-            first as usize * arity + word,
-            survivors.len(),
-        ),
-        None => crate::exec::kernel::fold_sum_u64_idx(keys, arity, word, survivors),
-    }
-}
-
-fn gather_min(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u64 {
-    gather_min_max(keys, arity, word, survivors).0
-}
-
-fn gather_max(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> u64 {
-    gather_min_max(keys, arity, word, survivors).1
-}
-
-fn gather_min_max(keys: &[u64], arity: usize, word: usize, survivors: &[u32]) -> (u64, u64) {
-    match dense_run(survivors) {
-        Some(first) => crate::exec::kernel::fold_min_max_u64(
-            keys,
-            arity,
-            first as usize * arity + word,
-            survivors.len(),
-        ),
-        None => crate::exec::kernel::fold_min_max_u64_idx(keys, arity, word, survivors),
+/// Density describes the whole selection, not just its two endpoints.
+/// Resolve it once for every shared column reduction in this batch.
+fn batch_run(survivors: &[u32]) -> SuffixRun<'_> {
+    let start = survivors[0] as usize;
+    if survivors
+        .iter()
+        .enumerate()
+        .all(|(i, &entry)| entry as usize == start + i)
+    {
+        SuffixRun::Identity {
+            start,
+            len: survivors.len(),
+        }
+    } else {
+        SuffixRun::Positions(survivors)
     }
 }
