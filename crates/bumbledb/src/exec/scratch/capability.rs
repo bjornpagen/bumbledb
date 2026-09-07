@@ -2,7 +2,7 @@
 //! passed to admission, grouping, derived stages and results. An error's
 //! Rust type is never a capability detector.
 
-use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
+use crate::work::{ByteKind, ByteReservation, ExecutionPolicy, Resource, WorkContext, WorkError};
 
 use super::{DEFAULT_RAM_BYTES, ScratchRelation};
 
@@ -53,7 +53,9 @@ impl ScratchPolicy {
         Ok(())
     }
 
-    /// Enforce the declared disk policy before a retained-byte growth.
+    /// Preflight the declared disk policy before additional charged bytes.
+    /// This checks current use but does not reserve; actual growth must use
+    /// the same cap during atomic reservation.
     /// # Errors
     /// Refuses when the live scratch charge plus `additional` exceeds the
     /// policy or the operation ledger.
@@ -76,6 +78,15 @@ impl ScratchPolicy {
             });
         }
         Ok(())
+    }
+
+    pub(crate) fn reserve(
+        &self,
+        work: &WorkContext,
+        bytes: u64,
+    ) -> Result<ByteReservation, WorkError> {
+        self.enforce(work)?;
+        work.reserve_with_limit(ByteKind::Scratch, bytes, self.scratch_bytes)
     }
 }
 

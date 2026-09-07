@@ -6,6 +6,10 @@ workloads**. The pre-timing oracle passed **2,879 cases**. This page includes
 every current benchmark chart, the full read/scenario tables, and the slower
 results as well as the improvements.
 
+Subsequent development experiments are recorded separately in the
+[autoresearch notes](autoresearch.md). The release measurements below remain
+unchanged.
+
 ## Measurement identity
 
 - Source: `5e83ee60c4e5d88e8ca395daa3de4d92a0c03186`, crate version **1.0.1**.

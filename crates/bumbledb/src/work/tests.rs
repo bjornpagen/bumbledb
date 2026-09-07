@@ -185,6 +185,79 @@ fn concurrent_admission_cannot_oversubscribe_the_same_allowance() {
 }
 
 #[test]
+fn capped_reservations_enforce_both_limits_and_refund_exactly_once() {
+    let ctx = policy().start().unwrap();
+    let first = ctx.reserve_with_limit(ByteKind::Scratch, 6, 7).unwrap();
+    assert!(matches!(
+        ctx.reserve_with_limit(ByteKind::Scratch, 2, 7),
+        Err(WorkError::Exhausted {
+            resource: Resource::ScratchBytes,
+            used: 6,
+            requested: 2,
+            limit: 7
+        })
+    ));
+    assert_eq!(ctx.used(Resource::ScratchBytes), 6);
+    drop(first);
+    let full = ctx
+        .reserve_with_limit(ByteKind::Scratch, 10, u64::MAX)
+        .unwrap();
+    assert!(matches!(
+        ctx.reserve_with_limit(ByteKind::Scratch, 1, u64::MAX),
+        Err(WorkError::Exhausted {
+            used: 10,
+            requested: 1,
+            limit: 10,
+            ..
+        })
+    ));
+    ctx.cancel();
+    assert!(matches!(
+        ctx.reserve_with_limit(ByteKind::Scratch, 0, 7),
+        Err(WorkError::Cancelled)
+    ));
+    drop(full);
+    assert_eq!(ctx.used(Resource::ScratchBytes), 0);
+}
+
+#[test]
+fn concurrent_capped_reservations_cannot_oversubscribe_the_narrower_limit() {
+    let ctx = policy().start().unwrap();
+    let barrier = Arc::new(std::sync::Barrier::new(16));
+    std::thread::scope(|scope| {
+        let jobs: Vec<_> = (0..16)
+            .map(|_| {
+                let (ctx, barrier) = (ctx.clone(), Arc::clone(&barrier));
+                scope.spawn(move || {
+                    barrier.wait();
+                    ctx.reserve_with_limit(ByteKind::Scratch, 1, 7)
+                })
+            })
+            .collect();
+        // Returning each owner keeps all accepted bytes live through joining.
+        let results: Vec<_> = jobs.into_iter().map(|job| job.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 7);
+        assert_eq!(ctx.used(Resource::ScratchBytes), 7);
+        assert!(
+            results
+                .iter()
+                .filter_map(|result| result.as_ref().err())
+                .all(|error| matches!(
+                    error,
+                    WorkError::Exhausted {
+                        used: 7,
+                        requested: 1,
+                        limit: 7,
+                        ..
+                    }
+                ))
+        );
+        drop(results);
+    });
+    assert_eq!(ctx.used(Resource::ScratchBytes), 0);
+}
+
+#[test]
 fn cancellation_deadline_and_unwind_do_not_leak_reservations() {
     let ctx = policy().start().unwrap();
     let result = std::panic::catch_unwind(|| {

@@ -134,8 +134,17 @@ impl Ledger {
     }
 
     fn charge(&self, resource: Resource, amount: u64) -> Result<(), WorkError> {
+        self.charge_with_limit(resource, amount, self.limits[resource.index()])
+    }
+
+    fn charge_with_limit(
+        &self,
+        resource: Resource,
+        amount: u64,
+        limit: u64,
+    ) -> Result<(), WorkError> {
         self.checkpoint()?;
-        let limit = self.limits[resource.index()];
+        let limit = limit.min(self.limits[resource.index()]);
         self.used[resource.index()]
             .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(amount).filter(|next| *next <= limit)
@@ -195,8 +204,20 @@ impl WorkContext {
     /// # Errors
     /// Refuses bytes beyond the operation allowance or stopped work.
     pub fn reserve(&self, kind: ByteKind, bytes: u64) -> Result<ByteReservation, WorkError> {
+        self.reserve_with_limit(kind, bytes, self.limit(kind.resource()))
+    }
+
+    /// Reserve against a caller's narrower cap in the same atomic admission
+    /// as the operation limit. A preflight load followed by ordinary reserve
+    /// would let concurrent callers oversubscribe the narrower allowance.
+    pub(crate) fn reserve_with_limit(
+        &self,
+        kind: ByteKind,
+        bytes: u64,
+        limit: u64,
+    ) -> Result<ByteReservation, WorkError> {
         let resource = kind.resource();
-        self.0.charge(resource, bytes)?;
+        self.0.charge_with_limit(resource, bytes, limit)?;
         Ok(ByteReservation {
             ledger: Arc::clone(&self.0),
             resource,

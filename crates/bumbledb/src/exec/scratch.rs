@@ -269,9 +269,12 @@ fn adjust_retained(
     new: usize,
 ) -> Result<()> {
     if new > old {
+        // charge advances live bytes after successful admission. Applying
+        // the delta again here would count every insertion/growth twice.
         charge(work, bytes, charged, reservations, new - old)?;
+    } else {
+        *bytes = bytes.checked_sub(old - new).ok_or_else(allocation)?;
     }
-    *bytes = bytes.saturating_sub(old) + new;
     Ok(())
 }
 
@@ -880,12 +883,9 @@ impl ScratchRelation {
         // table stays charged, and the new environment's copy is charged
         // as scratch for the whole payload.
         let payload = *bytes as u64;
-        self.policy
-            .allow_growth(&self.work, payload)
-            .map_err(work_error)?;
         let _transfer = self
-            .work
-            .reserve(ByteKind::Scratch, payload)
+            .policy
+            .reserve(&self.work, payload)
             .map_err(work_error)?;
         let mut env = ScratchEnv::create(&self.work, self.policy)?;
         for map_id in ScratchMapId::ALL {
@@ -1524,8 +1524,11 @@ impl ScratchEnv {
                 work.step(1).map_err(work_error)?;
                 let db = env.db(put.map);
                 if Self::inline_key(&put.key, &mut physical) {
+                    // NO_OVERWRITE either inserts or returns the existing
+                    // value in one tree walk. Fresh staged keys need no
+                    // separate membership search before their insertion.
                     let old = db
-                        .get(&wtxn, physical.as_slice())
+                        .get_or_put(&mut wtxn, physical.as_slice(), put.value.as_ref())
                         .map_err(Error::from)?
                         .map(|existing| physical.len() + existing.len() + 32);
                     if put.if_absent && old.is_some() {
@@ -1534,8 +1537,10 @@ impl ScratchEnv {
                     if old.is_none() && put.map == ScratchMapId::Default {
                         inserted += 1;
                     }
-                    db.put(&mut wtxn, physical.as_slice(), put.value.as_ref())
-                        .map_err(Error::from)?;
+                    if old.is_some() {
+                        db.put(&mut wtxn, physical.as_slice(), put.value.as_ref())
+                            .map_err(Error::from)?;
+                    }
                     grown += signed_bytes(physical.len() + put.value.len() + 32)?
                         - signed_bytes(old.unwrap_or(0))?;
                     continue;
@@ -1587,13 +1592,15 @@ impl ScratchAccounting {
             return Ok(batch);
         }
         let grown = usize::try_from(logical_delta).map_err(|_| allocation())?;
-        self.policy
-            .allow_growth(work, grown as u64)
-            .map_err(work_error)?;
-        let target_logical = self.logical.saturating_add(grown);
+        self.policy.enforce(work).map_err(work_error)?;
+        let target_logical = self.logical.checked_add(grown).ok_or_else(allocation)?;
+        // Live growth inside the paid envelope needs no new reservation.
+        // Enforce both caps on the actual rounded growth, not logical bytes
+        // added to a counter which already contains that reserved capacity.
         while target_logical > batch.target_charged {
             batch.reservations.push(
-                work.reserve(ByteKind::Scratch, CHARGE_CHUNK as u64)
+                self.policy
+                    .reserve(work, CHARGE_CHUNK as u64)
                     .map_err(work_error)?,
             );
             batch.target_charged += CHARGE_CHUNK;
