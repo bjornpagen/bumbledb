@@ -2,6 +2,13 @@
 use super::hash_words;
 use super::{Colt, Cursor, Map, ctrl_tag, eq_byte_mask, unpack_child, zero_byte_mask};
 
+/// A successful key lookup, before the optional child-lane load. This never
+/// escapes a probe call: forcing another node may relocate the bucket pool.
+enum KeyHit {
+    Row(u32),
+    Bucket(usize),
+}
+
 impl Colt {
     #[cfg(test)]
     pub fn get(&mut self, cursor: Cursor, level: usize, key: &[u64]) -> Option<Cursor> {
@@ -38,6 +45,21 @@ impl Colt {
         self.probe_child_at_width::<K>(cursor, self.join_index(level), key, hash)
     }
 
+    /// Key existence with the same forcing and admission as `get_prehashed`,
+    /// but no child load or decoding. `K == 0` dispatches the runtime width.
+    #[inline(always)]
+    pub(crate) fn contains_prehashed_width<const K: usize>(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        key: &[u64],
+        hash: u64,
+    ) -> Result<bool, crate::work::WorkError> {
+        Ok(self
+            .probe_key_at_width::<K>(cursor, self.join_index(level), key, hash)?
+            .is_some())
+    }
+
     #[inline(always)]
     pub(super) fn probe_child_at(
         &mut self,
@@ -57,12 +79,28 @@ impl Colt {
         key: &[u64],
         hash: u64,
     ) -> Result<Option<Cursor>, crate::work::WorkError> {
+        Ok(self
+            .probe_key_at_width::<K>(cursor, level, key, hash)?
+            .map(|hit| match hit {
+                KeyHit::Row(position) => Cursor::Row(position),
+                KeyHit::Bucket(index) => unpack_child(self.buckets[index]),
+            }))
+    }
+
+    #[inline(always)]
+    fn probe_key_at_width<const K: usize>(
+        &mut self,
+        cursor: Cursor,
+        level: usize,
+        key: &[u64],
+        hash: u64,
+    ) -> Result<Option<KeyHit>, crate::work::WorkError> {
         debug_assert_eq!(key.len(), self.arity_at(level));
         debug_assert!(K == 0 || key.len() == K);
         match cursor {
             Cursor::Row(position) => Ok(self
                 .position_matches(level, position, key)
-                .then_some(Cursor::Row(position))),
+                .then_some(KeyHit::Row(position))),
             Cursor::Node(node) => {
                 let map = self.force(node, level)?;
                 let m = &self.maps[map as usize];
@@ -74,7 +112,7 @@ impl Colt {
                 if !found {
                     return Ok(None);
                 }
-                Ok(Some(unpack_child(self.buckets[m.child_at(idx)])))
+                Ok(Some(KeyHit::Bucket(m.child_at(idx))))
             }
         }
     }

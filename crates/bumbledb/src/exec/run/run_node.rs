@@ -57,10 +57,7 @@ impl Executor {
         let arity = self.slot_map[node_idx][cover_sub].len();
         // Leaves do not recurse. Only a membership probe on this cover can
         // consume its children; all other work reads the batch's key words.
-        let needs_children = self.precompute[node_idx]
-            .point_probes
-            .iter()
-            .any(|spec| spec.occ == cover_occ);
+        let needs_children = !scratch.children[cover_sub].is_empty();
 
         let gate_cover = arity == 0 && !self.point_probed[cover_occ];
         scratch.prepare_sources(
@@ -93,7 +90,7 @@ impl Executor {
                     arity,
                     &self.overlap_hits[overlap_drained..overlap_drained + take],
                     &mut scratch.entry_keys,
-                    needs_children.then_some(scratch.children.as_mut_slice()),
+                    needs_children.then_some(scratch.children[cover_sub].as_mut_slice()),
                 );
                 overlap_drained += take;
                 (take, token)
@@ -105,7 +102,7 @@ impl Executor {
                         cover_level,
                         token,
                         &mut scratch.entry_keys,
-                        &mut scratch.children,
+                        &mut scratch.children[cover_sub],
                         max,
                     )
                 } else {
@@ -296,27 +293,20 @@ impl Executor {
 
                 counters.probe_batch(node_idx, sub_idx, n);
                 grow_scratch(&mut scratch.mask, n);
-                {
-                    let survivors = &scratch.survivors[..n];
-                    let probe_keys = &scratch.probe_keys[..n * sub_arity.max(1)];
-                    let hashes = &scratch.hashes[..n];
-                    let sibling_children = &mut scratch.sibling_children[sub_idx][..];
-                    let mask = &mut scratch.mask[..n];
-                    let colt = &mut colts[occ];
-                    for k in 0..n {
-                        let entry = usize::try_from(survivors[k]).expect("batch fits usize");
-                        let Some(hit) = self.colt_ok(colt.get_prehashed(
-                            s_cursor,
-                            s_level,
-                            &probe_keys[k * sub_arity..(k + 1) * sub_arity],
-                            hashes[k],
-                        )) else {
-                            break 'outer;
-                        };
-                        counters.probe(node_idx, sub_idx, hit.is_some());
-                        sibling_children[entry] = hit.unwrap_or(Cursor::Row(0));
-                        mask[k] = u8::from(hit.is_some());
-                    }
+                self.probe_sibling_batch::<0, C>(
+                    scratch,
+                    &mut colts[occ],
+                    node_idx,
+                    sub_idx,
+                    s_level,
+                    None,
+                    0,
+                    s_cursor,
+                    sub_arity,
+                    counters,
+                );
+                if !matches!(self.drive_state, super::DriveState::Running) {
+                    break 'outer;
                 }
                 crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
             }
@@ -331,14 +321,12 @@ impl Executor {
                         .point_sources
                         .push((*start_col, *end_col, src, *dense));
                 }
-                let cursor_src = if spec.occ == cover_occ {
-                    super::CursorSrc::Cover
-                } else if let Some(sub_idx) = plan.nodes()[node_idx]
+                let cursor_src = if let Some(sub_idx) = plan.nodes()[node_idx]
                     .subatoms
                     .iter()
                     .position(|sub| usize::from(sub.occ.0) == spec.occ)
                 {
-                    super::CursorSrc::Sibling(sub_idx)
+                    super::CursorSrc::Subatom(sub_idx)
                 } else {
                     super::CursorSrc::Const(self.cursors[spec.occ].0)
                 };
@@ -363,10 +351,7 @@ impl Executor {
                         scratch.point_checks.push((start_col, end_col, point));
                     }
                     let cursor = match cursor_src {
-                        super::CursorSrc::Cover => scratch.children[entry],
-                        super::CursorSrc::Sibling(sub_idx) => {
-                            scratch.sibling_children[sub_idx][entry]
-                        }
+                        super::CursorSrc::Subatom(sub_idx) => scratch.children[sub_idx][entry],
                         super::CursorSrc::Carried(_) => {
                             unreachable!("the leaf pass carries no pending cursors")
                         }

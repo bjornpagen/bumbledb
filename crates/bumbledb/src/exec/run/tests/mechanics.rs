@@ -60,8 +60,13 @@ fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves
     let mut colts = colts_for(&plan, &images);
     let mut executor = Executor::new(&plan);
     executor.set_physical_distinct(Some(witness));
-    let sentinel = Cursor::Row(u32::MAX);
-    executor.scratch.last_mut().unwrap().children.fill(sentinel);
+    let gate = plan.nodes()[0]
+        .subatoms
+        .iter()
+        .position(|sub| sub.occ == OccId(1))
+        .expect("S has an empty-key gate before binding its variable");
+    assert!(plan.nodes()[0].subatoms[gate].vars.is_empty());
+    assert!(!executor.scratch[0].children[gate].is_empty());
     let mut bindings = Bindings::new(plan.slot_count());
     for _ in 0..2 {
         let mut sink = RawRows::default();
@@ -79,21 +84,23 @@ fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves
             sink.0,
             vec![vec![7, 11], vec![7, 12], vec![8, 11], vec![8, 12]]
         );
-        assert!(
-            executor
-                .scratch
-                .last()
-                .unwrap()
-                .children
-                .iter()
-                .all(|&child| child == sentinel),
-            "a distinct leaf without membership probes never writes child cursors"
-        );
+        for (node, scratch) in plan.nodes().iter().zip(&executor.scratch) {
+            assert!(
+                node.covers
+                    .iter()
+                    .all(|&cover| scratch.children[usize::from(cover)].is_empty()),
+                "terminating covers need no child storage; the S() gate still continues"
+            );
+        }
     }
 }
 use crate::ir::WordCmp;
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one differential scenario switches covers with live and dead children"
+)]
 fn reused_executor_follows_reordered_dynamic_covers() {
     for pipeline in [false, true] {
         let neg_id = 2 + u16::from(pipeline);
@@ -183,6 +190,12 @@ fn reused_executor_follows_reordered_dynamic_covers() {
                 })
                 .collect();
             for _ in 0..2 {
+                let sentinel = Cursor::Row(u32::MAX);
+                for scratch in &mut executor.scratch {
+                    for children in &mut scratch.children {
+                        children.fill(sentinel);
+                    }
+                }
                 let mut sink = CollectSink::default();
                 let mut counters = RecordingCounters::default();
                 executor
@@ -192,6 +205,18 @@ fn reused_executor_follows_reordered_dynamic_covers() {
                 assert_eq!(counters.cover_choices[0], (0, chosen, true));
                 assert_eq!(executor.scratch[0].source_cover, Some(chosen));
                 assert_eq!(sink.rows, expected, "pipeline {pipeline}, cover {chosen}");
+                for children in &executor.scratch[0].children[..2] {
+                    assert!(children.is_empty());
+                }
+                if pipeline {
+                    assert!(
+                        executor.scratch[0].children[2]
+                            .iter()
+                            .any(|&c| c != sentinel),
+                        "the continuing sibling must retain its real cursors"
+                    );
+                    assert!(executor.scratch[1].children.iter().all(Vec::is_empty));
+                }
             }
         }
     }

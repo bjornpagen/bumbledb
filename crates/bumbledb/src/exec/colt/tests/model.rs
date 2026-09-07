@@ -219,10 +219,12 @@ fn batch_width_probes_match_dynamic_through_selection_force_and_pinned_rows() {
         let (_cache, image) = source.image_with_cache(R);
         let columns: Vec<usize> = (1..=width).collect();
         let mut fixed = Colt::new(all(&image), &scalars(&[0]), vec![columns.clone()]);
+        let mut presence = Colt::new(all(&image), &scalars(&[0]), vec![columns.clone()]);
         let mut dynamic = Colt::new(all(&image), &scalars(&[0]), vec![columns]);
         for group in [0, 3, 1, 7, 3, 0] {
             let selected = fixed.select(&[vec![group]]).unwrap().unwrap();
             assert_eq!(dynamic.select(&[vec![group]]).unwrap(), Some(selected));
+            assert_eq!(presence.select(&[vec![group]]).unwrap(), Some(selected));
             for value in [0, 1, 99, 2, 3, 0] {
                 let key = tuple(value);
                 let hash = hash_key(&key);
@@ -231,11 +233,19 @@ fn batch_width_probes_match_dynamic_through_selection_force_and_pinned_rows() {
                     .unwrap();
                 let expected = dynamic.get_prehashed(selected, 0, &key, hash).unwrap();
                 assert_eq!(got, expected);
-                assert_eq!(fixed.ctrl, dynamic.ctrl);
-                assert_eq!(fixed.buckets, dynamic.buckets);
-                assert_eq!(fixed.dense, dynamic.dense);
-                assert_eq!(fixed.chunk_positions, dynamic.chunk_positions);
-                assert_eq!(fixed.watermark(), dynamic.watermark());
+                assert_eq!(
+                    presence
+                        .contains_prehashed_width::<K>(selected, 0, &key, hash)
+                        .unwrap(),
+                    expected.is_some()
+                );
+                for actual in [&fixed, &presence] {
+                    assert_eq!(actual.ctrl, dynamic.ctrl);
+                    assert_eq!(actual.buckets, dynamic.buckets);
+                    assert_eq!(actual.dense, dynamic.dense);
+                    assert_eq!(actual.chunk_positions, dynamic.chunk_positions);
+                    assert_eq!(actual.watermark(), dynamic.watermark());
+                }
             }
         }
         let key: Vec<_> = (1..=width)
@@ -243,13 +253,20 @@ fn batch_width_probes_match_dynamic_through_selection_force_and_pinned_rows() {
             .collect();
         for key in [key, tuple(99)] {
             let hash = hash_key(&key);
+            let expected = dynamic
+                .get_prehashed(Cursor::Row(0), 0, &key, hash)
+                .unwrap();
             assert_eq!(
                 fixed
                     .get_prehashed_width::<K>(Cursor::Row(0), 0, &key, hash)
                     .unwrap(),
-                dynamic
-                    .get_prehashed(Cursor::Row(0), 0, &key, hash)
+                expected,
+            );
+            assert_eq!(
+                presence
+                    .contains_prehashed_width::<K>(Cursor::Row(0), 0, &key, hash)
                     .unwrap(),
+                expected.is_some(),
             );
         }
     }

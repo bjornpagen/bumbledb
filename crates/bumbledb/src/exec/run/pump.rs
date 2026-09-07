@@ -34,7 +34,7 @@ impl Executor {
         let below_absorb = matches!(tables.absorb, super::SkipAbsorb::Node(a) if node_idx > a);
         let mut fill = 0usize;
 
-        let mut group: Option<(usize, usize, usize, usize)> = None;
+        let mut group: Option<(usize, usize)> = None;
 
         for entry in 0..scratch.pending_len {
             if !matches!(self.drive_state, super::DriveState::Running) {
@@ -68,7 +68,7 @@ impl Executor {
             let cover_level = tables.entry_level[node_idx][cover_occ];
 
             let cur_arity = self.slot_map[node_idx][cover_sub].len();
-            if let Some((open_sub, open_arity, _, _)) = group
+            if let Some((open_sub, open_arity)) = group
                 && open_sub != cover_sub
                 && fill > 0
             {
@@ -78,13 +78,14 @@ impl Executor {
                 );
                 fill = 0;
             }
-            group = Some((cover_sub, cur_arity, cover_occ, cover_level));
+            group = Some((cover_sub, cur_arity));
             let cover_cursor = match tables.carried_index(node_idx, cover_occ) {
                 Some(col) => scratch.pending_cursors[entry * carried_w + col],
                 None => colts[cover_occ].start(),
             };
 
             let gate_cover = cur_arity == 0 && !self.point_probed[cover_occ];
+            let needs_children = !scratch.children[cover_sub].is_empty();
 
             if S::may_use_distinct_traversal()
                 && self.physical_distinct.is_some()
@@ -103,14 +104,25 @@ impl Executor {
                     break;
                 }
                 let want = if gate_cover { 1 } else { self.batch - fill };
-                let Some((yielded, next)) = self.colt_ok(colts[cover_occ].iter_batch(
-                    cover_cursor,
-                    cover_level,
-                    token,
-                    &mut scratch.entry_keys[fill * cur_arity..],
-                    &mut scratch.children[fill..],
-                    want,
-                )) else {
+                let batch = if needs_children {
+                    colts[cover_occ].iter_batch(
+                        cover_cursor,
+                        cover_level,
+                        token,
+                        &mut scratch.entry_keys[fill * cur_arity..],
+                        &mut scratch.children[cover_sub][fill..],
+                        want,
+                    )
+                } else {
+                    colts[cover_occ].iter_keys_batch(
+                        cover_cursor,
+                        cover_level,
+                        token,
+                        &mut scratch.entry_keys[fill * cur_arity..],
+                        want,
+                    )
+                };
+                let Some((yielded, next)) = self.colt_ok(batch) else {
                     break;
                 };
 
@@ -148,7 +160,7 @@ impl Executor {
             }
         }
         if fill > 0
-            && let Some((open_sub, open_arity, _, _)) = group
+            && let Some((open_sub, open_arity)) = group
         {
             self.probe_pass(
                 tables, plan, node_idx, open_sub, open_arity, fill, scratch, below, colts,

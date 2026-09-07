@@ -43,8 +43,8 @@ impl Colt {
     }
 
     /// The same key stream and resume tokens as `iter_batch`, without loading
-    /// or materializing child cursors. Leaf sinks consume keys alone unless
-    /// an interval-membership probe needs the underlying positions.
+    /// or materializing child cursors. A terminating subatom needs keys alone
+    /// unless an interval-membership probe consumes the underlying positions.
     pub(crate) fn iter_keys_batch(
         &mut self,
         cursor: Cursor,

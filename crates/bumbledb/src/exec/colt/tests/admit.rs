@@ -33,6 +33,12 @@ fn join_colt(view: &std::sync::Arc<crate::image::RelationImage>) -> Colt {
 }
 
 fn iter_once(colt: &mut Colt, cursor: Cursor) -> Result<(usize, BatchToken), WorkError> {
+    let probe = colt.get_prehashed(cursor, 0, &[0], hash_key(&[0]));
+    assert_eq!(
+        colt.contains_prehashed_width::<0>(cursor, 0, &[0], hash_key(&[0])),
+        probe.map(|child| child.is_some()),
+        "presence retains force, growth and chunk refusals"
+    );
     let mut keys = vec![0u64; 8];
     let keys_only = colt.iter_keys_batch(cursor, 0, BatchToken::default(), &mut keys, 8);
     let mut children = vec![Cursor::Row(0); 8];

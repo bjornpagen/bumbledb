@@ -73,6 +73,12 @@ fn point_probes_of(plan: &ValidatedPlan, node: &PlanNode) -> Vec<PointProbeSpec>
 }
 
 impl NodePrecompute {
+    /// A matching subatom's child is needed by membership here or a later
+    /// consumer. The pipeline's carried table already owns that liveness.
+    fn needs_child(&self, occ: usize, next_carried: &[usize]) -> bool {
+        self.point_probes.iter().any(|spec| spec.occ == occ) || next_carried.contains(&occ)
+    }
+
     fn of(
         plan: &ValidatedPlan,
         node: &PlanNode,
@@ -233,12 +239,27 @@ impl Executor {
                 point_probed[usize::from(probe.occ.0)] = true;
             }
         }
+        let drive = if plan.nodes().len() >= 2 {
+            Drive::Pipeline(std::rc::Rc::new(PipeTables::of(plan)))
+        } else {
+            Drive::Leaf
+        };
         let scratch = plan
             .nodes()
             .iter()
             .enumerate()
             .zip(&precompute)
             .map(|((node_idx, node), pre)| {
+                let next_carried = match &drive {
+                    Drive::Pipeline(tables) => tables
+                        .carried
+                        .get(node_idx + 1)
+                        .map_or(&[][..], Vec::as_slice),
+                    Drive::Leaf => &[],
+                };
+                let needs_child = |sub_idx: usize| {
+                    pre.needs_child(usize::from(node.subatoms[sub_idx].occ.0), next_carried)
+                };
                 let max_arity = slot_map[node_idx]
                     .iter()
                     .map(Vec::len)
@@ -255,14 +276,16 @@ impl Executor {
                     .max(max_arity);
                 NodeScratch {
                     entry_keys: vec![0; batch * max_arity],
-                    children: vec![Cursor::Row(0); batch],
                     survivors: Vec::with_capacity(batch),
                     probe_keys: vec![0; batch * max_key],
                     hashes: Vec::with_capacity(batch),
-                    sibling_children: node
+                    children: node
                         .subatoms
                         .iter()
-                        .map(|_| vec![Cursor::Row(0); batch])
+                        .enumerate()
+                        .map(|(sub_idx, _)| {
+                            vec![Cursor::Row(0); if needs_child(sub_idx) { batch } else { 0 }]
+                        })
                         .collect(),
 
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
@@ -299,11 +322,7 @@ impl Executor {
             scratch,
             leaf,
             scan_filter: Vec::new(),
-            drive: if plan.nodes().len() >= 2 {
-                Drive::Pipeline(std::rc::Rc::new(PipeTables::of(plan)))
-            } else {
-                Drive::Leaf
-            },
+            drive,
             ledger: None,
             cancelled: Vec::new(),
             cancel_epoch: 0,

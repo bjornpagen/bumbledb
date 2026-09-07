@@ -248,9 +248,7 @@ impl Source {
 
 #[derive(Debug, Clone, Copy)]
 enum CursorSrc {
-    Cover,
-
-    Sibling(usize),
+    Subatom(usize),
 
     Carried(usize),
 
@@ -301,15 +299,15 @@ const PREFETCH_WIDTH_FLOOR: usize = 4;
 struct NodeScratch {
     entry_keys: Vec<u64>,
 
-    children: Vec<Cursor>,
+    /// One buffer per subatom, whether it enumerates or probes this batch.
+    /// Empty means no current or later consumer needs that subatom's child.
+    children: Vec<Vec<Cursor>>,
 
     survivors: Vec<u32>,
 
     probe_keys: Vec<u64>,
 
     hashes: Vec<u64>,
-
-    sibling_children: Vec<Vec<Cursor>>,
 
     sources: Vec<Vec<Source>>,
 
@@ -388,7 +386,8 @@ pub struct Executor {
 
     precompute: Vec<NodePrecompute>,
 
-    /// suffix) must not fire on it.
+    /// Occurrences whose positions are consumed by membership at any node.
+    /// An empty-key cover is not a one-row gate when those positions matter.
     point_probed: Vec<bool>,
 
     var_widths: Vec<(crate::ir::VarId, usize)>,
@@ -396,7 +395,7 @@ pub struct Executor {
 
     leaf: LeafPrecompute,
 
-    /// filter positions before the sink folds them).
+    /// Selected positions for residual filtering of direct leaf scans.
     scan_filter: Vec<u32>,
 
     drive: Drive,

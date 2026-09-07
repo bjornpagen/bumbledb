@@ -29,7 +29,7 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
     let plan = planned(&normalized, &schema, &[0]);
     let images = views_of(&schema, &[vec![(7, 10), (8, 20)]]);
     let first_key = images[0].column_words(0)[0];
-    for fixed in [false, true] {
+    for (fixed, children) in [(false, false), (false, true), (true, false), (true, true)] {
         for cancelled in [false, true] {
             let work = bounded(if cancelled { u64::MAX } else { 0 });
             if cancelled {
@@ -48,7 +48,7 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
                 hashes: [first_key, u64::MAX, first_key, first_key]
                     .map(|key| crate::exec::colt::hash_key(&[key]))
                     .to_vec(),
-                sibling_children: vec![vec![sentinel; 4]],
+                children: vec![vec![sentinel; if children { 4 } else { 0 }]],
                 mask: vec![9; 4],
                 ..NodeScratch::default()
             };
@@ -83,8 +83,13 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
             assert_eq!(counters.0, vec![true, false]);
             assert_eq!(scratch.mask, vec![1, 0, 9, 9]);
             assert_eq!(
-                scratch.sibling_children[0],
-                vec![Cursor::Row(0), sentinel, Cursor::Row(0), sentinel]
+                scratch.children[0],
+                if children {
+                    vec![sentinel, sentinel, Cursor::Row(0), sentinel]
+                } else {
+                    vec![]
+                },
+                "misses and presence-only probes never write child output"
             );
             assert_eq!(scratch.survivors, vec![2, 0, 1, 3]);
             assert!(colt.forced_capacity(Colt::root()).is_none());

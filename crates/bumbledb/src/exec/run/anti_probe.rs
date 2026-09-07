@@ -114,6 +114,20 @@ pub(super) fn anti_probe_pass<C: Counters>(
                     let probe_keys = &probe_keys[..n * kw];
                     let hashes = &hashes[..n];
                     let mask = &mut mask[..n];
+                    if spec.point_parts.is_empty() {
+                        for k in 0..n {
+                            let hit = colts[spec.occ].contains_prehashed_width::<0>(
+                                start,
+                                0,
+                                &probe_keys[k * kw..(k + 1) * kw],
+                                hashes[k],
+                            )?;
+                            counters.anti_probe(node_idx, hit);
+                            mask[k] = u8::from(!hit);
+                        }
+                        crate::exec::kernel::compact_u32_by_mask(survivors, mask);
+                        continue;
+                    }
                     for k in 0..n {
                         let element = usize::try_from(survivors[k]).expect("batch fits usize");
                         let child = colts[spec.occ].get_prehashed(
@@ -124,7 +138,6 @@ pub(super) fn anti_probe_pass<C: Counters>(
                         )?;
                         let hit = match child {
                             None => false,
-                            Some(_) if spec.point_parts.is_empty() => true,
                             Some(child) => {
                                 point_checks.clear();
                                 for &(start_col, end_col, src, dense) in point_sources.iter() {

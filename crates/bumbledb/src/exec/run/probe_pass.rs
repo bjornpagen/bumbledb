@@ -38,7 +38,6 @@ impl Executor {
         let slot_count = bindings.slot_count();
         let carried_w = tables.carried[node_idx].len();
         let node = &plan.nodes()[node_idx];
-        let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
         scratch.prepare_sources(
             &self.slot_map[node_idx],
             &self.precompute[node_idx],
@@ -313,21 +312,20 @@ impl Executor {
 
         scratch.cursor_srcs.clear();
         for (occ, colt) in colts.iter().enumerate() {
-            scratch.cursor_srcs.push(if occ == cover_occ {
-                super::CursorSrc::Cover
-            } else if let Some(sub_idx) = node
-                .subatoms
-                .iter()
-                .position(|sub| usize::from(sub.occ.0) == occ)
-            {
-                debug_assert_ne!(sub_idx, cover_sub, "distinct occs per node");
-                super::CursorSrc::Sibling(sub_idx)
-            } else {
-                match tables.carried_index(node_idx, occ) {
-                    Some(col) => super::CursorSrc::Carried(col),
-                    None => super::CursorSrc::Const(colt.start()),
-                }
-            });
+            scratch.cursor_srcs.push(
+                if let Some(sub_idx) = node
+                    .subatoms
+                    .iter()
+                    .position(|sub| usize::from(sub.occ.0) == occ)
+                {
+                    super::CursorSrc::Subatom(sub_idx)
+                } else {
+                    match tables.carried_index(node_idx, occ) {
+                        Some(col) => super::CursorSrc::Carried(col),
+                        None => super::CursorSrc::Const(colt.start()),
+                    }
+                },
+            );
         }
 
         // Membership checks use surviving bindings and their resolved cursors.
@@ -350,10 +348,7 @@ impl Executor {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
                 let cursor = match cursor_src {
-                    super::CursorSrc::Cover => scratch.children[element],
-                    super::CursorSrc::Sibling(sub_idx) => {
-                        scratch.sibling_children[sub_idx][element]
-                    }
+                    super::CursorSrc::Subatom(sub_idx) => scratch.children[sub_idx][element],
                     super::CursorSrc::Carried(col) => {
                         scratch.pending_cursors[parent * carried_w + col]
                     }
@@ -489,10 +484,7 @@ impl Executor {
 
             let assemble = |occ: usize| -> Cursor {
                 match scratch.cursor_srcs[occ] {
-                    super::CursorSrc::Cover => scratch.children[element],
-                    super::CursorSrc::Sibling(sub_idx) => {
-                        scratch.sibling_children[sub_idx][element]
-                    }
+                    super::CursorSrc::Subatom(sub_idx) => scratch.children[sub_idx][element],
                     super::CursorSrc::Carried(col) => {
                         scratch.pending_cursors[parent * carried_w + col]
                     }
@@ -582,8 +574,56 @@ impl Executor {
         clippy::too_many_arguments,
         reason = "the existing batch routing and borrows stay explicit"
     )]
-    #[inline(never)]
     pub(super) fn probe_sibling_batch<const K: usize, C: Counters>(
+        &mut self,
+        scratch: &mut NodeScratch,
+        colt: &mut Colt,
+        node_idx: usize,
+        sub_idx: usize,
+        s_level: usize,
+        carried: Option<usize>,
+        carried_w: usize,
+        start_cursor: Cursor,
+        sub_arity: usize,
+        counters: &mut C,
+    ) {
+        // Resolve child liveness once per batch, not once per key. Both leaf
+        // and pipeline calls use these same kernels and refusal handling.
+        if scratch.children[sub_idx].is_empty() {
+            self.probe_sibling_keys::<K, false, C>(
+                scratch,
+                colt,
+                node_idx,
+                sub_idx,
+                s_level,
+                carried,
+                carried_w,
+                start_cursor,
+                sub_arity,
+                counters,
+            );
+        } else {
+            self.probe_sibling_keys::<K, true, C>(
+                scratch,
+                colt,
+                node_idx,
+                sub_idx,
+                s_level,
+                carried,
+                carried_w,
+                start_cursor,
+                sub_arity,
+                counters,
+            );
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the existing batch routing and borrows stay explicit"
+    )]
+    #[inline(never)]
+    fn probe_sibling_keys<const K: usize, const CHILDREN: bool, C: Counters>(
         &mut self,
         scratch: &mut NodeScratch,
         colt: &mut Colt,
@@ -604,27 +644,33 @@ impl Executor {
         let pending_cursors = &scratch.pending_cursors[..];
         let probe_keys = &scratch.probe_keys[..n * width];
         let hashes = &scratch.hashes[..n];
-        let sibling_children = &mut scratch.sibling_children[sub_idx][..];
+        let children = &mut scratch.children[sub_idx][..];
         let mask = &mut scratch.mask[..n];
         for k in 0..n {
             let element = usize::try_from(survivors[k]).expect("batch fits usize");
-            let parent = parents[element] as usize;
             let cursor = carried.map_or(start_cursor, |col| {
+                let parent = parents[element] as usize;
                 pending_cursors[parent * carried_w + col]
             });
             // Each cursor may force a different node and reallocate COLT
             // pools. No map or backing pointer survives this call.
-            let Some(hit) = self.colt_ok(colt.get_prehashed_width::<K>(
-                cursor,
-                s_level,
-                &probe_keys[k * width..(k + 1) * width],
-                hashes[k],
-            )) else {
+            let key = &probe_keys[k * width..(k + 1) * width];
+            let result = if CHILDREN {
+                colt.get_prehashed_width::<K>(cursor, s_level, key, hashes[k])
+                    .map(|hit| {
+                        if let Some(child) = hit {
+                            children[element] = child;
+                        }
+                        hit.is_some()
+                    })
+            } else {
+                colt.contains_prehashed_width::<K>(cursor, s_level, key, hashes[k])
+            };
+            let Some(hit) = self.colt_ok(result) else {
                 break;
             };
-            counters.probe(node_idx, sub_idx, hit.is_some());
-            sibling_children[element] = hit.unwrap_or(Cursor::Row(0));
-            mask[k] = u8::from(hit.is_some());
+            counters.probe(node_idx, sub_idx, hit);
+            mask[k] = u8::from(hit);
         }
     }
 }
