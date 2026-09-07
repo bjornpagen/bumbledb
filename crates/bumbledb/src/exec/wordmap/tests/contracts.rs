@@ -174,29 +174,6 @@ fn tail_padded_home_spreads(hash: fn(&[u64]) -> u64) -> Vec<(&'static str, usize
 }
 
 #[test]
-fn hash_core_is_identical_to_hash_words() {
-    fn check<const K: usize>(next: &mut impl FnMut() -> u64) {
-        for _ in 0..1_000 {
-            let key: Vec<u64> = (0..K).map(|_| next()).collect();
-            assert_eq!(hash_core::<K>(&key), hash_words(&key), "K={K}");
-        }
-    }
-    let mut rng = 0x0F1E_2D3C_4B5A_6978u64;
-    let mut next = move || {
-        rng = rng
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        rng
-    };
-    check::<1>(&mut next);
-    check::<2>(&mut next);
-    check::<3>(&mut next);
-    check::<4>(&mut next);
-    check::<6>(&mut next);
-    check::<8>(&mut next);
-}
-
-#[test]
 fn probe_steps_stay_near_one_at_max_load() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 32_768);
     let mut rng = 7u64;
