@@ -380,16 +380,6 @@ impl crate::image::view::Operands for RowWords {
         })
     }
 
-    fn block(&self, at: crate::image::view::OperandAddr) -> Result<([u64; 8], u8)> {
-        Ok(match self.operand(at.field()) {
-            crate::exec::dispatch::FactOperand::Block { words, count } => (words, count),
-            crate::exec::dispatch::FactOperand::Word(_)
-            | crate::exec::dispatch::FactOperand::Pair(..) => {
-                unreachable!("validated: block operands are bytes<N>")
-            }
-        })
-    }
-
     fn loaded(&self, at: crate::image::view::OperandAddr) -> Result<crate::image::view::Loaded> {
         Ok(match self.operand(at.field()) {
             crate::exec::dispatch::FactOperand::Word(w) => crate::image::view::Loaded::Word(w),

@@ -10,7 +10,7 @@ use crate::ir::WordCmp;
 use crate::schema::Relation;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
 
-use super::{Const, FilterPredicate, IntervalConst, MaskConst, SetConst, ViewWordSource};
+use super::{Const, FilterPredicate, IntervalConst, SetConst, ViewWordSource};
 
 /// Address of one operand in a provider's space. Image and fact
 /// providers interpret [`Self::at`] as a [`FieldId`]; binding and batch
@@ -125,9 +125,6 @@ pub(crate) trait Operands {
 
     fn word(&self, at: OperandAddr) -> Result<u64, Self::Error>;
     fn pair(&self, at: OperandAddr) -> Result<(u64, u64), Self::Error>;
-    #[allow(dead_code, reason = "bytes<N> currently loads via `loaded`")]
-    fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8), Self::Error>;
-
     fn loaded(&self, at: OperandAddr) -> Result<Loaded, Self::Error>;
 
     fn intern(&self, bytes: &[u8]) -> Result<u64, Self::Error> {
@@ -165,15 +162,6 @@ impl Operands for ImageRow<'_> {
             Loaded::Pair(s, e) => (s, e),
             Loaded::Word(_) | Loaded::Byte(_) | Loaded::Block { .. } => {
                 unreachable!("validated: interval predicates read interval fields")
-            }
-        })
-    }
-
-    fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8), Self::Error> {
-        Ok(match self.loaded(at)? {
-            Loaded::Block { words, count } => (words, count),
-            Loaded::Word(_) | Loaded::Byte(_) | Loaded::Pair(..) => {
-                unreachable!("validated: block operands are bytes<N>")
             }
         })
     }
@@ -234,10 +222,6 @@ pub(crate) const fn element_probe_word(dense: bool, point: u64) -> u64 {
     } else {
         point
     }
-}
-
-pub(crate) fn mask_of(mask: MaskConst, _params: &[Const]) -> bumbledb_theory::allen::AllenMask {
-    mask
 }
 
 fn resolve_word(value: &ViewWordSource, params: &[Const]) -> u64 {
@@ -398,20 +382,16 @@ where
         FilterPredicate::FieldsAllen { left, right, mask } => {
             let (l_start, l_end) = ops.pair(*left)?;
             let (r_start, r_end) = ops.pair(*right)?;
-            Some(
-                mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                    &l_start, &l_end, &r_start, &r_end,
-                )),
-            )
+            Some(mask.contains(crate::allen::classify_bounds(
+                &l_start, &l_end, &r_start, &r_end,
+            )))
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (f_start, f_end) = ops.pair(*field)?;
             let (start, end) = const_interval(other, params);
-            Some(
-                mask_of(*mask, params).contains(crate::allen::classify_bounds(
-                    &f_start, &f_end, &start, &end,
-                )),
-            )
+            Some(mask.contains(crate::allen::classify_bounds(
+                &f_start, &f_end, &start, &end,
+            )))
         }
         FilterPredicate::FieldsPointIn {
             interval,
@@ -638,26 +618,14 @@ pub(crate) fn kernel_scan(
             let (l_starts, l_ends) = interval_columns(image, *left);
             let (r_starts, r_ends) = interval_columns(image, *right);
             crate::exec::kernel::allen_filter_columns(
-                l_starts,
-                l_ends,
-                r_starts,
-                r_ends,
-                mask_of(*mask, params),
-                out,
+                l_starts, l_ends, r_starts, r_ends, *mask, out,
             );
             return true;
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
             let (starts, ends) = interval_columns(image, *field);
             let (start, end) = const_interval(other, params);
-            crate::exec::kernel::allen_filter_columns_const(
-                starts,
-                ends,
-                start,
-                end,
-                mask_of(*mask, params),
-                out,
-            );
+            crate::exec::kernel::allen_filter_columns_const(starts, ends, start, end, *mask, out);
             return true;
         }
         FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
@@ -883,7 +851,7 @@ pub(crate) fn resolve_filter_into(
             *dst = FilterPredicate::FieldsAllen {
                 left: *left,
                 right: *right,
-                mask: mask_of(*mask, params),
+                mask: *mask,
             };
         }
         FilterPredicate::FieldAllen { field, other, mask } => {
@@ -900,7 +868,7 @@ pub(crate) fn resolve_filter_into(
             *dst = FilterPredicate::FieldAllen {
                 field: *field,
                 other: resolved,
-                mask: mask_of(*mask, params),
+                mask: *mask,
             };
         }
         FilterPredicate::FieldsCompare { .. } | FilterPredicate::FieldsPointIn { .. } => {
@@ -1309,9 +1277,6 @@ mod text_eq_holds {
             Ok(self.0)
         }
         fn pair(&self, _: OperandAddr) -> Result<(u64, u64), Self::Error> {
-            unreachable!("scalar")
-        }
-        fn block(&self, _: OperandAddr) -> Result<([u64; 8], u8), Self::Error> {
             unreachable!("scalar")
         }
         fn loaded(&self, _: OperandAddr) -> Result<Loaded, Self::Error> {

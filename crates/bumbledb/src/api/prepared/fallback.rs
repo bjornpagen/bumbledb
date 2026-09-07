@@ -973,15 +973,6 @@ impl Operands for BindingOps<'_> {
         Ok((self.bindings.get(slot), self.bindings.get(slot + 1)))
     }
 
-    fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8)> {
-        match self.var_loaded(at) {
-            Loaded::Block { words, count } => Ok((words, count)),
-            Loaded::Word(_) | Loaded::Byte(_) | Loaded::Pair(..) => {
-                unreachable!("validated: block residuals address bytes<N> variables")
-            }
-        }
-    }
-
     fn loaded(&self, at: OperandAddr) -> Result<Loaded> {
         Ok(self.var_loaded(at))
     }
@@ -1017,16 +1008,6 @@ impl Operands for ScratchRow<'_> {
             crate::exec::dispatch::FactOperand::Word(_)
             | crate::exec::dispatch::FactOperand::Block { .. } => {
                 unreachable!("validated: interval predicates read interval fields")
-            }
-        })
-    }
-
-    fn block(&self, at: OperandAddr) -> Result<([u64; 8], u8)> {
-        Ok(match self.operand(at.field()) {
-            crate::exec::dispatch::FactOperand::Block { words, count } => (words, count),
-            crate::exec::dispatch::FactOperand::Word(_)
-            | crate::exec::dispatch::FactOperand::Pair(..) => {
-                unreachable!("validated: block operands are bytes<N>")
             }
         })
     }

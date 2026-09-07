@@ -165,15 +165,6 @@ impl Operands for ProbeRow<'_> {
         }
     }
 
-    fn block(&self, at: OperandAddr) -> std::result::Result<([u64; 8], u8), Self::Error> {
-        match self.row.operand(at.field()) {
-            FactOperand::Block { words, count } => Ok((words, count)),
-            FactOperand::Word(_) | FactOperand::Pair(..) => {
-                unreachable!("validated: block operands are bytes<N>")
-            }
-        }
-    }
-
     fn loaded(&self, at: OperandAddr) -> std::result::Result<Loaded, Self::Error> {
         Ok(match self.row.operand(at.field()) {
             FactOperand::Word(w) => Loaded::Word(w),

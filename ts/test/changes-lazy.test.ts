@@ -16,8 +16,6 @@
  *   calls never reset it);
  * - finish consumes the draft: later ingestion and a second finish refuse
  *   through the spent capability state.
- *
- * Verification: NotRun until F3 (needs the rebuilt addon's draft verbs).
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
@@ -173,34 +171,36 @@ test("a throwing getter is a typed input failure that spends and drains the draf
 	}
 })
 
-test("ingestion charges ONE cumulative aggregate budget across calls — chunks never reset it", async function cumulativeBudget() {
+test("ingestion charges input once per operation and cumulatively across calls", async function cumulativeBudget() {
 	const rt = runtime()
 	try {
-		const tight = { ...work, inputBytes: 256n }
-		const ids: Uuid[] = []
-		for (let index = 0; index < 8; index += 1) {
-			ids.push(await newId())
-		}
-		const exit = await rt.runPromiseExit(
+		// Native charge: UUID 24 + string (8 + UTF-8 length) + i64 16.
+		const row = studentRow(await newId(), "x".repeat(2048))
+		const tight = { ...work, inputBytes: 2096n }
+		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
 					const draft = yield* ChangeSet.builder(Learning, tight)
-					// Each row alone fits the budget; the CUMULATIVE series
-					// must exhaust it — a fresh-per-call budget would admit
-					// all eight.
-					for (const id of ids) {
-						yield* draft.insert(Student, [{ id, name: "x".repeat(48), budget: 1n }])
+					// Exactly one row fits. A duplicate native charge between
+					// JS extraction and worker ingestion would refuse this call.
+					yield* draft.insert(Student, [row])
+					const exit = yield* Effect.exit(draft.insert(Student, [row]))
+					assert.equal(exit._tag, "Failure")
+					if (exit._tag === "Failure") {
+						const failure = exit.cause.reasons.find(Cause.isFailReason)
+						assert.ok(failure?.error instanceof DbError)
+						assert.deepEqual(failure.error.reason, {
+							_tag: "ResourceLimit",
+							dimension: "inputBytes",
+							used: 2096n,
+							requested: 2096n,
+							limit: 2096n
+						})
 					}
-					return yield* draft.finish()
+					assert.equal((yield* Effect.exit(draft.finish()))._tag, "Failure", "a refused draft is spent")
 				})
 			)
 		)
-		assert.equal(exit._tag, "Failure", "the aggregate input budget is cumulative")
-		if (exit._tag === "Failure") {
-			const reason = exit.cause.reasons.find(Cause.isFailReason)
-			assert.ok(reason?.error instanceof DbError)
-			assert.equal(reason.error.code, "ResourceLimit")
-		}
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}

@@ -42,12 +42,12 @@ mod snapshot;
 
 pub(crate) use apply::{apply_change_set, changes_from_payload, inspect_db};
 pub(crate) use close::{close_admitted, spawn_teardown};
-pub(crate) use codec::{decode_rows_values, encode_rows_bytes};
+pub(crate) use codec::{decode_rows_values, encode_rows_bytes, parse_input_rows};
 pub(crate) use delivery::{
     collect_from_payload, intersected_result_bytes, is_terminal_backing, publish_from_payload,
     transfer_from_payload,
 };
-pub(crate) use draft::{finish_from_payload, ingest_from_payload, parse_draft_rows};
+pub(crate) use draft::{finish_from_payload, ingest_from_payload};
 pub(crate) use snapshot::{execute_complete_work, snapshot_get_work};
 
 const _: () = {
@@ -829,7 +829,7 @@ fn draft_mutation(
         policy.parse().map_err(|error| thrown(env, error))?,
         notification(callback)?,
         move |context| {
-            let parsed = parse_draft_rows(&sealed, relation, stated, &cells, context);
+            let parsed = parse_input_rows(&sealed, relation, stated, &cells, context);
             match parsed {
                 Ok((rows, bytes)) => Ok(Box::new(
                     move |context: &WorkContext, payload, _publication| {
@@ -1176,7 +1176,7 @@ pub fn runtime_encode_rows(
         policy.parse().map_err(|error| thrown(env, error))?,
         notification(callback)?,
         |context| {
-            let prepared = (|| -> napi::Result<(bumbledb::schema::Schema, RelationId, Vec<Vec<Value>>, u64)> {
+            let prepared = (|| -> napi::Result<(bumbledb::schema::Schema, crate::Sealed)> {
                 use bumbledb::schema::ValidateDescriptor as _;
                 let (descriptor, attrs) = match crate::descriptor_of(&spec)? {
                     Ok(parsed) => parsed,
@@ -1193,43 +1193,15 @@ pub fn runtime_encode_rows(
                     .clone()
                     .validate()
                     .map_err(|error| marshal::err(error.to_string()))?;
-                let roster = sealed
-                    .rosters
-                    .get(relation as usize)
-                    .ok_or_else(|| marshal::err("encodeRows: unknown relation id".into()))?;
-                let arity = roster.fields.len();
-                if u128::from(stated) * (arity as u128) != u128::from(cells.len()) {
-                    return Err(marshal::err("encodeRows: stated rows disagree with cells".into()));
-                }
-                let mut rows = Vec::new();
-                let mut bytes = 0u64;
-                let mut row = Vec::with_capacity(arity.max(1));
-                for index in 0..cells.len() {
-                    if arity == 0 {
-                        break;
-                    }
-                    let field = &roster.fields[(index as usize) % arity.max(1)];
-                    let value = marshal::req_at::<Unknown>(&cells, index, "encodeRows cells")?;
-                    let value = marshal::schema_value_in(
-                        &field.value_type,
-                        &value,
-                        &roster.name,
-                        &field.name,
-                    )?;
-                    bytes = bytes.saturating_add(value_bytes(&value));
-                    row.push(value);
-                    if row.len() == arity {
-                        rows.push(std::mem::replace(&mut row, Vec::with_capacity(arity)));
-                    }
-                }
-                Ok((schema, RelationId(relation), rows, bytes))
+                Ok((schema, sealed))
             })();
             match prepared {
-                Ok((schema, relation, rows, bytes)) => {
-                    context.input(bytes)?;
+                Ok((schema, sealed)) => {
+                    let (rows, _) = parse_input_rows(&sealed, relation, stated, &cells, context)?;
                     Ok(Box::new(move |context: &WorkContext| {
                         context.checkpoint()?;
-                        let bytes = encode_rows_bytes(&schema, relation, &rows, context)?;
+                        let bytes =
+                            encode_rows_bytes(&schema, RelationId(relation), &rows, context)?;
                         Ok(Output::Bytes(bytes))
                     }) as crate::runtime::Work)
                 }

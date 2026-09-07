@@ -17,7 +17,7 @@ use crate::runtime::registry::Payload;
 use crate::runtime::registry::registry_draft::{DraftPayload, PendingChange};
 use crate::runtime::{Output, RuntimeError};
 
-use super::{change_error, value_bytes};
+use super::change_error;
 
 fn draft_spent(entry: &DraftPayload) -> bool {
     entry.ledger.terminal
@@ -103,7 +103,8 @@ fn ingest_chunk(
             limit: entry.allowance_rows,
         });
     }
-    context.input(chunk_bytes)?;
+    // The JS-thread parser already charged this operation's input before
+    // dispatch. Only the draft's cumulative ledger advances here.
     let rel = RelationId(relation);
     for values in rows {
         context.rows(1)?;
@@ -180,52 +181,4 @@ pub(crate) fn finish_from_payload(
             Err(change_error(&error))
         }
     }
-}
-
-pub(crate) fn parse_draft_rows(
-    sealed: &crate::Sealed,
-    relation: u32,
-    stated: u64,
-    cells: &napi::bindgen_prelude::Array,
-    context: &WorkContext,
-) -> Result<(Vec<Vec<Value>>, u64), RuntimeError> {
-    let roster = sealed
-        .rosters
-        .get(relation as usize)
-        .ok_or(RuntimeError::InvalidArgument)?;
-    let arity = roster.fields.len();
-    let len = cells.len() as usize;
-    let expected = u128::from(stated) * (arity as u128);
-    if expected != len as u128 {
-        return Err(RuntimeError::InvalidArgument);
-    }
-    if arity == 0 {
-        context.input(0)?;
-        let rows = if stated == 0 {
-            Vec::new()
-        } else {
-            vec![Vec::new()]
-        };
-        return Ok((rows, 0));
-    }
-    let mut rows = Vec::new();
-    rows.try_reserve_exact(usize::try_from(stated).map_err(|_| RuntimeError::InvalidArgument)?)
-        .map_err(|_| RuntimeError::Internal)?;
-    let mut bytes: u64 = 0;
-    let mut row = Vec::with_capacity(arity);
-    for index in 0..cells.len() {
-        let field = &roster.fields[(index as usize) % arity];
-        let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "draft cells")
-            .map_err(|_| RuntimeError::InvalidArgument)?;
-        let value =
-            crate::marshal::schema_value_in(&field.value_type, &value, &roster.name, &field.name)
-                .map_err(|_| RuntimeError::InvalidArgument)?;
-        bytes = bytes.saturating_add(value_bytes(&value));
-        row.push(value);
-        if row.len() == arity {
-            rows.push(std::mem::replace(&mut row, Vec::with_capacity(arity)));
-        }
-    }
-    context.input(bytes)?;
-    Ok((rows, bytes))
 }

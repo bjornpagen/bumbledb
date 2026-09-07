@@ -68,6 +68,12 @@ test("native row codecs return owned canonical values and typed capacity refusal
 			assert.deepEqual(await rt.runPromise(decodeRows(shape, fresh, work)), [first])
 		}
 		assert.deepEqual(await rt.runPromise(decodeRows(shape, await rt.runPromise(encodeRows(shape, [], work)), work)), [])
+		const Flag = relation("Flag", {})
+		const flagShape = rowShape(schema("Flags", { Flag }, []), Flag)
+		for (const input of [[], [{}], [{}, {}, {}]]) {
+			const bytes = await rt.runPromise(encodeRows(flagShape, input, work))
+			assert.deepEqual(await rt.runPromise(decodeRows(flagShape, bytes, work)), input.length === 0 ? [] : [{}])
+		}
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}

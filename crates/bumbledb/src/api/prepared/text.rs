@@ -197,9 +197,6 @@ mod tests {
         fn pair(&self, _: OperandAddr) -> std::result::Result<(u64, u64), Self::Error> {
             unreachable!("filter equality test is a word compare")
         }
-        fn block(&self, _: OperandAddr) -> std::result::Result<([u64; 8], u8), Self::Error> {
-            unreachable!("filter equality test is a word compare")
-        }
         fn loaded(&self, _: OperandAddr) -> std::result::Result<Loaded, Self::Error> {
             Ok(Loaded::Word(self.0))
         }

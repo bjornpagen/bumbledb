@@ -8,7 +8,62 @@ use bumbledb::{ChangeSet, RelationId, Value};
 use crate::marshal::{ValueOut, output_vec, row_out};
 use crate::runtime::{QueuedBytes, QueuedOutput, RuntimeError};
 
-use super::change_error;
+use super::{change_error, value_bytes};
+
+/// Own and charge the same host row shape for change drafts and encoding.
+/// The worker receives these values without another input copy or charge.
+pub(crate) fn parse_input_rows(
+    sealed: &crate::Sealed,
+    relation: u32,
+    stated: u64,
+    cells: &napi::bindgen_prelude::Array,
+    context: &WorkContext,
+) -> Result<(Vec<Vec<Value>>, u64), RuntimeError> {
+    let roster = sealed
+        .rosters
+        .get(relation as usize)
+        .ok_or(RuntimeError::InvalidArgument)?;
+    let arity = roster.fields.len();
+    if u128::from(stated) * (arity as u128) != u128::from(cells.len()) {
+        return Err(RuntimeError::InvalidArgument);
+    }
+    context.checkpoint()?;
+    if arity == 0 {
+        // The zero-column relation is a set: absent or the one empty tuple.
+        let rows = if stated == 0 {
+            Vec::new()
+        } else {
+            vec![Vec::new()]
+        };
+        return Ok((rows, 0));
+    }
+    let mut rows = Vec::new();
+    rows.try_reserve_exact(usize::try_from(stated).map_err(|_| RuntimeError::InvalidArgument)?)
+        .map_err(|_| RuntimeError::Internal)?;
+    let mut bytes = 0u64;
+    for start in (0..cells.len()).step_by(arity) {
+        let mut row = Vec::with_capacity(arity);
+        let mut row_bytes = 0u64;
+        for (offset, field) in roster.fields.iter().enumerate() {
+            let index = start + u32::try_from(offset).expect("field count fits u32");
+            let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "row cells")
+                .map_err(|_| RuntimeError::InvalidArgument)?;
+            let value = crate::marshal::schema_value_in(
+                &field.value_type,
+                &value,
+                &roster.name,
+                &field.name,
+            )
+            .map_err(|_| RuntimeError::InvalidArgument)?;
+            row_bytes = row_bytes.saturating_add(value_bytes(&value));
+            row.push(value);
+        }
+        context.input(row_bytes)?;
+        bytes = bytes.saturating_add(row_bytes);
+        rows.push(row);
+    }
+    Ok((rows, bytes))
+}
 
 pub(crate) fn encode_rows_bytes(
     schema: &bumbledb::schema::Schema,
