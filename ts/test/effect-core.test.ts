@@ -6,15 +6,12 @@
  * lookups, honest close reports, scoped misuse refusals and foreign
  * capability refusals. Effect-only: everything below is a LAZY effect and
  * nothing runs at construction.
- *
- * Verification: NotRun until F3 — these lanes execute once P06R's
- * db-bridge verbs land in the rebuilt addon (`#db-native.ts` is the
- * consumer-side pin).
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Effect, Exit, Fiber, ManagedRuntime, Option } from "effect"
 import { ChangeSet } from "#changes.ts"
+import { decodeRows, encodeRows, rowShape } from "#codec.ts"
 import type { ApplyOutcome, CoreWitness, Db as DbValue, Snapshot } from "#db.ts"
 import { Db } from "#db.ts"
 import { str, uuid } from "#fields.ts"
@@ -41,6 +38,40 @@ function runtime() {
 }
 
 const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
+
+test("native row codecs return owned canonical values and typed capacity refusals", async function canonicalRows() {
+	const rt = runtime()
+	const shape = rowShape(Learning, Student)
+	const first: {
+		id: Uuid
+		name: string
+		budget: bigint
+	} = { id: "00000000-0000-0000-0000-000000000001", name: "\u{1f41d}".repeat(4097), budget: 10n }
+	const second = { ...first, id: "00000000-0000-0000-0000-000000000002" } satisfies typeof first
+	try {
+		const encoded = await rt.runPromise(encodeRows(shape, [second, first, first], work))
+		assert.ok(encoded instanceof Uint8Array)
+		const decoded = await rt.runPromise(decodeRows(shape, encoded, work))
+		assert.deepEqual(decoded, [first, second])
+		encoded.fill(0)
+		assert.deepEqual(decoded, [first, second], "decoded values do not alias the input buffer")
+		const fresh = await rt.runPromise(encodeRows(shape, [first], work))
+		for (const operation of [
+			encodeRows(shape, [first], { ...work, resultBytes: 0n }).pipe(Effect.asVoid),
+			decodeRows(shape, fresh, { ...work, resultBytes: 0n }).pipe(Effect.asVoid)
+		]) {
+			const exit = await rt.runPromiseExit(operation)
+			assert.ok(Exit.isFailure(exit))
+			const failure = exit.cause.reasons.find(Cause.isFailReason)
+			assert.ok(failure?.error instanceof DbError)
+			assert.equal(failure.error.reason._tag, "ResourceLimit")
+			assert.deepEqual(await rt.runPromise(decodeRows(shape, fresh, work)), [first])
+		}
+		assert.deepEqual(await rt.runPromise(decodeRows(shape, await rt.runPromise(encodeRows(shape, [], work)), work)), [])
+	} finally {
+		await Effect.runPromise(rt.disposeEffect)
+	}
+})
 
 function seeded(studentId: Uuid, attemptId: Uuid) {
 	return Effect.gen(function* () {

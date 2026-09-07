@@ -48,6 +48,49 @@ pub struct QueuedRow {
     pub charge: ByteReservation,
 }
 
+/// Byte output keeps its capacity charged until JavaScript owns the buffer.
+#[derive(Debug)]
+pub struct QueuedBytes {
+    pub bytes: Vec<u8>,
+    pub charge: ByteReservation,
+}
+
+impl QueuedBytes {
+    pub(crate) fn copy_from(work: &WorkContext, source: &[u8]) -> Result<Self, RuntimeError> {
+        let charge = work.reserve(bumbledb::work::ByteKind::Result, source.len() as u64)?;
+        let mut bytes = crate::marshal::output_vec(source.len())?;
+        for chunk in source.chunks(16 * 1024) {
+            work.step(chunk.len() as u64)?;
+            bytes.extend_from_slice(chunk);
+        }
+        Ok(Self { bytes, charge })
+    }
+
+    /// Retain an already-produced response without copying its backing.
+    pub(crate) fn admit(work: &WorkContext, bytes: Vec<u8>) -> Result<Self, RuntimeError> {
+        let charge = work.reserve(bumbledb::work::ByteKind::Result, bytes.capacity() as u64)?;
+        Ok(Self { bytes, charge })
+    }
+}
+
+impl napi::bindgen_prelude::ToNapiValue for QueuedBytes {
+    #[expect(
+        unsafe_code,
+        reason = "N-API conversion delegates to the owned buffer on the same live env"
+    )]
+    unsafe fn to_napi_value(
+        env: napi::sys::napi_env,
+        value: Self,
+    ) -> napi::Result<napi::sys::napi_value> {
+        let Self { bytes, charge } = value;
+        // SAFETY: the caller supplies the live environment; Buffer takes
+        // ownership of the vector. Retain its charge through the transfer.
+        let result = unsafe { napi::bindgen_prelude::Buffer::to_napi_value(env, bytes.into()) };
+        drop(charge);
+        result
+    }
+}
+
 impl napi::bindgen_prelude::ToNapiValue for QueuedOutput {
     #[expect(
         unsafe_code,
@@ -85,6 +128,7 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedRow {
 }
 
 impl QueuedOutput {
+    #[cfg(test)]
     pub fn admit(
         work: &WorkContext,
         rows: Vec<Vec<crate::marshal::ValueOut>>,
@@ -217,7 +261,7 @@ pub enum Output {
     /// Bounded database diagnostics (measurements, never rows).
     DbReport(crate::db_wire::DbInspectionOwned),
     /// Owned bounded byte payloads (row codec, migration codec responses).
-    Bytes(Vec<u8>),
+    Bytes(QueuedBytes),
     /// A log-machine payload (histories, commands, caches, admin — C10's
     /// `LogNative` roster over the internal Rust machine).
     Machine(crate::log_wire::MachineOutput),

@@ -1225,7 +1225,7 @@ pub enum ValueOut {
     I64(i64),
     F64(F64),
     Text(String),
-    /// Canonical canonical hyphenated UUID text — the TypeScript spelling of an
+    /// Canonical hyphenated UUID text — the TypeScript spelling of an
     /// application-owned `Uuid`.
     Uuid(String),
     Bytes(Vec<u8>),
@@ -1326,7 +1326,7 @@ fn allocation_error(_: std::collections::TryReserveError) -> crate::runtime::Run
 }
 
 /// Called only after the destination's complete capacity has been admitted.
-fn output_vec<T>(len: usize) -> Result<Vec<T>, crate::runtime::RuntimeError> {
+pub(crate) fn output_vec<T>(len: usize) -> Result<Vec<T>, crate::runtime::RuntimeError> {
     let mut values = Vec::new();
     values.try_reserve_exact(len).map_err(allocation_error)?;
     Ok(values)
@@ -1399,7 +1399,19 @@ pub(crate) fn row_out_charged(
     work: &bumbledb::work::WorkContext,
     row: &bumbledb::canonical::DecodedRow,
 ) -> Result<crate::runtime::QueuedRow, crate::runtime::RuntimeError> {
-    let mut bytes = 0u64;
+    let mut charge = work.reserve(bumbledb::work::ByteKind::Result, 0)?;
+    let values = row_out(work, row, &mut charge)?;
+    Ok(crate::runtime::QueuedRow { values, charge })
+}
+
+/// Grow the destination reservation before allocating; the borrowed decoded
+/// row stays charged until this one-copy conversion is complete.
+pub(crate) fn row_out(
+    work: &bumbledb::work::WorkContext,
+    row: &bumbledb::canonical::DecodedRow,
+    charge: &mut bumbledb::work::ByteReservation,
+) -> Result<Vec<ValueOut>, crate::runtime::RuntimeError> {
+    let mut bytes = charge.bytes();
     for value in row {
         work.step(1)?;
         bytes = bytes
@@ -1408,13 +1420,13 @@ pub(crate) fn row_out_charged(
                 crate::runtime::session::engine_error(&bumbledb::Error::ResultBytesOverflow)
             })?;
     }
-    let charge = work.reserve(bumbledb::work::ByteKind::Result, bytes)?;
+    charge.grow_to(bytes)?;
     let mut values = output_vec(row.len())?;
     for value in row {
         work.step(1)?;
         values.push(value_out_from_answer(borrowed_value(value))?);
     }
-    Ok(crate::runtime::QueuedRow { values, charge })
+    Ok(values)
 }
 
 /// Bound every cell's string/byte work, then report the page charge.

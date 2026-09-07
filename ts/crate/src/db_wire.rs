@@ -20,14 +20,14 @@ use std::time::Instant;
 
 use bumbledb::work::WorkContext;
 use bumbledb::{ChangeError, ChangeSet, CompleteResult, RelationId, ResultCursor, Theory, Value};
-use napi::bindgen_prelude::{Array, BigInt, Buffer, Env, External, Function, Object, Unknown};
+use napi::bindgen_prelude::{Array, BigInt, Env, External, Function, Object, Unknown};
 use napi_derive::napi;
 
-use crate::marshal::{self, ValueOut};
+use crate::marshal;
 use crate::runtime::registry::{
     Capability, NativeKind, Payload, RegistryAdmission, ResultState, registry_draft::DraftPayload,
 };
-use crate::runtime::{DraftLedger, Output, QueuedOutput, Runtime, RuntimeError};
+use crate::runtime::{DraftLedger, Output, QueuedBytes, QueuedOutput, Runtime, RuntimeError};
 use crate::runtime_wire::{
     OperationHandle, PolicyWire, RuntimeHandle, SessionHandle, notification, operation_handle,
     owner, reporter, session, take_output, thrown, unshared_input,
@@ -213,6 +213,11 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
 }
 
 pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
+    if let ChangeError::Work(error) | ChangeError::Row(bumbledb::canonical::RowError::Work(error)) =
+        error
+    {
+        return RuntimeError::Work(*error);
+    }
     RuntimeError::Engine {
         kind: crate::tags::error_family::VALIDATION,
         message: format!("bumbledb changes: {error:?}"),
@@ -1243,9 +1248,12 @@ pub fn runtime_encode_rows(
 }
 
 #[napi]
-pub fn runtime_bytes_take(env: Env, handle: &External<OperationHandle>) -> napi::Result<Buffer> {
+pub fn runtime_bytes_take(
+    env: Env,
+    handle: &External<OperationHandle>,
+) -> napi::Result<QueuedBytes> {
     match take_output(env, handle)? {
-        Output::Bytes(bytes) => Ok(Buffer::from(bytes)),
+        Output::Bytes(bytes) => Ok(bytes),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
@@ -1289,13 +1297,12 @@ pub fn runtime_decode_rows(
                     let owned = bytes.to_vec();
                     Ok(Box::new(move |context: &WorkContext| {
                         context.checkpoint()?;
-                        let rows =
-                            decode_rows_values(&schema, RelationId(relation), &owned, context)?;
-                        let out: Vec<Vec<ValueOut>> = rows
-                            .into_iter()
-                            .map(|row| row.into_iter().map(ValueOut::from_value).collect())
-                            .collect();
-                        Ok(Output::Rows(QueuedOutput::admit(context, out, 0)?))
+                        Ok(Output::Rows(decode_rows_values(
+                            &schema,
+                            RelationId(relation),
+                            &owned,
+                            context,
+                        )?))
                     }) as crate::runtime::Work)
                 }
                 Err(error) => {
@@ -1340,9 +1347,8 @@ pub fn runtime_migration_schema(
             };
             Ok(Box::new(move |context| {
                 context.checkpoint()?;
-                Ok(Output::Bytes(crate::migration_wire::schema_response(
-                    parsed, context,
-                )?))
+                let bytes = crate::migration_wire::schema_response(parsed, context)?;
+                Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
             }))
         },
     );
@@ -1373,9 +1379,8 @@ pub fn runtime_migration_read(
                 let owned = request.to_vec();
                 Ok(Box::new(move |context| {
                     context.checkpoint()?;
-                    Ok(Output::Bytes(crate::migration_wire::chain_response(
-                        &owned, context,
-                    )?))
+                    let bytes = crate::migration_wire::chain_response(&owned, context)?;
+                    Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
                 }))
             },
         )
@@ -1384,7 +1389,7 @@ pub fn runtime_migration_read(
 }
 
 // ---------------------------------------------------------------------------
-// Engine-backed bridge tests (authored now; verification NotRun).
+// Engine-backed bridge tests.
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

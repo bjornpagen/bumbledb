@@ -140,6 +140,28 @@ fn reservation_resize_preserves_old_owner_on_refusal_and_refunds_after_shrink() 
 }
 
 #[test]
+fn growing_reservation_never_refunds_live_bytes() {
+    let ctx = policy().start().unwrap();
+    let mut owner = ctx.reserve(ByteKind::Result, 3).unwrap();
+    owner.grow_to(7).unwrap();
+    owner.grow_to(2).unwrap();
+    assert_eq!(owner.bytes(), 7);
+    assert_eq!(ctx.used(Resource::ResultBytes), 7);
+    assert!(matches!(
+        owner.grow_to(11),
+        Err(WorkError::Exhausted { .. })
+    ));
+    assert_eq!(owner.bytes(), 7);
+    assert_eq!(ctx.used(Resource::ResultBytes), 7);
+    ctx.cancel();
+    assert_eq!(owner.grow_to(8), Err(WorkError::Cancelled));
+    owner.grow_to(0).unwrap();
+    assert_eq!(owner.bytes(), 7);
+    drop(owner);
+    assert_eq!(ctx.used(Resource::ResultBytes), 0);
+}
+
+#[test]
 fn concurrent_admission_cannot_oversubscribe_the_same_allowance() {
     let ctx = policy().start().unwrap();
     let barrier = Arc::new(std::sync::Barrier::new(16));

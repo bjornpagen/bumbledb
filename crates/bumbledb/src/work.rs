@@ -237,6 +237,15 @@ impl ByteReservation {
         self.bytes
     }
 
+    /// Admit a growing owner's total capacity before allocating it. Smaller
+    /// requests leave the reservation intact; this cannot refund live bytes.
+    /// # Errors
+    /// Refuses growth beyond the allowance or after work stops. Refusal
+    /// preserves the owner's previous reservation.
+    pub fn grow_to(&mut self, bytes: u64) -> Result<(), WorkError> {
+        self.resize(self.bytes.max(bytes))
+    }
+
     /// Grow before the owner allocates; shrink only after its allocation
     /// shrinks. Refused growth leaves both this owner and the ledger intact.
     /// Shrinking remains permitted after cancellation for cleanup.

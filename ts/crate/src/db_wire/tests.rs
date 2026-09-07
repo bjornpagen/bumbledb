@@ -1,5 +1,4 @@
-//! D01/D07/D12/D18/D25 discriminators for the real addon delivery, draft
-//! and snapshot chain. Authored now; verification `NotRun`.
+//! Addon delivery, draft, codec and snapshot ownership tests.
 //!
 //! Sensitivity (D25): a post-register checkpoint that drops `QueuedOutput`
 //! loses the consumed page. Resource abort must retry the same row;
@@ -931,15 +930,144 @@ fn the_row_codec_borrows_decoded_values_and_refuses_foreign_records() {
         vec![Value::U64(1), Value::U64(10)],
     ];
     let bytes = encode_rows_bytes(&schema, RelationId(0), &rows, &ctx).expect("encodes");
-    let decoded = decode_rows_values(&schema, RelationId(0), &bytes, &ctx).expect("decodes");
-    assert_eq!(decoded.len(), 2);
-    assert_eq!(decoded[0], vec![Value::U64(1), Value::U64(10)]);
-    assert!(decode_rows_values(&schema, RelationId(1), &bytes, &ctx).is_err());
+    let decoded = decode_rows_values(&schema, RelationId(0), &bytes.bytes, &ctx).expect("decodes");
+    assert_eq!(decoded.rows.len(), 2);
+    assert!(matches!(
+        decoded.rows[0].as_slice(),
+        [ValueOut::U64(1), ValueOut::U64(10)]
+    ));
+    assert!(decode_rows_values(&schema, RelationId(1), &bytes.bytes, &ctx).is_err());
     // A different u64 payload is still a lawful canonical change set;
     // truncation, not arbitrary scalar mutation, is malformed framing.
-    let mut tampered = bytes;
+    let mut tampered = bytes.bytes.clone();
     tampered.pop();
     assert!(decode_rows_values(&schema, RelationId(0), &tampered, &ctx).is_err());
+}
+
+#[test]
+fn row_codec_payloads_retain_exact_result_capacity_and_refund_on_refusal() {
+    use bumbledb::schema::ValidateDescriptor as _;
+    use bumbledb::work::Resource;
+
+    bumbledb::schema! {
+        pub PayloadRows;
+        relation Entry { id: uuid, text: str, bytes: bytes<16> }
+    }
+    let schema = PayloadRows.descriptor().validate().unwrap();
+    let text = "\u{1f41d}".repeat(4097);
+    let rows = vec![
+        vec![
+            Value::Uuid(bumbledb::Uuid::from_u128(1)),
+            Value::String(text.clone().into()),
+            Value::FixedBytes(Box::new([7; 16])),
+        ],
+        vec![
+            Value::Uuid(bumbledb::Uuid::from_u128(2)),
+            Value::String(text.clone().into()),
+            Value::FixedBytes(Box::new([8; 16])),
+        ],
+    ];
+    let encode = work();
+    let encoded = encode_rows_bytes(&schema, RelationId(0), &rows, &encode).unwrap();
+    assert_eq!(encode.used(Resource::WorkingBytes), 0);
+    assert_eq!(
+        encode.used(Resource::ResultBytes),
+        encoded.bytes.capacity() as u64
+    );
+    assert_eq!(encoded.charge.bytes(), encoded.bytes.capacity() as u64);
+
+    let result_bytes =
+        2 * (size_of::<Vec<ValueOut>>() + 3 * size_of::<ValueOut>() + 36 + text.len() + 16) as u64;
+    let decode = ExecutionPolicy {
+        result_bytes,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    let decoded = decode_rows_values(&schema, RelationId(0), &encoded.bytes, &decode).unwrap();
+    assert_eq!(decode.used(Resource::WorkingBytes), 0);
+    assert_eq!(decode.used(Resource::ResultBytes), result_bytes);
+    assert_eq!(decoded.charge.bytes(), result_bytes);
+    assert!(
+        matches!(&decoded.rows[0][0], ValueOut::Uuid(id) if id == "00000000-0000-0000-0000-000000000001")
+    );
+    assert!(matches!(&decoded.rows[1][1], ValueOut::Text(value) if value == &text));
+    assert!(matches!(&decoded.rows[1][2], ValueOut::Bytes(value) if value.as_slice() == [8; 16]));
+    drop(decoded);
+    assert_eq!(decode.used(Resource::ResultBytes), 0);
+
+    let refused = ExecutionPolicy {
+        result_bytes: result_bytes - 1,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    assert!(matches!(
+        decode_rows_values(&schema, RelationId(0), &encoded.bytes, &refused),
+        Err(RuntimeError::Work(WorkError::Exhausted {
+            resource: Resource::ResultBytes,
+            ..
+        }))
+    ));
+    assert_eq!(refused.used(Resource::WorkingBytes), 0);
+    assert_eq!(refused.used(Resource::ResultBytes), 0);
+    let refused = ExecutionPolicy {
+        result_bytes: 0,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    assert!(matches!(
+        encode_rows_bytes(&schema, RelationId(0), &rows, &refused),
+        Err(RuntimeError::Work(WorkError::Exhausted {
+            resource: Resource::ResultBytes,
+            ..
+        }))
+    ));
+    assert_eq!(refused.used(Resource::WorkingBytes), 0);
+    assert_eq!(refused.used(Resource::ResultBytes), 0);
+    drop(encoded);
+    assert_eq!(encode.used(Resource::ResultBytes), 0);
+}
+
+#[test]
+fn changes_preserve_cancellation_and_resource_errors_through_the_bridge() {
+    use bumbledb::schema::ValidateDescriptor as _;
+    let schema = Mini.descriptor().validate().unwrap();
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        decode_rows_values(&schema, RelationId(0), &[], &cancelled),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    let refused = ExecutionPolicy {
+        working_bytes: 0,
+        ..policy()
+    }
+    .start()
+    .unwrap();
+    assert!(matches!(
+        encode_rows_bytes(
+            &schema,
+            RelationId(0),
+            &[vec![Value::U64(1), Value::U64(2)]],
+            &refused
+        ),
+        Err(RuntimeError::Work(WorkError::Exhausted {
+            resource: bumbledb::work::Resource::WorkingBytes,
+            ..
+        }))
+    ));
+    assert_eq!(refused.used(bumbledb::work::Resource::WorkingBytes), 0);
+    for error in [
+        ChangeError::Work(WorkError::Cancelled),
+        ChangeError::Row(bumbledb::canonical::RowError::Work(WorkError::Cancelled)),
+    ] {
+        assert_eq!(
+            change_error(&error),
+            RuntimeError::Work(WorkError::Cancelled)
+        );
+    }
 }
 
 #[test]
