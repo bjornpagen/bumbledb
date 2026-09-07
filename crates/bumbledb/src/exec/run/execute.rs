@@ -299,7 +299,6 @@ impl Executor {
                     point_sources: Vec::new(),
                     point_rows: Vec::new(),
                     point_row_ks: Vec::new(),
-                    cursor_srcs: Vec::new(),
                     mask: Vec::with_capacity(batch),
                     parents: Vec::with_capacity(batch),
                     pending_bindings: Vec::new(),

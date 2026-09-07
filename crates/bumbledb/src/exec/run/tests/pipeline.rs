@@ -2,6 +2,99 @@ use super::*;
 use crate::ir::WordCmp;
 
 #[test]
+fn cached_cursor_routes_read_late_occurrences_from_each_new_selection() {
+    let schema = schema(3);
+    let normalized = normalized(
+        (0..3u16)
+            .map(|occ| occurrence(occ, u32::from(occ), &[(0, occ)]))
+            .collect(),
+        vec![],
+    );
+    // No early empty-key gates: S and T first appear below the root. Their
+    // outgoing routes must read the current selected start, not capture it.
+    let plan = validate(
+        &crate::plan::fj::FjPlan {
+            nodes: (0..3u16)
+                .map(|occ| crate::plan::fj::Node {
+                    estimate: 0,
+                    subatoms: vec![crate::plan::fj::Subatom {
+                        occ: OccId(occ),
+                        vars: vec![VarId(occ)],
+                    }],
+                })
+                .collect(),
+        },
+        &normalized,
+        &schema,
+        &all_vars(&normalized),
+    )
+    .unwrap();
+    let images = views_of(
+        &schema,
+        &[
+            vec![(10, 1), (11, 1), (12, 2)],
+            vec![(20, 1), (21, 1), (22, 2)],
+            vec![(30, 1), (31, 1), (32, 2)],
+        ],
+    );
+    let mut colts: Vec<_> = images
+        .iter()
+        .map(|image| {
+            Colt::new(
+                apply(
+                    image,
+                    &[],
+                    &[],
+                    Vec::new(),
+                    image.generation().text_eq(None),
+                )
+                .unwrap(),
+                &[crate::exec::colt::SelectionLevel::Point { columns: vec![1] }],
+                vec![vec![0]],
+            )
+        })
+        .collect();
+    let mut executor = Executor::with_batch_size(&plan, 2);
+    let mut bindings = Bindings::new(plan.slot_count());
+    for selections in [[1, 1, 2], [2, 2, 1], [1, 2, 1], [1, 1, 2]] {
+        for (colt, selection) in colts.iter_mut().zip(selections) {
+            let start = colt.select(&[vec![selection]]).unwrap().unwrap();
+            assert_eq!(matches!(start, Cursor::Row(_)), selection == 2);
+        }
+        let mut sink = CollectSink::default();
+        executor
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut NoopCounters,
+            )
+            .unwrap();
+        let keys = |base, selection| {
+            if selection == 1 {
+                base..base + 2
+            } else {
+                base + 2..base + 3
+            }
+        };
+        let mut expected = BTreeSet::new();
+        for x in keys(10, selections[0]) {
+            for y in keys(20, selections[1]) {
+                for z in keys(30, selections[2]) {
+                    let mut row = vec![0; plan.slot_count()];
+                    for (var, value) in [x, y, z].into_iter().enumerate() {
+                        row[plan.slot_of(VarId(u16::try_from(var).unwrap()))] = value;
+                    }
+                    expected.insert(row);
+                }
+            }
+        }
+        assert_eq!(sink.rows, expected, "selections {selections:?}");
+    }
+}
+
+#[test]
 fn pipelined_executor_matches_oracle() {
     let schema = schema(3);
 

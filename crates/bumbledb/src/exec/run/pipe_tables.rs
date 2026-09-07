@@ -1,38 +1,47 @@
 //! The pipelined executor's static shape tables.
-use super::{PipeTables, ValidatedPlan};
+use super::{CursorSrc, PipeTables, ValidatedPlan};
 
 impl PipeTables {
     pub(super) fn of(plan: &ValidatedPlan) -> Self {
         let n_nodes = plan.nodes().len();
         let n_occ = plan.occurrences().len();
-        let mut appears = vec![vec![false; n_nodes]; n_occ];
+        // Only positive occurrences acquire levels. The initial zero for an
+        // unused occurrence never makes it live because its level stays zero.
+        let mut last_use = vec![0; n_occ];
         for (node_idx, node) in plan.nodes().iter().enumerate() {
-            for subatom in &node.subatoms {
-                appears[usize::from(subatom.occ.0)][node_idx] = true;
+            for occ in node
+                .subatoms
+                .iter()
+                .map(|sub| sub.occ)
+                .chain(node.point_probes.iter().map(|probe| probe.occ))
+            {
+                last_use[usize::from(occ.0)] = node_idx;
             }
         }
 
-        let mut uses = appears.clone();
-        for (node_idx, node) in plan.nodes().iter().enumerate() {
-            for probe in &node.point_probes {
-                uses[usize::from(probe.occ.0)][node_idx] = true;
-            }
-        }
+        let mut levels = vec![0; n_occ];
         let mut entry_level = Vec::with_capacity(n_nodes);
         let mut carried = Vec::with_capacity(n_nodes);
-        for node_idx in 0..n_nodes {
-            let mut levels = Vec::with_capacity(n_occ);
+        let mut outgoing = Vec::with_capacity(n_nodes);
+        for (node_idx, node) in plan.nodes().iter().enumerate() {
             let mut occs = Vec::new();
-            for (occ, at) in appears.iter().enumerate() {
-                levels.push(at[..node_idx].iter().filter(|b| **b).count());
-                let before = at[..node_idx].iter().any(|b| *b);
-                let at_or_after = uses[occ][node_idx..].iter().any(|b| *b);
-                if before && at_or_after {
+            let mut sources = vec![CursorSrc::Start; n_occ];
+            for (occ, &level) in levels.iter().enumerate() {
+                if level > 0 && last_use[occ] >= node_idx {
+                    sources[occ] = CursorSrc::Carried(occs.len());
                     occs.push(occ);
                 }
             }
-            entry_level.push(levels);
+            entry_level.push(levels.clone());
+            // A current subatom replaces its incoming cursor with the matched
+            // child, independently of which subatom becomes the batch cover.
+            for (sub_idx, subatom) in node.subatoms.iter().enumerate() {
+                let occ = usize::from(subatom.occ.0);
+                sources[occ] = CursorSrc::Subatom(sub_idx);
+                levels[occ] += 1;
+            }
             carried.push(occs);
+            outgoing.push(sources);
         }
         let absorb = (0..n_nodes)
             .rev()
@@ -41,6 +50,7 @@ impl PipeTables {
         Self {
             entry_level,
             carried,
+            outgoing,
             absorb,
         }
     }

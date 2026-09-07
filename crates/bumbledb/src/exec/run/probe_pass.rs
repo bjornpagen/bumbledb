@@ -310,24 +310,6 @@ impl Executor {
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
 
-        scratch.cursor_srcs.clear();
-        for (occ, colt) in colts.iter().enumerate() {
-            scratch.cursor_srcs.push(
-                if let Some(sub_idx) = node
-                    .subatoms
-                    .iter()
-                    .position(|sub| usize::from(sub.occ.0) == occ)
-                {
-                    super::CursorSrc::Subatom(sub_idx)
-                } else {
-                    match tables.carried_index(node_idx, occ) {
-                        Some(col) => super::CursorSrc::Carried(col),
-                        None => super::CursorSrc::Const(colt.start()),
-                    }
-                },
-            );
-        }
-
         // Membership checks use surviving bindings and their resolved cursors.
 
         for spec in &self.precompute[node_idx].point_probes {
@@ -338,7 +320,7 @@ impl Executor {
                     .point_sources
                     .push((*start_col, *end_col, src, *dense));
             }
-            let cursor_src = scratch.cursor_srcs[spec.occ];
+            let cursor_src = tables.outgoing[node_idx][spec.occ];
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
 
@@ -352,7 +334,7 @@ impl Executor {
                     super::CursorSrc::Carried(col) => {
                         scratch.pending_cursors[parent * carried_w + col]
                     }
-                    super::CursorSrc::Const(start) => start,
+                    super::CursorSrc::Start => colts[spec.occ].start(),
                 };
                 if let Cursor::Row(position) = cursor {
                     scratch.point_rows.push(position);
@@ -483,12 +465,12 @@ impl Executor {
             }
 
             let assemble = |occ: usize| -> Cursor {
-                match scratch.cursor_srcs[occ] {
+                match tables.outgoing[node_idx][occ] {
                     super::CursorSrc::Subatom(sub_idx) => scratch.children[sub_idx][element],
                     super::CursorSrc::Carried(col) => {
                         scratch.pending_cursors[parent * carried_w + col]
                     }
-                    super::CursorSrc::Const(start) => start,
+                    super::CursorSrc::Start => colts[occ].start(),
                 }
             };
             if leaf {

@@ -252,7 +252,8 @@ enum CursorSrc {
 
     Carried(usize),
 
-    Const(Cursor),
+    /// Read this execution's selected start, never a cached cursor value.
+    Start,
 }
 
 fn compare_wide(
@@ -330,8 +331,6 @@ struct NodeScratch {
     point_rows: Vec<u32>,
 
     point_row_ks: Vec<u32>,
-
-    cursor_srcs: Vec<CursorSrc>,
 
     mask: Vec<u8>,
 
@@ -459,6 +458,8 @@ struct PipeTables {
     entry_level: Vec<Vec<usize>>,
 
     carried: Vec<Vec<usize>>,
+
+    outgoing: Vec<Vec<CursorSrc>>,
 
     absorb: SkipAbsorb,
 }

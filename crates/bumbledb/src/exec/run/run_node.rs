@@ -321,15 +321,10 @@ impl Executor {
                         .point_sources
                         .push((*start_col, *end_col, src, *dense));
                 }
-                let cursor_src = if let Some(sub_idx) = plan.nodes()[node_idx]
+                let sub_idx = plan.nodes()[node_idx]
                     .subatoms
                     .iter()
-                    .position(|sub| usize::from(sub.occ.0) == spec.occ)
-                {
-                    super::CursorSrc::Subatom(sub_idx)
-                } else {
-                    super::CursorSrc::Const(self.cursors[spec.occ].0)
-                };
+                    .position(|sub| usize::from(sub.occ.0) == spec.occ);
                 let n = scratch.survivors.len();
                 grow_scratch(&mut scratch.mask, n);
                 for k in 0..n {
@@ -350,13 +345,9 @@ impl Executor {
                         };
                         scratch.point_checks.push((start_col, end_col, point));
                     }
-                    let cursor = match cursor_src {
-                        super::CursorSrc::Subatom(sub_idx) => scratch.children[sub_idx][entry],
-                        super::CursorSrc::Carried(_) => {
-                            unreachable!("the leaf pass carries no pending cursors")
-                        }
-                        super::CursorSrc::Const(outer) => outer,
-                    };
+                    let cursor = sub_idx.map_or(self.cursors[spec.occ].0, |sub_idx| {
+                        scratch.children[sub_idx][entry]
+                    });
                     let pass = colts[spec.occ].any_position_matches(cursor, &scratch.point_checks);
                     counters.residual(node_idx, pass);
                     scratch.mask[k] = u8::from(pass);
