@@ -157,6 +157,15 @@ impl NodeScratch {
                     Source::of(spec.rhs_slot, cover_slots),
                 )
             }));
+        for (sources, spec) in self.anti_sources.iter_mut().zip(&pre.anti_probes) {
+            sources.clear();
+            if let super::AntiProbeForm::Keyed { parts, key_words } = &spec.form {
+                for &(slot, width) in parts {
+                    sources.extend((slot..slot + width).map(|slot| Source::of(slot, cover_slots)));
+                }
+                debug_assert_eq!(sources.len(), key_words.get(), "key widths add up");
+            }
+        }
         self.source_cover = Some(cover);
     }
 }

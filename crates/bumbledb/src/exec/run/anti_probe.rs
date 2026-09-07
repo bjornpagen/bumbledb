@@ -25,7 +25,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
     probe_keys: &mut [u64],
     hashes: &mut Vec<u64>,
     mask: &mut Vec<u8>,
-    anti_sources: &mut [Vec<Source>],
+    anti_sources: &[Vec<Source>],
     point_checks: &mut Vec<(usize, usize, u64)>,
     point_sources: &mut Vec<(usize, usize, Source, bool)>,
     read_slot: impl Fn(usize, usize) -> u64,
@@ -81,16 +81,8 @@ pub(super) fn anti_probe_pass<C: Counters>(
                 }
                 crate::exec::kernel::compact_u32_by_mask(survivors, mask);
             }
-            AntiProbeForm::Keyed { parts, key_words } => {
-                let sources = &mut anti_sources[a_idx];
-                sources.clear();
-                for (slot, width) in parts {
-                    for offset in 0..*width {
-                        sources.push(Source::of(slot + offset, cover_slots));
-                    }
-                }
-                debug_assert_eq!(sources.len(), key_words.get(), "key widths add up");
-
+            AntiProbeForm::Keyed { key_words, .. } => {
+                let sources = &anti_sources[a_idx];
                 let start = colts[spec.occ].start();
                 colts[spec.occ].ensure_forced(start, 0)?;
 

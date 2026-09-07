@@ -96,7 +96,8 @@ use crate::ir::WordCmp;
 #[test]
 fn reused_executor_follows_reordered_dynamic_covers() {
     for pipeline in [false, true] {
-        let schema = schema(if pipeline { 3 } else { 2 });
+        let neg_id = 2 + u16::from(pipeline);
+        let schema = schema(usize::from(neg_id) + 1);
         let mut occurrences = vec![
             occurrence(0, 0, &[(0, 0), (1, 1)]),
             occurrence(1, 1, &[(0, 0), (1, 1)]),
@@ -118,6 +119,7 @@ fn reused_executor_follows_reordered_dynamic_covers() {
                 vars: vec![VarId(1)],
             });
         }
+        occurrences.push(negated(neg_id, u32::from(neg_id), &[(0, 0), (1, 1)]));
         let mut normalized = normalized(
             occurrences,
             vec![FilterPredicate::FieldsCompare {
@@ -163,12 +165,13 @@ fn reused_executor_follows_reordered_dynamic_covers() {
             if pipeline {
                 data.push((1..=5).map(|i| (payload(i), i + 100)).collect());
             }
+            data.push(vec![(1, payload(1))]);
             let views = views_of(&schema, &data);
             let mut colts = colts_for(&plan, &views);
             colts[0].force_root().unwrap();
             colts[1].force_root().unwrap();
             let expected: BTreeSet<Vec<u64>> = (1..=r_len.min(s_len))
-                .filter(|&i| i < payload(i))
+                .filter(|&i| i < payload(i) && i != 1)
                 .map(|i| {
                     let mut row = vec![0; plan.slot_count()];
                     row[plan.slot_of(VarId(0))] = i;

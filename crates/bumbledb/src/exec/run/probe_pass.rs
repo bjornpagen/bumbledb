@@ -435,7 +435,7 @@ impl Executor {
             &mut scratch.probe_keys,
             &mut scratch.hashes,
             &mut scratch.mask,
-            &mut scratch.anti_sources,
+            &scratch.anti_sources,
             &mut scratch.point_checks,
             &mut scratch.point_sources,
             |element, slot| {
