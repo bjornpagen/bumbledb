@@ -105,7 +105,9 @@ fn unit_out_dirs(build: &Path) -> Vec<PathBuf> {
         };
         for hash in hashes {
             let out = hash.expect("hash entry").path().join("out");
-            if out.is_dir() {
+            // Exclude executable/check-only units before rustc repeatedly
+            // walks its dependency search paths for every fixture.
+            if out.is_dir() && dir_has_artifact(&out) {
                 dirs.push(out);
             }
         }

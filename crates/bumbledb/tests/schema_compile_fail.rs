@@ -92,7 +92,10 @@ fn unit_out_dirs(build: &Path) -> Vec<PathBuf> {
         };
         for hash in hashes {
             let out = hash.expect("hash entry").path().join("out");
-            if out.is_dir() {
+            // rustc re-scans every search directory for each fixture and
+            // dependency. Test executables and check-only units contain no
+            // linkable library; their historical output is not a search path.
+            if out.is_dir() && dir_has_artifact(&out) {
                 dirs.push(out);
             }
         }
