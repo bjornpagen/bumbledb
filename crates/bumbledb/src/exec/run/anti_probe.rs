@@ -3,7 +3,6 @@
 //! variables at one level: this checks existence, not a continuation to emit.
 use super::{
     AntiProbeForm, AntiProbeSpec, Colt, Counters, PREFETCH_WIDTH_FLOOR, Source, grow_scratch,
-    word_base,
 };
 use crate::work::WorkError;
 
@@ -18,8 +17,7 @@ use crate::work::WorkError;
 pub(super) fn anti_probe_pass<C: Counters>(
     specs: &[AntiProbeSpec],
     node_idx: usize,
-    cover_vars: &[crate::ir::VarId],
-    var_widths: &[(crate::ir::VarId, usize)],
+    cover_slots: &[usize],
     arity: usize,
     colts: &mut [Colt],
     entry_keys: &[u64],
@@ -33,13 +31,6 @@ pub(super) fn anti_probe_pass<C: Counters>(
     read_slot: impl Fn(usize, usize) -> u64,
     counters: &mut C,
 ) -> Result<(), WorkError> {
-    let width_of = |var: crate::ir::VarId| -> usize {
-        var_widths
-            .iter()
-            .find(|(v, _)| *v == var)
-            .expect("plans bind every variable")
-            .1
-    };
     for (a_idx, spec) in specs.iter().enumerate() {
         if survivors.is_empty() {
             return Ok(());
@@ -47,9 +38,8 @@ pub(super) fn anti_probe_pass<C: Counters>(
         let n = survivors.len();
 
         point_sources.clear();
-        for (start_col, end_col, var, slot, dense) in &spec.point_parts {
-            let src =
-                word_base(cover_vars, *var, width_of).map_or(Source::Slot(*slot), Source::Batch);
+        for (start_col, end_col, slot, dense) in &spec.point_parts {
+            let src = Source::of(*slot, cover_slots);
             point_sources.push((*start_col, *end_col, src, *dense));
         }
 
@@ -94,18 +84,9 @@ pub(super) fn anti_probe_pass<C: Counters>(
             AntiProbeForm::Keyed { parts, key_words } => {
                 let sources = &mut anti_sources[a_idx];
                 sources.clear();
-                for (var, slot, width) in parts {
-                    match word_base(cover_vars, *var, width_of) {
-                        Some(base) => {
-                            for offset in 0..*width {
-                                sources.push(Source::Batch(base + offset));
-                            }
-                        }
-                        None => {
-                            for offset in 0..*width {
-                                sources.push(Source::Slot(slot + offset));
-                            }
-                        }
+                for (slot, width) in parts {
+                    for offset in 0..*width {
+                        sources.push(Source::of(slot + offset, cover_slots));
                     }
                 }
                 debug_assert_eq!(sources.len(), key_words.get(), "key widths add up");

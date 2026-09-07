@@ -4,7 +4,6 @@
 use std::num::NonZeroUsize;
 
 use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
-use crate::image::view::OperandAddr;
 use crate::plan::fj::ValidatedPlan;
 
 /// The sink's reply to one emitted binding.
@@ -236,6 +235,17 @@ enum Source {
     Slot(usize),
 }
 
+impl Source {
+    /// Resolve an already-lowered binding word against the cover's layout.
+    /// Wide values and interval endpoints use the same physical slot map.
+    fn of(slot: usize, cover_slots: &[usize]) -> Self {
+        cover_slots
+            .iter()
+            .position(|s| *s == slot)
+            .map_or(Self::Slot(slot), Self::Batch)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum CursorSrc {
     Cover,
@@ -277,21 +287,6 @@ fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
     }
 }
 
-fn word_base(
-    cover_vars: &[crate::ir::VarId],
-    target: crate::ir::VarId,
-    width_of: impl Fn(crate::ir::VarId) -> usize,
-) -> Option<usize> {
-    let mut base = 0;
-    for var in cover_vars {
-        if *var == target {
-            return Some(base);
-        }
-        base += width_of(*var);
-    }
-    None
-}
-
 #[derive(Clone, Copy)]
 enum Operand<'a> {
     Col(crate::image::ColumnView<'a>),
@@ -300,10 +295,8 @@ enum Operand<'a> {
 
 const PREFETCH_WIDTH_FLOOR: usize = 4;
 
-/// Fields group by lifecycle, marked by the dividers below (named sub-structs
-/// were refused: the grouping buys no new invariant — every field is already
-/// private to the executor — and would rename every access in the two hot
-/// passes for it).
+/// Retained per-node execution buffers. Source layouts depend only on the
+/// selected cover; data buffers change per batch and execution.
 #[derive(Default)]
 struct NodeScratch {
     entry_keys: Vec<u64>,
@@ -320,9 +313,9 @@ struct NodeScratch {
 
     sources: Vec<Vec<Source>>,
 
-    residual_sources: Vec<(Source, Source)>,
+    source_cover: Option<usize>,
 
-    word_residual_sources: Vec<(Source, Source)>,
+    residual_sources: Vec<(Source, Source)>,
 
     allen_sources: Vec<(Source, Source)>,
 
@@ -360,26 +353,13 @@ struct NodeScratch {
 #[derive(Clone, Copy)]
 struct ResidualSpec {
     op: crate::ir::WordCmp,
-    lhs: crate::ir::VarId,
-    rhs: crate::ir::VarId,
     lhs_slot: usize,
     rhs_slot: usize,
     width: usize,
 }
 
 #[derive(Clone, Copy)]
-struct WordResidualSpec {
-    op: crate::ir::WordCmp,
-    left: OperandAddr,
-    right: OperandAddr,
-    lhs_slot: usize,
-    rhs_slot: usize,
-}
-
-#[derive(Clone, Copy)]
 struct AllenResidualSpec {
-    lhs: crate::ir::VarId,
-    rhs: crate::ir::VarId,
     lhs_slot: usize,
     rhs_slot: usize,
     mask: crate::allen::AllenMask,
@@ -387,7 +367,6 @@ struct AllenResidualSpec {
 
 struct NodePrecompute {
     residual_slots: Vec<ResidualSpec>,
-    word_residual_slots: Vec<WordResidualSpec>,
     allen_residual_slots: Vec<AllenResidualSpec>,
 
     point_probes: Vec<PointProbeSpec>,
@@ -495,7 +474,7 @@ enum SkipAbsorb {
 enum AntiProbeForm {
     Gate,
     Keyed {
-        parts: Vec<(crate::ir::VarId, usize, usize)>,
+        parts: Vec<(usize, usize)>,
         key_words: NonZeroUsize,
     },
 }
@@ -504,7 +483,7 @@ struct AntiProbeSpec {
     occ: usize,
     form: AntiProbeForm,
 
-    point_parts: Vec<(usize, usize, crate::ir::VarId, usize, bool)>,
+    point_parts: Vec<(usize, usize, usize, bool)>,
 }
 
 impl AntiProbeSpec {
@@ -519,7 +498,7 @@ impl AntiProbeSpec {
 struct PointProbeSpec {
     occ: usize,
 
-    parts: Vec<(usize, usize, crate::ir::VarId, usize, bool)>,
+    parts: Vec<(usize, usize, usize, bool)>,
 }
 
 enum LeafPrecompute {

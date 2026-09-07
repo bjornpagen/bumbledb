@@ -6,6 +6,7 @@ impl LeafPrecompute {
         plan: &ValidatedPlan,
         precompute: &[NodePrecompute],
         var_widths: &[(crate::ir::VarId, usize)],
+        slot_map: &[Vec<Vec<usize>>],
     ) -> Self {
         let last = plan.nodes().len() - 1;
         let width_of = |var: crate::ir::VarId| -> usize {
@@ -36,14 +37,8 @@ impl LeafPrecompute {
         let mut scan_residuals = Vec::new();
         let mut const_residuals = Vec::new();
         for spec in &precompute[last].residual_slots {
-            let resolve = |var: crate::ir::VarId, slot: usize| {
-                cover_vars
-                    .iter()
-                    .position(|cv| *cv == var)
-                    .map_or(Source::Slot(slot), Source::Batch)
-            };
-            let lhs = resolve(spec.lhs, spec.lhs_slot);
-            let rhs = resolve(spec.rhs, spec.rhs_slot);
+            let lhs = Source::of(spec.lhs_slot, &slot_map[last][0]);
+            let rhs = Source::of(spec.rhs_slot, &slot_map[last][0]);
             match (lhs, rhs) {
                 (Source::Slot(l), Source::Slot(r)) => const_residuals.push((spec.op, l, r)),
                 _ => scan_residuals.push((spec.op, lhs, rhs)),

@@ -39,32 +39,40 @@ impl Executor {
         let carried_w = tables.carried[node_idx].len();
         let node = &plan.nodes()[node_idx];
         let cover_occ = usize::from(node.subatoms[cover_sub].occ.0);
+        scratch.prepare_sources(
+            &self.slot_map[node_idx],
+            &self.precompute[node_idx],
+            cover_sub,
+        );
 
         scratch.survivors.clear();
         scratch
             .survivors
             .extend(0..u32::try_from(fill).expect("batch fits u32"));
 
-        // Residuals run BEFORE the sibling probes — the cost-class
+        // Reject comparison failures before probing sibling tries.
 
-        for spec in &self.precompute[node_idx].residual_slots {
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let lhs_word = super::word_base(cover_vars, spec.lhs, |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, spec.rhs, |v| self.width_of(v));
+        for (spec, &(lhs, rhs)) in self.precompute[node_idx]
+            .residual_slots
+            .iter()
+            .zip(&scratch.residual_sources)
+        {
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.mask, n);
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word + offset],
-                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                let value = |source: Source, offset: usize| match source {
+                    Source::Batch(word) => scratch.entry_keys[element * arity + word + offset],
+                    Source::Slot(slot) => {
+                        scratch.pending_bindings[parent * slot_count + slot + offset]
+                    }
                 };
                 let pass = super::compare_wide(
                     spec.op,
                     spec.width,
-                    |offset| value(lhs_word, spec.lhs_slot, offset),
-                    |offset| value(rhs_word, spec.rhs_slot, offset),
+                    |offset| value(lhs, offset),
+                    |offset| value(rhs, offset),
                 );
                 counters.residual(node_idx, pass);
                 scratch.mask[k] = u8::from(pass);
@@ -72,37 +80,12 @@ impl Executor {
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
 
-        for spec in &self.precompute[node_idx].word_residual_slots {
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let side = |addr: crate::image::view::OperandAddr| {
-                super::word_base(cover_vars, addr.var(), |v| self.width_of(v))
-                    .map(|base| base + addr.offset())
-            };
-            let (lhs_word, rhs_word) = (side(spec.left), side(spec.right));
-            let n = scratch.survivors.len();
-            grow_scratch(&mut scratch.mask, n);
-            for k in 0..n {
-                let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
-                let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word],
-                    None => scratch.pending_bindings[parent * slot_count + slot],
-                };
-                let pass = spec.op.compare(
-                    &value(lhs_word, spec.lhs_slot),
-                    &value(rhs_word, spec.rhs_slot),
-                );
-                counters.residual(node_idx, pass);
-                scratch.mask[k] = u8::from(pass);
-            }
-            crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
-        }
-
-        for spec in &self.precompute[node_idx].allen_residual_slots {
+        for (spec, &(lhs, rhs)) in self.precompute[node_idx]
+            .allen_residual_slots
+            .iter()
+            .zip(&scratch.allen_sources)
+        {
             let mask = spec.mask;
-            let cover_vars = &node.subatoms[cover_sub].vars;
-            let lhs_word = super::word_base(cover_vars, spec.lhs, |v| self.width_of(v));
-            let rhs_word = super::word_base(cover_vars, spec.rhs, |v| self.width_of(v));
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.allen_gather, 4 * n);
             let (a_starts, rest) = scratch.allen_gather[..4 * n].split_at_mut(n);
@@ -111,14 +94,16 @@ impl Executor {
             for k in 0..n {
                 let element = usize::try_from(scratch.survivors[k]).expect("batch fits usize");
                 let parent = scratch.parents[element] as usize;
-                let value = |word: Option<usize>, slot: usize, offset: usize| match word {
-                    Some(word) => scratch.entry_keys[element * arity + word + offset],
-                    None => scratch.pending_bindings[parent * slot_count + slot + offset],
+                let value = |source: Source, offset: usize| match source {
+                    Source::Batch(word) => scratch.entry_keys[element * arity + word + offset],
+                    Source::Slot(slot) => {
+                        scratch.pending_bindings[parent * slot_count + slot + offset]
+                    }
                 };
-                a_starts[k] = value(lhs_word, spec.lhs_slot, 0);
-                a_ends[k] = value(lhs_word, spec.lhs_slot, 1);
-                b_starts[k] = value(rhs_word, spec.rhs_slot, 0);
-                b_ends[k] = value(rhs_word, spec.rhs_slot, 1);
+                a_starts[k] = value(lhs, 0);
+                a_ends[k] = value(lhs, 1);
+                b_starts[k] = value(rhs, 0);
+                b_ends[k] = value(rhs, 1);
             }
             crate::exec::kernel::allen_code_batch(
                 a_starts,
@@ -134,8 +119,6 @@ impl Executor {
             crate::exec::kernel::compact_u32_by_mask(&mut scratch.survivors, &scratch.mask);
         }
 
-        // extraction refusal is recorded at that loop's head).
-
         for sub_idx in 0..node.subatoms.len() {
             if sub_idx == cover_sub || scratch.survivors.is_empty() {
                 continue;
@@ -144,21 +127,6 @@ impl Executor {
             let sub_arity = self.slot_map[node_idx][sub_idx].len();
             let occ = usize::from(subatom.occ.0);
             let s_level = tables.entry_level[node_idx][occ];
-            let cover_vars = &node.subatoms[cover_sub].vars;
-
-            scratch.sources[sub_idx].clear();
-            let mut word = 0;
-            for var in &subatom.vars {
-                let width = self.width_of(*var);
-                let base = super::word_base(cover_vars, *var, |v| self.width_of(v));
-                for offset in 0..width {
-                    scratch.sources[sub_idx].push(match base {
-                        Some(base) => Source::Batch(base + offset),
-                        None => Source::Slot(self.slot_map[node_idx][sub_idx][word + offset]),
-                    });
-                }
-                word += width;
-            }
             let n = scratch.survivors.len();
             grow_scratch(&mut scratch.hashes, n);
 
@@ -362,14 +330,12 @@ impl Executor {
             });
         }
 
-        // sources. They stay AFTER the sibling probes (unlike the ALU
+        // Membership checks use surviving bindings and their resolved cursors.
 
         for spec in &self.precompute[node_idx].point_probes {
-            let cover_vars = &node.subatoms[cover_sub].vars;
             scratch.point_sources.clear();
-            for (start_col, end_col, var, slot, dense) in &spec.parts {
-                let src = super::word_base(cover_vars, *var, |v| self.width_of(v))
-                    .map_or(Source::Slot(*slot), Source::Batch);
+            for (start_col, end_col, slot, dense) in &spec.parts {
+                let src = Source::of(*slot, &self.slot_map[node_idx][cover_sub]);
                 scratch
                     .point_sources
                     .push((*start_col, *end_col, src, *dense));
@@ -461,8 +427,7 @@ impl Executor {
         if let Err(error) = anti_probe_pass(
             &self.precompute[node_idx].anti_probes,
             node_idx,
-            &node.subatoms[cover_sub].vars,
-            &self.var_widths,
+            &self.slot_map[node_idx][cover_sub],
             arity,
             colts,
             &scratch.entry_keys,

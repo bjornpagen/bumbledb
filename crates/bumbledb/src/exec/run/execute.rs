@@ -2,7 +2,7 @@
 use super::{
     AllenResidualSpec, AntiProbeSpec, BATCH, Bindings, Colt, Counters, Cursor, Drive, Executor,
     LeafPrecompute, NodePrecompute, NodeScratch, PipeTables, PointProbeSpec, ResidualSpec, Sink,
-    ValidatedPlan, WordResidualSpec,
+    Source, ValidatedPlan,
 };
 use crate::plan::fj::PlanNode;
 use std::num::NonZeroUsize;
@@ -11,14 +11,14 @@ fn point_parts(
     plan: &ValidatedPlan,
     occ: usize,
     filters: &[(bumbledb_theory::schema::FieldId, crate::ir::VarId, bool)],
-) -> Vec<(usize, usize, crate::ir::VarId, usize, bool)> {
+) -> Vec<(usize, usize, usize, bool)> {
     let occurrence = &plan.occurrences()[occ];
     filters
         .iter()
         .map(|(field, var, dense)| {
             let span = occurrence.spans[usize::from(field.0)];
             let first = usize::from(span.first_column);
-            (first, first + 1, *var, plan.slot_of(*var), *dense)
+            (first, first + 1, plan.slot_of(*var), *dense)
         })
         .collect()
 }
@@ -34,7 +34,7 @@ fn anti_probes_of(plan: &ValidatedPlan, node: &PlanNode) -> Vec<AntiProbeSpec> {
                 1,
                 "a negated occurrence's trie schema is one probe level"
             );
-            let parts: Vec<(crate::ir::VarId, usize, usize)> = occurrence.trie_schema[0]
+            let parts: Vec<(usize, usize)> = occurrence.trie_schema[0]
                 .iter()
                 .map(|var| {
                     let (_, width) = plan
@@ -42,7 +42,7 @@ fn anti_probes_of(plan: &ValidatedPlan, node: &PlanNode) -> Vec<AntiProbeSpec> {
                         .iter()
                         .find(|(slot_var, _)| slot_var == var)
                         .expect("anti-probe variables are slot-bound");
-                    (*var, plan.slot_of(*var), width.slots())
+                    (plan.slot_of(*var), width.slots())
                 })
                 .collect();
             let key_words = usize::from(occurrence.key_widths[0]);
@@ -90,27 +90,20 @@ impl NodePrecompute {
                 );
                 ResidualSpec {
                     op,
-                    lhs: left.var(),
-                    rhs: right.var(),
                     lhs_slot: plan.slot_of(left.var()),
                     rhs_slot: plan.slot_of(right.var()),
                     width: width_of(left.var()),
                 }
             })
-            .collect();
-        let word_residual_slots = node
-            .word_residuals
-            .iter()
-            .map(|r| {
+            .chain(node.word_residuals.iter().map(|r| {
                 let (left, right, op) = r.compare_sides();
-                WordResidualSpec {
+                ResidualSpec {
                     op,
-                    left,
-                    right,
                     lhs_slot: plan.slot_of(left.var()) + left.offset(),
                     rhs_slot: plan.slot_of(right.var()) + right.offset(),
+                    width: 1,
                 }
-            })
+            }))
             .collect();
         let allen_residual_slots: Vec<AllenResidualSpec> = node
             .allen_residuals
@@ -118,8 +111,6 @@ impl NodePrecompute {
             .map(|r| {
                 let (left, right, mask) = r.allen_sides();
                 AllenResidualSpec {
-                    lhs: left.var(),
-                    rhs: right.var(),
                     lhs_slot: plan.slot_of(left.var()),
                     rhs_slot: plan.slot_of(right.var()),
                     mask,
@@ -128,11 +119,45 @@ impl NodePrecompute {
             .collect();
         Self {
             residual_slots,
-            word_residual_slots,
             allen_residual_slots,
             point_probes: point_probes_of(plan, node),
             anti_probes: anti_probes_of(plan, node),
         }
+    }
+}
+
+impl NodeScratch {
+    pub(super) fn prepare_sources(
+        &mut self,
+        slots: &[Vec<usize>],
+        pre: &NodePrecompute,
+        cover: usize,
+    ) {
+        if self.source_cover == Some(cover) {
+            return;
+        }
+        let cover_slots = &slots[cover];
+        for (sources, slots) in self.sources.iter_mut().zip(slots) {
+            sources.clear();
+            sources.extend(slots.iter().map(|&slot| Source::of(slot, cover_slots)));
+        }
+        self.residual_sources.clear();
+        self.residual_sources
+            .extend(pre.residual_slots.iter().map(|spec| {
+                (
+                    Source::of(spec.lhs_slot, cover_slots),
+                    Source::of(spec.rhs_slot, cover_slots),
+                )
+            }));
+        self.allen_sources.clear();
+        self.allen_sources
+            .extend(pre.allen_residual_slots.iter().map(|spec| {
+                (
+                    Source::of(spec.lhs_slot, cover_slots),
+                    Source::of(spec.rhs_slot, cover_slots),
+                )
+            }));
+        self.source_cover = Some(cover);
     }
 }
 
@@ -232,8 +257,8 @@ impl Executor {
                         .collect(),
 
                     sources: node.subatoms.iter().map(|_| Vec::new()).collect(),
+                    source_cover: None,
                     residual_sources: Vec::new(),
-                    word_residual_sources: Vec::new(),
                     allen_sources: Vec::new(),
                     allen_gather: Vec::new(),
                     allen_codes: Vec::new(),
@@ -253,7 +278,7 @@ impl Executor {
                 }
             })
             .collect();
-        let leaf = LeafPrecompute::of(plan, &precompute, &var_widths);
+        let leaf = LeafPrecompute::of(plan, &precompute, &var_widths, &slot_map);
         Self {
             batch,
             physical_distinct: None,

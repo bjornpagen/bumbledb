@@ -82,6 +82,107 @@ fn scalar_set_traversal_deduplicates_middle_terminals_and_never_scans_raw_leaves
 use crate::ir::WordCmp;
 
 #[test]
+fn reused_executor_follows_reordered_dynamic_covers() {
+    for pipeline in [false, true] {
+        let schema = schema(if pipeline { 3 } else { 2 });
+        let mut occurrences = vec![
+            occurrence(0, 0, &[(0, 0), (1, 1)]),
+            occurrence(1, 1, &[(0, 0), (1, 1)]),
+        ];
+        let mut subatoms = vec![
+            crate::plan::fj::Subatom {
+                occ: OccId(0),
+                vars: vec![VarId(0), VarId(1)],
+            },
+            crate::plan::fj::Subatom {
+                occ: OccId(1),
+                vars: vec![VarId(1), VarId(0)],
+            },
+        ];
+        if pipeline {
+            occurrences.push(occurrence(2, 2, &[(0, 1), (1, 2)]));
+            subatoms.push(crate::plan::fj::Subatom {
+                occ: OccId(2),
+                vars: vec![VarId(1)],
+            });
+        }
+        let mut normalized = normalized(
+            occurrences,
+            vec![FilterPredicate::FieldsCompare {
+                left: OperandAddr::from(VarId(0)),
+                right: OperandAddr::from(VarId(1)),
+                op: WordCmp::Ne,
+            }],
+        );
+        normalized
+            .word_residuals
+            .push(FilterPredicate::FieldsCompare {
+                left: OperandAddr::var_word(VarId(0), 0),
+                right: OperandAddr::var_word(VarId(1), 0),
+                op: WordCmp::Lt,
+            });
+        let mut nodes = vec![crate::plan::fj::Node {
+            estimate: 0,
+            subatoms,
+        }];
+        if pipeline {
+            nodes.push(crate::plan::fj::Node {
+                estimate: 0,
+                subatoms: vec![crate::plan::fj::Subatom {
+                    occ: OccId(2),
+                    vars: vec![VarId(2)],
+                }],
+            });
+        }
+        let plan = validate(
+            &crate::plan::fj::FjPlan { nodes },
+            &normalized,
+            &schema,
+            &all_vars(&normalized),
+        )
+        .unwrap();
+        let mut executor = Executor::with_batch_size(&plan, 2);
+        let mut bindings = Bindings::new(plan.slot_count());
+        let payload = |i: u64| if i.is_multiple_of(2) { i - 1 } else { i + 10 };
+        for (r_len, s_len) in [(3, 5), (5, 3), (3, 5)] {
+            let mut data: Vec<_> = [r_len, s_len]
+                .map(|len| (1..=len).map(|i| (i, payload(i))).collect())
+                .into();
+            if pipeline {
+                data.push((1..=5).map(|i| (payload(i), i + 100)).collect());
+            }
+            let views = views_of(&schema, &data);
+            let mut colts = colts_for(&plan, &views);
+            colts[0].force_root().unwrap();
+            colts[1].force_root().unwrap();
+            let expected: BTreeSet<Vec<u64>> = (1..=r_len.min(s_len))
+                .filter(|&i| i < payload(i))
+                .map(|i| {
+                    let mut row = vec![0; plan.slot_count()];
+                    row[plan.slot_of(VarId(0))] = i;
+                    row[plan.slot_of(VarId(1))] = payload(i);
+                    if pipeline {
+                        row[plan.slot_of(VarId(2))] = i + 100;
+                    }
+                    row
+                })
+                .collect();
+            for _ in 0..2 {
+                let mut sink = CollectSink::default();
+                let mut counters = RecordingCounters::default();
+                executor
+                    .execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters)
+                    .unwrap();
+                let chosen = usize::from(s_len < r_len);
+                assert_eq!(counters.cover_choices[0], (0, chosen, true));
+                assert_eq!(executor.scratch[0].source_cover, Some(chosen));
+                assert_eq!(sink.rows, expected, "pipeline {pipeline}, cover {chosen}");
+            }
+        }
+    }
+}
+
+#[test]
 fn dynamic_cover_prefers_the_forced_small_side() {
     let schema = schema(2);
 

@@ -1,9 +1,7 @@
-//! The leaf overlap enumeration (ruled 2026-07-23; finding 012 — the
-//! 40-execution range-accelerator OPEN item, discharged): a leaf Allen
-//! residual whose mask is *touching* (⊆ INTERSECTS ∪ MEETS ∪ `MET_BY`:
-//! every admitted configuration shares a point or abuts) and whose one
-//! side is an outer-binding constant licenses enumerating, per key
-//! group, only the cover positions whose interval pair lies in the
+//! Leaf overlap enumeration. When an Allen residual permits only intersecting
+//! or abutting intervals and one side is constant for the current binding,
+//! a per-key directory narrows the cover positions to a candidate window.
+//! The ordinary residual pass still checks every candidate exactly.
 use super::{Bindings, Colt, Cursor, Executor, Source, ValidatedPlan};
 use crate::exec::colt::SuffixRun;
 use crate::image::ColumnView;
