@@ -28,7 +28,7 @@
 //!   history metadata published under the target's open object epoch, named
 //!   by the genesis head's recovery root — S3 is the hosted authority.
 //!
-//! The TypeScript generator (P10) calls [`crate::schema_file`] and the
+//! The TypeScript generator calls [`crate::schema_file`] and the
 //! [`plan`]/[`manifest`] codecs through the native boundary; generation and
 //! execution share these exact canonical bytes, so no digest or encoding is
 //! ever computed twice in two languages. There is no callback migration,

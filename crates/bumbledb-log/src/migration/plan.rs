@@ -1,4 +1,4 @@
-//! The canonical migration plan (C11): finite declarative data, one codec.
+//! The canonical migration plan: finite declarative data, one codec.
 //!
 //! A plan is generated data, reviewed in the repository as JSON and hashed
 //! as a canonical FRAME — JSON formatting can never change identity, and no

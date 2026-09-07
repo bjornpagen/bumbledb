@@ -1,4 +1,4 @@
-//! The one `logAdmin` verb family (C08/C11): maintenance, retention,
+//! The one `logAdmin` verb family: maintenance, retention,
 //! backup/restore/erase and the migration workflow, over P05's admin/
 //! checkpointer/gc/backup/restore/erase modules and P09's migration
 //! executor. Every request derives its ref-able identity BEFORE dispatch on
@@ -193,7 +193,7 @@ pub(crate) struct PlansSpec {
     plan_texts: Vec<String>,
     /// Canonical schema snapshots (`schema_file::render` texts): the base
     /// schema first, then each entry's TARGET schema, order-matched —
-    /// entries + 1 rows. Requested `PlansWire` extension (P08/P10); absent
+    /// entries + 1 rows. Requested `PlansWire` extension; absent
     /// snapshots refuse the verbs that must compile steps.
     snapshots: Vec<String>,
 }
@@ -1222,7 +1222,7 @@ fn run_admin(
                 }
                 BackendSpec::Hosted { .. } => {
                     // Hosted retirement rides the checkpoint that stops
-                    // promising the rows (C08), then applies locally.
+                    // promising the rows, then applies locally.
                     let (backend, prefix, _head) =
                         validated_backend(&binding, context)?.expect("hosted backend");
                     let db = open_admin_db(runtime, &binding, context)?;
@@ -1647,7 +1647,7 @@ fn fail_of_admin(error: bumbledb_log::admin::AdminError) -> LogFail {
 }
 
 // ---------------------------------------------------------------------------
-// Per-verb dispatch fences (LOG-001): an error after ANY dispatched
+// Per-verb dispatch fences: an error after ANY dispatched
 // mutation/CAS carries `DispatchedUnresolved` (outcome-unknown), never a
 // fabricated `not-started`; genuinely pre-dispatch refusals stay
 // `Prepared` by flowing out as `Err`.

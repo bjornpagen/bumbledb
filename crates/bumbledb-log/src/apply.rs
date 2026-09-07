@@ -23,7 +23,7 @@
 //! }
 //! ```
 //!
-//! Set idempotence (chapter 02) means re-applying a decision whose effects are
+//! Set idempotence means re-applying a decision whose effects are
 //! already present nets no fact change, so the crash window between a remote
 //! publication and the local commit needs no extra detection state: replay is
 //! safe to repeat.
@@ -112,7 +112,7 @@ pub fn materialize<S>(
     let mut session = db
         .integration_writer(work)
         .map_err(|e| ApplyError::Local(e.into()))?;
-    // Validate the actual predecessor while holding the writer fence (LOG-003):
+    // Validate the actual predecessor while holding the writer fence:
     // a stale caller snapshot cannot seal control against later local facts.
     let actual = read_committed_authority(db, limits.envelope_bytes).map_err(ApplyError::Local)?;
     if already_at(&actual, envelope.stamp()) {
@@ -121,7 +121,7 @@ pub fn materialize<S>(
     let live = actual.live().map_err(|e| ApplyError::Local(e.into()))?;
     decision::verify_step(live.decision, &envelope)?;
     // Historical precondition is the command's exact predecessor under this
-    // writer — never current admission, freeze, or retirement (LOG-006).
+    // writer — never current admission, freeze, or retirement.
     let plan = plan_for(&command, &actual);
     let schema = db.schema();
     let candidate = match plan {

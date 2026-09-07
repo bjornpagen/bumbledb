@@ -525,7 +525,7 @@ fn admin_identity_copied_directory_refuses_on_the_recorded_origin_binding() {
 
     // A byte-for-byte copy of the tenant at a NEW location: the identity is
     // exact, but the recorded origin binding still names the original
-    // directory — canonical-location provenance (REP-011) refuses adoption.
+    // directory — canonical-location provenance refuses adoption.
     copy_dir(&dir, &copy);
     let before = snapshot_dir(&copy);
     expect_refusal(

@@ -1,14 +1,14 @@
 /**
- * The one native-codec seam of the migration GENERATOR (C11). Everything
+ * The native-codec interface of the migration generator. Everything
  * semantic — schema validation, canonical SchemaId, snapshot rendering, plan
  * validation/rendering/digesting, manifest verification/appending, plan-set
- * digests — happens in the native codec (P09: `schema_file::{schema_id,
- * render}`, `migration::plan`, `migration::manifest`) reached through the P06
- * bridge. TypeScript never reimplements framing, hashing or scalar
+ * digests — happens in the native `schema_file`, `migration::plan` and
+ * `migration::manifest` modules reached through the shared bridge.
+ * TypeScript never reimplements framing, hashing or scalar
  * arithmetic; this interface only names the two bounded read entrypoints the
  * generator calls. `#migrations/native.ts` binds the production codec;
- * authored tests drive the same generator through a scripted codec because
- * physical digest bytes remain provisional until the F3 format freeze (C12).
+ * generator tests can substitute a scripted codec to exercise refusal and
+ * repository-publication behavior independently of native execution.
  *
  * This module is types only — importing it performs no native work and does
  * not load the addon.

@@ -1,4 +1,4 @@
-//! A scale curve is data, not a script: [`CURVE_FAMILIES`] is a `point` from
+//! A scale curve is data, not a script: `CURVE_FAMILIES` is a `point` from
 //! [`crate::families`] (point is the crud/point-regime key probe), `busy_scan`
 //! from [`crate::calendar::families`], and ([`crate::compare::multisets`])
 //! before anything reaches a timer. The REGION (one gate pass or one whole

@@ -1,4 +1,4 @@
-//! The complete disk-native cursor fallback (chapter 12 §3): a depth-first
+//! The complete disk-native cursor fallback: a depth-first
 //! index-nested-loop evaluation of one rule over the source's committed
 //! row cursors — no relation image, no COLT, bounded state (the current
 //! binding stack plus one decoded row per depth). Its purpose is complete
@@ -11,10 +11,9 @@
 //! operands exist; negative atoms and residual comparisons run once their
 //! variables are bound; surviving bindings stream to the SAME sinks the
 //! resident path uses, so dedup, aggregation, computed outputs and stage
-//! error boundaries are shared, not re-implemented. Text words come from
-//! the one interner (intern-on-read: the fallback's text working set is
-//! charged and bounded by the operation ledger; the hashed-word text path
-//! for text-heavy beyond-RAM relations is a recorded C04 follow-up).
+//! error boundaries are shared, not re-implemented. Text resolution uses
+//! the generation interner or the charged scratch-backed text store;
+//! resident and nonresident tokens share exact text equality.
 
 use std::sync::Arc;
 

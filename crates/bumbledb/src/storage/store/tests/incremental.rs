@@ -1,4 +1,4 @@
-//! F3 G-C regressions: the incremental production judgment (chapter 10 §4).
+//! F3 G-C regressions: the incremental production judgment.
 //!
 //! `SchemaJudge` now judges a delta-carrying candidate through
 //! `judge_final_state_delta_local`: statements the delta cannot affect are

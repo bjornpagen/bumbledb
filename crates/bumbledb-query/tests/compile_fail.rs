@@ -319,7 +319,7 @@ fn compile_fail_fixtures() {
     // its ?param, a numeric label on a relation atom, a third Arg
     // position after the key, a malformed uuid literal, an inverted dense
     // float interval, a `use` import after a rule — plus the typed-template
-    // walls (chapter 34): an unknown `params!` name, a missing param
+    // walls: an unknown `params!` name, a missing param
     // (typestate), a doubled `params!` name, a scalar-and-set mixed param,
     // and a keyword param name.
     assert_eq!(seen, 40, "the compile-fail roster has forty fixtures");

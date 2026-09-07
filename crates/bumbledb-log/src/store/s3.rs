@@ -16,7 +16,7 @@
 //! Production qualification is for a specific AWS S3 configuration (region,
 //! bucket class, strong read-after-write, conditional replacement, IAM
 //! separation) exercised by the real-credential F3 lane; emulator green is
-//! not S3 qualification (C07).
+//! not S3 qualification.
 
 use std::io;
 use std::sync::Arc;

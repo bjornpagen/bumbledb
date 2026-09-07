@@ -58,7 +58,7 @@ impl Colt {
         }
     }
 
-    /// (the `gather_keys` invariant), bounds-checked here — this gather
+    /// Gather encoded interval endpoints at the given image positions.
     pub fn gather_interval_pair(
         &self,
         start_col: usize,
@@ -87,7 +87,8 @@ impl Colt {
     }
 
     /// # Panics
-    /// Only on a programmer-invariant violation: `out` shorter than the
+    /// If `out` is shorter than the level's column list or the position is
+    /// outside the bound image.
     pub fn gather_row(&self, level: usize, position: u32, out: &mut [u64]) {
         let level = self.join_index(level);
         for (i, col) in self.schema_columns[level].iter().enumerate() {
@@ -189,13 +190,11 @@ impl Colt {
                 ColumnView::Words(words) => {
                     debug_assert!(segment.iter().all(|&p| (p as usize) < words.len()));
                     for (k, &position) in segment.iter().enumerate() {
-                        // SAFETY: `position < words.len()` rests on a
-                        // CROSS-MODULE invariant, not a local check:
-
-                        // its view after construction, so no path can
-
-                        // replay and ASAN lanes' 2026-07-20 hard-delete
-
+                        // SAFETY: view::apply creates positions within the
+                        // bound image; COLT chunks only partition those
+                        // positions. All image columns have row_count entries.
+                        // reset clears chunks/maps when replacing the view,
+                        // so these positions still address this image.
                         let word = unsafe { *words.get_unchecked(position as usize) };
                         keys_out[(out_base + k) * arity + i] = word;
                     }

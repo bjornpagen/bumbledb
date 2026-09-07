@@ -118,7 +118,7 @@ pub enum FilterPredicate {
         field: OperandAddr,
         point: ViewWordSource,
         /// The field's element domain is the dense F64 line: nonfinite
-        /// probe words are ordinary NONMATCHES (chapter 10 §2), guarded
+        /// probe words are ordinary NONMATCHES, guarded
         /// at evaluation (`eval::dense_probe_word`) — word order alone
         /// would wrongly admit `-Infinity` into a left ray.
         dense: bool,

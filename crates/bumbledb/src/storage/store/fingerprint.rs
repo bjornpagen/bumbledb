@@ -1,23 +1,22 @@
-//! 16-byte exact-checked local fingerprints (chapter 41 defaults).
+//! 16-byte exact-checked local fingerprints.
 //!
 //! The persisted fingerprint is the first 16 bytes of a domain-separated
 //! BLAKE3 digest. It selects candidate buckets; **full canonical bytes decide
 //! equality**. Truncation does not reduce the compression work, only the
-//! stored width; the AEGIS candidate is compared in the F3 probes before the
-//! physical format freezes (C12), and switching requires a layout bump.
+//! stored width. The algorithm and domain separators are persisted-format
+//! choices; changing them requires a layout bump.
 //!
 //! Tests and the HASH-02 bench probe may force constant fingerprints to
 //! exercise collision buckets through insert/contains/delete/judgment/
 //! export; the forcing variant exists only under `cfg(test)` or the
 //! bench-only `collision-probe` feature, and only at store construction —
-//! no production constructor can select it (P14 request, recorded in
-//! `implementation/packets/P02.md`).
+//! no production constructor can select it.
 
 use bumbledb_theory::schema::RelationId;
 
 use crate::schema::ProjectionId;
 
-/// The exact-checked local fingerprint width (chapter 41 default).
+/// The persisted exact-checked local fingerprint width.
 pub const FP_LEN: usize = 16;
 
 const ROW_DOMAIN: &[u8] = b"bumbledb/1/row-fp";

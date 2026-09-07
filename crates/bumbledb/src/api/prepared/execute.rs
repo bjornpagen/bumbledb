@@ -170,7 +170,7 @@ impl<S> PreparedQuery<S> {
                 work: images.source().work().clone(),
                 ram_bytes: self.sink_ram,
             }));
-        // ONE numerical guard per whole engine operation (chapter 11 §3):
+        // ONE numerical guard per whole engine operation:
         // queries with computed scalar outputs establish the canonical FPU
         // environment here, hold it across every rule/derived stage and
         // finalization, and restore the host state when the operation

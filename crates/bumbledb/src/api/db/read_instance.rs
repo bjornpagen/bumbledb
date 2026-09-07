@@ -357,7 +357,8 @@ impl<S> PreparedQuery<S> {
     /// pin is not a `ReadInstance` Send wrapper.
     ///
     /// # Errors
-    /// As [`PreparedQuery::execute_collect`](PreparedQuery::execute_collect).
+    /// Binding or snapshot-identity mismatch, query execution failure, or
+    /// exhaustion of the supplied operation budget.
     pub fn execute_collect_owned<'p, P: BindArgs<'p>>(
         &mut self,
         owned: &OwnedRead<S>,

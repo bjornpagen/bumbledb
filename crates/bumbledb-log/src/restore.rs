@@ -11,12 +11,10 @@
 //! preserved byte-for-byte: entity bytes encode no lineage and are not
 //! command/witness credentials. Reusing a live incarnation refuses.
 //!
-//! Checkpoint state streams into the fresh store in bounded batches
-//! ([`crate::recovery::import_stream`]); tip agreement, new-incarnation
-//! genesis/binding, and bounded receipt cleanup happen on the private
-//! unready owner. Receipt cleanup is L07 `delete_host_batch` / `HostResume`.
-//! [`crate::recovery::StagedPopulation::complete_install`] is the one
-//! no-clobber publication of that finished incarnation. A valid checksum
+//! Checkpoint state streams into the fresh store in bounded batches;
+//! tip agreement, new-incarnation genesis/binding, and bounded receipt
+//! cleanup happen on the private unready owner. The finished incarnation
+//! is published once, without clobbering an existing destination. A valid checksum
 //! preserving a semantically invalid export still refuses activation with
 //! evidence — never a whole-database RAM materialization (audit-log #5).
 //!
@@ -266,9 +264,8 @@ where
 /// backed-up tip. The tail applies as unjudged batches on the unready owner
 /// (current admission guards do not apply; no `LawfulParent` from a prefix).
 /// Tip agreement, new-incarnation genesis/binding, and bounded receipt
-/// cleanup run on that unpublished owner; one
-/// [`crate::recovery::StagedPopulation::complete_install`]
-/// is the publication. Replayed receipt rows are archival evidence and
+/// cleanup run on that unpublished owner before no-clobber publication.
+/// Replayed receipt rows are archival evidence and
 /// are dropped from the new incarnation's executable table in that genesis
 /// write, while migration-history evidence carries forward. The genesis
 /// digests are recomputed from the reached state's unready export, never

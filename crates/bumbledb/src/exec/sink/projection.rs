@@ -230,7 +230,7 @@ mod tests {
         for (turn, layout) in layouts.into_iter().enumerate() {
             if turn == 5 {
                 projected = [7, 0, 4, 2, 7];
-                sink.aim(&projected.map(|slot| FindSpec::Var { slot, width: 1 }), 8);
+                sink.aim(&projected.map(|slot| FindSpec::Var { slot, width: 1 }));
             }
             slots.clear();
             slots.extend_from_slice(layout);

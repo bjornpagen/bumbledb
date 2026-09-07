@@ -1,4 +1,4 @@
-//! Administrative authority transitions over both backends (C08).
+//! Administrative authority transitions over both backends.
 //!
 //! Every operation uses its existing operation/root/barrier identity and the
 //! completed/not-started/outcome-unknown discipline: a hosted CAS whose
@@ -878,7 +878,7 @@ pub fn rotate_receipts_local<S>(
 }
 
 /// The retired receipt-row keys at or below `through`, from one committed
-/// read. Uses the recorded `integration_host_scan` seam (P02R).
+/// read, through `integration_host_scan`.
 ///
 /// # Errors
 /// Storage failures refuse.

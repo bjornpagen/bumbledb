@@ -1,6 +1,6 @@
 //! Explicit scratch capability: one execution-owned transient substrate
 //! passed to admission, grouping, derived stages and results. An error's
-//! Rust type is never a capability detector (chapter 61).
+//! Rust type is never a capability detector.
 
 use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
 

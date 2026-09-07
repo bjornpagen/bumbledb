@@ -95,7 +95,7 @@
 //! named after the field** — projection shorthand, Rust's struct-shorthand
 //! after its referencing field; one named otherwise is written
 //!
-//! **Typed templates (chapter 34):** `query!` evaluates to a per-expansion
+//! **Typed templates:** `query!` evaluates to a per-expansion
 //! TEMPLATE value wrapping the owned immutable `::bumbledb::Query` — it
 //! derefs to `&Query` (so `db.prepare(&q)`, `use x = &q;` and
 //! `ir::render(&schema, &q)` are unchanged), moves the plain IR out via
@@ -2305,7 +2305,7 @@ struct Import {
 
 /// Parses the leading `use <name> = <expr>;` clauses — nonrecursive
 /// composition binds an existing schema-bound typed query value into the
-/// macro's lexical relation roster (chapter 34). Declaration order is
+/// macro's lexical relation roster. Declaration order is
 /// imports, then interiors, then rec, then main.
 fn parse_imports(tokens: &mut Tokens) -> Parse<Vec<Import>> {
     let mut imports: Vec<Import> = Vec::new();

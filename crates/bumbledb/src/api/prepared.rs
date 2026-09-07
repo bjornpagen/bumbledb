@@ -245,8 +245,8 @@ pub struct Answer<'a> {
 /// The reusable execution object. `!Sync` by construction (interior
 /// scratch); executes from one thread at a time; owns its scratch.
 /// Carries the preparing database's schema typestate `S`, so it executes
-/// only against same-schema snapshots (the same-environment check stays
-/// a runtime identity check — [`source::PinnedSource`]).
+/// only against same-schema snapshots. A runtime identity check also
+/// requires snapshots from the preparing environment.
 /// Not shareable across threads:
 /// ```compile_fail
 /// fn require_sync<T: Sync>() {}
@@ -479,7 +479,7 @@ pub(crate) enum PreparedRule {
 pub(crate) struct FreeJoinRule {
     plan: ValidatedPlan,
     executor: Executor,
-    /// The sealed cursor-fallback program (chapter 12 §3): the same rule
+    /// The sealed cursor-fallback program: the same rule
     /// over source cursors instead of images — used when forced (Q-FALLBACK)
     /// or after a resident reservation refusal (one bounded restart).
     fallback: fallback::FallbackRule,
@@ -509,24 +509,6 @@ pub(crate) struct FreeJoinRule {
     /// The view memo : per occurrence, the active binding
     /// (whose COLT the executor consumes) plus parked bindings under LRU.
     memo: ViewMemo,
-    /// Per participating occurrence, the statistics the rule's plan was
-    /// costed with. Cold data — written once at build, read by the
-    /// stats surface when a caller asks.
-    #[expect(dead_code, reason = "prepare-time pins for the stats surface")]
-    pinned: Box<[OccurrencePin]>,
-}
-
-/// One occurrence's pinned prepare-time statistics — the stats surface
-/// renders ("estimated from (pinned rows at prepare)"). Participating
-/// occurrences only: negated and grounding-eliminated occurrences enter
-/// no DP state and earn no statistics read at prepare.
-#[derive(Debug, Clone, Copy)]
-#[expect(dead_code, reason = "prepare-time pins for the stats surface")]
-pub(super) struct OccurrencePin {
-    pub occ_id: crate::ir::normalize::OccId,
-    pub relation: bumbledb_theory::schema::RelationId,
-    pub rows: u64,
-    pub survivors: Option<u64>,
 }
 
 pub(crate) struct KeyProbeRule {

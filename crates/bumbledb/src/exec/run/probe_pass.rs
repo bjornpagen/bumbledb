@@ -410,7 +410,7 @@ impl Executor {
                         Source::Batch(base) => scratch.entry_keys[element * arity + base],
                         Source::Slot(slot) => scratch.pending_bindings[parent * slot_count + slot],
                     };
-                    // The dense finite-probe guard (chapter 10 §2).
+                    // The dense finite-probe guard.
                     let point = if dense {
                         crate::image::view::dense_probe_word(point)
                     } else {
@@ -445,7 +445,7 @@ impl Executor {
                                 scratch.pending_bindings[parent * slot_count + slot]
                             }
                         };
-                        // The dense finite-probe guard (chapter 10 §2).
+                        // The dense finite-probe guard.
                         let point = if dense {
                             crate::image::view::dense_probe_word(point)
                         } else {

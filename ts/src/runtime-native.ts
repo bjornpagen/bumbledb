@@ -33,20 +33,11 @@ export interface RepositoryLockHandle {
 	readonly __repositoryLock: unique symbol
 }
 
-/** F0 C7 kind roster for worker-table resources. */
+/** Resource kinds installed in native worker tables. */
 export type NativeKind = "snapshot" | "result" | "cursor" | "draft" | "changes" | "repository-lock"
 
-/** Worker-routed capability header (C7). Never holds payload bytes. */
-export interface ResourceHeader {
-	readonly runtime: bigint
-	readonly worker: number
-	readonly kind: NativeKind
-	readonly id: bigint
-	readonly generation: bigint
-}
-
 /**
- * Checked capability into the native registry (C7). JS tokens validate
+ * Checked capability into the native registry. JS tokens validate
  * these five fields; native re-judges kind/generation/owner on every verb.
  */
 export interface Capability {
@@ -57,11 +48,6 @@ export interface Capability {
 	readonly generation: bigint
 }
 
-/** Coalesced close obligation — already-owned drain, not rejectable work. */
-export interface CloseDrain {
-	readonly header: ResourceHeader
-}
-
 export type ManagedDbOutcome =
 	| { readonly tag: "accepted"; readonly db: DbHandle }
 	| { readonly tag: "rejected"; readonly violations: readonly Violation[] }
@@ -70,12 +56,6 @@ export type ManagedDbOutcome =
 			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch" | "destinationExists"
 			readonly message: string
 	  }
-
-// The 0.x five-verb JS filesystem transport (`runtimeFs`/`runtimeFsTake`,
-// FsRequestWire/FsResultWire) is DELETED with the TS CAS authority: all
-// object-store work is native (C07, P05's store rewrite); the log machine
-// drives FsStore/S3Store inside `ts/crate` and no JS layer holds a
-// conditional-store verb anymore.
 
 export type LogTakeWire =
 	| { readonly ok: false; readonly kind: LogCommandKind | LogChainKind; readonly message: string }

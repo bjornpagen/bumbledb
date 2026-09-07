@@ -262,7 +262,7 @@ fn scan_routing_is_prepared_again_after_rule_aim_and_reset() {
     );
     sink.reset();
     let finds = [2, 0, 1].map(|slot| crate::exec::sink::FindSpec::Var { slot, width: 1 });
-    sink.aim(&finds, 3);
+    sink.aim(&finds);
     bindings.set(1, 777);
     let scan = LeafScan {
         colt: &colt,

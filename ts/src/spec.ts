@@ -58,7 +58,7 @@ type CapacityWindowSpec =
 /**
  * One field: name, structural type, and host newtype label. There is no
  * `fresh` mark: the database issues no identity, and key laws are declared
- * statements (C01, chapter 30).
+ * statements.
  */
 interface FieldSpec {
 	readonly name: string
@@ -207,7 +207,7 @@ function renderLiteral(literal: LiteralSpec): string {
 
 /**
  * The canonical binary64 bit image as sixteen lowercase hex digits — the
- * one f64 rendering (chapter 11): every NaN is the quiet canonical NaN and
+ * one f64 rendering: every NaN is the quiet canonical NaN and
  * `-0` renders as `+0`, mirroring the engine's `f64:0x{bits:016x}`.
  */
 function f64BitsHex(value: number): string {

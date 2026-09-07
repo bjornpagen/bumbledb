@@ -464,7 +464,7 @@ impl Total {
         }
     }
 
-    /// The canonical merge table (chapter 11 §4): finite parts add exactly
+    /// The canonical merge table: finite parts add exactly
     /// (signed magnitude arithmetic), same-sign infinities keep their sign,
     /// mixed infinities and anything with NaN are NaN.
     #[must_use]

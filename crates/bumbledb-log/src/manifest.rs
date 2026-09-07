@@ -1,9 +1,8 @@
-//! The hosted HEAD body (C08): P05-owned retention fields composed around
-//! P04's authority control projection.
+//! The hosted HEAD body: retention fields around the authority projection.
 //!
 //! ```text
 //! HeadRecord {
-//!   control: HeadAuthority   (P04's exact projection bytes, embedded)
+//!   control: HeadAuthority   (exact authority projection bytes, embedded)
 //!   object_epoch,            (advanced only by the GC barrier CAS)
 //!   recovery: RecoveryRoot?, (checkpoint at S plus exactly the decisions (S,T])
 //!   roots: bounded list<NamedRoot>,
@@ -17,7 +16,7 @@
 //! A full root list returns `RootCapacityExceeded` and never discards another
 //! root. `Deleted` heads carry no active recovery root — only explicitly
 //! retained named roots and a running barrier keep protecting objects.
-//! Physical bytes remain provisional until the F3 format freeze (C12).
+//! The frame family and layout identify this persisted grammar.
 
 use crate::history::authority::{
     AuthorityError, HeadAuthority, Lifecycle, decode_control, encode_control,

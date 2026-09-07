@@ -21,8 +21,8 @@ interface IntervalValue {
 }
 
 /**
- * A half-open dense float interval `[start, end)` as a plain value object
- * (chapter 11): two canonical binary64 bounds on the dense numeric line.
+ * A half-open dense float interval `[start, end)` as a plain value object:
+ * two canonical binary64 bounds on the dense numeric line.
  * NaN is never an endpoint, signed zero is normalized at the checked
  * constructor and again by the native boundary, and strict `start < end`
  * makes empty spans unrepresentable through {@link span}. Infinite bounds
@@ -35,8 +35,7 @@ interface FloatIntervalValue {
 
 /**
  * Constructs a checked interval literal — the `start..end` spelling.
- * Half-open and nonempty by construction. This is one of chapter 35's
- * "checked small interval constructors": genuinely fallible pure parsing
+ * Half-open and nonempty by construction. Fallible pure parsing
  * returns `Result` (use `Effect.fromResult(span(...))` inside a generator),
  * never hidden I/O and never a thrown domain outcome.
  *
@@ -109,7 +108,7 @@ interface F64Field {
 }
 
 /**
- * The application-owned 128-bit identity scalar (chapter 30/34): sixteen
+ * The application-owned 128-bit identity scalar: sixteen
  * exact bytes, spelled as the canonical hyphenated UUID {@link Uuid}
  * host value. There is no `fresh` mark anywhere: the database issues no
  * identity, and key laws are declared statements.

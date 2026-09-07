@@ -137,7 +137,7 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 			return { $f64: f64Bits(typeof cell === "number" ? cell : Number.NaN) }
 		case "uuid": {
 			// The core row-cell codec lowers uuid to its canonical
-			// canonical hyphenated UUID string (chapter 35) — already the plan wire
+			// canonical hyphenated UUID string — already the plan wire
 			// spelling.
 			if (!Uuid.isUuid(cell)) {
 				throw new Error(`relation ${relation.name}.${declared.name}: uuid cell did not lower to canonical hex`)

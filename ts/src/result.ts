@@ -10,15 +10,15 @@ import { deliveryResultBytes, nativeOperationWith, policyWire } from "#runtime.t
 import type { CloseReport, DbError } from "#runtime-errors.ts"
 
 /**
- * `CompleteResult<A>` — the sealed owner of one COMPLETED query answer
- * (C05): published only after all evaluation/finalization succeeded,
+ * `CompleteResult<A>` — the sealed owner of one completed query answer:
+ * published only after all evaluation/finalization succeeded,
  * possibly backed by temporary LMDB scratch. Owned and independent of its
  * source snapshot/session.
  *
  * `collect` materializes a bounded owned array and leaves the result
  * available; it refuses (`ResourceLimit`) before allocating past
  * `maxBytes`, and a cap failure leaves the sealed backing available for
- * `pages`. `pages` is chapter 35's ONE-SHOT consuming stream over the
+ * `pages`. `pages` is a one-shot consuming stream over the
  * completed result: its first execution atomically spends the result and
  * moves the backing storage into a private cursor owned by the stream's
  * scope — construction alone spends nothing, a second run fails

@@ -356,7 +356,6 @@ mod correctness;
 mod intervals;
 mod mechanics;
 mod negation;
-mod pinned_run;
 mod pipeline;
 mod scan;
 mod spill_bounded;

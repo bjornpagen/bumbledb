@@ -44,8 +44,8 @@ relations as instance-independent sealed constants.
 * **Discharged (2026-07-14): the literal-SET σ form.** The engine's
  accepted σ fragment is the (field, literal-set) disjunctive form —
  `Side.selection` is `Box<[(FieldId, LiteralSet)]>`
- (`crates/bumbledb-theory/src/schema.rs`), the sealed `CompiledCheck`
- set arms judge membership among the sealed encodings, and the
+ (`crates/bumbledb-theory/src/schema.rs`), `schema/judge.rs::satisfies`
+ checks membership against those canonical literals, and the
  canonical form is sorted and duplicate-free (validation rejects
  the degenerate spellings). The singleton `One` arm is
  byte-identical to the pre-set engine —
@@ -184,7 +184,7 @@ the DISJUNCTION over its spelled set (the field's value is a MEMBER).
 Membership-to-literal-set BY REPRESENTATION: no richer predicate is
 writable. The engine's accepted σ is this same fragment
 (`LiteralSet` in `crates/bumbledb-theory/src/schema.rs`;
-`validate_side_selection` and the sealed `CompiledCheck` arms consume
+`validate_side_selection` and `schema/judge.rs::satisfies` consume
 it), and `Selection.singleton_satisfies_iff` proves the singleton
 reading is exactly the equality binding — the engine's zero-cost
 `One` arm, unchanged in meaning. The sets are

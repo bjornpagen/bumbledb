@@ -9,6 +9,9 @@ echo "==> cargo test --workspace --doc"
 # handles these; do not force a single test thread.
 cargo test --workspace --doc
 
+echo "==> public Rust documentation (warnings are errors)"
+RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --workspace --no-deps
+
 echo "==> allocation gate (release): steady-state + escalating high-water"
 
 cargo nextest run -p bumbledb --features alloc-counter --test alloc_gate --release

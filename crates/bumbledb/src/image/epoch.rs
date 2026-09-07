@@ -11,7 +11,7 @@ use crate::storage::store::RelationVersion;
 /// PER RELATION: the store advances a relation's change version exactly when
 /// a committed transaction changed that relation's rows, so an unrelated
 /// write — another relation, or a host-record/attachment-only seal — leaves
-/// the epoch equal and every memo valid (PERF-001). Equal versions within
+/// the epoch equal and every memo valid. Equal versions within
 /// one environment prove equal rows; a mismatch rebuilds. `Heap(tick)` is a
 /// prepared-query-local execution counter: heap instances carry no durable
 /// identity, so their images are rebuilt per execution and can never alias

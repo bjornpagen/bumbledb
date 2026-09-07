@@ -1,7 +1,7 @@
 //! The one store owner: environment lifecycle, elastic map growth, the
 //! transaction gate, directory ownership and close.
 //!
-//! Create and open are distinct (C04). Create publishes through a staged
+//! Create and open are distinct. Create publishes through a staged
 //! sibling directory: lock staging, write meta, durable commit, fsync files
 //! and dirent chain, rename into place, fsync the parent — a crash leaves
 //! either no destination or a complete one. Open acquires the kernel lock
@@ -75,8 +75,8 @@ struct MapState {
     current_map_bytes: u64,
 }
 
-/// The successor store owner. `Send + Sync`; clones of the handle share one
-/// environment. See the module docs of [`super`] for the full C04 table.
+/// The store owner. `Send + Sync`; clones share one environment and its
+/// transaction gate, map policy, and admitted readers.
 pub struct Store {
     pub(crate) inner: Arc<StoreInner>,
 }
@@ -252,7 +252,7 @@ impl Store {
     }
 
     /// Populate a new store in a private staging directory, then publish it
-    /// atomically to `dest` (CORE-016). Prefer [`super::staging`] for the
+    /// atomically to `dest`. Prefer [`super::staging`] for the
     /// full unready → admitted → installed ownership path.
     /// # Errors
     /// `DestinationExists`, population failure, lock/I/O/LMDB failures.
@@ -276,7 +276,7 @@ impl Store {
         Self::open_with(path, schema, policy, Fingerprinter::Blake3)
     }
 
-    /// HASH-02 probe constructor (P14): open with a caller-supplied
+    /// HASH-02 probe constructor: open with a caller-supplied
     /// fingerprint function. Bench/test builds only — the production
     /// constructors above cannot reach a non-BLAKE3 fingerprinter, so the
     /// default hash role is never weakened by this seam.
@@ -292,7 +292,7 @@ impl Store {
         Self::open_with(path, schema, policy, fingerprinter)
     }
 
-    /// HASH-02 probe constructor (P14): create with the production protocol,
+    /// HASH-02 probe constructor: create with the production protocol,
     /// then select the forced-collision bucket function before publication so a bench
     /// probe can drive insert/contains/delete/judgment/export through real
     /// collision buckets. Bench/test builds only; a store written this way
@@ -411,7 +411,7 @@ impl Store {
     }
 
     /// One coherent owned snapshot: rows, generation, and host attachment
-    /// all derive from the single read transaction opened here (ENG-003).
+    /// all derive from the single read transaction opened here.
     /// # Errors
     /// Refuses a closing store, exhausted reader slots, or stopped work.
     pub fn snapshot(&self, work: &WorkContext) -> StoreResult<OwnedSnapshot> {

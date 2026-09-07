@@ -69,7 +69,7 @@ pub trait ChainVisitor {
 }
 
 /// Walk decision objects backward from `cursor` to `base` using authenticated
-/// parent locators. Each fetch is [`fetch_decision_ref`] → [`get_verified`]
+/// parent locators. Each fetch is [`fetch_decision_ref`] → [`crate::store::get_verified`]
 /// under the caller's [`WorkContext`] and intersected locator/envelope
 /// [`ReceiveLimits`]. Decode borrows [`bumbledb::work::ChargedBytes::as_bytes`];
 /// the owner is dropped via [`bumbledb::work::ChargedBytes::into_owner`]

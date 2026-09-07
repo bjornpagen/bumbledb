@@ -273,7 +273,7 @@ fn erase02_policy_allowed_roots_release_and_erasure_collects_everything_else() {
     // A second pass collects everything the first pass conservatively kept.
     // Exactly the second pass's own mark evidence remains: a current-epoch
     // object that is ordinary unreachable input to a LATER collection
-    // (chapter 21) — never application data.
+    // — never application data.
     let second = erase_hosted(&store, "t", op(0x43), &[], LIMITS, &gc_policy(), &work())
         .expect("second pass");
     assert_eq!(

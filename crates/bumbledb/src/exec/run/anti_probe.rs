@@ -75,7 +75,7 @@ pub(super) fn anti_probe_pass<C: Counters>(
                             Source::Batch(base) => entry_keys[element * arity + base],
                             Source::Slot(slot) => read_slot(element, slot),
                         };
-                        // The dense finite-probe guard (chapter 10 §2):
+                        // The dense finite-probe guard:
                         // a nonfinite point satisfies no membership, so
                         // the negated atom's conjunction has no witness.
                         let point = if dense {

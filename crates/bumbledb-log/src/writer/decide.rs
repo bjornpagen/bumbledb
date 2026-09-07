@@ -241,10 +241,6 @@ pub fn seal_candidate<'owner, 'db, S>(
 /// over `(schema, violations, budget)`, so historical replay re-derives
 /// byte-identical evidence (`apply` compares exactly).
 ///
-/// This replaces the earlier `format!("{violations}")` Display placeholder
-/// recorded as a C12 defect in implementation/packets/P04.md: Display bytes
-/// were neither strict nor version-stable.
-///
 /// A diagnostic whose complete statement skeleton exceeds the budget — or a
 /// resource failure while producing it — refuses before deciding
 /// (`LogError::IncompleteRejectionEvidence` / `Work`) rather than recording a
@@ -260,7 +256,7 @@ fn encode_rejection_evidence(
             EvidenceError::Work(work) => LogError::Work(work),
             // Budget, allocation, row-encode and impossible-shape refusals all
             // mean this invocation could not produce COMPLETE bounded
-            // evidence: a nonterminal refusal before deciding (chapter 20),
+            // evidence: a nonterminal refusal before deciding,
             // never a shorter recorded verdict.
             EvidenceError::Budget { .. }
             | EvidenceError::Row(_)

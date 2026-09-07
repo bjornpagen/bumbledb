@@ -228,7 +228,7 @@ fn long_text_determinants_resolve_exactly() {
         .expect("create")
         .expect("accepted");
     // Titles far past LMDB's 511-byte key bound: the determinant is
-    // fingerprinted, never keyed raw (chapter 10 §3).
+    // fingerprinted, never keyed raw.
     let title_a = "a".repeat(4096) + " — the long one";
     let title_b = "a".repeat(4096) + " — the long two";
     common::expect_admitted(db.write(common::work(), |tx| {

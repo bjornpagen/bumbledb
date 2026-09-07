@@ -1384,7 +1384,7 @@ fn rejects_a_duration_weight_over_a_scalar() {
 }
 
 /// Float capacity is refused at schema validation, never judged with
-/// rounding (chapter 11): a dense `interval<f64>` field is an interval,
+/// rounding: a dense `interval<f64>` field is an interval,
 /// but not an exact integral duration — neither a `[Duration(field)]`
 /// weight nor a `{0..Duration(field)}` bound may read it. A
 /// `FixedInterval<F64>` cannot even be spelled (its element enum is

@@ -1,11 +1,11 @@
-//! The backend seam (C07): typed object identity, the one object-key
+//! The backend seam: typed object identity, the one object-key
 //! namespace, and verified immutable object I/O over the conditional-store
 //! verbs declared in [`crate::writer::verbs`].
 //!
 //! P05 owns this composition: the concrete adapters ([`mem`], [`fs`], [`s3`]),
 //! their durability ordering and fault taxonomy, the object-key grammar, and
 //! the verification rule every reader applies before interpreting bytes. The
-//! publication machine (P04) consumes only the verb trait and its three-way
+//! publication machine consumes only the verb trait and its three-way
 //! conditional grammar.
 //!
 //! Deleted mechanisms from the 0.x store: the generic five-verb `ObjectStore`

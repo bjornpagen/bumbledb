@@ -352,7 +352,7 @@ fn same_command_id_with_different_bytes_conflicts_after_publication() {
 }
 
 /// The independent history model's Deleted-refuses-before-lookup rule as a
-/// PRODUCTION boundary (requested by P11 in implementation/packets/P11.md): a
+/// production boundary: a
 /// tombstoned authority has no receipt table. The retained receipt row is
 /// still physically present in LMDB after the one-transaction tombstone, but
 /// no production surface serves it — deletion precedes receipt lookup, unlike

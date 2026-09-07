@@ -76,7 +76,7 @@ fn tree_count(tree: &ConditionTree) -> usize {
 /// Distributes one rule's condition trees to DNF: one [`LoweredRule`] per
 /// term, atoms and finds cloned, conditions = that term's leaves in
 /// left-to-right tree order. Callers judge the cap on
-/// [`disjunct_count`] **first** — distribution materializes every term.
+/// `disjunct_count` **first** — distribution materializes every term.
 /// Provenance is the caller's to stamp (`lower_rules` writes the written
 /// index; the terms leave here unstamped).
 #[must_use]

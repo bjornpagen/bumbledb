@@ -1,4 +1,4 @@
-//! The one charged transient relation/map (chapter 12 §4): every
+//! The charged transient relation/map: every
 //! intermediate owner that can outgrow RAM — projection/union distinct
 //! sets, aggregate group state, recursion seen/frontier sets, completed
 //! results — spills through this abstraction, never through a private
@@ -15,12 +15,11 @@
 //!   oscillating tier manager. Scratch writes never claim authoritative
 //!   durability: the environment is `NO_SYNC`, unreachable from any
 //!   persistent-store constructor, and its loss loses only this query
-//!   attempt (ENG-008 stays intact — the production store has no such
-//!   flag anywhere).
+//!   attempt. The authoritative store always uses durable commits.
 //!
 //! Keys are **exact full bytes** — the map is ordered by the key bytes and
 //! never consults a hash verdict, so forced fingerprint collisions cannot
-//! merge distinct tuples (Q-COLLISION). Long logical keys are the caller's
+//! merge distinct tuples. Long logical keys are the caller's
 //! encoded words/bytes; the scratch env bounds physical LMDB keys by
 //! hashing oversized keys into exact-checked candidate buckets, comparing
 //! full key bytes within a bucket.
@@ -58,8 +57,8 @@ pub const DEFAULT_RAM_BYTES: usize = 8 << 20;
 /// Working-byte reservations are taken in chunks of this size so the
 /// charge vector stays small while growth is still charged before it
 /// happens. Small enough that several small maps under one bounded
-/// operation budget do not pin whole budgets per map (F3 finding C:
-/// grouped judgment state runs many maps under small working budgets).
+/// operation budget do not pin whole budgets per map; grouped judgment
+/// can hold many small maps at once.
 const CHARGE_CHUNK: usize = 4 << 10;
 
 /// Copy batch size for the RAM→LMDB transition (entries per transaction).
@@ -343,10 +342,7 @@ impl ScratchRelation {
         )
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "test-suite constructor over DEFAULT_RAM_BYTES")
-    )]
+    #[cfg(test)]
     pub(crate) fn with_default_budget(work: &WorkContext) -> Self {
         Self::new(work, DEFAULT_RAM_BYTES)
     }
@@ -357,7 +353,7 @@ impl ScratchRelation {
 
     /// Re-home this relation onto a caller-supplied operation ledger: every
     /// SUBSEQUENT step/checkpoint/reservation charges `work` instead of the
-    /// ledger the relation was built under. The chapter-35 retained-result
+    /// ledger the relation was built under. The retained-result
     /// seam: a sealed result outlives its execute operation, and its scratch
     /// reads must not keep consulting that operation's expired deadline.
     ///
@@ -471,7 +467,7 @@ impl ScratchRelation {
 
     /// Upsert: stores `value` under `key`, replacing any previous value.
     /// # Errors
-    /// As [`Self::insert_if_absent`].
+    /// Work allowance, allocation, or scratch-storage failure.
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
         self.work.step(1).map_err(work_error)?;
         self.maybe_spill(key.len() + value.len())?;
@@ -524,7 +520,7 @@ impl ScratchRelation {
     /// Walk every (key, value) in key order, charging one work step per
     /// entry. The callback returns `false` to stop early.
     /// # Errors
-    /// As [`Self::insert_if_absent`], or the callback's failure.
+    /// Work allowance, scratch-storage failure, or the callback's failure.
     pub fn for_each(&mut self, visit: KeyValueVisit<'_>) -> Result<()> {
         self.for_each_from(&[], visit)
     }
@@ -556,7 +552,7 @@ impl ScratchRelation {
 
     /// Get an ordered fixed-word key.
     /// # Errors
-    /// As [`Self::get`].
+    /// Work allowance or scratch-storage failure.
     pub fn get_words<const WORDS: usize>(
         &mut self,
         key: ScratchWordKey<WORDS>,
@@ -647,7 +643,7 @@ impl ScratchRelation {
 
     /// Get from a named map. `Ok(false)` clears `out`.
     /// # Errors
-    /// As [`Self::get`].
+    /// Work allowance or scratch-storage failure.
     pub fn get_map(&mut self, name: ScratchMapId, key: &[u8], out: &mut Vec<u8>) -> Result<bool> {
         self.work.step(1).map_err(work_error)?;
         out.clear();
@@ -1707,4 +1703,4 @@ fn split_bucket_value(stored: &[u8]) -> Result<(&[u8], &[u8])> {
 mod tests;
 
 #[cfg(test)]
-mod f3c_bounds;
+mod bounds;

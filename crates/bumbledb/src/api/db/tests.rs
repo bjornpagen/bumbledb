@@ -13,7 +13,7 @@
 //! - witness lifecycle (clone/stale/foreign) → CONC substrate, SDK-009.
 //! - deleted text unreachable after delete + reopen → ENG-006 (E-TEXT api
 //!   remainder; no dictionary exists to leak).
-//! - no `*_nosync` constructor exists (ENG-008) — structural: the surface
+//! - no `*_nosync` constructor exists — structural: the surface
 //!   has no such symbol; E-DURABILITY execution lives in the store tests.
 //! - generation moves only on change → E-SNAPSHOT/G06 remainder.
 //!

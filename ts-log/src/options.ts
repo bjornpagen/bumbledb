@@ -61,7 +61,7 @@ export interface HostedOpenOptions extends ExecutionPolicy {
  * validates this stable identity and completes genesis instead of adopting
  * an unrelated database. The artifact is the checked canonical
  * initialization data (ordinarily produced by the generated-plan
- * `initialize` operation, C11), never fabricated migration history.
+ * `initialize` operation), never fabricated migration history.
  */
 export interface CreationOptions {
 	readonly operationId: OperationId
@@ -76,7 +76,7 @@ export interface HostedCreateOptions extends HostedOpenOptions {
 	readonly creation: CreationOptions
 }
 
-/** Chapter 30's consistency sum over the core policy — nothing else. */
+/** Read consistency plus the shared core execution policy. */
 export interface ReadOptions extends ExecutionPolicy {
 	readonly consistency: ReadConsistency
 }
@@ -95,9 +95,8 @@ export interface SubmitOptions extends ExecutionPolicy {
 }
 
 /**
- * The generated runtime expectation (chapter 33 `runtime-contract.json`):
- * exact canonical schema and applied migration-prefix digests. Shape is
- * C11-provisional until P09/P10 freeze the generated contract.
+ * The generated `runtime-contract.json` expectation: exact canonical schema
+ * and applied migration-prefix digests, checked when opening a tenant.
  */
 export interface RuntimeExpectation {
 	readonly schemaId: string

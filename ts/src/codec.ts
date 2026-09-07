@@ -17,7 +17,7 @@ import { Uuid } from "#uuid.ts"
 
 /**
  * Boundary row codecs, derived from the core relation descriptors — never a
- * second hand-maintained field roster (chapter 35).
+ * second hand-maintained field roster.
  *
  * Two layers:
  *

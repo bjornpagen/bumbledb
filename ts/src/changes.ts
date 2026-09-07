@@ -17,8 +17,8 @@ import type { AnySchema } from "#schema.ts"
 import type { Rel } from "#shape.ts"
 
 /**
- * `ChangeSet` — the public name of the engine's checked immutable delta
- * (chapter 30/34): schema-fingerprint-bound canonical native bytes with
+ * `ChangeSet` — the engine's checked immutable delta:
+ * schema-fingerprint-bound canonical native bytes with
  * one-command `(add, remove ∖ add)` normalization and exact same-fact
  * add-wins. Immutable and reusable while open; sealing/submitting it later
  * retains the SAME native value — no second JS row walk ever happens.
@@ -184,7 +184,7 @@ function ingest(
 		}
 		if (state.inFlight) {
 			// Reentrant construction refuses AND spends/drains — there is
-			// no implicit queue (chapter 35).
+			// no implicit queue.
 			yield* spendAndDrain(state, operation)
 			return yield* Effect.fail(refusal(operation, "SpentHandle"))
 		}
@@ -307,7 +307,7 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 
 /**
  * `ChangeSet.builder(schema, work)` — lazy scoped acquisition of a
- * database-free draft (chapter 35 roster). Requires the acquired
+ * database-free draft. Requires the acquired
  * `NativeRuntime`; the draft's native resources release with its scope, and
  * the scope finalizer surfaces incomplete/failed teardown as a
  * `CloseFailure` defect.

@@ -57,8 +57,7 @@ impl ScratchMapId {
 }
 
 /// Ordered fixed-width word key. Encoded big-endian so byte order equals
-/// unsigned word order. Inline under [`super::MAX_INLINE_KEY`] for every
-/// `WORDS` that fits `WORDS * 8 <= 400`.
+/// unsigned word order. Fits the inline-key limit when `WORDS * 8 <= 400`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ScratchWordKey<const WORDS: usize> {
     words: [u64; WORDS],
@@ -109,8 +108,7 @@ impl<const WORDS: usize> ScratchWordKey<WORDS> {
 }
 
 /// Pack claim: 3×big-endian u64 `(token, start, end)`. Always 24 bytes,
-/// which is ≤ [`super::MAX_INLINE_KEY`], so claim walks are exact key
-/// order. This is not a mode tag — 0xFE payload inference is deleted.
+/// within the inline-key limit, so claim walks are exact key order.
 pub type ScratchClaimKey = ScratchWordKey<3>;
 
 /// Ordered 4-word exact key for colliding-wide heads that still fit

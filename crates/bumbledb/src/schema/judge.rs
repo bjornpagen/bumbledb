@@ -15,12 +15,12 @@
 //! order). [`CompiledTheory::index_key`] is used only at
 //! `visit_compiled_group`.
 //!
-//! [`judge_final_state`] is the independent streaming reference. It shares
+//! [`crate::schema::judge::judge_final_state`] is the independent streaming reference. It shares
 //! denotation with the production entries and does not share their
 //! optimized access planning. Exact value equality decides identity — a
 //! forced fingerprint collision cannot change a verdict here.
 //!
-//! Grouped state lives in charged scratch ([`grouped`]). Citations are
+//! Grouped state lives in charged scratch. Citations are
 //! selected by canonical fact bytes **before** the labeled top-k budget
 //! truncates (C4 / CORE-021). A completed rejection names every violated
 //! statement; resource failure is not a rejection.
@@ -353,7 +353,7 @@ impl Default for JudgeBudget {
 /// Capability that the committed parent is lawful (C4). Only complete
 /// admission, trusted persisted open, or a prior admitted commit may mint it.
 /// An [`UnreadyStore`](crate::storage::store::UnreadyStore) cannot. This
-/// type has no public constructor; [`LawfulParent::established`] is
+/// type has no public constructor; `LawfulParent::established` is
 /// crate-private so an unready owner cannot forge the premise.
 ///
 /// ```compile_fail

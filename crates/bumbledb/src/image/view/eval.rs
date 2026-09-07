@@ -212,7 +212,7 @@ pub(crate) const fn point_in(start: u64, end: u64, point: u64) -> bool {
 pub(crate) const DENSE_NEG_INF_KEY: u64 = bumbledb_theory::F64::NEG_INFINITY.to_order_key();
 
 /// The finite-probe guard for dense (F64) point membership: a nonfinite
-/// probe is an ordinary NONMATCH (chapter 10 §2). Word order alone already
+/// probe is an ordinary NONMATCH. Word order alone already
 /// refuses `+Infinity`/`NaN` probes (their keys are at or above every
 /// legal dense end word), so the one wrong admission is `-Infinity` into a
 /// left ray whose start word equals its key. Remap that key (and any

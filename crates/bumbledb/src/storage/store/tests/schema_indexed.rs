@@ -6,8 +6,8 @@
 //! These tests pin: symmetric maintenance across insert/replace/delete,
 //! bucket-shaped (never relation-shaped) competitor enumeration for
 //! judgment (E-ADMIT acceleration, structural work counts), pointwise
-//! scalar-prefix bucketing (chapter 10), long text determinants outside
-//! LMDB keys (chapter 10 §3), exact confirmation under forced collisions
+//! scalar-prefix bucketing, long text determinants outside
+//! LMDB keys, exact confirmation under forced collisions
 //! (Q-COLLISION/HASH-02), and snapshot adoption rebuilding the index.
 
 use super::*;

@@ -1,11 +1,11 @@
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 /**
- * The successor row codec: fact object ⇄ positional cell array by field
+ * The row codec: fact object ⇄ positional cell array by field
  * ordinal, schema-directed, in ONE place. The write side lowers named host
  * objects to rows in the relation's field-declaration order (declaration
  * order = ordinal ids); the read side decodes owned rows back to named
  * objects of BARE structural values. This module is the one fact⇄row
- * projector. It covers the COMPLETE successor value roster: bool, u64, i64,
+ * projector. It covers all value types: bool, u64, i64,
  * f64, uuid, str, bytes<N>, discrete intervals and dense float intervals,
  * plus the closed-handle bijection (name ⇄ declaration-order row id).
  *
@@ -14,7 +14,7 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * the pure {@link AuthoringError}; the Effect ingestion boundary catches
  * and types it (never an untracked partial draft). SharedArrayBuffer-backed
  * views are refused before any copy. Host length is judged before string
- * scans and byte copies (TS-004).
+ * scans and byte copies.
  */
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import { isFloatIntervalValue, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
@@ -27,7 +27,7 @@ const HOST_CELL_MAX = 65536n
 /**
  * One owned cell at the private bridge boundary. The declared sealed field
  * type disambiguates the union: `string` is text, an `uuid` in its
- * canonical hyphenated UUID spelling (chapter 35), or a closed handle
+ * canonical hyphenated UUID spelling, or a closed handle
  * before lowering (closed handles cross as `bigint` row ids),
  * `Uint8Array` is `bytes<N>`, `{ start, end }` bigints are a discrete
  * interval and numbers a dense float interval.
@@ -64,8 +64,9 @@ function refuseShared(context: string, value: Uint8Array): void {
 }
 
 /**
- * Cheap host charge before any string scan or byte copy (TS-004). UTF-16
- * code units × 2 upper-bounds UTF-8; byte views charge their length.
+ * Cheap host charge before any string scan or byte copy. Strings charge
+ * two bytes per UTF-16 code unit, not their UTF-8 wire size. Native admission
+ * measures and bounds UTF-8 separately; byte views charge their length.
  */
 function hostCellCharge(value: unknown): bigint {
 	if (typeof value === "string") {
@@ -133,9 +134,8 @@ function cellBytes(cell: CellValue): bigint {
 		return 8n
 	}
 	if (typeof cell === "string") {
-		// UTF-16 code units × 2 is a cheap safe upper bound before exact
-		// UTF-8 conversion is charged natively (chapter 35: reject oversize
-		// cells with cheap length bounds before costly conversion).
+		// Account for the host string here; native admission separately
+		// checks and charges its exact UTF-8 encoding.
 		return BigInt(cell.length) * 2n
 	}
 	if (cell instanceof Uint8Array) {
@@ -186,9 +186,7 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 			if (!Uuid.isUuid(value)) {
 				throw literalShapeError(context, "a UUID (canonical UUID text)", value)
 			}
-			// Chapter 35: uuid crosses the bridge as the canonical
-			// canonical hyphenated UUID STRING (the native marshal's spelling),
-			// never as sixteen raw bytes.
+			// UUIDs cross as canonical hyphenated text, not raw bytes.
 			return value
 		}
 		case "bytes": {
@@ -362,8 +360,7 @@ function isCompleteFact<R extends AnyRelation>(
 
 /**
  * The read half: one owned positional row into a plain frozen record in
- * declared field order — the SAME fields and shapes on every row (chapter
- * 35's stable row shape rule; no Proxy, no per-cell closures).
+ * declared field order: stable field names and shapes, no Proxy or per-cell closures.
  */
 function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]): Fact<R> {
 	const data = relation.data

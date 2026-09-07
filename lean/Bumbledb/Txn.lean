@@ -388,7 +388,7 @@ theorem obligation_partition (T : Theory) (I : Instance) :
 /-- **L3.** The complete roster passes when every instance-dependent
 obligation holds: both complete-roster citation sets are empty.
 Closed-constant statements are not members — validation discharges
-them. Bridge: `schema.rs::CompleteObligations` over a sealed
+them. Bridge: `schema.rs::Schema::complete_obligations` over a sealed
 `Schema`. -/
 def completeRosterPasses (T : Theory) (I : Instance) : Prop :=
   (∀ st, st ∉ completeKeyViolations T I) ∧

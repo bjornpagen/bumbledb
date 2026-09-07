@@ -1226,7 +1226,7 @@ pub enum ValueOut {
     F64(F64),
     Text(String),
     /// Canonical canonical hyphenated UUID text — the TypeScript spelling of an
-    /// application-owned `Uuid` (chapter 32).
+    /// application-owned `Uuid`.
     Uuid(String),
     Bytes(Vec<u8>),
     IntervalU64 {

@@ -362,7 +362,7 @@ fn assert_census_key_width(
 
 #[test]
 fn census_and_page_stats_read_one_coherent_snapshot() {
-    // SPACE-01 seam (P14): the entry walk classifies by the real namespace
+    // SPACE-01 seam: the entry walk classifies by the real namespace
     // tags and the page stats stay self-consistent — both from the pinned
     // snapshot's one transaction, unmoved by a later commit.
     let (_dir, path) = store_dir("snap-census");

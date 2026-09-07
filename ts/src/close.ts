@@ -4,8 +4,8 @@ import type { CloseReport } from "#runtime-errors.ts"
 import { DbError } from "#runtime-errors.ts"
 /**
  * Shared close/drain adapters for scoped core owners (drafts, changes,
- * snapshots, sessions, results, cursors, databases). One policy, chapter
- * 35's: early `close()` starts/joins the native close transition and
+ * snapshots, sessions, results, cursors, databases). Early `close()` joins
+ * the native close transition and
  * returns the honest {@link CloseReport}; a scope FINALIZER runs the same
  * close and surfaces `incomplete`/`failed` as a structured `CloseFailure`
  * DEFECT in the finalizer Cause — never catch-and-log, never false

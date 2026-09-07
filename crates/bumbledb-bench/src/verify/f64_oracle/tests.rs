@@ -188,7 +188,7 @@ fn sum_is_permutation_and_partition_independent() {
 fn partial_state_replay_is_not_idempotent() {
     // Merging one finite partial state with itself doubles contribution and
     // count: the accumulator carries no binding provenance, so exact set
-    // deduplication MUST precede accumulation (chapter 11 §4).
+    // deduplication MUST precede accumulation.
     let acc = fold(&[ONE, TWO]);
     let replayed = acc.merge(&acc);
     assert_ne!(replayed, acc);

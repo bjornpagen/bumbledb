@@ -11,8 +11,7 @@ import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "#s
 import type { Statement } from "#statements.ts"
 
 /**
- * `SchemaId` — the canonical schema/theory identity (chapter 30's value
- * vocabulary): the engine's canonical schema fingerprint as lowercase hex.
+ * `SchemaId` — the engine's canonical schema fingerprint as lowercase hex.
  * Independent of database identity; a branded string so arbitrary text does
  * not typecheck where a schema identity is required.
  */
@@ -22,7 +21,7 @@ type SchemaId = string & { readonly [schemaIdBrand]: "bumbledb.SchemaId" }
 
 /**
  * `CompiledSchema<S>` — bounded detached immutable descriptor data plus the
- * canonical `schemaId` (chapter 35). NOT a tenant handle or a second
+ * canonical `schemaId`. NOT a tenant handle or a second
  * user-authored schema: it needs no native finalizer, holds no native
  * resource, and open/create/build compile through the same implementation —
  * prior compilation is optional, never a mandatory prepare ceremony.
@@ -99,7 +98,7 @@ function admitSchemaId(fingerprint: string): SchemaId {
 }
 
 /**
- * Charged, effectful native schema admission/compilation (chapter 35): a
+ * Charged, effectful native schema admission/compilation: a
  * schema declaration is pure metadata and never a claim its theory has been
  * admitted. Runs on the one bounded executor under `work`, requires the
  * acquired {@link NativeRuntime}, and yields detached immutable descriptor
@@ -139,7 +138,7 @@ type Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = Schema
 
 /**
  * The core `Schema` namespace (import as `BumbleSchema` when Effect Schema
- * is also in scope — chapter 35). The `Schema<Rels>` TYPE remains the pure
+ * is also in scope). The `Schema<Rels>` type remains the pure
  * declaration from `#schema.ts` (the local alias above); this value owns
  * the effectful half. One exported name, two meanings.
  */

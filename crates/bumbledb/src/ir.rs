@@ -1,7 +1,6 @@
 //! The pure-data query IR, validation, and normalization.
-//! Queries are plain data — encodable, inspectable, no behavior
-//! . No wildcard variant
-//! exists: an unbound field is *absent* from `bindings`, so "wildcard bound
+//! Queries are plain data — encodable and inspectable. No wildcard variant
+//! exists: an unbound field is absent from `bindings`, so "wildcard bound
 //! to something" is unwritable. Variables carry dense ids only; names are a
 //! debugging sidecar the engine never stores.
 pub(crate) mod normalize;
@@ -23,7 +22,7 @@ pub use normalize::{LoweredRule, distribute};
 /// `Query.rules` independently, and the rec SCC as one pool
 /// (`base.len + rec.len`), rejected at validation
 /// (`ValidationError::TooManyRules`). Counted independently of the
-/// per-rule occurrence cap ([`crate::plan::planner::MAX_OCCURRENCES`]):
+/// per-rule occurrence cap (`MAX_OCCURRENCES` in the planner):
 /// rules are planned one at a time, so the roster bounds each
 /// rule-list's breadth here and each rule's width there. There is no
 /// interior-count cap.
@@ -35,8 +34,8 @@ pub const MAX_RULES: usize = 16;
 /// walks (DNF counting, distribution, rendering) recurse by depth, and an
 /// unbounded depth would let hostile input exhaust the stack — a crash,
 /// not a typed error. Depth is measured **iteratively** (an explicit work
-/// list, [`normalize::nesting_depth`]), so the check itself is total; the
-/// recursive walks run only on checked trees. The cap is generous: a
+/// list), so the check itself is total; the recursive walks run only on
+/// checked trees.
 pub const MAX_CONDITION_DEPTH: usize = 64;
 
 /// Dense derived-table id — an index into a [`Query`]'s interiors,
@@ -543,7 +542,7 @@ pub struct RecStep {
 }
 
 impl RecStep {
-    /// [`crate::ir::normalize::OccId`](0) after lowering.
+    /// Occurrence zero after lowering.
     #[must_use]
     pub fn to_rule(&self, rec_id: InteriorId) -> Rule {
         let mut atoms = Vec::with_capacity(1 + self.atoms.len());

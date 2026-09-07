@@ -342,7 +342,7 @@ pub struct ValidatedBaseArm {
 }
 
 /// One lowered rec *step* arm: the unique positive self-atom's
-/// occurrence ([`Self::self_occ`]) plus the rule and its typing.
+/// occurrence plus the rule and its typing.
 /// Missing/nonlinear self are roster refusals; the witness cannot
 /// spell them.
 #[derive(Debug)]
@@ -455,8 +455,8 @@ impl ValidatedMain {
 
 /// The sealed witness: query-global param tables plus a shape sum.
 /// Unconstructible outside this module.
-/// Variables are rule-scoped, so their typing lives per rule
-/// ([`RuleTyping`]); params are query-global, so their tables live here
+/// Variables are rule-scoped, so their typing lives per rule;
+/// params are query-global, so their tables live here
 /// once — unified across every interior, rec arm, and main rule.
 /// Rec-absence is `rec: None`; rec-presence is `rec: Some`. Shared
 /// fields live on the struct. `rec_id` and `derived_count` are methods

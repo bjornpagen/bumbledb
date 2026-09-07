@@ -24,7 +24,7 @@
 //! The old `FreshRow` row-id fast branch is deleted with the fresh
 //! reservation machinery (E-NO-RESERVE); the old fixed-layout fact fetch
 //! and the persisted-dictionary lookups are deleted with the transitional
-//! storage (ENG-006).
+//! storage.
 
 use super::fact_word::FactOperand;
 use super::{KeyProbePart, KeyProbePlan};

@@ -1,4 +1,4 @@
-# The log program's CI lane, including the implementation branch.
+# The log and native-package CI lane.
 # This workflow owns crates/bumbledb-log and ts-log.
 # The linux-arm64 job is the ONE builder for the
 # two linux artifacts (the napi .node and the duty binary): the
@@ -13,7 +13,7 @@ name: bumbledb-log
 
 on:
   push:
-    branches: [main, codex/bumbledb-1-0]
+    branches: [main]
     paths:
       - "crates/bumbledb-log/**"
       - "crates/bumbledb/**"

@@ -49,7 +49,7 @@ pub fn create_ours(
 /// # Panics
 /// Only on programmer-invariant violations (WAL refused; corpus values
 pub fn create_sqlite(path: &Path, r#gen: GenConfig) -> Result<rusqlite::Connection, String> {
-    // FULL sync always (ENG-008): the weakened sqlite mirror existed only
+    // FULL sync always: the weakened sqlite mirror existed only
     // to pair the deleted ours-side no-sync lane; an unpaired OFF mirror
     // would be an unfair twin, so it went with the lane.
     let conn = rusqlite::Connection::open(path).map_err(|e| format!("churn mirror open: {e}"))?;

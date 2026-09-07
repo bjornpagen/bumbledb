@@ -1,8 +1,6 @@
 //! The canonical bounded named-scalar record — the core codec for the
-//! log's declared `CommandResult` slot (C01; chapter 30: "`CommandResult`
-//! is bounded caller-declared scalar metadata … its grammar and digest
-//! contribution are fixed by the command codec"; PROMPT: the core owns the
-//! result primitive and the log imports it literally).
+//! log's declared `CommandResult` slot. The log imports this primitive
+//! rather than defining another scalar grammar.
 //!
 //! One record is a set of `name → scalar` entries. The canonical spelling
 //! sorts entries by ascending UTF-8 name bytes, refuses duplicate names,
@@ -18,8 +16,8 @@
 //! identically regardless of caller entry order. The command digest covers
 //! them verbatim; strict decode refuses noncanonical spellings (unsorted
 //! or duplicate names, alternative float payloads, trailing bytes) rather
-//! than normalizing wire input. Physical bytes are provisional until the
-//! F3 format freeze (C12); a change bumps [`LAYOUT`].
+//! than normalizing wire input. Incompatible byte changes bump
+//! [`crate::canonical::result::LAYOUT`].
 
 use crate::work::WorkError;
 use crate::{F64, Uuid, Value, WorkContext};

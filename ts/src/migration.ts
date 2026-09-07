@@ -1,9 +1,8 @@
 /**
- * Private log-migration integration entrypoints (C11): the two read-only
+ * Private log-migration integration entrypoints: the two read-only
  * native migration-codec verbs the `@bjornpagen/bumbledb-log/migrations`
- * generator consumes literally (recorded contract in
- * implementation/packets/P10.md), wired over the P06 executor onto P09's
- * native `schema_file`/`migration::plan`/`migration::manifest` lanes.
+ * generator imports, wired over the shared executor onto the native
+ * `schema_file`, `migration::plan` and `migration::manifest` modules.
  *
  * Both follow `hashChunk`'s shape: bounded owned input, bounded owned JSON
  * response bytes, ONE registered cancellable operation under the acquired

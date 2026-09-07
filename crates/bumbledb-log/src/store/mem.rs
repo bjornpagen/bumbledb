@@ -3,7 +3,7 @@
 //! never arises spontaneously — it is *injected*, exactly where a schedule
 //! demands it, including the "applied but unacknowledged" arm a real
 //! transport produces. Tests and deterministic schedules only; emulator
-//! green is not S3 qualification (C07).
+//! green is not S3 qualification.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -350,7 +350,7 @@ impl ConditionalStore for MemStore {
             _ => {}
         }
         // Immutable names: identical bytes are idempotent, conflicting bytes
-        // refuse — creation never overwrites a colliding payload (chapter 41),
+        // refuse — creation never overwrites a colliding payload,
         // exactly like the filesystem adapter.
         if let Some(existing) = state.objects.get(key)
             && existing != body

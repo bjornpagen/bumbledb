@@ -520,7 +520,7 @@ fn the_default_tail_envelope_is_finite_and_unbounded_is_explicit_only() {
     }
 }
 
-// ---- authenticated decision locators (LOG-013) ------------------------------
+// ---- authenticated decision locators ------------------------------
 
 #[test]
 fn authenticated_parent_locators_fetch_in_one_get() {

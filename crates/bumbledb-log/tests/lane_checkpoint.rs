@@ -1,6 +1,6 @@
 //! Streamed coherent checkpoints with bounded validated suffix rebase —
 //! STORE-03/04/07 shapes, the epoch-moved restaging rule, the tail envelope
-//! backpressure and the shared blank-projection digests (REP-014, PERF-004).
+//! backpressure and the shared blank-projection digests.
 //! Deterministic `MemStore` schedules; real-S3 evidence is the separate
 //! credential-gated lane. Verification: `NotRun` (F1 authors, does not execute).
 
@@ -379,10 +379,7 @@ fn decision_stamp(seq: u64) -> bumbledb_log::history::DecisionStamp {
 
 #[test]
 fn blank_initial_digests_equal_the_empty_export_projection() {
-    // C12 cross-lane obligation (recorded in implementation/packets/P05.md):
-    // P04's genesis sentinels and P05's canonical empty export projection
-    // must name the SAME blank digests. This test is the forcing function for
-    // the recorded P04 patch (decision.rs blank_initial_digests domains).
+    // Genesis and a canonical empty export must name the same blank digests.
     let (application, system) = decision::blank_initial_digests();
     assert_eq!(
         application,

@@ -1,5 +1,5 @@
 //! Independent verified-bytes backup and new-incarnation restore —
-//! BACKUP-01..05 shapes and RESTORE-01..03 (OPS-002). The destination is a
+//! BACKUP-01..05 shapes and RESTORE-01..03. The destination is a
 //! DISTINCT store; restores read the destination only. Cross-platform and
 //! >RAM arms are F3 lanes over these entry points. Verification: NotRun (F1
 //! > authors, does not execute).

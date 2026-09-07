@@ -1,4 +1,4 @@
-//! Fresh-destination adoption (CORE-015): metadata-only history refuses.
+//! Fresh-destination adoption: metadata-only history refuses.
 
 use super::*;
 use crate::schema::{

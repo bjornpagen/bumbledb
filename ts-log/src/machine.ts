@@ -4,7 +4,7 @@
  * conversion, certainty preservation and scope ownership. No protocol
  * transition, CAS, catch-up, retry loop, checkpoint, GC step, lock, or
  * cache-eviction decision is implemented in JavaScript — those live in the
- * one Rust machine reached through the C09 executor. The factory takes the
+ * Rust machine reached through the shared executor. The factory takes the
  * wire and the core integration seam so authored tests can drive the layer
  * deterministically; production binds the real addon in `#production.ts`.
  */
@@ -135,7 +135,7 @@ import type {
 } from "#outcome.ts"
 import type { Command, CommandInput, History, HistoryBorrow, PublishedSnapshot, TenantCache } from "#surface.ts"
 
-// ── The core integration seam (C10; production binds P07's internals) ──────
+// ── Shared core capabilities ─────────────────────────────────────────────
 
 export interface PublishedReadCapability<S extends AnySchema> {
 	/** Self-contained (closure-captured) methods; never `this`-dependent. */
@@ -1313,7 +1313,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		}
 	}
 
-	// `ActivationRef` is the C11 shape declared in #migrations/types.ts:
+	// `ActivationRef` is declared in #migrations/types.ts:
 	// { operation: OperationId, planSetDigest, target, targetGenesis }.
 	function activationRefOf(wire: ActivationRefWire): ActivationRef {
 		return {

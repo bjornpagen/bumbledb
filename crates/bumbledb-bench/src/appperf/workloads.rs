@@ -6,7 +6,7 @@
 
 use super::{Gate, Regime};
 
-/// The six qualification families (chapter 40).
+/// The six qualification families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     /// Exact key hit/miss, selective Free Join, fanout/existence, anti-join,

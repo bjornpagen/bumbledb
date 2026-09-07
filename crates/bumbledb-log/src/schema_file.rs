@@ -2,7 +2,7 @@
 //! crate's corpus schema object — `{relations, statements}` — so a second
 //! descriptor grammar cannot exist: the duty boundary, the migration
 //! snapshots (`meta/NNNN.schema.json`) and the TypeScript generator all
-//! read and write exactly this text through these entrypoints (C11).
+//! read and write exactly this text through these entrypoints.
 //!
 //! [`parse`] is the strict reader, [`render`] the deterministic writer
 //! (`parse(render(d)) == d`, byte-stable output), and [`schema_id`] the

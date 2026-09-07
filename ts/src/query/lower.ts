@@ -166,7 +166,7 @@ interface QueryRuleScope<Rels extends SchemaRelations, Classes extends SchemaCla
 	): QueryRuleChain<Rels, BindParamsShape<MatchFields<R>, B>, Classes>
 
 	/**
-	 * Nonrecursive composition (chapter 34): a typed query template of the
+	 * Nonrecursive composition: a typed query template of the
 	 * SAME schema is a relation expression — its whole body splices as a
 	 * derived stage; every head column must be bound to a variable minted
 	 * by `v(imported)`. Naming materializes nothing.

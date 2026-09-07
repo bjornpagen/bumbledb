@@ -1,10 +1,10 @@
-//! Bounded framing for the one migration format family (C11):
+//! Bounded framing for the migration format family:
 //! `family || layout(u16) || kind(u8) || fields`, big-endian, fixed widths,
 //! length-prefixed spans, no trailing bytes — the same discipline as the
 //! history frames, in the migration family so plan bytes can never alias a
 //! command, decision or control frame. Framing establishes grammar only;
-//! digests, admission and authority happen above it. Physical bytes remain
-//! provisional until the F3 format freeze (C12).
+//! digests, admission and authority happen above it. Incompatible byte
+//! changes require a new layout; frame tags must never be reassigned.
 
 use crate::history::FrameError;
 
@@ -21,7 +21,7 @@ pub const KIND_PLAN_SET: u8 = 4;
 #[allow(
     dead_code,
     reason = "reserved kind number in the one migration frame family; \
-              renumbering a frozen grammar is forbidden (C11/C12)"
+              renumbering a persisted grammar is forbidden"
 )]
 pub const KIND_STATE: u8 = 5;
 pub const KIND_APPLIED: u8 = 6;
@@ -29,7 +29,7 @@ pub const KIND_BASELINE: u8 = 7;
 #[allow(
     dead_code,
     reason = "reserved kind number in the one migration frame family; \
-              renumbering a frozen grammar is forbidden (C11/C12)"
+              renumbering a persisted grammar is forbidden"
 )]
 pub const KIND_TOMBSTONE: u8 = 8;
 

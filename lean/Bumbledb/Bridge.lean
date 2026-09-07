@@ -585,7 +585,7 @@ def ledger : List Obligation := [
   .row @Txn.completeRosterPasses_iff_holds
     `Bumbledb.Txn.completeRosterPasses_iff_holds
     "On a validated schema the complete roster passing is exactly holds — the partition theorem with the closed-constant witness spent."
-    "crate::schema::CompleteObligations (crates/bumbledb/src/schema.rs); crate::schema::Schema::complete_obligations (crates/bumbledb/src/schema.rs); schema/validate.rs::validate (crates/bumbledb/src/schema/validate.rs)"
+    "crate::schema::Schema::complete_obligations (crates/bumbledb/src/schema.rs); delta_local_statements (crates/bumbledb/src/schema/compiled.rs); schema/validate.rs::validate (crates/bumbledb/src/schema/validate.rs)"
     "complete_roster_skips_closed_constant_and_keeps_instance_dependent (crates/bumbledb/src/schema/tests/obligations.rs); closed_to_closed_containment_is_not_a_complete_obligation (crates/bumbledb/src/schema/tests/obligations.rs); a_satisfied_closed_to_closed_containment_validates (crates/bumbledb/src/schema/tests/valid.rs)",
 
   .row @closed_source_ordinary_not_closedConstant

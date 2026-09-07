@@ -250,10 +250,10 @@ impl GenerationHandle {
     }
 
     /// The one production text equality: intern, scratch, and mixed.
-    /// [`crate::image::TextEq::tokens_equal`] is `Result<bool, _>` —
+    /// `TextEq::tokens_equal` is `Result<bool, _>` —
     /// resolver failure is `Err`, not inequality. Stamp retained tokens
     /// with `eq.scratch_epoch()` and rebind via
-    /// [`crate::image::TextEq::with_memo_stamp`] after a store replace.
+    /// `TextEq::with_memo_stamp` after a store replace.
     #[must_use]
     pub fn text_eq<'a>(
         &'a self,

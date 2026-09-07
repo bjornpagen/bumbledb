@@ -7,7 +7,7 @@
  * additions.
  */
 export const protocolErrorCodes = [
-	// Identity and authority refusals (chapter 20/30).
+	// Identity and authority refusals.
 	"ForeignIdentity",
 	"CommandIdentityConflict",
 	"DatabaseDeleted",
@@ -23,7 +23,7 @@ export const protocolErrorCodes = [
 	"NotYetAvailable",
 	"WitnessUnavailable",
 	"SnapshotExpired",
-	// Maintenance and retention (chapters 21/22).
+	// Maintenance and retention.
 	"MaintenanceRequired",
 	// The warm local materialization is behind the checkpoint base (older
 	// than the retained tail): recovery hydration is required. Native owns
@@ -34,7 +34,7 @@ export const protocolErrorCodes = [
 	"SlotBorrowed",
 	"Contention",
 	"IncompleteRejectionEvidence",
-	// Migration workflow (chapters 22/33).
+	// Migration workflow.
 	"MigrationRequired",
 	"MigrationDrift",
 	"MigrationIntentRequired",
@@ -43,7 +43,7 @@ export const protocolErrorCodes = [
 	"DatabaseAhead",
 	"MigrationOutputMismatch",
 	"OperationConflict",
-	// Host feasibility and transport (chapters 31/21).
+	// Host feasibility and transport.
 	"InsufficientLocalDisk",
 	"UnsupportedArtifact",
 	"Corruption",

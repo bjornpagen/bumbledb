@@ -1,10 +1,10 @@
 //! Hosted migration cutover transitions: the same authority values over one
-//! never-reused HEAD per database, through the C07 [`ConditionalStore`]
-//! verbs (P05 owns the actual S3/filesystem adapters).
+//! never-reused HEAD per database, through the conditional operations of
+//! [`crate::store::ReceivingStore`].
 //!
 //! Remote HEAD bodies are the composed [`crate::manifest::HeadRecord`]
-//! frames (C08) — exactly the grammar `writer::hosted` publishes: P04's
-//! authority control projection embedded verbatim inside P05's retention
+//! frames — exactly the grammar `writer::hosted` publishes: the
+//! authority control projection embedded verbatim inside the retention
 //! fields (object epoch, recovery root, named roots, GC state). Every read
 //! here decodes the full record ([`manifest::decode_head`]); every authority
 //! transition (freeze/thaw/activate/delete) is re-composed onto the exact
@@ -443,7 +443,7 @@ fn target_evidence_refusal(existing: &HeadAuthority, operation: OperationId) -> 
 
 // ---------------------------------------------------------------------------
 // The complete hosted workflow: generated migration execution and
-// initialization with the hosted data plane (C08/C11). S3-class storage IS
+// initialization with the hosted data plane. S3-class storage IS
 // the hosted authority: a `ReadyToSwitch` target exists hosted-side as its
 // composed genesis head whose recovery root names ONE uploaded verified
 // checkpoint (chunks + streamed manifest, staged under the target's open

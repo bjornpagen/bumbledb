@@ -1,4 +1,4 @@
-//! The one native migration runner for `LocalHistory` authorities (C11).
+//! The one native migration runner for `LocalHistory` authorities.
 //!
 //! One operation plans the whole pending suffix against ONE frozen source,
 //! builds ONE final staged target through the core checked builder, verifies

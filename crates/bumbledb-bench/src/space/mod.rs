@@ -66,7 +66,7 @@ impl Namespace {
     }
 }
 
-/// Live raw key/value model. Discriminator is interned [`ProjectionId`],
+/// Live raw key/value model. Discriminator is interned [`bumbledb::schema::ProjectionId`],
 /// not a declaration-order statement number. Membership values are empty;
 /// secondary determinant values carry the relation's selected home bytes.
 pub mod current_layout {

@@ -1,4 +1,4 @@
-//! Authoritative migration history records (C11).
+//! Authoritative migration history records.
 //!
 //! The generated manifest defines the ordered chain; the DATABASE records
 //! what actually happened. One execution of a contiguous pending suffix is

@@ -5,7 +5,7 @@
 //! facts they describe. The grammar moved here from the deleted transitional
 //! `storage::env::host` module; the exported symbol roster
 //! (`bumbledb::integration::{HostChanges, HostRecordChange, AttachmentChange,
-//! HostSealError}`) is unchanged for the log/native bridge (P04/P06).
+//! HostSealError}`) is unchanged for the log/native bridge.
 
 use crate::error::Error;
 use crate::work::WorkError;

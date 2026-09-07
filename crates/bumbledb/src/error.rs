@@ -1350,9 +1350,9 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Per-variant taxonomy: the one exhaustive table [`Error::descriptor`]
-/// walks. `source`, the C kind map, and any future Clone-like fold
-/// read this — adding a variant is one arm here plus its `Display`.
+/// Stable error taxonomy shared by native and TypeScript error surfaces.
+/// The engine's exhaustive descriptor table assigns each [`Error`] variant
+/// a family and an optional source error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ErrorFamily {
     FormatMismatch,

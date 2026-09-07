@@ -352,7 +352,7 @@ mod tests {
         assert!(F64::from_canonical_be_bytes(0x8000_0000_0000_0000_u64.to_be_bytes()).is_err());
     }
 
-    /// Explicit cast boundaries near 2^53 and the integer limits (C01).
+    /// Explicit cast boundaries near 2^53 and the integer limits.
     #[test]
     fn cast_boundaries_are_exact_or_refuse() {
         // 2^53 is exact; 2^53 + 1 is not.

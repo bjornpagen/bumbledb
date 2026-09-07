@@ -1,12 +1,12 @@
 /**
  * The one production machine instance: the real addon wire plus the core's
- * internal integration seam (C10). `internalPublishedReader` wraps a
+ * internal integration. `internalPublishedReader` wraps a
  * published core snapshot handle in the exact core `QueryReader`;
- * `internalChanges` is the core's landed private ChangeSet registry
+ * `internalChanges` is the core's private ChangeSet registry
  * accessor (the retained native change — no re-marshaled rows); `lower` is
  * the same core schema lowering `Db.open` admits; `runtimeHandle` captures
  * the already-acquired shared `NativeRuntime`. All four are core-owned
- * (P07/P06) and imported literally — the log mirrors none of them.
+ * and imported directly — the log mirrors none of them.
  */
 
 import type { AnySchema } from "@bjornpagen/bumbledb"

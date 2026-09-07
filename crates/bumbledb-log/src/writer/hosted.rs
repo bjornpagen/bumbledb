@@ -11,7 +11,7 @@
 //! consumed version token with no receipt is a proven loss that re-attempts),
 //! or returns `OutcomeUnknown` with the retained ref when nothing is provable.
 //!
-//! The remote HEAD body is the composed [`crate::manifest::HeadRecord`] (C08):
+//! The remote HEAD body is the composed [`crate::manifest::HeadRecord`]:
 //! P04's authority control projection embedded verbatim inside P05's retention
 //! fields (recovery root, object epoch, named roots, GC state). This machine
 //! reads heads through [`manifest::head-record decoding`](crate::manifest::decode_head)
@@ -148,7 +148,7 @@ pub struct HostedHistory<S, B> {
     prefix: String,
     identity: DatabaseIdentity,
     limits: Limits,
-    /// The configured durable-tail envelope (C08). Starts at the finite
+    /// The configured durable-tail envelope. Starts at the finite
     /// [`DEFAULT_TAIL_POLICY`]; `UNBOUNDED` only by the explicit
     /// [`Self::with_tail_policy`] option. The composed-head grammar enforces
     /// whatever is configured on every decided composition, no-ops included.
@@ -255,7 +255,7 @@ where
     /// Open a hosted incarnation by reading its HEAD and catching the local
     /// materialization up to the captured tip. Never initializes on a missing
     /// head; a warm local cache older than the head's checkpoint base is
-    /// `MaterializationStale` — recovery hydration (C08), never an empty
+    /// `MaterializationStale` — recovery hydration, never an empty
     /// fallback. The current object epoch comes from the head itself.
     ///
     /// # Errors
@@ -302,7 +302,7 @@ where
         self
     }
 
-    /// Configure the durable-tail envelope this writer enforces (C08). The
+    /// Configure the durable-tail envelope this writer enforces. The
     /// values are deployment-qualified policy; the composed head refuses any
     /// decided composition that would exceed them. Machines start at the
     /// finite [`DEFAULT_TAIL_POLICY`]; [`TailPolicy::UNBOUNDED`] is available
@@ -463,7 +463,7 @@ where
                 Err(refusal) => return Err(predispatch(refusal.into())),
             };
 
-            // Envelope backpressure (C08): a retained receipt above still
+            // Envelope backpressure: a retained receipt above still
             // resolves; NEW decisions — no-ops and rejections included — are
             // refused before any work is dispatched. The composed-head
             // grammar re-enforces this authoritatively at composition time.
@@ -746,7 +746,7 @@ where
         }
         if frontier.row_present {
             // A present row that failed optional diagnostic decode is not
-            // absence (LOG-029). The original identity stays resolvable.
+            // absence. The original identity stays resolvable.
             return Ok(UnknownResolution::Unresolved);
         }
         let version_consumed = current != *attempted;
@@ -804,7 +804,7 @@ where
             .ok_or(LogError::DatabaseDeleted)?;
         if frontier.row_present && frontier.receipt.is_none() {
             // Present receipt row, diagnostic decode failed: not absence
-            // and not a discarded decided receipt (LOG-029).
+            // and not a discarded decided receipt.
             return Err(LogError::IncompleteRejectionEvidence);
         }
         match view.resolve(command, frontier.receipt.as_ref()) {
@@ -834,7 +834,7 @@ where
     /// (`NotInitialized`), never thaws or otherwise transitions the authority,
     /// and a warm cache older than the durable tail's checkpoint base still
     /// reports [`LogError::MaterializationStale`] — the caller routes that to
-    /// recovery hydration (C08), never to an empty fallback.
+    /// recovery hydration, never to an empty fallback.
     ///
     /// # Errors
     /// `NotInitialized` (absent head), `DatabaseDeleted` (tombstone head),
@@ -1053,7 +1053,7 @@ where
                 }
             }
         }
-        // Control-only HEAD changes still need installation (LOG-004).
+        // Control-only HEAD changes still need installation.
         if local.revision != target_revision || local != record.control {
             self.install_captured_control(&record.control, work)?;
         }

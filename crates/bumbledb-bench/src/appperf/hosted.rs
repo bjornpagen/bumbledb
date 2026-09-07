@@ -1,17 +1,8 @@
-//! PERF-003: hosted commit cost is the complete named-decision path, not one
-//! winning PUT.
-//!
-//! Accounting identity (audit 40-performance.md):
-//! `commit latency = queue + record/encode + local durable preparation +
-//! judgment/apply + object round trips + settlement`, plus a variable
-//! recovery/retry term. Segments can overlap in some modes, so
-//! [`CommitCostSample::end_to_end_ns`] is measured on its own and the
-//! summariser never reports a sum of segments as the latency.
-//!
-//! The successor history machine is P04/P05 wave-B work; this module is the
-//! accounting/schedule side, complete now, with the driver seam
-//! ([`HostedDriver`]) the F3 wiring implements over the real log. Nothing
-//! here fabricates a hosted result: without a driver there is no report.
+//! Hosted commit accounting covers the complete named-decision path.
+//! End-to-end latency comes from [`PhaseSplit::end_to_end_ns`], measured
+//! separately from optional phase attribution: overlapping segments must
+//! not be added together and presented as latency. [`HostedDriver`] supplies
+//! observations; this module aggregates them by terminal outcome.
 
 use super::PhaseSplit;
 
@@ -186,7 +177,7 @@ pub fn contention_schedule() -> Vec<ContentionCell> {
     cells
 }
 
-/// The seam the F3 wiring implements over the real hosted log (C06/C07/C08).
+/// The seam the F3 wiring implements over the real hosted log.
 /// One call runs one contention cell and returns every command's complete
 /// cost sample. No emulator shortcut: `backend` names what actually served
 /// the requests, and emulator green is recorded as emulator green.

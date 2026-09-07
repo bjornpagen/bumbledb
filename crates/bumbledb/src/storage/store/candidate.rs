@@ -2,19 +2,13 @@
 //!
 //! The candidate is one uncommitted LMDB write transaction on its owning
 //! worker. Existing committed readers never observe it; a losing candidate
-//! is dropped, never readable. Judgment (C03, produced by P01) sees the
+//! is dropped, never readable. Judgment sees the
 //! **proposed final state** — the transaction's own view, where the
 //! determinant namespace is a multimap holding every competing proposal —
 //! before any decision, so unique-index installation order cannot hide a
-//! second conflicting row (ENG-005's physical precondition).
+//! second conflicting row.
 //!
-//! ```compile_fail
-//! fn require_competing_rows() {
-//!     let _: bumbledb::store::CompetingRows = Vec::new();
-//! }
-//! ```
-//!
-//! `seal` writes only opaque host records and the attachment (C04): it can
+//! `seal` writes only opaque host records and the attachment: it can
 //! never amend judged application facts, so sealing cannot invalidate the
 //! admission evidence. A failed seal drops the entire transaction —
 //! including any host-record prefix — and dispatches nothing. After seal,
@@ -78,7 +72,7 @@ impl CommitKind {
     }
 }
 
-/// C01/C03 seam: interned projections a stored row participates in, as
+/// Interned projections a stored row participates in, as
 /// (`ProjectionId`, routing bytes). Shared physical
 /// indexes emit once. The store fingerprints and maintains the entries;
 /// projection semantics stay with the schema owner.
@@ -99,7 +93,7 @@ pub trait RowIndexer {
     ) -> StoreResult<()>;
 }
 
-/// C03 seam, produced by P01: judge the proposed final state before any
+/// Judge the proposed final state before any
 /// commit capability exists. A completed semantic rejection carries the
 /// producer's evidence type; a resource failure is a `StoreError`, never a
 /// fabricated rejection.

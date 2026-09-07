@@ -35,7 +35,7 @@ impl EitherSink {
     ) {
         match self {
             Self::Computed(sink) => sink.aim(finds, slot_count, shared_slots),
-            Self::Projection(sink) => sink.aim(finds, slot_count),
+            Self::Projection(sink) => sink.aim(finds),
             Self::Aggregate(sink) => sink.aim(finds, slot_count, shared_slots),
         }
     }

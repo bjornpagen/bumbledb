@@ -111,7 +111,7 @@ impl ExactF64Accumulator {
         self.round(NonZeroU64::MIN)
     }
 
-    /// Exact byte image for the one scratch map (chapter 12 §4): a spilled
+    /// Exact byte image for the one scratch map: a spilled
     /// group's accumulator round-trips bit-for-bit, so partition merges
     /// across the RAM→disk transition are the SAME merges the in-RAM bank
     /// performs (`lean/Bumbledb/Float64/Sum.lean` merge laws — exactness

@@ -1,5 +1,5 @@
 /**
- * `LocalHistory` and `HostedHistory`: the chapter 30/35 durable envelope
+ * `LocalHistory` and `HostedHistory`: the durable envelope
  * around the exact core change/read machinery. `open` of a missing or
  * unreadable configured database never creates a replacement; `create` is
  * the explicit constructor, refuses existing authority, and validates its

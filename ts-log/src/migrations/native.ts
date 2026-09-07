@@ -1,25 +1,14 @@
 /**
- * The production `MigrationCodec` (C11): bounded JSON requests to and bounded
- * JSON responses from the native migration codec (P09, reached through the
- * P06 bridge). Nothing semantic happens here — schema validation + canonical
+ * The production `MigrationCodec`: bounded JSON requests to and bounded
+ * JSON responses from the shared native runtime. Schema validation, canonical
  * SchemaId + snapshot rendering (`schema_file::{schema_id, render}`), plan
  * parsing/validation/rendering/digesting (`migration::plan`) and manifest
  * verification/appending/plan-set digests (`migration::manifest`) are all
- * native. The durable status/migrate/activate/abort workflow is NOT reached
- * from this module: the runner surface is P08's `#migration-ops.ts` over the
- * one `logAdmin` wire verb (chapter 35 Migration/admin section).
+ * native. The durable status/migrate/activate/abort workflow lives in
+ * `#migration-ops.ts`, reached through the `logAdmin` wire verb.
  *
- * RECORDED DEPENDENCY (implementation/packets/P10.md): the core barrel must
- * export two private log-integration entrypoints wired by P06 over P09's
- * native verbs, with the exact contract:
- *
- *   internalMigrationSchema(spec: SchemaSpec, work: ExecutionPolicy):
- *     Effect.Effect<Uint8Array, DbError, NativeRuntime>
- *   internalMigrationRead(request: Uint8Array, work: ExecutionPolicy):
- *     Effect.Effect<Uint8Array, DbError, NativeRuntime>
- *
- * Both follow `hashChunk`'s shape (bounded owned input, bounded owned JSON
- * response bytes, one registered cancellable operation). The schema verb
+ * The two imported core entrypoints accept bounded owned input and JSON
+ * response bytes under one registered cancellable operation. The schema verb
  * takes the SDK `SchemaSpec` object because that wire already crosses the
  * bridge for open/create; it is never respelled as text here. Both are
  * read-only: they never open, initialize, freeze or migrate a database.
@@ -83,7 +72,7 @@ const decodeSchemaResponse = Schema.decodeUnknownOption(SchemaResponse)
 const decodeChainResponse = Schema.decodeUnknownOption(ChainResponse)
 
 /**
- * A native refusal code becomes the typed log error through P08's one wire
+ * A native refusal code becomes the typed log error through the shared wire
  * decoder: known protocol codes become `ProtocolError`, anything else the
  * core `Internal` — never a fabricated success and never string matching.
  */

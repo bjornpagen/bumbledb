@@ -192,7 +192,7 @@ fn intent() -> FreezeIntent {
 }
 
 // ---------------------------------------------------------------------------
-// Composed-head grammar: the CAS bodies ARE HeadRecord frames (C08).
+// Composed-head grammar: the CAS bodies ARE HeadRecord frames.
 // ---------------------------------------------------------------------------
 
 #[test]

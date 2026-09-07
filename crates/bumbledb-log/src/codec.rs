@@ -1,4 +1,4 @@
-//! The checkpoint stream codec (C08/C12): one canonical logical stream —
+//! The checkpoint stream codec: one canonical logical stream —
 //! schema-bound application facts, retained receipt rows, migration-history
 //! evidence — cut into fixed-target chunks, described by one streamed
 //! manifest, digested by one shared acyclic projection.
@@ -13,16 +13,17 @@
 //! streaming parser.
 //!
 //! The **logical digest projection** here is shared by export, import and
-//! replay checks (chapter 20): the application digest covers exactly the
+//! replay checks: the application digest covers exactly the
 //! fact records; the system digest covers exactly the keyed system records
 //! (retained receipt rows under the `r` key prefix, migration/history
-//! evidence under P09's `m` key prefix). Control state, head revisions, certificates and the digests
+//! evidence under the `m` key prefix). Control state, head revisions, certificates and the digests
 //! themselves are excluded — bound instead by the manifest's own hash and
 //! the head that references it. `empty_application_digest`/
-//! `empty_system_digest` are the blank-database projection; P04's
-//! `blank_initial_digests` must equal them (recorded cross-lane patch).
+//! `empty_system_digest` are the blank-database projection, also used by
+//! [`crate::history::decision::blank_initial_digests`].
 //!
-//! Physical bytes remain provisional until the F3 format freeze (C12).
+//! The manifest family and layout identify the grammar and ordering;
+//! incompatible changes must advance the layout before accepting new bytes.
 
 use crate::history::authority::{HeadAuthority, decode_control, encode_control};
 use crate::history::{

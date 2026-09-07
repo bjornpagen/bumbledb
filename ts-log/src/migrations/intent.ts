@@ -4,7 +4,7 @@
  * admitted, and no I/O happens here. Ambiguous rename/drop/backfill/convert
  * and business seed data are typed inputs to bounded generation, never
  * imperative migration files under another name. Expressions are the core's
- * own `ScalarExpr` values (C01) — the generator serializes them into
+ * own `ScalarExpr` values — the generator serializes them into
  * canonical plan data and the native executor evaluates them; there is no
  * migration-only expression interpreter.
  */

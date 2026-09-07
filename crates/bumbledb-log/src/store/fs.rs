@@ -2,13 +2,13 @@
 //! the ONE implementation of every filesystem operation — its entire
 //! read/compare/write/flush/rename/cleanup critical section runs here, in
 //! Rust, under a kernel-held mutation lock. No JS layer carries a lock across
-//! an await; TS delegates through the shared native executor (C07).
+//! an await; TS delegates through the shared native executor.
 //!
 //! Deleted 0.x mechanisms: numeric token/`~lease/<key>/gen` sidecar CAS,
 //! `Lease` parsing, age-based temp sweeping and the unconditional-rename TS
 //! authority. The head version token is the content hash of the current head
 //! bytes; every proposed head body differs through its monotone head
-//! revision, so equal-bytes ABA is impossible (chapter 20).
+//! revision, so equal-bytes ABA is impossible.
 //!
 //! Durable ordering per mutation: stage under `~tmp` → fsync file → rename
 //! into place → fsync parent directory. A crash leaves the old or the new

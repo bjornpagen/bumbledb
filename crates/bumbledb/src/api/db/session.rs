@@ -228,8 +228,8 @@ impl<S> ReadFrame<'_, S> {
     }
 
     /// Visit every committed host record whose key starts with `prefix`, in
-    /// ascending key order, within this read's one committed transaction
-    /// (the P02R host enumeration seam). Key and value bytes borrow the
+    /// ascending key order, within this read's one committed transaction.
+    /// Key and value bytes borrow the
     /// snapshot only for the duration of each visit — copy before
     /// returning; charged against this lease's work allowance per record.
     /// # Errors
@@ -238,8 +238,7 @@ impl<S> ReadFrame<'_, S> {
     #[doc(hidden)]
     #[expect(
         clippy::type_complexity,
-        reason = "the P02R-requested visitor signature, spelled exactly as \
-                  implementation/packets/P05.md records it"
+        reason = "borrowed key/value visitor with typed host errors"
     )]
     pub fn integration_host_scan(
         &self,

@@ -47,17 +47,17 @@ impl ProjectionSink {
 
     #[must_use]
     pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
-        let parsed = parse_finds(finds, slot_count);
+        let parsed = parse_finds(finds);
         let sources = sources_of(&parsed);
         let mut sink = Self::with_capacity_hint_sources(sources, slot_count, hint);
         sink.finds = parsed;
         sink
     }
 
-    pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize) {
+    pub fn aim(&mut self, finds: &[FindSpec]) {
         self.scan_route.clear();
         self.batch_route.clear();
-        parse_finds_into(finds, slot_count, &mut self.finds);
+        parse_finds_into(finds, &mut self.finds);
         extend_sources(&self.finds, &mut self.sources);
         debug_assert_eq!(
             self.sources.len(),

@@ -1,10 +1,9 @@
 //! bumbledb: an embedded, typed, set-semantic relational database over
 //! LMDB, executing conjunctive queries with Free Join.
-//! The surface is plain data in, plain data out:
-//! - Declare a schema with the [`schema!`] macro — its `pub Name;` header
-//!   names a unit struct implementing [`Theory`], and the body expands
-//!   (variable-width fields borrowed: `str` → `&str`, `bytes` → `&[u8]`).
-//!   `write` + [`WriteTx::insert_dyn`]. After a failed apply, later
+//! Declare a schema with [`schema!`]: its `pub Name;` header creates a
+//! type implementing [`Theory`], and relation declarations create typed
+//! facts. Optional field wrappers keep application identities distinct:
+//!
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
@@ -17,7 +16,8 @@
 //! let _holder: HolderId = account; // mismatched types: rustc refuses
 //! ```
 //! The schema typestate closes the cross-schema hole the same way: an
-//! `Inventory` fact into a `Ledger` database is a compile error, not a
+//! `Inventory` fact cannot be inserted into a `Ledger` database:
+//!
 //! ```compile_fail
 //! bumbledb::schema! {
 //!     pub Ledger;
@@ -47,13 +47,6 @@
 //!         .map(|_| ())
 //! })
 //! .unwrap();
-//! ```
-//! change:
-//! The workspace holds the three-command contract — green after every
-//! ```text
-//! cargo fmt --all --check
-//! cargo clippy --workspace --all-targets -- -D warnings
-//! cargo test --workspace
 //! ```
 #![feature(portable_simd)]
 #[cfg(target_pointer_width = "32")]
@@ -138,7 +131,7 @@ pub use work::{
     WorkError,
 };
 
-/// Successor physical store (C04): LMDB owner, owned snapshots, private
+/// Successor physical store: LMDB owner, owned snapshots, private
 /// candidate. Consumed by the internal log and the native runtime.
 pub mod store {
     pub use crate::storage::store::*;
@@ -239,9 +232,9 @@ pub use verify_store::{StoreFinding, StoreReport, StoreVerdict};
 /// ```
 pub use bumbledb_macros::schema;
 
-/// Named-parameter binder for typed templates (chapter 34).
+/// Named-parameter binder for typed templates.
 pub use bumbledb_query_macros::params;
-/// The typed query AST macro (chapter 34): `query! { ... }` builds a typed
+/// The typed query AST macro: `query! { ... }` builds a typed
 /// per-expansion template (Deref to the untyped core IR).
 pub use bumbledb_query_macros::query;
 

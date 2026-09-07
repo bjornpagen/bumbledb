@@ -1,10 +1,7 @@
-//! Byte accounting is one measuring function over one on-disk representation —
-//! [`file_bytes`] (`std::fs::metadata` length) applied to the engine's
-//! `data.mdb`, the `SQLite` file, and its `-wal` but the only expressible
-//! reading: every `SQLite` lane checkpoints sibling — so "measured after
-//! checkpoint/sync" is not a convention (TRUNCATE) and drops its connection
-//! before any stat, and the wal honesty mechanism: a churn protocol that forgot
-//! to checkpoint shows
+//! Physical file-size accounting for LMDB and SQLite. Measure `data.mdb`
+//! and the SQLite database plus any remaining WAL. SQLite lanes checkpoint
+//! with TRUNCATE and close their connection before measuring; a surviving
+//! WAL is included rather than silently omitted.
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 

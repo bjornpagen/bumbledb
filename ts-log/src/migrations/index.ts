@@ -1,14 +1,12 @@
 /**
  * `@bjornpagen/bumbledb-log/migrations` — generation, checking and the
- * explicit admin workflow over generated inert plan data (chapters 33/35,
- * C11). Pure intent constructors live in `@bjornpagen/bumbledb-log/schema`.
+ * explicit admin workflow over generated inert plan data. Pure intent
+ * constructors live in `@bjornpagen/bumbledb-log/schema`.
  *
  * The runner operations (`migrationStatus`, `initialize`, `migrate`,
- * `activateMigration`, `abortMigration`) are P08's wrappers over the ONE
- * native executor and durable workflow (P09) — re-exported here, never
- * reimplemented; their outcome vocabulary is P08's `#outcome.ts`. The
- * generator (`generateMigrations`, `checkMigrations`) is this packet's, bound
- * once over the native migration codec.
+ * `activateMigration`, `abortMigration`) are re-exported from
+ * `#migration-ops.ts`; their outcomes come from `#outcome.ts`. Generation
+ * and checking use the same native migration codec as execution.
  */
 export type { AdminIdentityOptions } from "#machine.ts"
 export { abortMigration, activateMigration, initialize, migrate, migrationStatus } from "#migration-ops.ts"

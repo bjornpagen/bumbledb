@@ -1,5 +1,5 @@
 //! Group-state spill: the aggregate sink's group tables and accumulator
-//! banks continue in the one charged scratch map (chapter 12 §4) when the
+//! banks continue in the one charged scratch map when the
 //! execution's RAM allowance is crossed — exactly like the dedup seen-set
 //! and completed results, never through a private partition framework.
 //!

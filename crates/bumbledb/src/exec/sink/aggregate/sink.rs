@@ -1,5 +1,4 @@
 use crate::exec::colt::SuffixRun;
-use crate::exec::kernel;
 use crate::exec::run::{Bindings, Flow, LeafBatch, LeafScan, ScanOffer, Sink};
 use crate::exec::sink::{
     Acc, AggSpec, AggregateSink, DedupState, FoldOp, GroupState, SinkSpec, word_to_i64,
@@ -7,6 +6,7 @@ use crate::exec::sink::{
 use crate::image::ColumnView;
 
 use super::super::FoldSource;
+use super::scan::{ScanInput, ScanPartial};
 
 impl Sink for AggregateSink {
     #[inline]
@@ -48,6 +48,7 @@ impl Sink for AggregateSink {
             return ScanOffer::Declined;
         }
         self.scan_sources.clear();
+        self.scan_inputs.clear();
         for find in &self.finds {
             let SinkSpec::Agg(spec) = find else {
                 continue;
@@ -63,7 +64,17 @@ impl Sink for AggregateSink {
                     ) {
                         return ScanOffer::Declined;
                     }
-                    FoldSource::Column(word)
+                    let partial = ScanPartial::seed(*spec);
+                    let input = self
+                        .scan_inputs
+                        .iter()
+                        .position(|input| input.word == word && input.partial.same_kernel(partial))
+                        .unwrap_or_else(|| {
+                            let index = self.scan_inputs.len();
+                            self.scan_inputs.push(ScanInput { word, partial });
+                            index
+                        });
+                    FoldSource::Column(input)
                 }
                 None => FoldSource::Outer,
             };
@@ -92,52 +103,11 @@ impl Sink for AggregateSink {
             return;
         };
         self.scan_count = count;
-        let mut acc_i = 0;
-        let mut fold_i = 0;
-        for find in &self.finds {
-            let SinkSpec::Agg(spec) = find else {
-                continue;
-            };
-            let acc = &mut self.acc_scratch[acc_i];
-            acc_i += 1;
-            let AggSpec::Fold { op, .. } = spec else {
-                continue;
-            };
-            let source = self.scan_sources[fold_i];
-            fold_i += 1;
-            let FoldSource::Column(word) = source else {
-                continue;
-            };
-            let ColumnView::Words(col) = scan.colt.suffix_column(scan.level, word) else {
+        for input in &mut self.scan_inputs {
+            let ColumnView::Words(column) = scan.colt.suffix_column(scan.level, input.word) else {
                 unreachable!("begin_scan declined byte columns")
             };
-            match (op, acc, run) {
-                (FoldOp::Sum, Acc::SumSigned(total), SuffixRun::Identity { start, len }) => {
-                    *total += kernel::fold_sum_biased_i64(col, 1, start, len);
-                }
-                (FoldOp::Sum, Acc::SumSigned(total), SuffixRun::Positions(p)) => {
-                    *total += kernel::fold_sum_biased_i64_idx(col, 1, 0, p);
-                }
-                (FoldOp::Sum, Acc::SumUnsigned(total), SuffixRun::Identity { start, len }) => {
-                    *total += kernel::fold_sum_u64(col, 1, start, len);
-                }
-                (FoldOp::Sum, Acc::SumUnsigned(total), SuffixRun::Positions(p)) => {
-                    *total += kernel::fold_sum_u64_idx(col, 1, 0, p);
-                }
-                (FoldOp::Min, Acc::Min(best), SuffixRun::Identity { start, len }) => {
-                    *best = (*best).min(kernel::fold_min_max_u64(col, 1, start, len).0);
-                }
-                (FoldOp::Min, Acc::Min(best), SuffixRun::Positions(p)) => {
-                    *best = (*best).min(kernel::fold_min_max_u64_idx(col, 1, 0, p).0);
-                }
-                (FoldOp::Max, Acc::Max(best), SuffixRun::Identity { start, len }) => {
-                    *best = (*best).max(kernel::fold_min_max_u64(col, 1, start, len).1);
-                }
-                (FoldOp::Max, Acc::Max(best), SuffixRun::Positions(p)) => {
-                    *best = (*best).max(kernel::fold_min_max_u64_idx(col, 1, 0, p).1);
-                }
-                _ => unreachable!("accumulators are seeded per op; Count has no source"),
-            }
+            input.partial.fold(column, run);
         }
     }
 
@@ -172,7 +142,8 @@ impl Sink for AggregateSink {
                 AggSpec::Fold { op, slot, .. } => {
                     let source = self.scan_sources[fold_i];
                     fold_i += 1;
-                    if matches!(source, FoldSource::Column(_)) {
+                    if let FoldSource::Column(input) = source {
+                        *acc = self.scan_inputs[input].partial.output(*spec, count);
                         continue;
                     }
                     match (op, acc) {

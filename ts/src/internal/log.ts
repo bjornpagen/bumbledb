@@ -37,7 +37,6 @@ export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
 export type {
 	Capability,
-	CloseDrain,
 	CloseWire,
 	DirectoryHandle,
 	InspectionWire,
@@ -45,7 +44,6 @@ export type {
 	OperationHandle,
 	PolicyWire,
 	RepositoryLockHandle,
-	ResourceHeader,
 	RuntimeHandle
 } from "#runtime-native.ts"
 export { runtimeNative } from "#runtime-native.ts"

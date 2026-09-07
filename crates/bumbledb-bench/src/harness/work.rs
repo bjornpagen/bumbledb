@@ -2,7 +2,7 @@
 //!
 //! L07's create/open/read/write take an explicit [`WorkContext`]. Timing
 //! cells mint a fresh allowance per operation so work counters stay the
-//! cell's admitted-work denominator (REVIEW-001). This is not a default-build
+//! cell's admitted-work denominator. This is not a default-build
 //! per-tuple atomic.
 
 use bumbledb::{ExecutionPolicy, WorkContext};

@@ -1,15 +1,6 @@
-//! The generated identity table's checked-in goldens: a fresh emission from
-//! the successor enums must byte-equal both checked-in copies. The 0.x
-//! braided corpus (braids/chain/counter/lease/batch/scratch goldens) is
-//! deleted machinery; its inventory is retired with it (recorded in
-//! implementation/packets/P05.md, corpus deletion is a P00 hub decision).
-//!
-//! REGENERATION (F3, executes code — deferred by the F1 rule): run
-//! `cargo run -p bumbledb-log --bin identities` redirected into
-//! `crates/bumbledb-log/conformance/v3/identities.json`, and copy the
-//! identical bytes to `ts/crate/log-identities.json` (P06R's tree). Until
-//! that runs, these tests are the red forcing function.
-//! Verification: `NotRun` (F1 authors, does not execute).
+//! Identity-table agreement across the native enums and both checked-in
+//! copies. `cargo run -p bumbledb-log --bin identities` emits the table for
+//! `conformance/v3/identities.json` and `ts/crate/log-identities.json`.
 
 use std::path::Path;
 
@@ -25,7 +16,7 @@ fn checked_in_identity_golden_matches_a_fresh_emission() {
         checked_in,
         bumbledb_log::identities::emit(),
         "conformance/v3/identities.json is stale; regenerate with \
-         `cargo run -p bumbledb-log --bin identities` (F3)"
+         `cargo run -p bumbledb-log --bin identities`"
     );
 }
 
@@ -37,7 +28,7 @@ fn the_ts_crate_twin_is_byte_identical_to_the_same_emission() {
         checked_in,
         bumbledb_log::identities::emit(),
         "ts/crate/log-identities.json is stale; copy the regenerated \
-         identities.json bytes (P06R tree, F3)"
+         identities.json bytes"
     );
 }
 

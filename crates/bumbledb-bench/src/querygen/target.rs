@@ -13,7 +13,7 @@
 //! extensions the six-type matrix needs: `Posting.{memo, reconciled}`
 //! (interned-string vocabulary and the Bool column) and
 //! `Transfer { extref: bytes<32>, window: interval<u64>, tag7..tag64 }`
-//! (the bytes<N> exerciser — extref is a keyed adversarial digest and
+//! (the `bytes<N>` exerciser — extref is a keyed adversarial digest and
 //! the tags cover the pad-boundary widths 7/8/9/16/63/64 — and the
 //! U64-element interval lane; `Mandate.active` is the I64-element
 //! lane) — plus, for the grounding shapes (`shapes_ground.rs`),
@@ -655,7 +655,7 @@ pub const CURRENCY_BACKED: bumbledb::StatementId = bumbledb::StatementId(29);
 /// ψ-sub-vocabulary.
 pub const CASH_ROUNDING_SUBSET: bumbledb::StatementId = bumbledb::StatementId(30);
 /// `Posting(id) <=[tag]{0..3} PostingTag(posting)` — the capacity
-/// ledger entry (C13), the weighted tag budget the corpus satisfies by
+/// ledger entry, the weighted tag budget the corpus satisfies by
 /// construction.
 pub const TAG_BUDGET: bumbledb::StatementId = bumbledb::StatementId(31);
 
@@ -669,7 +669,7 @@ pub const ZERO_DECIMAL_CURRENCY: u64 = 2;
 pub const DIGEST_WIDTHS: [u16; 6] = [7, 8, 9, 16, 63, 64];
 
 /// The digest-tag vocabulary size per width: small, so group-by and
-/// `Count` over bytes<N> see real multiplicity.
+/// `Count` over `bytes<N>` see real multiplicity.
 pub const DIGEST_VOCAB: u64 = 61;
 
 /// Derived per-relation domains (dense ids are `0..n`) — the dressing
@@ -1116,7 +1116,7 @@ mod tests {
             containment(CASH_ROUNDING_SUBSET),
             (ids::CASH_ROUNDING, ids::CURRENCY)
         );
-        // The capacity ledger entry (C13): the weighted tag budget sits
+        // The capacity ledger entry: the weighted tag budget sits
         // at the appended-last id, weight and ceiling asserted so a
         // silent unit downgrade cannot pass as the same statement.
         assert!(

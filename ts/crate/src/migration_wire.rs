@@ -1,5 +1,5 @@
-//! The two read-only migration-codec responses (C11): bounded JSON envelope
-//! plumbing over P09's native `schema_file`/`migration::{plan, manifest}`
+//! The two read-only migration-codec responses: bounded JSON envelope
+//! plumbing over the native `schema_file`/`migration::{plan, manifest}`
 //! lanes. Everything SEMANTIC — schema validation, canonical `SchemaId`,
 //! snapshot rendering, plan parsing/validation/digesting, manifest
 //! verification/appending, plan-set digests — happens in those native
@@ -19,9 +19,8 @@ use bumbledb_log::schema_file;
 
 use crate::runtime::RuntimeError;
 
-/// The migration frame cap for envelope-carried plan/manifest data —
-/// provisional until the F3 format freeze (C12) selects the deployment
-/// envelope; a change here is a re-emit, never a reinterpretation.
+/// Maximum plan/manifest bytes accepted by one native codec request.
+/// This resource bound does not alter the persisted frame grammar.
 pub(crate) const MIGRATION_CAP: usize = 16 << 20;
 
 // ---------------------------------------------------------------------------

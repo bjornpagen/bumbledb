@@ -21,9 +21,7 @@ import type {
 	RootId,
 	StateStamp
 } from "#identity.ts"
-// The generated plan/manifest/contract DATA shapes are C11 joint property
-// declared once in `#migrations/types.ts` (P10, mirroring P09's native
-// codec); this module imports them instead of declaring a second roster.
+// Generated plan/manifest/contract shapes are shared with the migration API.
 import type { ActivationRef, GeneratedMigrations } from "#migrations/types.ts"
 import type { HistoryBinding } from "#options.ts"
 
@@ -93,7 +91,7 @@ export interface ReceiptPolicyReport {
 	readonly retiredThrough: bigint
 }
 
-/** The bounded history health snapshot (chapter 22 evidence list). */
+/** Bounded history health snapshot. */
 export interface HistoryInspection {
 	readonly identity: DatabaseIdentity
 	readonly accessMode: AccessMode
@@ -218,7 +216,7 @@ export interface ErasureReport {
 	readonly residual: readonly ResidualCopy[]
 }
 
-// ── Migration workflow values (chapters 22/33, C11) ────────────────────────
+// ── Migration workflow values ────────────────────────────────────────────
 
 export type { ActivationRef, GeneratedMigrations }
 

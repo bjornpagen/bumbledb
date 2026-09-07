@@ -510,7 +510,7 @@ pub(crate) fn count_determinant_bucket_bounded(
 }
 
 /// Bounded visitor over one determinant bucket — one row at a time, no
-/// materialized id or decoded-row collection (CORE-002).
+/// materialized id or decoded-row collection.
 pub(crate) fn visit_determinant_bucket<'txn>(
     inner: &StoreInner,
     txn: &'txn RoTxn<'_, heed::AnyTls>,

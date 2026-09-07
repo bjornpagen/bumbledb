@@ -66,7 +66,7 @@ pub enum PutOutcome {
 
 /// One bounded listing page: the object keys in this page and an optional
 /// continuation token. A continuation token is an optimization, not a global
-/// snapshot promise (chapter 21).
+/// snapshot promise.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListPage {
     pub keys: Vec<String>,

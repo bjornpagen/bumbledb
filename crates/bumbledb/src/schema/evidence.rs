@@ -1,12 +1,12 @@
-//! The canonical bounded rejection-evidence codec (contracts C01/C03).
+//! The canonical bounded rejection-evidence codec.
 //!
 //! A durable rejection receipt must carry the COMPLETE violated-statement
-//! set with bounded, explicitly labeled example facts (chapter 10 §
-//! diagnostics; chapter 20 `InvariantRejected { complete_bounded_evidence }`).
+//! set with bounded, explicitly labeled example facts.
 //! This module owns the one canonical byte spelling of that evidence: the
 //! log (`bumbledb-log::writer::decide`) frames these bytes verbatim into
 //! decisions and receipts, and the native runtime decodes them back for the
-//! public TS `Violation[]` surface via [`ViolationEvidence::to_violations`]
+//! public TS `Violation[]` surface via
+//! [`crate::schema::evidence::ViolationEvidence::to_violations`]
 //! plus the existing [`crate::schema::render_rejection`].
 //!
 //! Properties, all load-bearing for the durable protocol:
@@ -21,18 +21,19 @@
 //!   EXAMPLES are dropped under the byte budget, deterministically and with
 //!   a per-violation truncation label. If even the example-free statement
 //!   skeleton exceeds the budget, encoding refuses
-//!   ([`EvidenceError::Budget`]) so the caller can refuse *before deciding*
+//!   ([`crate::schema::evidence::EvidenceError::Budget`]) so the caller can refuse *before deciding*
 //!   rather than record a falsely complete rejection.
 //! - **Versioned and domain-separated.** The frame opens with its own
 //!   family magic and layout counter; no other frame family shares them,
 //!   so evidence bytes cannot be misread as a command, decision, receipt or
-//!   canonical row (and vice versa). Physical bytes remain provisional
-//!   until the F3 format freeze (C12); a change bumps [`LAYOUT`].
-//! - **Strict decode.** [`decode`] refuses foreign families/layouts,
+//!   canonical row (and vice versa). Incompatible byte changes bump
+//!   [`crate::schema::evidence::LAYOUT`].
+//! - **Strict decode.** [`crate::schema::evidence::decode`] refuses foreign families/layouts,
 //!   unsorted or duplicated statement ids, malformed tags, oversized
 //!   counts, truncation and trailing bytes. Example facts stay opaque
 //!   canonical row bytes at this layer; interpreting them against a schema
-//!   ([`ViolationEvidence::to_judged`] / [`ViolationEvidence::to_violations`])
+//!   ([`crate::schema::evidence::ViolationEvidence::to_judged`] /
+//!   [`crate::schema::evidence::ViolationEvidence::to_violations`])
 //!   re-validates every row through the strict canonical decoder.
 //!
 //! Example facts are spelled as `(relation id, canonical row bytes)` — the

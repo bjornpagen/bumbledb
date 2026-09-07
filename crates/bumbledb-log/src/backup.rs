@@ -11,7 +11,7 @@
 //! usable backups; a lost completion response resolves by operation identity
 //! and manifest digest. Normal writer/GC credentials never own the backup
 //! destination — this module takes the destination as a distinct
-//! [`ConditionalStore`] and never derives it from the source.
+//! [`crate::store::ReceivingStore`] and never derives it from the source.
 //!
 //! The manifest declares external blobs explicitly: 1.0 backups are
 //! database-only and say so, rather than implying arbitrary URLs in facts

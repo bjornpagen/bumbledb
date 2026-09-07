@@ -1,10 +1,10 @@
 /**
- * The migration workflow operations (chapter 33/35): read-only
+ * The migration workflow operations: read-only
  * `migrationStatus` with typed E, and mutating `initialize` / `migrate` /
  * `activateMigration` / `abortMigration` returning `AdminOutcome` certainty
- * with a stable operation reference supplied before dispatch. P10's
+ * with a stable operation reference supplied before dispatch. The
  * `@bjornpagen/bumbledb-log/migrations` module re-exports these wrappers
- * next to its generator; P09's native executor owns freeze, one-final-
+ * next to its generator; the native executor owns freeze, one-final-
  * target plan execution, validation, genesis publication, activation and
  * the abort fence. `completed` means the reported transition is KNOWN —
  * `migrate` may complete as `paused` with the source still frozen; that is

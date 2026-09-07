@@ -21,7 +21,7 @@ use crate::Value;
 use crate::schema::StatementKind;
 use crate::schema::ValueType;
 
-/// Stable physical projection identity (chapter 40). Assigned in canonical
+/// Stable physical projection identity. Assigned in canonical
 /// statement order at compile time; survives incidental reordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProjectionId(pub u16);
@@ -280,7 +280,7 @@ struct StatementAccess {
     target_witness: Option<DistinctnessWitness>,
 }
 
-/// Law adjacency compiled once from the sealed schema (chapter 10 §3).
+/// Law adjacency compiled once from the sealed schema.
 #[derive(Debug, Clone, Default)]
 pub struct LawAdjacency {
     /// Per relation: key statement ids declared over it.
@@ -305,7 +305,7 @@ impl LawAdjacency {
     }
 
     /// Whether delta-local judgment may skip this statement under the
-    /// lawful-parent premise (chapter 10 §4).
+    /// lawful-parent premise.
     #[must_use]
     pub fn delta_local_skippable(
         &self,
@@ -328,7 +328,7 @@ impl LawAdjacency {
     }
 }
 
-/// The sealed schema's compiled machine (chapter 61). Owned by the store
+/// The sealed schema's compiled machine. Owned by the store
 /// and query layers; compiled once at open / seal.
 #[derive(Debug)]
 pub struct CompiledTheory {
@@ -346,14 +346,14 @@ pub struct CompiledTheory {
     pub max_determinant_key_width: usize,
 }
 
-/// LMDB's key limit for the pinned build (chapter 40). One place — not
+/// LMDB's key limit for the pinned build. One place — not
 /// scattered 400/496/511 axioms.
 pub const LMDB_KEY_LIMIT: usize = 511;
 
 /// Prefix + projection id + row ordinal, excluding scalar routing.
 const DETERMINANT_KEY_OVERHEAD: usize = 1 + 2 + 8;
 
-/// Maximum encoded scalar bytes for the exact-bounded crossover (chapter 40).
+/// Maximum encoded scalar bytes for the exact-bounded crossover.
 pub const MAX_EXACT_SCALAR_BYTES: usize = 16;
 
 impl CompiledTheory {
@@ -601,7 +601,7 @@ impl CompiledTheory {
         Ok(VisitOutcome::Exhausted { visited })
     }
 
-    /// Statement ids whose law family the delta can affect (chapter 10 §4).
+    /// Statement ids whose law family the delta can affect.
     #[must_use]
     pub fn delta_local_statements<'a>(
         &self,
@@ -609,11 +609,8 @@ impl CompiledTheory {
         delta: &[(RelationId, DeltaShape)],
     ) -> Vec<StatementView<'a>> {
         schema
-            .statements()
-            .filter(|view| {
-                !schema.closed_constant(*view)
-                    && !self.adjacency.delta_local_skippable(*view, delta)
-            })
+            .complete_obligations()
+            .filter(|view| !self.adjacency.delta_local_skippable(*view, delta))
             .collect()
     }
 

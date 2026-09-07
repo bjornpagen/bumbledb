@@ -11,14 +11,13 @@ use super::{BoundView, Const, FilterPredicate, View};
 
 /// Applies the filter conjunction over a (warm) image, writing survivors
 /// into `buf` (caller-owned, reused across executions — capacity is
-/// retained). An empty predicate list yields the unfiltered [`View::All`].
+/// retained). An empty predicate list yields [`BoundView::All`].
 /// # Errors
 /// Scratch text lookup I/O, work refusal, or corrupt UTF-8 — never
 /// rewritten as an empty survivor set.
 /// # Panics
-/// position space (the 32 GiB map physically bounds live rows roughly an
-/// order of magnitude under u32; the validated 10⁷ scale sits far below).
-/// Only on programmer-invariant violations: an image beyond the u32
+/// If an image exceeds the u32 position space. Image admission enforces
+/// that bound independently of the database's mapped size.
 pub fn apply(
     image: &Arc<RelationImage>,
     predicates: &[FilterPredicate],
@@ -43,8 +42,8 @@ fn apply_resolved(
     debug_assert!(u32::try_from(row_count).is_ok(), "positions fit u32");
     buf.clear();
 
-    // `Ne` must not hide the SIMD path) produces the initial survivor
-
+    // Any vectorizable predicate can seed the survivors; refine those
+    // positions with the remaining predicates, regardless of written order.
     if let Some(pivot) = predicates
         .iter()
         .position(|p| kernel_scan(image, p, params, &mut buf, text))

@@ -1,5 +1,5 @@
 use super::*;
-use crate::schema::{CompleteObligation, Pairing};
+use crate::schema::Pairing;
 
 fn closed_source_ordinary_target() -> Schema {
     SchemaDescriptor {
@@ -31,23 +31,18 @@ fn closed_source_ordinary_target() -> Schema {
 fn complete_roster_skips_closed_constant_and_keeps_instance_dependent() {
     let schema = closed_source_ordinary_target();
 
-    // closed→ordinary containment are instance-dependent.
-    let roster: Vec<_> = schema.complete_obligations().iter().collect();
+    // Both the ordinary key and closed→ordinary containment depend on rows.
+    let roster: Vec<_> = schema.complete_obligations().collect();
     assert_eq!(roster.len(), 2, "{roster:?}");
     assert!(matches!(
         roster.as_slice(),
         [
-            CompleteObligation::Key { .. },
-            CompleteObligation::Containment { .. },
+            StatementView::Key(KeyId(1), _),
+            StatementView::Containment(ContainmentId(0), _),
         ]
     ));
-    assert_eq!(roster[0].statement_ref(), StatementRef::Key(KeyId(1)));
-    assert_eq!(roster[0].statement_id(), StatementId(1));
-    assert_eq!(
-        roster[1].statement_ref(),
-        StatementRef::Containment(ContainmentId(0))
-    );
-    assert_eq!(roster[1].statement_id(), StatementId(2));
+    assert_eq!(roster[0].id(), StatementId(1));
+    assert_eq!(roster[1].id(), StatementId(2));
     let closed_key = schema.statement(StatementId(0));
     assert!(
         schema.closed_constant(closed_key),
@@ -81,7 +76,7 @@ fn closed_to_closed_containment_is_not_a_complete_obligation() {
     .validate()
     .expect("satisfied closed-to-closed validates");
     assert!(
-        schema.complete_obligations().iter().next().is_none(),
+        schema.complete_obligations().next().is_none(),
         "closed-constant containments are validation-discharged"
     );
 }

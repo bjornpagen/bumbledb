@@ -5,9 +5,9 @@
 //!
 //! The support derivation here is INDEPENDENT: it reads the schema
 //! descriptor as data and computes the consulted/mutable relation sets
-//! itself; judgments come from the [`NaiveDb`] reference judge, never the
-//! engine. When P01/P03 land the production support planner, the F3
-//! differential compares it against [`mutable_support`] per accepted
+//! itself; judgments come from the [`crate::naive::NaiveDb`] reference
+//! judge, never the engine. Differential tests compare the production
+//! support planner against [`mutable_support`] per accepted
 //! statement form — shared closed targets, closed sources, selections,
 //! capacity weights and isolated relations included.
 
@@ -334,7 +334,7 @@ mod tests {
                 "the union group measures two against a ceiling of one: {refused:?}"
             );
         }
-        // The key law is not union-closed either (chapter 02): two
+        // The key law is not union-closed either: two
         // same-key rows are each admissible from the base, their union is
         // not — deduplication cannot hide distinct full tuples.
         let k1 = Delta {

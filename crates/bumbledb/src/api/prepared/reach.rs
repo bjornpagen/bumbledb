@@ -31,8 +31,8 @@ pub(super) trait StageSink: crate::exec::run::Sink {
 }
 
 impl StageSink for ProjectionSink {
-    fn aim_stage(&mut self, finds: &[FindSpec], slot_count: usize, _spans: &[(usize, usize)]) {
-        self.aim(finds, slot_count);
+    fn aim_stage(&mut self, finds: &[FindSpec], _slot_count: usize, _spans: &[(usize, usize)]) {
+        self.aim(finds);
     }
 }
 

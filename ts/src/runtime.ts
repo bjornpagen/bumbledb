@@ -97,8 +97,7 @@ function failure(operation: string, cause: unknown): DbError {
 
 function closeReport(operation: string, report: CloseWire): CloseReport {
 	// A payload-less native "failed" drain (cleanup capacity exhausted, or
-	// owner teardown failed) is bounded diagnostic data per chapter 35's
-	// CloseReport policy: it decodes as the core `Internal` reason — the
+	// owner teardown failed) decodes as the core `Internal` reason — the
 	// same mapping the log bridge applies, so one wire arm has one meaning.
 	// It is deliberately NOT `QueueFull`: a failed drain is never retryable
 	// submit backpressure.
@@ -368,7 +367,7 @@ function joinLockRelease(operation: string, owner: RepositoryLockHandle): Effect
 
 /**
  * Internal log seam: stamped mint only. Cleanup is registered before
- * the interruptible acquire (TS-003): `acquireRelease({ interruptible })`
+ * the interruptible acquire: `acquireRelease({ interruptible })`
  * installs the finalizer only after acquire succeeds. Interrupt, defect,
  * and acquire failure all run the same slot finalizer — empty slot is
  * a no-op. No `runtimeDirectoryAcquire`, no core `Db`, no JS bookkeeping.

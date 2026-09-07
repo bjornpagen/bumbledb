@@ -1,7 +1,7 @@
 //! The hash qualification campaign (chapter 41; gates HASH-01..HASH-04).
 //!
 //! This module is authored during F1 and **executes only in F3**, before the
-//! physical format freeze (C12). It owns:
+//! physical format freeze. It owns:
 //!
 //! - the role/width/domain inventory that HASH-01 checks (this file),
 //! - the reproducible sizing math for HASH-03 ([`sizing`]),
@@ -72,9 +72,8 @@ pub struct RoleSpec {
     pub adversarial: bool,
 }
 
-/// The complete role inventory. HASH-01's checker asserts this roster, and
-/// [`tests`] pin its invariants (no truncatable authoritative digest, every
-/// non-adversarial role backed by exact comparison, widths match chapter 41).
+/// The hash-role inventory. Tests require authoritative digests to retain
+/// their full width and local fingerprints to use exact collision checks.
 #[must_use]
 pub const fn role_inventory() -> [RoleSpec; 4] {
     [

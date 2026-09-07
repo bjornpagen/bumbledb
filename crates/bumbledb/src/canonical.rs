@@ -11,7 +11,7 @@ use crate::work::{ByteKind, ByteReservation};
 use crate::{F64, Uuid, Value, WorkContext, WorkError};
 
 /// The canonical bounded named-scalar record — the core codec the log's
-/// declared `CommandResult` slot frames verbatim (C01; chapter 30).
+/// declared `CommandResult` slot frames verbatim.
 pub mod result;
 
 pub(crate) mod field;

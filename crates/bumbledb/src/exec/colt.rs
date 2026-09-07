@@ -314,7 +314,7 @@ pub struct Colt {
 impl Colt {
     /// The trie's retained pool footprint in bytes — O(1) over the pools'
     /// capacities. The executor's bounded-quantum ledger poll charges this
-    /// growth to working bytes (chapter 12 §7), so the bounded-restart
+    /// growth to working bytes, so the bounded-restart
     /// trigger can fire from join growth. The `Arc`'d image is excluded:
     /// the image build charged its slabs; the view's survivor positions
     /// (this colt's owned copy) are included.

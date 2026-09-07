@@ -1,6 +1,6 @@
 /**
  * @bjornpagen/bumbledb — the Effect-native TypeScript SDK for the
- * bumbledb embedded relational engine (chapter 35 surface). Pure
+ * bumbledb embedded relational engine. Pure
  * schema/query/scalar construction is synchronous metadata; all work is
  * lazy, scoped and bounded on the one native runtime. No Promise, sync,
  * or disposal twin. The raw native bridge is not exported from this barrel.

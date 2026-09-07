@@ -1,48 +1,12 @@
-# The CI spine (the crucible packet (git ecec1dc3)). The battery
-# (scripts/battery.sh) and the SDK fingerprint lock run per push on
-# macos arm64 (macos-latest is M-series); the Miri lane runs on a
-# nightly cron.
-# The check lane runs on macos and on ubuntu-latest-as-host under an
-# amazonlinux:2023 container (grail/40): Amazon Linux is the linux
-# userspace — glibc 2.34, never Ubuntu — and that linux cell is the
-# first real execution of the engine's linux arms and of the
-# scalar-fallback promise (other 64-bit platforms compile and run
-# scalar fallback correctly, no performance promises). The suite is
-# linux-clean by construction:
-# every host-pinned falsifier is #[ignore]d and every macos-only
-# integration binary is whole-file cfg(target_os = "macos"). Run
-# 29697582864 falsified that claim once — clockproxy's plausibility
-# band read 0.18 GHz on the shared ubuntu runner — and the probe
-# joined the host-pinned set (arch-conditioned ignore: the band is
-# aarch64 physics). The sdk lane matrixes macos + the same
-# amazonlinux:2023 linux cell as the check lane; the miri lane's
-# native pass is the reference host's.
-#
-# Wall-time record (measured locally on the pinned M2 Max, 2026-07-13):
-#   * Miri lane: 752 s ≈ 12.5 min — OVER the 10-minute per-push budget,
-#     hence the cron (the "measure first, decide by the number" rule).
-#   * check lane: scripts/battery.sh is the correctness body.
-#   The lanes run in parallel: estimated under 15 minutes with warm
-#   caches; the first run on a cold cache (toolchain download + full
-#   builds) will exceed it once.
-#
-# Deliberate exclusions (each per the measurement discipline: measure
-# first, decide by the number):
-#   * NO benches: timing on a shared virtualized runner is noise; every
-#     pinned margin is measured locally on the M2 Max.
-#   * NO asm gates (scripts/check-asm.sh): aarch64 codegen inspection
-#     is a local gate for the same reason — runner codegen/toolchain
-#     drift would make it flaky without making it informative.
-#   * NO fuzzing lanes: the fuzzing apparatus died by owner ruling
-#     (2026-07-20) and the corpus-replay lane with it; the storm recipe
-#     (crates/bumbledb-log/conformance/v3/README.md § Fuzz) runs inside
-#     the battery, not as a CI lane of its own.
+# Correctness on Apple Silicon and Amazon Linux 2023 (glibc 2.34).
+# The battery covers Rust, Lean, the native bridge and installed SDKs.
+# Miri runs nightly and on manual dispatch. Performance is measured locally,
+# not on shared CI runners. No job publishes packages.
 name: ci
 
 on:
-  # Qualify every successor implementation push, without publishing it.
   push:
-    branches: [main, codex/bumbledb-1-0]
+    branches: [main]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -171,11 +135,7 @@ jobs:
         working-directory: ts-log
       - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
 
-  # Lane 2 — Miri, both interpretation targets (native arm64 + the
-  # x86_64-linux cross-interpretation): 752 s ≈ 12.5 min measured
-  # locally (2026-07-13, M2 Max, warm sysroot), over the 10-minute
-  # per-push budget — so it runs on the nightly cron (and on manual
-  # dispatch), not per push.
+  # Native arm64 and x86_64 Linux interpretation; separate from per-push tests.
   miri:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
@@ -195,31 +155,7 @@ jobs:
             miri-${{ runner.os }}-
       - run: scripts/miri.sh
 
-  # Lane 3 — the SDK lane (the hardening-0.3.0 packet, PRD T6): both
-  # halves of the cross-host fingerprint lock, per push. The TS half is
-  # the full SDK gate exactly as run locally — build the napi bridge +
-  # package from source, then tsc, biome, and `pnpm test` (the ONE
-  # test-glob spelling — package.json's `test` script, its pattern
-  # quoted so node's own glob engine always expands it, never the
-  # shell; the rebuild it fronts is incremental after the named build
-  # step). The Rust half is `cargo test` against ts/crate — the crate
-  # is workspace-excluded, so the root workspace gate (lane 1) never
-  # reaches it; this step is what executes
-  # ts/crate/src/fingerprint_lock.rs. The T5 per-recipe goldens run
-  # inside the two suites by construction.
-  # Runner: an os matrix, exactly as the check lane — ts/scripts/build.ts
-  # derives the LOCAL platform from its host (platform.ts), so the
-  # linux cell (AL2023 userspace) is what executes the dev-twin
-  # manifest synthesis, the `.so` artifact naming, and the loader's
-  # linux branch — and the cross-host fingerprint lock genuinely
-  # crosses hosts: both halves run on two architectures per push
-  # (ruled 2026-07-23, R22).
-  # Runtime budget (measured locally on the pinned M2 Max, 2026-07-18,
-  # warm caches): pnpm run build 15.6 s (the bridge release compile
-  # dominates) + tsc 1.4 s + biome 1.3 s + node --test 0.9 s + ts/crate
-  # cargo test 9.7 s ≈ 29 s of work; a cold cache pays the toolchain
-  # download and the full dependency builds once. Runs `needs:`-free in
-  # parallel with the engine lanes, never gated behind them.
+  # Cross-platform SDK and native-bridge checks, including fingerprint parity.
   sdk:
     if: github.event_name != 'schedule'
     strategy:
@@ -311,7 +247,7 @@ jobs:
       - name: SDK tests without a second native rebuild
         run: node --test 'test/**/*.test.ts'
         working-directory: ts
-      - name: the FFI lint wall (cleanup-0.5.0 ruling 12)
+      - name: Native bridge lints
         # ts/crate is workspace-excluded, so lane 1's clippy never reaches
         # it; this step is what enforces the crate's own lint table
         # (deny unsafe_code with per-site reasons, deny

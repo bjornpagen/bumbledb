@@ -1,10 +1,10 @@
 //! The one durable authority record and its legal transitions.
 //!
-//! `HeadAuthority` is the P04-owned authority projection of a tenant head:
+//! `HeadAuthority` is the authority projection of a tenant head:
 //! identity, head revision, lifecycle (Live access/decision/state/receipts or
 //! a terminal Deleted tombstone) and the one-time activation marker. Hosted
 //! retention fields (recovery root, named roots, object epoch, GC state) are
-//! P05-owned and ride outside this projection; every transition here returns a
+//! stored outside this projection; every transition here returns a
 //! **value** that the actual authority must commit atomically — an S3 head CAS
 //! or one `LocalHistory` LMDB transaction. Constructing a transition is never
 //! publication.
@@ -536,8 +536,8 @@ impl HeadAuthority {
 }
 
 /// Encode the authority projection. Hosted head bytes embed this projection
-/// beside P05-owned retention fields; `LocalHistory` commits it as the LMDB
-/// attachment component. Bytes remain provisional until the F3 format freeze.
+/// beside retention fields; `LocalHistory` commits it as the LMDB attachment
+/// component. [`FAMILY`] and [`LAYOUT`] identify this persisted grammar.
 /// # Errors
 /// Refuses oversized frames and allocation failure.
 #[expect(

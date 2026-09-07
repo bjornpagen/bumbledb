@@ -1,14 +1,9 @@
-//! The counting allocator: test-support machinery
-//! for the zero-warm-allocation gate and the benchmark's memory
-//! observability.
-//! The counter type, its statics, and the reading functions always
-//! compile so the ordinary-tier budget binary (`tests/alloc_budgets.rs`)
-//! can register [`CountingAllocator`] without the feature. The lib
-//! design — the protocol is single-threaded. The counter wraps the
-//! Sanctioned allocation windows, documented per the protocol: the first
-//! execution after prepare (COLT pools, sink maps, and view buffers grow
-//! to their high-water), the first execution after a commit (image
-#![allow(unsafe_code)] // GlobalAlloc is an unsafe trait; this module only
+//! Allocation accounting for correctness gates and benchmark diagnostics.
+//! The `alloc-counter` feature registers this allocator globally. Test
+//! binaries can register [`crate::alloc_counter::CountingAllocator`] directly
+//! when the feature is off. Counters are process-global: isolate measured
+//! windows from unrelated allocations on other threads.
+#![allow(unsafe_code)] // GlobalAlloc delegates to the system allocator below.
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -28,7 +23,8 @@ fn bump_live(add: u64) {
 /// the ordinary-tier budget binary registers it when that feature is off.
 pub struct CountingAllocator;
 
-// SAFETY: every method delegates directly to `System`, which upholds the
+// SAFETY: every method forwards the caller's GlobalAlloc contract to System.
+// Accounting uses atomics and does not allocate or alter pointers/layouts.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);

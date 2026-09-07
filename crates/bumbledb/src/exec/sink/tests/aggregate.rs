@@ -147,6 +147,17 @@ fn cardinality_failure_precedes_finalization_and_reset_clears_the_failure() {
     }
 }
 
+fn sorted_aggregate_rows(sink: &mut AggregateSink) -> Vec<Vec<u64>> {
+    let mut rows = Vec::new();
+    sink.finalize_into(&mut Vec::new(), |row| {
+        rows.push(row.to_vec());
+        Ok(())
+    })
+    .expect("in range");
+    rows.sort_unstable();
+    rows
+}
+
 #[test]
 fn constant_group_batches_fold_once_per_run() {
     let schema = schema();
@@ -174,31 +185,65 @@ fn constant_group_batches_fold_once_per_run() {
             FindSpec::Agg(AggSpec::Count),
             agg_spec(plan, FoldOp::Min, 2, true),
             agg_spec(plan, FoldOp::Max, 2, true),
+            // Nonadjacent aliases share reductions, not result positions.
+            agg_spec(plan, FoldOp::Sum, 0, false),
+            agg_spec(plan, FoldOp::Max, 2, true),
+            agg_spec(plan, FoldOp::Sum, 2, true),
+            agg_spec(plan, FoldOp::Min, 0, false),
+            agg_spec(plan, FoldOp::Min, 2, true),
+            // Outer slots stay constant across each scanned suffix.
+            agg_spec(plan, FoldOp::Max, 1, false),
         ]
     };
 
     let mut reference: Option<Vec<Vec<u64>>> = None;
-    for (batch, distinct) in [(1usize, true), (7, true), (128, true), (128, false)] {
+    for (batch, distinct, ram_bytes) in [
+        (1usize, true, usize::MAX),
+        (7, true, usize::MAX),
+        (128, true, usize::MAX),
+        (128, false, usize::MAX),
+        (128, true, 0),
+    ] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
-        Executor::with_batch_size(&plan, batch)
-            .execute(
-                &plan,
-                &mut colts,
-                &mut bindings,
-                &mut sink,
-                &mut crate::exec::run::NoopCounters,
-            )
-            .expect("execute");
+        sink.begin(Some(SinkBudget {
+            work: crate::api::db::test_operation().unwrap(),
+            ram_bytes,
+        }));
+        let mut execute = |sink: &mut AggregateSink| {
+            Executor::with_batch_size(&plan, batch)
+                .execute(
+                    &plan,
+                    &mut colts,
+                    &mut bindings,
+                    sink,
+                    &mut crate::exec::run::NoopCounters,
+                )
+                .expect("execute");
+        };
+        execute(&mut sink);
         if distinct && batch == 128 {
-            assert_eq!(
-                sink.group_probes, 8,
-                "one probe per group run, memoized across batches"
-            );
+            // One sum/extrema kernel per column, one probe per group.
+            assert_eq!(sink.scan_inputs.len(), 4);
+            assert_eq!(sink.group_probes, 8);
         }
-        let mut rows = sink.into_answers().expect("in range");
-        rows.sort_unstable();
+        let rows = sorted_aggregate_rows(&mut sink);
+
+        let capacity = sink.scan_inputs.capacity();
+        sink.reset();
+        let mut reversed = finds(&plan);
+        reversed.reverse();
+        sink.aim(&reversed, plan.slot_count(), &[]);
+        execute(&mut sink);
+        assert_eq!(sink.scan_inputs.capacity(), capacity);
+        let mut expected: Vec<Vec<_>> = rows
+            .iter()
+            .map(|row| row.iter().copied().rev().collect())
+            .collect();
+        expected.sort_unstable();
+        let rerun = sorted_aggregate_rows(&mut sink);
+        assert_eq!(rerun, expected, "aliases survive aim/reset and spill");
 
         assert_eq!(rows.len(), 8, "batch {batch} distinct {distinct}");
         assert_eq!(
@@ -208,7 +253,13 @@ fn constant_group_batches_fold_once_per_run() {
                 i64_to_word(-150),
                 300,
                 i64_to_word(-150),
-                i64_to_word(149)
+                i64_to_word(149),
+                44850,
+                i64_to_word(149),
+                i64_to_word(-150),
+                0,
+                i64_to_word(-150),
+                0,
             ],
             "batch {batch} distinct {distinct}"
         );
@@ -858,7 +909,7 @@ fn spilled_partition_merge_refuses_cardinality_overflow() {
 }
 
 /// Legal multi-word Pack group heads must spill under pressure — spill is
-/// not disabled for large groups (CORE-023). Ten words remain the narrow
+/// not disabled for large groups. Ten words remain the narrow
 /// (inline-key) regime; token tables start only past `MAX_INLINE_KEY`.
 #[test]
 fn wide_pack_group_heads_spill_under_a_zero_ram_allowance() {

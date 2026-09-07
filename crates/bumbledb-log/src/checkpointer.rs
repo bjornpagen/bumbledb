@@ -41,7 +41,7 @@ use crate::store::{
 pub const HISTORY_KEY_PREFIX: u8 = b'm';
 
 /// Deployment-qualified checkpoint policy. The chunk size and envelope are
-/// measured policy, not correctness constants (chapter 21).
+/// measured policy, not correctness constants.
 #[derive(Debug, Clone, Copy)]
 pub struct CheckpointPolicy {
     pub chunk_bytes: usize,
@@ -144,7 +144,7 @@ pub struct Captured {
 }
 
 /// Admission headroom against the configured tail envelope: the writer-side
-/// backpressure consult (C08).
+/// backpressure consult.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Headroom {
     Ok,
@@ -386,7 +386,7 @@ where
 /// Capture one coherent snapshot of `db` and upload it as a complete
 /// verified checkpoint — every chunk plus the streamed manifest — under
 /// `epoch` at `prefix`, WITHOUT touching any head. `publish_checkpoint`
-/// composes this into a head rebase; the hosted migration data plane (C11)
+/// composes this into a head rebase; the hosted migration data plane
 /// publishes the returned manifest reference inside the target's genesis
 /// head recovery root instead, so a migrated incarnation's state and its
 /// authoritative migration-history records ('m' system rows) are
@@ -519,7 +519,7 @@ where
             "live head without recovery root",
         ))?;
         // Distinguish ordinary base advancement from same-base receipt-policy
-        // replacement (LOG-017): retirement at the same decision is valid.
+        // replacement: retirement at the same decision is valid.
         let advances_retirement = matches!(kind, CheckpointKind::RetireReceipts { through } if through > live.receipts.retired_through());
         if base.seq < current_recovery.base.seq
             || (base == current_recovery.base
@@ -547,7 +547,7 @@ where
             work,
         )?;
         // New dependencies staged under a now-closed epoch must be restaged
-        // under the current epoch (chapter 21).
+        // under the current epoch.
         if staged_epoch != current.object_epoch {
             let new_epoch = current.object_epoch;
             let mut restaged = Vec::with_capacity(chunks.len());

@@ -7,9 +7,7 @@ import { ScriptError } from "./errors.ts"
 import { EFFECT_PIN } from "./pin.ts"
 
 /**
- * The affirmative product-deletion gate (PKG-06 / SDK-013 / ARCH-005 /
- * docs/reference/packaging.md PKG-06). Deleting a product is proved
- * by checks that FAIL if it comes back, not by its absence from a diff:
+ * Package boundaries checked before building and publishing:
  *
  *  1. No C product anywhere in the release tree: no `bumbledb-c` crate,
  *     no public C headers, no cbindgen tooling, no C examples/smoke
@@ -35,16 +33,13 @@ import { EFFECT_PIN } from "./pin.ts"
  *
  * Scans existing tracked and nonignored new files, so pending deletions
  * and additions work before the final commit. Ignored build output and
- * node_modules are excluded; historical audit evidence is exempt below.
+ * node_modules are excluded. No tracked directory bypasses these checks.
  *
  * Run from anywhere: `node ts/scripts/absence-gate.ts`. Exit 0 is the
  * gate; every finding is listed before the failure.
  */
 
 const REPO_ROOT = path.join(fileURLToPath(new URL("..", import.meta.url)), "..")
-
-/** Historical evidence stays; the gate never demands audit rewrites. */
-const EVIDENCE_PREFIXES = ["audit/", "docs/research/", "final-solution/", "implementation/", "proposals/"] as const
 
 /** Dependency names that must never appear in the core crate's manifest. */
 const CORE_FORBIDDEN_DEPS = [
@@ -99,10 +94,6 @@ function candidateFiles(): string[] {
 		.filter((file) => file !== "" && fs.existsSync(path.join(REPO_ROOT, file)))
 }
 
-function isEvidence(file: string): boolean {
-	return EVIDENCE_PREFIXES.some((prefix) => file.startsWith(prefix))
-}
-
 function readText(rel: string): string {
 	const text = Result.try(() => fs.readFileSync(path.join(REPO_ROOT, rel), "utf8"))
 	if (Result.isFailure(text)) {
@@ -125,9 +116,6 @@ function record(value: unknown): Record<string, unknown> {
 
 function checkCSurface(files: readonly string[], findings: string[]): void {
 	for (const file of files) {
-		if (isEvidence(file)) {
-			continue
-		}
 		if (/(^|\/)bumbledb-c(\/|$)/.test(file)) {
 			findings.push(`C crate path survives: ${file}`)
 		}
@@ -264,12 +252,12 @@ function checkTsPackages(findings: string[]): void {
 	}
 }
 
-/** Maintained code/manifest scopes; prose (PROMPT/proposal/docs) may NAME the ban. */
+/** Maintained code and manifest scopes; documentation may discuss dependencies. */
 const CODE_PREFIXES = ["crates/", "ts/", "ts-log/", "examples/", "scripts/", ".github/", "lean/"] as const
 
 function checkBannedText(files: readonly string[], findings: string[]): void {
 	for (const file of files) {
-		if (isEvidence(file) || !CODE_PREFIXES.some((prefix) => file.startsWith(prefix))) {
+		if (!CODE_PREFIXES.some((prefix) => file.startsWith(prefix))) {
 			continue
 		}
 		const extension = path.extname(file)
@@ -289,9 +277,6 @@ function checkBannedText(files: readonly string[], findings: string[]): void {
 
 function checkTrackedArtifacts(files: readonly string[], findings: string[]): void {
 	for (const file of files) {
-		if (isEvidence(file)) {
-			continue
-		}
 		if (/\.(node|dylib|so|a|tgz)$/.test(file)) {
 			findings.push(`tracked binary artifact: ${file} — release inputs are built fresh, never committed`)
 		}

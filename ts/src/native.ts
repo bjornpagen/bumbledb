@@ -38,7 +38,7 @@ interface F64IntervalValue {
 
 /**
  * One marshalled cell. An application-owned Uuid crosses as its
- * canonical hyphenated UUID string (chapter 32); there is no fresh
+ * canonical hyphenated UUID string; there is no fresh
  * range, reservation counter or issuance value anywhere on this wire.
  */
 type FactValue = boolean | bigint | number | string | Uint8Array | IntervalValue | F64IntervalValue
@@ -438,7 +438,7 @@ type Violation =
 // #runtime-native.ts (accepted | rejected | refused); reads, writes and
 // queries are worker-affine session verbs there too. The historical
 // raw-pointer `dbRead`/`dbWrite`/`tx*`/`instance*`/`prepared*` synchronous
-// surface — a JS callback inside a native transaction — is deleted (P06),
+// surface — a JS callback inside a native transaction — is deleted,
 // as are the fresh/reserve issuance verbs (`WireFreshRange`).
 
 type ErrorFamilyKind =

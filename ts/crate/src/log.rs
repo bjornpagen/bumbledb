@@ -1,7 +1,7 @@
 //! The bumbledb-log grammar bridge onto the SUCCESSOR history machine.
 //!
 //! One implementation reads and writes the protocol's bytes —
-//! `crates/bumbledb-log/src/history` (C06) — and this module only carries
+//! `crates/bumbledb-log/src/history` — and this module only carries
 //! payloads across: sealed canonical commands, retained receipt rows,
 //! immutable decision/genesis records and the head-authority control
 //! projection. Bytes in, plain tagged payloads out, grammar only — no
@@ -874,7 +874,7 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
 }
 
 /// Renders the head-authority control projection — the bytes P05 wraps
-/// with its retention fields in the hosted HEAD body (C07/C08).
+/// with its retention fields in the hosted HEAD body.
 /// Internal surface: not part of the SDK's documented API.
 #[napi]
 #[doc(hidden)]

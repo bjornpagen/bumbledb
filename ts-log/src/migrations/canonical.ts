@@ -1,7 +1,7 @@
 /**
  * Canonical value spelling and deterministic generated-text helpers.
  *
- * The native codec (P09) is the rendering and digest authority for plan,
+ * The native codec is the rendering and digest authority for plan,
  * manifest and schema-snapshot FILES: those bytes come back from the native
  * entrypoints (`schema_file::render`, `migration::plan::render_plan`,
  * `migration::manifest::render_manifest`) and are written verbatim, so JSON

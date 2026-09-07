@@ -227,8 +227,8 @@ pub fn render(schema: &Schema, id: StatementId) -> String {
 /// [`SchemaDescriptor::materialized_statements`] — exactly what
 /// [`crate::error::SchemaError`] payloads carry. Names a rejected
 /// statement may fail to resolve (that can be the error) render as
-/// `relation#N`/`field#N` placeholders. The one-statement convenience:
-/// materializes and pairs, then delegates to [`render_materialized`] —
+/// `relation#N`/`field#N` placeholders. This convenience function
+/// materializes and pairs the roster before rendering one statement.
 /// # Panics
 /// On an out-of-range id — schema errors carry ids produced by validating
 /// this same descriptor.

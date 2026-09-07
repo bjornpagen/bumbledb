@@ -1,4 +1,4 @@
-//! The successor float fixture corpus generator (P11; gates `F-GOLDEN`,
+//! The float corpus generator (gates `F-GOLDEN`,
 //! `F-CANON`, `F-ORDER`, `F-ARITH`, `F-AGG`, `F-CROSS`, `F-INTERVAL`).
 //!
 //! Deterministic bit-pattern corpora whose EXPECTED values come from the
@@ -6,21 +6,13 @@
 //! from the production engine, host floats, or a shared parser. The corpus
 //! is consumed three ways: the Rust engine differential, the packed-SDK
 //! cross-language fixtures (`F-CROSS` compares canonical BITS across
-//! darwin-arm64 / linux-arm64 / linux-x64), and the Lean conformance lane's
-//! future float cases.
+//! darwin-arm64 / linux-arm64 / linux-x64), and conformance consumers.
 //!
-//! REGENERATION IS DEFERRED TO F3 (chapter 61: no generator execution in
-//! F0–F2). The deferred command, to run once at the barrier and check the
-//! emitted files in beside the existing conformance corpus:
+//! The `corpus-float` command accepts an explicit seed and output directory:
 //!
 //! ```text
-//! cargo run -p bumbledb-bench -- corpus-float --seed 0xB0B --out fixtures/float
+//! cargo run -p bumbledb-bench -- corpus-float --seed 0xB0B --out /tmp/bumbledb-float
 //! ```
-//!
-//! (The CLI wiring for the `corpus-float` subcommand belongs to the shared
-//! `cli/` roster owned by P14/P00 — requested in
-//! `implementation/packets/P11.md` under hub/coordination notes; this
-//! module exposes the pure generator so the wiring is one match arm.)
 
 use crate::verify::f64_oracle::{
     INF, MAX_FINITE, NAN, NEG_INF, SIGN, canonical, mean_bits, order_key, ref_add, ref_div,

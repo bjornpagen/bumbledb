@@ -215,9 +215,7 @@ impl OwnedSnapshot {
         self.txn.age()
     }
 
-    /// Declared C05 seam: P03's cursor/probe execution reads through this
-    /// exact transaction. Also consumed by the store's own copy path.
-    #[allow(dead_code, reason = "C05 access point for P03's execution lane")]
+    /// The exact pinned transaction used by store copy and verification.
     pub(crate) fn read_txn(&self) -> &RoTxn<'static, WithoutTls> {
         &self.txn
     }
@@ -263,8 +261,7 @@ impl OwnedSnapshot {
     }
 
     /// Visit every committed host record whose key starts with `prefix`,
-    /// in ascending key order, from this exact transaction (the P02R host
-    /// enumeration seam under `ReadInstance::integration_host_scan`).
+    /// in ascending key order, from this exact transaction.
     /// Already streams: logical host keys — the storage tag never escapes —
     /// and values borrow the snapshot's mapped pages for the duration of
     /// one visit only; charged one work step per record. No resume and no
@@ -275,9 +272,7 @@ impl OwnedSnapshot {
     /// visitor's own refusal.
     #[expect(
         clippy::type_complexity,
-        reason = "the storage twin of the P02R visitor signature \
-                  (implementation/packets/P05.md), generic over the \
-                  integration error"
+        reason = "borrowed key/value visitor with the caller's integration error"
     )]
     pub fn host_scan<E: From<StoreError>>(
         &self,
@@ -603,7 +598,7 @@ impl OwnedSnapshot {
     ///
     /// Every emitted row, the returned generation, and the attachment all
     /// come from this snapshot's one transaction; the copy helper consumes
-    /// no second source view (ENG-003).
+    /// no second source view.
     /// # Errors
     /// Storage failure, stopped work, or the sink's failure.
     pub fn export(

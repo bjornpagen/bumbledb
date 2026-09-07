@@ -103,7 +103,7 @@ type NegativeBan<N extends bigint> = bigint extends N
 		: unknown
 
 /**
- * The spelling-ban tables are DELETED (C01, chapter 34): `{n..n}`, `{0..0}`,
+ * The spelling-ban tables are DELETED: `{n..n}`, `{0..0}`,
  * unit floors `{1..*}`/`{N..*}` and the vacuous `{0..*}` are harmless
  * equivalent spellings that lower to the one canonical `(lo, hi)` law at
  * the mint. Genuinely different semantics still refuse: negative bounds

@@ -100,7 +100,7 @@ pub fn cmd_bench(args: &BenchArgs) -> Result<i32, String> {
     });
     std::fs::create_dir_all(&out_dir).map_err(|e| format!("out dir: {e}"))?;
 
-    // One durability point remains (ENG-008): the stamped corpus opens
+    // One durability point remains: the stamped corpus opens
     // durable, always. The retired `--nosync`/`--ephemeral` flags refuse in
     // the parser.
     let lane = crate::duralane::DurabilityLane::Durable;

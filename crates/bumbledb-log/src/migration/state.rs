@@ -3,12 +3,12 @@
 //!
 //! Each relation is a spill-backed exact set (canonical bytes as keys).
 //! Map transforms stream compiled expressions into that set and deduplicate
-//! there. [`MapSpill::finish`] does not reconstruct `Rows` / `BTreeMap`.
+//! there. Finishing a transform does not reconstruct a resident row map.
 //! Every byte held is reserved by the core scratch owner; an exhausted
 //! budget refuses instead of growing a database-sized shadow map.
 //!
 //! Every `validate-schema` boundary judges the COMPLETE intermediate state
-//! with the core judge (C03) — a later step cannot hide an earlier invalid
+//! with the core judge — a later step cannot hide an earlier invalid
 //! intermediate state, and fused suffix execution is literally ordered
 //! execution with one final materialization.
 

@@ -1,4 +1,4 @@
-//! F3 finding C regressions for the charged scratch map: the predecessor
+//! Bounds and accounting regressions for the scratch map: the predecessor
 //! query is exact across both tiers, refused growth rolls its counter
 //! back, and the spill copy stays exact through the single-transaction
 //! batch path.

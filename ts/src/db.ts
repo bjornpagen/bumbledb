@@ -35,7 +35,7 @@ import type { AnySchema } from "#schema.ts"
 import type { Key, QueryTemplate, Rel } from "#shape.ts"
 
 /**
- * The chapter 35 core surface: `Db.create`/`Db.open`, scoped coherent
+ * The core surface: `Db.create`/`Db.open`, scoped coherent
  * `Snapshot`s, reusable `ExecutionSession`s, the shared `QueryReader`
  * capability, one immutable final-state `apply`, bounded `inspect` and
  * honest `close`. Effect-only: every method constructs a lazy effect; all
@@ -59,7 +59,7 @@ interface CoreWitness {
 
 type ApplyExpected = { readonly kind: "any" } | { readonly kind: "exact"; readonly at: CoreWitness }
 
-/** Core work policy plus the expected-state intent (chapter 35). */
+/** Core work policy plus the expected-state intent. */
 type ApplyOptions = ExecutionPolicy & { readonly expected: ApplyExpected }
 
 type ApplyOutcome =
@@ -80,7 +80,7 @@ interface DbInspection {
 }
 
 /**
- * The one shared read capability (chapter 30): the same typed `get` and
+ * The shared read capability: the same typed `get` and
  * `execute` on a core snapshot and on a log published snapshot, so a
  * cross-package read helper takes this interface with no adapter. Missing
  * key is `Option.none`, never a fake I/O error or nullable row. It carries
@@ -374,7 +374,7 @@ function makeDb<S extends AnySchema>(theory: S, state: DbState): Db<S> {
 		},
 		close() {
 			// The one close authority: database child first, then the
-			// directory owner releases its kernel lock LAST (C09). Both
+			// directory owner releases its kernel lock LAST. Both
 			// joins are idempotent natively.
 			return drainClose("Db.close", (callback) => runtimeNative.runtimeManagedDbClose(state.db, callback)).pipe(
 				Effect.flatMap((report) =>
@@ -413,7 +413,7 @@ function openDatabase<S extends AnySchema>(
 			try: () => policyWire(work, operation),
 			catch: () => refusal(operation, "InvalidArgument")
 		})
-		// Compound acquisition (TS-003): register the directory owner and
+		// Compound acquisition: register the directory owner and
 		// its finalizer BEFORE any interruptible child-open step.
 		const directory = yield* Effect.acquireRelease(
 			nativeOperationWith(
@@ -477,7 +477,7 @@ const dbStates = new WeakMap<object, DbState>()
 /**
  * `Db.create` is the explicit constructor and refuses existing authority;
  * `Db.open` of a missing or unreadable database never creates an empty
- * replacement (chapter 30). Both compile the schema through the same
+ * replacement. Both compile the schema through the same
  * implementation as `Schema.compile` — prior compilation is optional.
  */
 const Db = Object.freeze({
@@ -490,11 +490,11 @@ const Db = Object.freeze({
 })
 
 /**
- * Private log-integration seam (C10): wraps a PUBLISHED core snapshot
+ * Private log integration: wraps a published core snapshot
  * handle — minted by the internal log machine's native open/snapshot verbs
  * — in the exact core `QueryReader` plus the scoped session acquisition
- * (`PublishedSnapshot extends QueryReader` in chapter 35; the log adds
- * identity/stamps/freshness AROUND this capability, never a second reader).
+ * (the log adds identity, stamps and freshness around this capability,
+ * never a second reader).
  * The argument is the log package's branded handle for the same native
  * registry entry, so the one cast below is a cross-package respelling of
  * one native capability — the native side re-judges kind/generation/owner

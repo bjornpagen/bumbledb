@@ -4,17 +4,13 @@ use crate::exec::sink::{
 };
 use crate::exec::wordmap::WordMap;
 
-pub(in crate::exec::sink) fn parse_finds(finds: &[FindSpec], slot_count: usize) -> Vec<SinkSpec> {
+pub(in crate::exec::sink) fn parse_finds(finds: &[FindSpec]) -> Vec<SinkSpec> {
     let mut parsed = Vec::with_capacity(finds.len());
-    parse_finds_into(finds, slot_count, &mut parsed);
+    parse_finds_into(finds, &mut parsed);
     parsed
 }
 
-pub(in crate::exec::sink) fn parse_finds_into(
-    finds: &[FindSpec],
-    _slot_count: usize,
-    parsed: &mut Vec<SinkSpec>,
-) {
+pub(in crate::exec::sink) fn parse_finds_into(finds: &[FindSpec], parsed: &mut Vec<SinkSpec>) {
     parsed.clear();
     for find in finds {
         let spec = match find {
@@ -136,7 +132,7 @@ impl AggregateSink {
         hint: usize,
         dense_groups: &[u16],
     ) -> Self {
-        let finds = parse_finds(finds, slot_count);
+        let finds = parse_finds(finds);
         // Written unions can change which argument positions alias in each
         // rule. Only single-rule and DNF-origin heads have stable input aliases.
         let share_float_inputs = !matches!(regime, DedupRegime::Union);
@@ -236,6 +232,7 @@ impl AggregateSink {
             acc_scratch: Vec::with_capacity(n_aggs),
             dedup_survivors: Vec::new(),
             scan_sources: Vec::with_capacity(n_aggs),
+            scan_inputs: Vec::with_capacity(n_aggs),
             scan_count: 0,
             cached_outer_slots: Vec::new(),
             cached_constant_group: false,
@@ -251,7 +248,7 @@ impl AggregateSink {
     pub fn aim(&mut self, finds: &[FindSpec], slot_count: usize, shared_slots: &[(usize, usize)]) {
         debug_assert_eq!(finds.len(), self.finds.len(), "one head, fixed arity");
 
-        parse_finds_into(finds, slot_count, &mut self.finds);
+        parse_finds_into(finds, &mut self.finds);
         self.real_slots = slot_count;
         self.group_spans.clear();
         self.group_spans

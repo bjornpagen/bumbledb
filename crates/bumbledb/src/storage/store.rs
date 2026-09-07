@@ -1,18 +1,15 @@
-//! The successor physical store (C04): one LMDB owner, owned coherent
+//! The physical store: one LMDB owner, owned coherent
 //! snapshots, an elastic map, and the private candidate
 //! prepare/admit/seal/commit capability.
 //!
-//! This module is the storage contract handed to P01 (candidate judgment),
-//! P03 (cursor/snapshot access), P04/P05 (atomic host adjunct and snapshot
-//! export) and P06 (native ownership/affinity). The transitional
-//! `storage::env`/`storage::dict`/`storage::delta` machinery is deleted;
-//! this store is the one storage engine.
+//! Judgment, snapshot access, log metadata and native ownership all use
+//! this storage engine.
 //!
 //! Physical representation:
 //!
-//! - Rows are the canonical successor row bytes ([`crate::canonical`]),
+//! - Rows are the canonical row bytes ([`crate::canonical`]),
 //!   text inline in the LMDB value. There is **no dictionary database**: a
-//!   deleted row leaves no independently live text entry (ENG-006).
+//!   deleted row leaves no independently live text entry.
 //! - Row bodies are `(relation, selected exact scalar home, local ordinal)`.
 //!   Relations without an eligible home use an empty home and retain ordinal
 //!   placement. The body exists once: no row directory or duplicate cache.
@@ -23,11 +20,11 @@
 //!   digest; it selects a candidate bucket only. Full canonical bytes decide
 //!   equality, also under forced collision. All colliding rows remain
 //!   enumerable and individually deletable.
-//! - Secondary determinants are `(projection id, routing bytes, optional interval tail, local row id) → home`
+//! - Secondary determinants are `(projection id, routing bytes, local row id) → home`
 //!   where routing is either compact exact scalar bytes (≤16) or a 16-byte
 //!   BLAKE3 fingerprint — a **multimap**, so competing proposals coexist
 //!   physically while the final state is judged. Semantic
-//!   uniqueness is a law enforced by judgment (C03), not an LMDB key
+//!   uniqueness is a law enforced by judgment, not an LMDB key
 //!   constraint; installation-order accidents are unrepresentable. The
 //!   entries are schema-derived ([`det_index`]); the selected home projection
 //!   has no separate entry because its row bucket already serves it. Other
@@ -43,16 +40,15 @@
 //! - The map is elastic: sized from the populated file plus headroom, grown
 //!   geometrically under an exclusive transaction gate ([`gate`]). There is
 //!   no 32 GiB policy constant and no `NO_SYNC` open lane anywhere in this
-//!   module (ENG-008): every commit is an ordinary durable LMDB commit.
+//!   module: every commit is an ordinary durable LMDB commit.
 //! - [`OwnedSnapshot`] owns one real LMDB read transaction; rows, generation
 //!   and opaque host attachment all derive from that one transaction
-//!   (ENG-003), and export consumes only that view.
+//!   and export consumes only that view.
 //!
-//! Physical byte layout remains provisional until the F3 probes select the
-//! final format (C12); the family/layout counters below exist so provisional
-//! files are unambiguously refused after any change.
+//! [`format::FAMILY`] and [`format::LAYOUT`] identify the persisted format.
+//! Incompatible layouts are refused before any mutation.
 //!
-//! # Ownership and thread constraints (C04 handoff)
+//! # Ownership and thread constraints
 //!
 //! | Capability | Send | Sync | Lifetime |
 //! | --- | --- | --- | --- |
@@ -65,7 +61,7 @@
 //! A prepared/sealed write never crosses threads: LMDB write transactions
 //! are thread-affine and the types are `!Send` through the owner borrow and
 //! the `RwTxn`. A hosted publication attempt therefore keeps its candidate
-//! on the owning worker (chapter 10 §7); there is no unsafe `Send` and no
+//! on the owning worker; there is no unsafe `Send` and no
 //! lifetime erasure here, and none may be added.
 
 pub mod candidate;

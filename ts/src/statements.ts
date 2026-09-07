@@ -275,9 +275,9 @@ function capacity(
 		weight = options.weight.weight
 	}
 	const window = windowValue.window
-	// The unit-floor and vacuous-window ban tables are deleted (C01):
+	// The unit-floor and vacuous-window ban tables are deleted:
 	// `{1..*}`, `{N..*}` and `{0..*}` are accepted canonical laws now.
-	// CapacityDimensionMixing (C18) remains — genuinely different semantics.
+	// CapacityDimensionMixing remains — genuinely different semantics.
 	if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
 		throw new AuthoringError({
 			message: `a unit (count) window against the duration() bound on ${window.hi.field} mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal`

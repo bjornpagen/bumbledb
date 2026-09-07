@@ -1,4 +1,4 @@
-//! The ordered migration manifest and its acyclic prefix chain (C11).
+//! The ordered migration manifest and its acyclic prefix chain.
 //!
 //! The manifest records the repo's ordered chain of plan identities. Prefix
 //! hashing is acyclic and domain-separated: the base digest hashes a framed

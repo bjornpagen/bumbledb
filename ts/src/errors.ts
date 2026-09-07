@@ -1,14 +1,10 @@
 import { Data } from "effect"
 
 /**
- * Pure authoring refusals and SDK-invariant defects. These are the ONLY
- * non-`DbError` throw families in the core package: chapter 35 permits
- * programmer-facing AST misuse to throw synchronously (no I/O ever), and a
- * contradiction between SDK and native state is a defect, not a domain
- * outcome. Every operational failure of effectful work is the single
- * `DbError` tagged-reason class in `#runtime-errors.ts` — the old
- * per-surface `Err*` wrapper family is deleted (duplicate error wrappers
- * are banned by C02/C10).
+ * Pure authoring failures, SDK-invariant defects and internal native-boundary
+ * diagnostics. AST misuse can throw synchronously without I/O. Runtime
+ * adapters translate operational failures into the public `DbError` class
+ * in `#runtime-errors.ts`; contradictions in SDK/native state remain defects.
  */
 
 /** A pure schema, query, parameter, or value-authoring refusal. */

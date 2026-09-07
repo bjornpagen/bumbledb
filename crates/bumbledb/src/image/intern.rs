@@ -1,5 +1,5 @@
 //! The cache-scoped text interner: successor of the deleted persisted
-//! dictionary (ENG-006). Stored rows own their text inline; the query
+//! dictionary. Stored rows own their text inline; the query
 //! engine joins on fixed 64-bit words, so every distinct text observed
 //! during one [`GenerationHandle`] receives one dense token. Token equality
 //! is text equality by construction — the map is keyed by full text bytes,

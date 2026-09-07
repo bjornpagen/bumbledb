@@ -1,5 +1,5 @@
 /**
- * Core `ScalarExpr` → canonical plan expression data (exact reuse, C01/C11).
+ * Core `ScalarExpr` → canonical migration-plan expression data.
  * The generator SERIALIZES the core's typed scalar AST; it never evaluates
  * it — the native executor lowers the plan onto `bumbledb::ScalarExpr` and
  * the core `ScalarEvaluator` executes it with the core's exact numeric
@@ -8,18 +8,9 @@
  * native codec (`MAX_EXPR_DEPTH = 128`); any node outside the frozen core
  * roster (closure, module path, unknown kind) is an unsupported-transform
  * refusal, never a fallback.
- *
- * Assumed C01 core TS `ScalarExpr` runtime data (recorded in
- * implementation/packets/P10.md until P07's export lands) — the spelling is
- * identical to the plan JSON grammar in
- * `crates/bumbledb-log/src/migration/plan.rs::parse_expr`:
- *   { kind: "field", name } | { kind: "literal", value: <one-arm value> }
- *   | { kind: "negate" | "isNaN" | "isFinite", expr }
- *   | { kind: "add" | "subtract" | "multiply" | "divide", left, right }
- *   | { kind: "cast", cast: "toF64" | "toF64Exact" | "toI64Exact" | "toU64Exact", expr }
- * Literal payloads accept BOTH the wire spelling (decimal strings/bit hex)
- * and the idiomatic host values (bigint/number/Uint8Array) the core SDK's
- * `literal` constructor may retain.
+ * Literal payloads accept canonical wire values and the bigint, number,
+ * and Uint8Array values retained by core SDK constructors. The serialized
+ * form is checked again by the native migration-plan decoder.
  */
 import { Uuid } from "@bjornpagen/bumbledb"
 import { bytesHex, f64Bits } from "#migrations/canonical.ts"

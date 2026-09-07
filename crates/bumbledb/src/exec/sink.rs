@@ -85,7 +85,7 @@ enum SinkSpec {
 
 /// One execution's sink allowance: the operation ledger plus the RAM
 /// allowance a sink's distinct-state may occupy before it must continue in
-/// the one temporary-LMDB scratch map (chapter 12 §4). Installed per
+/// the one temporary-LMDB scratch map. Installed per
 /// execution by the prepared query on the main sink AND interior stage
 /// sinks (the derived-tuples budget still judges stage row counts at
 /// seal); a sink without a budget (bare executor harnesses) stays in RAM.
@@ -773,6 +773,7 @@ enum Acc {
 #[derive(Debug, Clone, Copy)]
 enum FoldSource {
     Outer,
+    /// Index into the shared column-reduction program, not a physical column.
     Column(usize),
 }
 
@@ -834,6 +835,7 @@ pub struct AggregateSink {
     acc_scratch: Vec<Acc>,
     dedup_survivors: Vec<u32>,
     scan_sources: Vec<FoldSource>,
+    scan_inputs: Vec<aggregate::scan::ScanInput>,
     scan_count: u64,
     cached_outer_slots: Vec<usize>,
     cached_constant_group: bool,

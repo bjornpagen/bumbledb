@@ -2,7 +2,7 @@
 //! quarantine keeps `blake3` out of `bumbledb-bench`; this thin surface
 //! lends the hash without leaking the dependency's types.
 //!
-//! Role separation (chapter 41): this full 32-byte digest is the
+//! Role separation: this full 32-byte digest is the
 //! **authoritative content-identity** width — schema fingerprints,
 //! command/decision commitments and remote objects. It is never truncated
 //! by a generic helper. The 16-byte exact-checked **local fact

@@ -1,15 +1,7 @@
 /**
- * Private core database bridge roster — the C09/C05 CONSUMER-side pin for
- * the managed runtime verbs the chapter 35 core surface dispatches. Not a
- * public API: nothing here is exported from the package barrel.
- *
- * OWNERSHIP NOTE (recorded in implementation/packets/P07.md): the addon
- * implementation of every verb below is P06R's lane (`ts/crate/src/`,
- * worker-affine sessions per P06.md's reactor design) on top of P02's C04
- * owned snapshots and P03's C05 completed results. This file declares the
- * exact shapes P07 codes against, exactly as `#runtime-native.ts` pins the
- * landed runtime/directory/fs handshake. Every verb runs on the ONE bounded
- * executor (no AsyncTask/libuv bypass), registers under the runtime's
+ * Private database bridge over worker-owned core snapshots and results.
+ * The implementation lives in `ts/crate/src/`; this is not a public API.
+ * Every verb runs on the shared bounded executor, registers under its
  * operation accounting, takes a `PolicyWire` converted once at admission,
  * and completes through the registered callback; `runtimeCancel` cancels
  * and joins any of them. Close verbs report the real drain outcome through
@@ -116,7 +108,7 @@ interface DbBridge {
 	 * Complete bounded execution. The snapshot variant owns an internal
 	 * one-shot session and closes it before publishing the result; the
 	 * session variant reuses the caller's session. Either way the result is
-	 * sealed and independent only after ALL evaluation succeeded (C05).
+	 * sealed and independent only after ALL evaluation succeeded.
 	 */
 	runtimeSnapshotExecute(
 		snapshot: SnapshotHandle,
@@ -221,9 +213,8 @@ interface DbBridge {
 	): OperationHandle
 
 	/**
-	 * Read-only migration-codec integration (C11; P09's native
-	 * `schema_file::{schema_id, render}` / `migration::{plan, manifest}`
-	 * lanes reached through the P06 executor). `hashChunk`-shaped: bounded
+	 * Read-only migration-codec integration over native `schema_file` and
+	 * `migration::{plan, manifest}` through the shared executor: bounded
 	 * owned input, bounded owned JSON response bytes, one registered
 	 * cancellable operation. Neither verb opens, initializes, freezes or
 	 * migrates a database.

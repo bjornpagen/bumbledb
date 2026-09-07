@@ -1,4 +1,4 @@
-//! The internal successor history machine's value vocabulary.
+//! The internal history machine's value vocabulary.
 //!
 //! One authority record and its legal transitions ([`authority`]), pure
 //! current-admission guards ([`admission`]), sealed canonical commands and
@@ -10,8 +10,8 @@
 //! never interprets them with a second codec.
 //!
 //! `SchemaId` aliases the core's canonical schema fingerprint. This Rust
-//! surface is internal shared-native implementation, not a public log SDK,
-//! and its physical bytes remain provisional until the F3 format freeze.
+//! surface is shared-native implementation, not a public log SDK. Persisted
+//! frames are versioned independently of the internal Rust API.
 
 pub mod admission;
 pub mod authority;

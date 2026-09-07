@@ -133,9 +133,8 @@ pub enum Condition {
 /// Bounded caller-declared result metadata. The bytes are the core's
 /// canonical scalar encoding, opaque to the log: this module frames and
 /// bounds them but never interprets them with a log value vocabulary.
-/// Until the core exposes its canonical result-scalar codec (C01, P01),
-/// only the empty result is produced by this crate's own machines; the
-/// framing is already total for nonempty canonical bytes.
+/// [`bumbledb::canonical::result`] owns the encoding and validation; the
+/// empty result is its empty-record spelling.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct CommandResult(Box<[u8]>);
 

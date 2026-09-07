@@ -1,9 +1,9 @@
 //! Create / open / publish over the successor store owner. Create and open
-//! are distinct native operations (C04): create refuses an existing
+//! are distinct native operations: create refuses an existing
 //! destination and publishes through the store's staged-directory protocol;
 //! open verifies family/layout/schema against one read view before adopting
 //! anything. Durability is LMDB defaults on every path — the `*_nosync`
-//! constructor family stays deleted (ENG-008).
+//! constructor family stays deleted.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -95,7 +95,7 @@ impl<S> Db<S> {
 
     /// Publish an admitted heap instance as a new durable database at
     /// `path` through the staged install protocol: populate and judge in a
-    /// private staging directory, then publish atomically (CORE-016).
+    /// private staging directory, then publish atomically.
     ///
     /// ```compile_fail
     /// fn require_builder(path: &std::path::Path, builder: &bumbledb::InstanceBuilder<()>) {

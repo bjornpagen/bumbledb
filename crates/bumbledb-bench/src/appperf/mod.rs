@@ -163,7 +163,7 @@ pub struct CostAccount {
     pub working_bytes: Option<u64>,
     /// Compiled index roster size for the cell's schema.
     pub roster_entries: Option<u64>,
-    /// Virtual map vs allocated disk (PERF-002). Never report map as RSS.
+    /// Virtual map vs allocated disk. Never report map as RSS.
     pub virtual_map_bytes: Option<u64>,
     pub allocated_disk_bytes: Option<u64>,
 }

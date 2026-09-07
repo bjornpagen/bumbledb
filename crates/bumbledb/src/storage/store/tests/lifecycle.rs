@@ -264,7 +264,7 @@ fn a_layout_bump_refuses_with_both_counters() {
 #[test]
 fn recognizing_the_layout_integer_alone_is_forbidden() {
     // A corrupted family with an intact layout counter must refuse as
-    // unrecognized: integer 1 alone never admits bytes (C12).
+    // unrecognized: integer 1 alone never admits bytes.
     let (_dir, path) = store_dir("store-family-corrupt");
     {
         let store = create_default(&path);

@@ -195,7 +195,7 @@ fn deterministic_random_merge_trees_match_unpartitioned_exact_states() {
 
 #[test]
 fn scratch_codec_round_trips_every_state_bit_for_bit() {
-    // The group-spill codec (chapter 12 §4): Empty, finite positive and
+    // The group-spill codec: Empty, finite positive and
     // negative totals, exact zero, subnormals, ±∞ and NaN totals all
     // round-trip exactly — merges of decoded states equal merges of the
     // originals, so a spilled partition's Sum/Mean bits never drift.

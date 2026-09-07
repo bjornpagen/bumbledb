@@ -124,7 +124,7 @@ impl<S> Db<S> {
         &self.schema
     }
 
-    /// The successor store owner (C04). Native/log integration and the
+    /// The successor store owner. Native/log integration and the
     /// offline sweeper read through this; it is not embedding API.
     #[doc(hidden)]
     #[must_use]

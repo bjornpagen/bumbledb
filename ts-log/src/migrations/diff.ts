@@ -8,7 +8,7 @@
  * list — generation never guesses from matching shapes and never fabricates
  * a zero/null.
  *
- * Output is inert plan data with TOTAL ordinary-relation coverage (C11):
+ * Output is inert plan data with TOTAL ordinary-relation coverage:
  * every ordinary source relation becomes exactly one `map-relation` or
  * `drop-relation`; every ordinary target relation exactly one
  * `map-relation`/`empty-relation`. A source field no expression references is

@@ -7,11 +7,11 @@ use crate::exec::colt::{BatchToken, Colt, Cursor, KeyCount};
 use crate::image::view::OperandAddr;
 use crate::plan::fj::ValidatedPlan;
 
-/// The sink's reply to one emitted binding (L06 contract).
+/// The sink's reply to one emitted binding.
 ///
-/// `SkipSuffix` requests the D2 subtree skip (legal only for the projection
+/// `SkipSuffix` requests a witnessed subtree skip (legal only for the projection
 /// sink). `Stop` is work/deadline/scratch refusal; `Error` is cardinality
-/// or corruption. L05 propagates all four; ignored `Stop` is deleted.
+/// or corruption. Every executor path propagates terminal replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
     Continue,
@@ -44,9 +44,8 @@ impl Flow {
 }
 
 /// One leaf batch, borrowed from the executor: the
-/// last plan node's surviving cover entries, handed to the sink whole —
-/// the per-row recursion that used to carry them one binding at a time
-/// is gone. A sink reads each output slot either from the batch's cover
+/// last plan node's surviving cover entries, handed to the sink whole.
+/// A sink reads each output slot either from the batch's cover
 /// keys (slots in `key_slots`, varying per entry) or from `bindings`
 /// (everything else — bound by ancestor nodes, constant across the
 /// batch).
@@ -115,8 +114,8 @@ pub trait Sink {
 
     fn emit_batch(&mut self, batch: &LeafBatch<'_>) -> Flow;
 
-    /// Sticky L06 progress after emit. Default is silent Continue so
-    /// harness sinks stay unchanged; production sinks override.
+    /// Sticky progress after emit. Infallible harness sinks use the default;
+    /// production sinks report latched errors and refusals.
     fn progress(&self) -> crate::exec::sink::SinkProgress {
         crate::exec::sink::SinkProgress::Continue
     }
@@ -175,7 +174,7 @@ fn emit_node_batch<S: Sink>(
     }
 }
 
-/// Sink-side evidence for D2 subtree cancellation. Only projection sinks
+/// Sink-side evidence for subtree cancellation. Only projection sinks
 /// mint `Licensed`; aggregate sinks inherit the forbidden default because
 /// existential variables still multiply their fold domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -226,10 +225,9 @@ pub struct Bindings {
     current: u64,
 }
 
-/// The starting batch size: sized so ~28 MLP lanes see >=28 independent
-/// probes in flight with bookkeeping amortized over several waves (D4's
-/// model). The exact number is measurement-owned (OPEN, architecture
-/// README) — this is the one place it lives.
+/// Default probe batch: enough independent work to overlap memory loads
+/// while amortizing per-batch bookkeeping. A tuning parameter, not a
+/// hardware constant; batch size one follows the same execution path.
 pub const BATCH: usize = 128;
 
 #[derive(Debug, Clone, Copy)]
@@ -271,8 +269,8 @@ fn compare_wide(
 /// zero-fills only above its high-water mark, never per pass — `clear` +
 /// `resize(n, 0)` re-memset the full window every pass (`_platform_memset`,
 /// 3.7% of `meets_chain`) though every element of `[..n]` is written before it
-/// is read. Shared by both line-parallel passes and the anti-probe — the
-/// contract is behavior, not the refused pass extraction.
+/// is read. Shared by both line-parallel passes and the anti-probe;
+/// each caller writes its active window before reading it.
 fn grow_scratch<T: Copy + Default>(v: &mut Vec<T>, n: usize) {
     if v.len() < n {
         v.resize(n, T::default());
@@ -461,7 +459,7 @@ enum Poison {
     SinkError,
 }
 
-/// The warm executor's per-execution ledger handle (chapter 12 §7):
+/// The warm executor's per-execution ledger handle:
 /// binding exploration steps and COLT pool growth are charged in bounded
 /// quanta — one poll per [`crate::exec::sink::STEP_QUANTUM`] explored
 /// cover entries, the same published maximum unpolled quantum as the

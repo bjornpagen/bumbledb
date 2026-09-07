@@ -1,14 +1,9 @@
-//! [`Db::verify_store`] — the offline sweeper over the successor store:
+//! [`Db::verify_store`] — the offline sweeper over the store:
 //! one coherent owned snapshot, one pass per physical namespace, then the
 //! complete production judgment re-run globally. Every key derivation,
 //! fingerprint and semantic law is imported from the engine's own modules
 //! ([`crate::storage::store`] and `schema::judge`) — the sweeper's
 //! knowledge is the engine's knowledge, never a second implementation.
-//!
-//! The dictionary namespaces of the deleted transitional format (`_dict`
-//! coherence, dangling-intern statistics, fresh-sequence ratchets) are gone
-//! with their mechanisms: live tuple text is owned inline by canonical rows
-//! (ENG-006) and no fresh issuance authority exists.
 
 use crate::Db;
 use crate::error::Result;

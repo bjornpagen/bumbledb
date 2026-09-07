@@ -1,20 +1,18 @@
-//! Schema declaration validation, the sealed witness, and the fingerprint
-//! .
-//! The schema-as-declared vocabulary — the ids, [`ValueType`],
-//! [`SchemaDescriptor`] and its descriptor family, [`LiteralSet`]/[`Side`],
-//! the [`spec`] lowering, and the shared [`value_matches`] check — lives in
-//! `bumbledb-theory` (the parity roster is normative there) and is
-/// The canonical bounded rejection-evidence codec (C01/C03): the one byte
+//! Schema validation, sealed witnesses, and compiled enforcement indexes.
+//! Declaration types and [`spec`] lowering are shared with `bumbledb-theory`.
+//! Validation seals declarations; [`compiled`] derives the access paths used
+//! by storage, judgment, and query planning.
+
+pub mod compiled;
+/// The canonical bounded rejection-evidence codec: the one byte
 /// spelling of a complete violated-statement set with labeled examples and
 /// truncation evidence. The log frames these bytes verbatim into decisions
 /// and receipts; strict decode plus schema interpretation reproduces the
 /// judge's verdict or the public [`crate::Violations`] value.
-pub mod compiled;
 pub mod evidence;
 pub mod fingerprint;
-/// The reference final-state judge and the candidate-state interface
-/// (contract C03): the semantic denotation the physical commit path and
-/// the independent models both answer to.
+/// Final-state judgment and the candidate-state interface shared by the
+/// physical commit path and independent models.
 pub mod judge;
 pub mod manifest;
 pub mod render;
@@ -26,7 +24,6 @@ mod validate;
 mod wire;
 
 use crate::encoding::FactLayout;
-// `super::Value`, exactly as before the theory extraction.
 use bumbledb_theory::Value;
 
 pub use bumbledb_theory::schema::spec;
@@ -89,32 +86,8 @@ impl Theory for SchemaDescriptor {
     }
 }
 
-impl Schema {
-    #[expect(
-        clippy::unused_self,
-        dead_code,
-        reason = "the schema is the witness's minting authority — readers go through \
-                  it; consumed by the recorded C03/C05 acceleration follow-up \
-                  (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn key_tail(&self, key: &KeyStatement) -> Option<ValueType> {
-        key.tail()
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DisjointDeterminantProof(());
-
-impl DisjointDeterminantProof {
-    #[expect(
-        dead_code,
-        reason = "the coverage authorization the recorded C03/C05 acceleration \
-                  follow-up consumes (implementation/packets/P02.md)"
-    )]
-    pub(crate) const fn authorize_coverage(self) {
-        let Self(()) = self;
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Enforcement {
@@ -145,19 +118,6 @@ impl Enforcement {
             Self::Closed { .. } => None,
         }
     }
-
-    #[expect(
-        dead_code,
-        reason = "compiled containment plan read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn key_projection(&self) -> Option<&[FieldId]> {
-        match self {
-            Self::ScalarProbe { key_projection, .. }
-            | Self::IntervalCoverage { key_projection, .. } => Some(key_projection),
-            Self::Closed { .. } => None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,28 +130,6 @@ pub(crate) enum CapacityEnforcement {
     Closed {
         members: MemberSet,
     },
-}
-
-impl CapacityEnforcement {
-    #[expect(
-        dead_code,
-        reason = "compiled capacity plan read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn key_projection(&self) -> Option<&[FieldId]> {
-        match self {
-            Self::ScalarProbe { key_projection, .. } => Some(key_projection),
-            Self::Closed { .. } => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Survivors {
-    ReverseEdges,
-
-    /// unrepresentable (refused at validation).
-    SealedRows,
 }
 
 /// The `==` partner of a containment, typed to the containment arena.
@@ -277,79 +215,6 @@ impl EncodableCheck {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CompiledCheck {
-    Encoded {
-        field: FieldId,
-        bytes: Box<[u8]>,
-    },
-
-    EncodedSet {
-        field: FieldId,
-        alternatives: Box<[Box<[u8]>]>,
-    },
-
-    Interned {
-        field: FieldId,
-        text: Box<str>,
-    },
-
-    InternedSet {
-        field: FieldId,
-        texts: Box<[Box<str>]>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum CompiledSide {
-    Ordinary(Box<[CompiledCheck]>),
-    Closed(Box<[EncodableCheck]>),
-}
-
-impl CompiledSide {
-    #[expect(
-        dead_code,
-        reason = "compiled selection plans read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn ordinary(&self) -> Option<&[CompiledCheck]> {
-        match self {
-            Self::Ordinary(checks) => Some(checks),
-            Self::Closed(_) => None,
-        }
-    }
-
-    #[expect(
-        dead_code,
-        reason = "compiled selection plans read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn closed(&self) -> Option<&[EncodableCheck]> {
-        match self {
-            Self::Closed(checks) => Some(checks),
-            Self::Ordinary(_) => None,
-        }
-    }
-
-    #[expect(
-        dead_code,
-        reason = "compiled selection plans read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn is_empty(&self) -> bool {
-        match self {
-            Self::Ordinary(checks) => checks.is_empty(),
-            Self::Closed(checks) => checks.is_empty(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CompiledSides {
-    pub(crate) source: CompiledSide,
-    pub(crate) target: CompiledSide,
-}
-
 /// The sealed key form: two behaviors, two arms. There is no fresh-row
 /// arm — the database issues no identity, and every key is an ordinary
 /// declared law over application-supplied values. The disjointness proof
@@ -379,16 +244,6 @@ impl KeyStatement {
     pub fn form(&self) -> &KeyForm {
         &self.form
     }
-
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "pointwise-tail accessor for the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) fn tail(&self) -> Option<ValueType> {
-        self.form.as_pointwise()
-    }
 }
 
 impl KeyForm {
@@ -396,43 +251,16 @@ impl KeyForm {
     pub const fn is_pointwise(&self) -> bool {
         matches!(self, Self::Pointwise { .. })
     }
-
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "pointwise-tail accessor for the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) const fn as_pointwise(&self) -> Option<ValueType> {
-        match *self {
-            Self::Pointwise { tail, .. } => Some(tail),
-            Self::Scalar => None,
-        }
-    }
 }
 
-/// One sealed containment: its declaration, enforcement proof, compiled
-/// selections, and optional `==` partner.
+/// One sealed containment: its canonical declaration, enforcement proof,
+/// and optional `==` partner. Physical access paths live in [`CompiledTheory`].
 #[derive(Debug, Clone)]
 pub struct ContainmentStatement {
     pub id: StatementId,
     pub source: Side,
     pub target: Side,
     pub(crate) enforcement: Enforcement,
-
-    #[expect(
-        dead_code,
-        reason = "compiled judgment-survivor plan read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) survivors: Survivors,
-
-    #[expect(
-        dead_code,
-        reason = "compiled selection plans read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) checks: CompiledSides,
 
     pub pairing: Pairing,
 }
@@ -486,16 +314,6 @@ impl SealedBound {
             Self::Duration { field, .. } => Some(Bound::TargetDuration(field)),
         }
     }
-
-    #[must_use]
-    #[expect(
-        dead_code,
-        reason = "bound-shape probe for the recorded C03/C05 acceleration \
-                  follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) const fn needs_parent_fact(self) -> bool {
-        matches!(self, Self::TargetField(_) | Self::Duration { .. })
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -505,12 +323,8 @@ pub(crate) enum BoundCeiling {
 }
 
 /// One sealed capacity statement: `B(Y | ψ) <=[w]{lo..hi} A(X | φ)`.
-/// Accepted at declaration with its sealed target-key plan handle
-/// (the same probe-ability rule containments resolve —
-/// plan); commit-time judging is the enforcement stage's work. Fields
-/// sit in the operator's read order — target, weight, window, source
-/// (ruled 2026-07-24, C2).
-/// `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the promised
+/// Validation resolves the target key and seals the weight and ceiling.
+/// Commit-time judgment checks the final measure against the window.
 #[derive(Debug, Clone)]
 pub struct CapacityStatement {
     pub id: StatementId,
@@ -524,13 +338,6 @@ pub struct CapacityStatement {
     pub source: Side,
 
     pub(crate) enforcement: CapacityEnforcement,
-
-    #[expect(
-        dead_code,
-        reason = "compiled selection plans read by the recorded C03/C05 \
-                  acceleration follow-up (implementation/packets/P02.md)"
-    )]
-    pub(crate) checks: CompiledSides,
 }
 
 /// The global materialized-order spine: a [`StatementId`] selects one typed
@@ -576,8 +383,7 @@ impl StatementView<'_> {
 
 /// One sealed ground axiom: the handle plus the row's canonical fact bytes
 /// — the synthetic id field (the declaration index) followed by each
-/// intrinsic value's canonical encoding. Values encode ONCE, at validate,
-/// .
+/// intrinsic value's canonical encoding. Validation encodes these once.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SealedRow {
     pub handle: Box<str>,
@@ -735,10 +541,7 @@ impl Schema {
     }
 
     #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "roster identity; tests and later consumers")
-    )]
+    #[cfg(test)]
     pub(crate) fn cite(&self, id: StatementId) -> StatementRef {
         self.order[usize::from(id.0)]
     }
@@ -771,7 +574,6 @@ impl Schema {
     }
 
     /// Mirrors `lean/Bumbledb/Schema.lean: Statement.closedConstant`.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn closed_constant(&self, view: StatementView<'_>) -> bool {
         let closed = |relation| self.relation(relation).body().closed_rows().is_some();
         match view {
@@ -785,13 +587,11 @@ impl Schema {
         }
     }
 
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "roster identity; tests and later consumers")
-    )]
-    pub(crate) fn complete_obligations(&self) -> CompleteObligations<'_> {
-        CompleteObligations { schema: self }
+    /// Instance-dependent laws in declaration order. Closed-constant laws
+    /// were discharged by validation and cannot be affected by a delta.
+    pub(crate) fn complete_obligations(&self) -> impl Iterator<Item = StatementView<'_>> + '_ {
+        self.statements()
+            .filter(|view| !self.closed_constant(*view))
     }
 
     /// # Panics
@@ -803,99 +603,5 @@ impl Schema {
     #[must_use]
     pub fn dependents_checked(&self, id: KeyId) -> Option<&[ContainmentId]> {
         self.dependents.get(usize::from(id.0)).map(AsRef::as_ref)
-    }
-}
-
-/// Hand-enumerated rosters beside this spine are refused.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "roster identity; tests and later consumers")
-)]
-pub(crate) struct CompleteObligations<'schema> {
-    schema: &'schema Schema,
-}
-
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "roster identity; tests and later consumers")
-)]
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum CompleteObligation<'schema> {
-    Key {
-        id: KeyId,
-        statement: &'schema KeyStatement,
-    },
-    Containment {
-        id: ContainmentId,
-        statement: &'schema ContainmentStatement,
-    },
-    Capacity {
-        id: CapacityId,
-        statement: &'schema CapacityStatement,
-    },
-}
-
-impl CompleteObligation<'_> {
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "roster identity; tests and later consumers")
-    )]
-    pub(crate) fn statement_ref(self) -> StatementRef {
-        match self {
-            Self::Key { id, .. } => StatementRef::Key(id),
-            Self::Containment { id, .. } => StatementRef::Containment(id),
-            Self::Capacity { id, .. } => StatementRef::Capacity(id),
-        }
-    }
-
-    #[must_use]
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "roster identity; tests and later consumers")
-    )]
-    pub(crate) fn statement_id(self) -> StatementId {
-        match self {
-            Self::Key { statement, .. } => statement.id,
-            Self::Containment { statement, .. } => statement.id,
-            Self::Capacity { statement, .. } => statement.id,
-        }
-    }
-}
-
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "roster identity; tests and later consumers")
-)]
-impl<'schema> CompleteObligations<'schema> {
-    pub(crate) fn iter(&self) -> impl Iterator<Item = CompleteObligation<'schema>> + '_ {
-        self.schema.order.iter().copied().filter_map(|slot| {
-            let view = self.schema.view(slot);
-            if self.schema.closed_constant(view) {
-                None
-            } else {
-                Some(Self::classify(view))
-            }
-        })
-    }
-
-    fn classify(view: StatementView<'schema>) -> CompleteObligation<'schema> {
-        match view {
-            StatementView::Key(id, statement) => match statement.form() {
-                KeyForm::Scalar | KeyForm::Pointwise { .. } => {
-                    CompleteObligation::Key { id, statement }
-                }
-            },
-            StatementView::Containment(id, statement) => match &statement.enforcement {
-                Enforcement::ScalarProbe { .. }
-                | Enforcement::IntervalCoverage { .. }
-                | Enforcement::Closed { .. } => CompleteObligation::Containment { id, statement },
-            },
-            StatementView::Capacity(id, statement) => match &statement.enforcement {
-                CapacityEnforcement::ScalarProbe { .. } | CapacityEnforcement::Closed { .. } => {
-                    CompleteObligation::Capacity { id, statement }
-                }
-            },
-        }
     }
 }

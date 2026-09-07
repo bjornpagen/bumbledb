@@ -78,11 +78,6 @@ fn random_field(rng: &mut Rng, idx: usize) -> FieldDescriptor {
         FIELD_NAMES[idx % FIELD_NAMES.len()]
     };
 
-    // The successor has no generated-field attribute: the retired fresh
-    // draw is gone WITH its mechanism (E-NO-RESERVE), so the descriptor
-    // grammar this generator samples is exactly the declared one.
-    // Checked-in corpora regenerate in F3 (deferred command recorded in
-    // implementation/packets/P11.md).
     FieldDescriptor {
         name: name.into(),
         value_type: random_type(rng),

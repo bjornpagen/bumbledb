@@ -1,4 +1,4 @@
-//! The core db-bridge verb roster (C09/C05): schema compile, coherent
+//! The core db-bridge verb roster: schema compile, coherent
 //! snapshots and snapshot-bound execution sessions, point reads, complete
 //! bounded execution into sealed [`bumbledb::CompleteResult`]s, one-shot
 //! cursor transfer, database-free change drafts, one immutable final-state

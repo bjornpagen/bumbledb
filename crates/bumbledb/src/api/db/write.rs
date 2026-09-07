@@ -49,7 +49,7 @@ pub enum ApplyExpected<S> {
     Exact(Witness<S>),
 }
 
-/// Typed public write outcome (chapter 30). Distinct from a JS callback.
+/// Typed public write outcome. Distinct from a JS callback.
 ///
 /// ```compile_fail
 /// fn require_rejected(outcome: bumbledb::ApplyOutcome) {

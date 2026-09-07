@@ -1,4 +1,4 @@
-//! Compile canonical plan data onto the CORE operators (C11/C05).
+//! Compile canonical plan data onto the CORE operators.
 //!
 //! Compilation is the complete native admission judgment over one plan:
 //! schema binding (the supplied descriptors must fingerprint to the plan's

@@ -1,4 +1,4 @@
-//! Completed results and paged delivery (C05, chapter 12 §8).
+//! Completed results and paged delivery.
 //!
 //! Execution builds a private result; only after **all** relational work,
 //! aggregate finalization, value checks and result storage succeed does a
@@ -573,8 +573,8 @@ impl<'w> ResultCharge<'w> {
 /// 7. A following row that does not fit a nonempty page ends the page
 ///    successfully (not an error).
 /// 8. An oversized first row refuses; the cursor is unchanged.
-/// 9. Terminal scratch/storage/corruption stays **failed** via
-///    [`Self::fail_backing`]; later pulls return that error, never EOF.
+/// 9. Terminal scratch/storage/corruption stays **failed**; later pulls
+///    return that error, never EOF.
 /// 10. No second public raw cursor.
 pub struct DeliveryTicket<'cursor> {
     cursor: &'cursor mut ResultCursor,
@@ -719,8 +719,8 @@ impl<'cursor> DeliveryTicket<'cursor> {
     }
 
     /// Take the previewed page. Position is still uncommitted. The
-    /// preview reservation stays on the ticket until
-    /// [`Self::take_preview_charge`] or abort.
+    /// preview reservation stays on the ticket until transferred to the
+    /// published page owner or released by abort.
     pub fn adopt(&mut self) -> Option<Answers> {
         self.preview.take()
     }
@@ -1088,7 +1088,7 @@ fn decode_row(mut bytes: &[u8], arity: usize, out: &mut Answers) -> Result<()> {
 
 impl<S> super::PreparedQuery<S> {
     /// Execute to one sealed [`CompleteResult`]: the atomic-answer entry
-    /// (QRY-001) — either the complete evaluated set seals, or the typed
+    /// — either the complete evaluated set seals, or the typed
     /// error is the only outcome. The result owns RAM or scratch backing
     /// and is charged to the caller's `result_bytes`.
     /// # Errors

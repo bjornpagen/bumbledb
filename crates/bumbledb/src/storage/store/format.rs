@@ -1,13 +1,11 @@
-//! Successor store identity and `_core_meta` framing.
+//! Store identity and `_core_meta` framing.
 //!
-//! The family magic plus layout counter make old bytes unambiguously
-//! incompatible: recognizing the integer `1` alone is forbidden (C12), so
-//! every check reads the eight family bytes first. The transitional format-8
-//! store uses different database names (`_meta`/`_data`/`_dict`) and no
-//! family key; either direction of cross-open refuses before any write.
+//! Readers check both the eight-byte family magic and the layout counter
+//! before interpreting stored data. A matching counter in another family
+//! is not a compatible format.
 //!
-//! Physical bytes remain provisional until the F3 format probes; changing
-//! any layout here requires bumping [`LAYOUT`] so provisional files refuse.
+//! Incompatible physical changes require a new [`LAYOUT`]; unknown layouts
+//! refuse before any write. Logical backup and migration belong to the log.
 
 use heed::RoTxn;
 use heed::types::Bytes;
@@ -15,41 +13,21 @@ use heed::types::Bytes;
 use super::error::{StoreCorruption, StoreError, StoreResult};
 use crate::schema::fingerprint::SchemaFingerprint;
 
-/// Successor core family magic. Not shared with the log/command/snapshot
+/// Core family magic. Not shared with the log/command/snapshot
 /// families, which own their separate magics.
 pub const FAMILY: &[u8; 8] = b"BDBCOR1\0";
 
-/// Layout counter within the family. Restarted at 1 by explicit decision;
-/// the family magic is what makes old files unambiguous. Layout 2 (F3
-/// finding B): the `0x03` determinant namespace is populated and
-/// load-bearing — every sealed key statement's scalar determinant entries
-/// are maintained with each row and consumed by keyed reads, key probes and
-/// judgment enumeration. A layout-1 directory (empty determinant namespace)
-/// refuses instead of silently missing on every keyed read. Layout 3 moves
-/// the row namespace after secondary indexes to preserve right-edge append
-/// packing during ascending relation loads. Layout 2 must refuse rather
-/// than silently read the old row namespace as an empty database.
-/// Layout 4 uses schema-fixed ordinal widths in data-tree keys; older
-/// layouts refuse before interpreting those keys. Metadata is unchanged.
-/// Layout 5 omits membership entries for relations with a selected exact
-/// scalar key, using that determinant multimap with full-row confirmation.
-/// Logical export uses the selected key order for those relations and
-/// fingerprint order otherwise. Older layouts must refuse: their readers
-/// would silently omit the rows whose membership entries no longer exist.
-/// Layout 6 clusters eligible row bodies under their selected exact scalar
-/// home and stores that home in secondary-index values. The selected home
-/// determinant entry is omitted. Logical export retains layout-5 ordering;
-/// row ordinals and canonical bytes are unchanged, but older physical
-/// readers must refuse before interpreting the new keys and index values.
-/// Layout 7 removes interval endpoints from determinant keys: every bucket
-/// is scalar route plus row ordinal. Canonical rows retain interval values,
-/// and pointwise judgment orders its own scratch by those endpoints. Older
-/// physical readers refuse; logical export and diagnostic ranks are unchanged.
+/// Persisted layout shipped in 1.0. Rows use schema-fixed ordinal widths
+/// and cluster under an eligible exact scalar home. That home supplies
+/// membership and determinant lookup without duplicate index entries;
+/// secondary-index values carry the home needed to locate each row.
+/// Determinant keys contain the scalar route and row ordinal, not interval
+/// endpoints. Canonical rows retain intervals; pointwise judgment orders
+/// scratch by their endpoints. See [`super::keys`] for the byte layouts.
 pub const LAYOUT: u32 = 7;
 
-/// Named databases inside the environment. Deliberately distinct from the
-/// transitional store's `_meta`/`_data`/`_dict` so neither format can adopt
-/// the other's bytes.
+/// Named databases inside the environment; neither is adopted from another
+/// format without the family and layout checks.
 pub const META_DB: &str = "_core_meta";
 pub const DATA_DB: &str = "_core_data";
 

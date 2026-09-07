@@ -105,8 +105,7 @@ pub fn log_error_codes() -> Vec<String> {
     PROTOCOL_CODES.iter().map(ToString::to_string).collect()
 }
 
-/// The protocol command/frame limits — one bridge-wide envelope,
-/// provisional until the F3 format freeze (C12) qualifies deployment caps.
+/// Bridge-wide byte limits for commands, changes, evidence and scalar results.
 pub(crate) const LIMITS: Limits = Limits {
     envelope_bytes: 4 << 20,
     change_bytes: 64 << 20,
@@ -2618,7 +2617,7 @@ fn witness_of(
     }
 }
 
-/// The typed read-refusal mapping (chapter 30): every arm is a rostered
+/// The typed read-refusal mapping: every arm is a rostered
 /// protocol reason — never a stale read dressed as validated, and never a
 /// claimed exact witness that was not verified.
 fn fail_of_read_refusal(refusal: bumbledb_log::replica::ReadRefusal) -> LogFail {
@@ -3340,7 +3339,7 @@ pub fn log_command_close(
 }
 
 // ---------------------------------------------------------------------------
-// The tenant cache (chapter 31): TenantRegistry bookkeeping + real opens.
+// The tenant cache: TenantRegistry bookkeeping + real opens.
 // ---------------------------------------------------------------------------
 
 pub(crate) struct CacheShared {
@@ -4148,10 +4147,10 @@ pub(crate) fn targets_root(directory: &str) -> PathBuf {
 
 /// The deterministic planned target incarnation for one migration
 /// operation: a stable ref exists BEFORE dispatch and a retry of the same
-/// operation resumes the same target (provisional domain until C12).
+/// operation resumes the same target. The domain is part of the persisted
+/// migration identity contract.
 pub(crate) fn planned_target_incarnation(operation: OperationId) -> IncarnationId {
-    // Domain-prefixed engine hash (the addon carries no second hash
-    // implementation); the derivation is provisional until C12.
+    // Domain-prefixed engine hash; the addon carries no second implementation.
     let mut digest = bumbledb::digest::Digest::new();
     digest.update(b"bumbledb.migration.v1/target-incarnation\0");
     digest.update(operation.as_core().as_bytes());

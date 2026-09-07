@@ -1,18 +1,17 @@
 //! Declaration validation: the boundary that turns a [`SchemaDescriptor`]
 //! into the sealed [`Schema`] witness.
-//! Field checks first, then the statement roster and acceptance gate of
-//! — exhaustive, one distinct
-//! (the variant doc comments carry the citations). Every accepted
-//! statement leaves as a typed arena witness; downstream trusts its
+//! Field checks precede statement checks. Every accepted statement leaves
+//! as a typed arena witness, with its target key and value domains resolved.
+
 use std::collections::BTreeMap;
 
 use super::{
-    AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, CompiledCheck,
-    CompiledSide, CompiledSides, ContainmentId, ContainmentStatement, DisjointDeterminantProof,
-    EncodableCheck, Enforcement, FactLayout, FieldDescriptor, FieldId, KeyForm, KeyId,
-    KeyStatement, LiteralSet, MemberSet, Pairing, Relation, RelationBody, RelationDescriptor,
-    RelationId, Schema, SchemaDescriptor, SealedBound, SealedWeight, Side, StatementDescriptor,
-    StatementId, StatementRef, Survivors, ValueMismatch, ValueType, Weight, value_matches,
+    AxiomIndex, Bound, CapacityEnforcement, CapacityId, CapacityStatement, ContainmentId,
+    ContainmentStatement, DisjointDeterminantProof, EncodableCheck, Enforcement, FactLayout,
+    FieldDescriptor, FieldId, KeyForm, KeyId, KeyStatement, LiteralSet, MemberSet, Pairing,
+    Relation, RelationBody, RelationDescriptor, RelationId, Schema, SchemaDescriptor, SealedBound,
+    SealedWeight, Side, StatementDescriptor, StatementId, StatementRef, ValueMismatch, ValueType,
+    Weight, value_matches,
 };
 use crate::encoding::{field_bytes, field_word_bytes};
 use crate::error::{Mismatch, RowIndex, SchemaError, StatementErrorKind, TargetKeyCandidate};
@@ -35,8 +34,8 @@ pub trait ValidateDescriptor: Sized {
 
 impl ValidateDescriptor for SchemaDescriptor {
     /// # Panics
-    /// Only on one programmer-invariant violation: more than 2³²
-    /// [`SchemaError::TooManyStatements`]) checked before any u16 id is
+    /// If a relation index exceeds u32. Statement count is checked before
+    /// any u16 statement id is minted.
     #[expect(
         clippy::too_many_lines,
         reason = "the one materialized-order sealing pass — one arm per \
@@ -55,8 +54,7 @@ impl ValidateDescriptor for SchemaDescriptor {
 
         let descriptors = self.materialized_statements();
 
-        // materialized roster past it is a typed rejection before any
-
+        // The materialized roster must fit every typed statement arena.
         if descriptors.len() > 1 << 16 {
             return Err(SchemaError::TooManyStatements {
                 count: descriptors.len(),
@@ -77,8 +75,7 @@ impl ValidateDescriptor for SchemaDescriptor {
             }
         }
 
-        // descriptor list, so a key may still be declared after its probe.
-
+        // Key resolution sees the full descriptor list, including later keys.
         let normalized: Vec<StatementIdentity> =
             descriptors.iter().map(StatementIdentity::of).collect();
         let key_count = descriptors
@@ -140,17 +137,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                         source: canonical_side(source),
                         target: canonical_side(target),
                         enforcement,
-                        survivors: survivors_of(&relations[source.relation.0 as usize]),
-                        checks: CompiledSides {
-                            source: compiled_side(
-                                &source.selection,
-                                &relations[source.relation.0 as usize],
-                            ),
-                            target: compiled_side(
-                                &target.selection,
-                                &relations[target.relation.0 as usize],
-                            ),
-                        },
                         pairing: Pairing::OneWay,
                     });
                     StatementRef::Containment(containment_id)
@@ -185,16 +171,6 @@ impl ValidateDescriptor for SchemaDescriptor {
                         hi: sealed.hi,
                         source: canonical_side(source),
                         enforcement: sealed.enforcement,
-                        checks: CompiledSides {
-                            source: compiled_side(
-                                &source.selection,
-                                &relations[source.relation.0 as usize],
-                            ),
-                            target: compiled_side(
-                                &target.selection,
-                                &relations[target.relation.0 as usize],
-                            ),
-                        },
                     });
                     StatementRef::Capacity(capacity_id)
                 }
@@ -304,14 +280,6 @@ fn pair_mirrors(
                 }
             },
         };
-    }
-}
-
-fn survivors_of(source: &Relation) -> Survivors {
-    if source.body.closed_rows().is_some() {
-        Survivors::SealedRows
-    } else {
-        Survivors::ReverseEdges
     }
 }
 
@@ -786,7 +754,7 @@ fn validate_capacity(
             // Exact integer duration only: a dense float interval has a
             // numerical length, never an exact capacity weight. Float
             // capacity is refused at schema validation, not judged with
-            // rounding (chapter 11).
+            // rounding.
             if !descriptor.value_type.is_discrete_interval() {
                 return Err(StatementErrorKind::CapacityWeightNotDuration {
                     relation: source.relation,
@@ -927,58 +895,6 @@ fn encoded_literal(literal: &Value, desc: bumbledb_theory::schema::ValueType) ->
     let mut bytes = Vec::with_capacity(16);
     crate::encoding::encode_literal(literal, desc, &mut bytes);
     bytes.into()
-}
-
-fn compiled_side(selection: &[(FieldId, LiteralSet)], relation: &Relation) -> CompiledSide {
-    if relation.body.closed_rows().is_some() {
-        CompiledSide::Closed(encodable_checks(selection, &relation.fields))
-    } else {
-        CompiledSide::Ordinary(compiled_checks(selection, &relation.fields))
-    }
-}
-
-fn compiled_checks(
-    selection: &[(FieldId, LiteralSet)],
-    fields: &[FieldDescriptor],
-) -> Box<[CompiledCheck]> {
-    selection
-        .iter()
-        .map(|(field, literals)| {
-            let desc = fields[usize::from(field.0)].value_type;
-            match canonical_literals(literals) {
-                LiteralSet::One(Value::String(text)) => CompiledCheck::Interned {
-                    field: *field,
-                    text: text.clone(),
-                },
-                LiteralSet::One(literal) => CompiledCheck::Encoded {
-                    field: *field,
-                    bytes: encoded_literal(&literal, desc),
-                },
-
-                LiteralSet::Many(values) if matches!(values[0], Value::String(_)) => {
-                    CompiledCheck::InternedSet {
-                        field: *field,
-                        texts: values
-                            .iter()
-                            .map(|value| {
-                                let Value::String(text) = value else {
-                                    unreachable!("validated string binding is homogeneous")
-                                };
-                                text.clone()
-                            })
-                            .collect(),
-                    }
-                }
-                LiteralSet::Many(values) => CompiledCheck::EncodedSet {
-                    field: *field,
-                    alternatives: values
-                        .iter()
-                        .map(|literal| encoded_literal(literal, desc))
-                        .collect(),
-                },
-            }
-        })
-        .collect()
 }
 
 fn encodable_checks(

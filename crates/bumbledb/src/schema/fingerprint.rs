@@ -1,7 +1,6 @@
-//! Canonical schema encoding and the blake3 fingerprint.
-//! ; that list is the contract
-//! ([`canonical_bytes`] reproduces it). Every string and list is
-//! length-prefixed (u32 LE) so no two schemas can alias to one byte stream;
+//! Canonical schema encoding and its BLAKE3 fingerprint.
+//! Every string and list is length-prefixed (u32 LE), so distinct
+//! canonical schemas have distinct byte streams;
 //! relation, field, and statement ids are pinned by declaration/materialized
 //! order and therefore covered without being hashed separately.
 use super::wire::{
@@ -117,7 +116,7 @@ pub(crate) fn fingerprint_of_descriptor(bytes: &[u8]) -> SchemaFingerprint {
     SchemaFingerprint(*blake3::hash(bytes).as_bytes())
 }
 
-/// Computes the schema fingerprint: blake3 of [`canonical_bytes`].
+/// Computes the schema fingerprint: BLAKE3 of its canonical encoding.
 #[must_use]
 pub fn fingerprint(schema: &Schema) -> SchemaFingerprint {
     *schema

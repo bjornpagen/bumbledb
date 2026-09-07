@@ -280,7 +280,7 @@ fn a_foreign_identity_decision_refuses_before_evaluation() {
 
 /// A decision that does not extend the exact local parent (wrong parent
 /// stamp / skipped sequence) refuses as a chain error — an attacker cannot
-/// splice history around a retained boundary (REP-008, REP-018).
+/// splice history around a retained boundary.
 #[test]
 fn a_decision_off_the_exact_parent_refuses_as_a_chain_break() {
     let (db, history) = keyed_history("splice");

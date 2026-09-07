@@ -1,6 +1,6 @@
 //! E-ADMIT / ENG-005 through the FULL physical path: the production
 //! `SchemaJudge` (P01's reference final-state judge, C03) bound to the
-//! store's private candidate (C04). The judged view is the proposed final
+//! store's private candidate. The judged view is the proposed final
 //! state in the candidate transaction; competing rows are all visible and
 //! all cited, and a rejection retains the writer session.
 

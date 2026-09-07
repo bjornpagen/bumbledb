@@ -1,18 +1,15 @@
 /**
  * The private log wire over the ONE exact-version native binding shared
- * with the core (C09). This file declares the log verbs the internal Rust
+ * with the core. This file declares the log verbs the internal Rust
  * machine (`crates/bumbledb-log` behind `ts/crate`) exposes and re-types
  * the core's already-loaded binding — there is no second addon, no public
  * low-level handle, and no JS reimplementation of any protocol transition.
- * Every operation follows the C09 executor pattern: registration returns an
+ * Every operation follows the shared executor protocol: registration returns an
  * `OperationHandle` before any completion can run in JS; `runtimeCancel`
  * cancels and joins the native drain; take-functions throw the typed wire
  * error frame decoded by `#errors.ts`.
  *
- * The native implementations are owned by P06 (bridge)/P05 (backends)/P09
- * (migration execution); this declaration is the C10 log-addition roster
- * they implement, pinned by the authored roster test against
- * `logErrorCodes()`.
+ * The error-code roster is checked against the native `logErrorCodes()`.
  */
 import type { Violation } from "@bjornpagen/bumbledb"
 import type {
@@ -539,7 +536,7 @@ export interface LogNative {
 	/**
 	 * Seals over the ALREADY-REGISTERED native change: the change handle is a
 	 * registered resource of the one runtime registry, so the native side
-	 * derives its runtime from the handle (chapter 35: seal "retains the
+	 * derives its runtime from the handle (seal "retains the
 	 * change's captured runtime, never loads a second one"; R has no
 	 * NativeRuntime).
 	 */

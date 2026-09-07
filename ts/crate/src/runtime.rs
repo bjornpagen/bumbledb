@@ -202,7 +202,7 @@ pub enum Output {
     Descriptor(crate::marshal::DescriptorWire),
     /// A snapshot-bound execution session sharing a pinned read session.
     ExecSession(crate::db_wire::ExecSessionOpened),
-    /// One sealed completed query result (C05), owned and independent.
+    /// One sealed completed query result, owned and independent.
     CompleteResult(bumbledb::CompleteResult),
     /// The one consuming cursor a spent result's backing moved into.
     ResultCursor(bumbledb::ResultCursor),

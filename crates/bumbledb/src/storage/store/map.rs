@@ -110,7 +110,7 @@ pub(crate) fn align_up(bytes: u64) -> u64 {
         .map_or(u64::MAX - (u64::MAX % MAP_ALIGN), |n| n - (n % MAP_ALIGN))
 }
 
-/// Distinct physical quantities, reported separately (chapter 31). Mixed
+/// Distinct physical quantities, reported separately. Mixed
 /// namespaces share pages; no fictional per-namespace page attribution is
 /// invented here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

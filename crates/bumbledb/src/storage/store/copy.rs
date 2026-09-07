@@ -333,7 +333,7 @@ fn copy_attempt(
     gated.commit()
 }
 
-/// Complete relevant metadata/data emptiness before adoption (CORE-015).
+/// Complete relevant metadata/data emptiness before adoption.
 fn refuse_nonempty_destination(txn: &RoTxn<'_, heed::AnyTls>, dest: &Store) -> StoreResult<()> {
     refuse_any_rows(txn, dest)?;
     refuse_host_history(txn, dest)?;

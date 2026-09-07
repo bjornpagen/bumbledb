@@ -1,5 +1,5 @@
 //! The stable local target namespace: kernel exclusion, durable pre-genesis
-//! tombstones and no-overwrite final installation (chapter 22).
+//! tombstones and no-overwrite final installation.
 //!
 //! Local final-target publication and local abort share ONE stable
 //! target-namespace kernel lock that lives OUTSIDE every staging or

@@ -4,7 +4,7 @@
 //! wall-clock TTL, token predecessor chain, renewal or check-then-rename
 //! proof exists; time does not mint a competing owner.
 //!
-//! Two distinct scopes share this one kernel mechanism (C07):
+//! Two distinct scopes share this one kernel mechanism:
 //!
 //! - **Directory ownership** ([`acquire_directory`]): one owning process per
 //!   local materialization, acquired before reading recovery scratch or

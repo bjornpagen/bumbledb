@@ -166,7 +166,7 @@ fn a_judge_rejection_retains_the_session_for_the_receipt_transaction() {
     );
     let before = store.committed_generation(&work()).expect("generation");
     // Two rows under one note id: the key judge must see both competing
-    // candidate rows (ENG-005) and reject with both row ids as evidence.
+    // candidate rows and reject with both row ids as evidence.
     let conflicting = change_set(&schema(), &[(NOTE, note(1, "second"))], &[]);
     let context = work();
     let mut owner = store.writer(&context).expect("writer");

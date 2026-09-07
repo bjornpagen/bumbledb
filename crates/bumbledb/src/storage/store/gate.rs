@@ -3,7 +3,7 @@
 //! `heed::Env::resize` is documented safe only with **no active
 //! transactions**, and the library does not check that condition; a writer
 //! mutex alone is insufficient. Every transaction the store creates —
-//! owned snapshots and the single writer — holds a [`GatePass`]. The gate
+//! owned snapshots and the single writer — holds a transaction pass. The gate
 //! may retain one unborrowed read transaction between operations. Writers,
 //! resize and close discard it under the admission mutex before proceeding;
 //! it never pins pages across writer admission. Resize (and

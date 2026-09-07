@@ -86,7 +86,7 @@ pub struct EraseReport {
 /// evidence-idempotent under the same operation ID.
 ///
 /// The caller must FIRST settle or explicitly record outstanding unknown
-/// commands (chapter 22): this function does not resolve them, and it
+/// commands: this function does not resolve them, and it
 /// cannot — erasure with unresolved uncertainty is a documented operator
 /// decision, not a library default.
 ///

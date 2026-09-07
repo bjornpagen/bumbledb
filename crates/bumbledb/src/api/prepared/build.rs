@@ -1,7 +1,7 @@
 use super::{
     AggregateSink, Binding, Bindings, Colt, EitherSink, Executor, FindSpec, FreeJoinRule,
-    KeyProbeRule, OccurrencePin, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule,
-    ProjectionSink, ResolveMemo, Schema, ValueType, ViewMemo,
+    KeyProbeRule, PreparedInterior, PreparedPipeline, PreparedQuery, PreparedRule, ProjectionSink,
+    ResolveMemo, Schema, ValueType, ViewMemo,
 };
 
 use super::source::{PinnedSource, QuerySource};
@@ -180,7 +180,6 @@ fn prepare_witnessed<S>(
             &schema,
             &rule,
             &normalized_rule,
-            &signature.columns,
             signatures,
         )?);
     }
@@ -385,7 +384,6 @@ fn prepare_interior(
             schema,
             &rule,
             &normalized_rule,
-            columns,
             signatures,
         )?);
     }
@@ -450,7 +448,6 @@ fn prepare_reach(
             schema,
             &base_w[rule_idx],
             &normalized_rule,
-            columns,
             signatures,
         )?);
     }
@@ -465,7 +462,6 @@ fn prepare_reach(
             schema,
             &rec_w[rule_idx],
             &normalized_rule,
-            columns,
             signatures,
             rec_id,
             delta,
@@ -604,29 +600,13 @@ fn ground_main(
         .collect()
 }
 
-fn prepare_rule(
-    images: &SourceImages<'_>,
-    schema: &Schema,
-    rule: &RuleWitness<'_>,
-    normalized: &NormalizedQuery,
-    columns: &[crate::ir::validate::SignatureColumn],
-    signatures: &[&crate::ir::validate::Signature],
-) -> Result<PreparedRule> {
-    prepare_rule_variant(images, schema, rule, normalized, columns, signatures)
-}
-
 /// Stamp the validated unique self-occurrence for the planner's frontier
 /// estimate. At execution it uses the same stage environment as interiors.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the rec-arm pipeline's inputs are clearer unpacked"
-)]
 fn prepare_rec_arm(
     images: &SourceImages<'_>,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-    columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
     rec_id: crate::ir::InteriorId,
     delta: crate::ir::normalize::OccId,
@@ -640,7 +620,7 @@ fn prepare_rec_arm(
             .any(|occ| matches!(occ.bind, crate::ir::normalize::OccBind::RecDelta(_))),
         "self_occ is the rec atom normalize numbered"
     );
-    let prepared = prepare_rule_variant(images, schema, rule, &normalized, columns, signatures)?;
+    let prepared = prepare_rule(images, schema, rule, &normalized, signatures)?;
     let PreparedRule::FreeJoin(fj) = prepared else {
         unreachable!("an Interior-reading rec arm never classifies as a key probe")
     };
@@ -690,12 +670,11 @@ fn prepare_key_rule(
     })
 }
 
-fn prepare_rule_variant(
+fn prepare_rule(
     images: &SourceImages<'_>,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     normalized: &NormalizedQuery,
-    _columns: &[crate::ir::validate::SignatureColumn],
     signatures: &[&crate::ir::validate::Signature],
 ) -> Result<PreparedRule> {
     let distinct_witness = provably_distinct(normalized, schema);
@@ -705,8 +684,6 @@ fn prepare_rule_variant(
         return prepare_key_rule(images, schema, rule, plan, distinct_witness)
             .map(PreparedRule::KeyProbe);
     }
-
-    let mut pins = Vec::new();
 
     let mut stats = Vec::with_capacity(normalized.occurrences.len());
     let join_variables = crate::plan::selectivity::join_variables(normalized);
@@ -737,12 +714,6 @@ fn prepare_rule_variant(
             rows,
             &join_variables,
         )?;
-        pins.push(OccurrencePin {
-            occ_id: occurrence.occ_id,
-            relation,
-            rows,
-            survivors: (!occurrence.filters.is_empty()).then_some(occ_stats.rows),
-        });
         stats.push(occ_stats);
     }
     let order = { plan_order(normalized, schema, &stats) };
@@ -799,15 +770,14 @@ fn prepare_rule_variant(
         resolved_selections: vec![Vec::new(); occurrence_count],
         resolution: super::ResolutionState::Pending,
         memo,
-        pinned: pins.into_boxed_slice(),
     }))
 }
 
 fn build_view_memo(plan: &crate::plan::fj::ValidatedPlan) -> ViewMemo {
     let mut memo = ViewMemo::new();
     for occurrence in plan.occurrences() {
-        // ⌈N/8⌉ words), and every field after one is shifted — spans,
-
+        // Logical fields may occupy several physical columns. Use the
+        // validated spans for both the field's width and its first column.
         let columns_of = |field: bumbledb_theory::schema::FieldId| -> Vec<usize> {
             let span = occurrence.spans[usize::from(field.0)];
             let first = usize::from(span.first_column);

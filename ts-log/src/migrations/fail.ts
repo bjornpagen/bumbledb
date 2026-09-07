@@ -1,15 +1,7 @@
 /**
- * Migration-lane failure construction over the one log error vocabulary
- * (`LogError = DbError | ProtocolError`, P08's `#errors.ts`). Refusals are
- * typed E failures with bounded structured detail; there is no third error
- * class and no side-channel message matching. Resource-budget refusals use
- * the core `DbError` `ResourceLimit` reason.
- *
- * Cross-lane note (recorded in implementation/packets/P10.md): the structured
- * reasons `MigrationIntentRequired`/`MigrationUnsupported`/
- * `MigrationRepository` and the structured `MigrationDrift` payload are
- * requested additions to P08's `#codes.ts`/`#errors.ts` roster, mirroring the
- * native migration codec's refusal codes (C11).
+ * Migration failures use the shared `DbError | ProtocolError` vocabulary.
+ * Reasons carry bounded structured detail; consumers never parse messages.
+ * Resource-budget refusals use the core `DbError` `ResourceLimit` reason.
  */
 import { DbError } from "@bjornpagen/bumbledb"
 import { ProtocolError } from "#errors.ts"

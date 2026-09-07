@@ -87,7 +87,7 @@ impl<S> OwnedInstance<S> {
     }
 
     /// Canonical rows of one relation, sorted by full canonical bytes. The
-    /// query lane (C05) and the native bridge read the admitted set through
+    /// query lane and the native bridge read the admitted set through
     /// this seam.
     #[doc(hidden)]
     #[must_use]

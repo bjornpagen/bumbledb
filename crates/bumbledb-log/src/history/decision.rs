@@ -10,8 +10,8 @@
 //! the manifest hash that will carry it.
 //!
 //! Framing establishes grammar. It does not admit facts, verify recorded
-//! judgment against a state, or grant authority. Physical bytes remain
-//! provisional until the F3 format freeze (C12).
+//! judgment against a state, or grant authority. The history frame family
+//! and layout identify the persisted grammar.
 
 use super::command::{
     self, FrameError, Limits, UnverifiedOutcome, outcome_len, put_outcome, read_outcome,
@@ -387,11 +387,8 @@ pub fn genesis_stamp(record: &GenesisRecord, cap: usize) -> Result<DecisionStamp
 
 /// Canonical digests of the **empty** initial state, used by ordinary blank
 /// creation. These are exactly the canonical empty export projection owned by
-/// the checkpoint stream codec (C08/C12): genesis sentinels, blank hydration
-/// checks and the empty export all name one value per domain. P05's forcing
-/// test (`lane_checkpoint.rs::blank_initial_digests_equal_the_empty_export_projection`)
-/// pins the equality; the earlier `bumbledb.decision.v1/empty-*` domains were
-/// a recorded C12 defect and are gone.
+/// the checkpoint stream codec: genesis sentinels, blank hydration
+/// checks and the empty export all name one value per domain.
 #[must_use]
 pub fn blank_initial_digests() -> ([u8; 32], [u8; 32]) {
     (
