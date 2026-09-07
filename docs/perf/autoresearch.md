@@ -1,5 +1,10 @@
 # Development autoresearch notes
 
+Autoresearch is paused at the user's request. No further engine changes are
+authorized until the user approves them. The hardware target is a Raspberry Pi
+Zero 2 with 512 MB RAM; allocation and memory ownership need a plan before
+implementation resumes. No Pi performance or memory qualification is claimed.
+
 These are development experiments after the [published 1.0.1 results](results.md),
 not replacement release benchmarks. Priorities are hardening, correctness,
 performance, then simplicity. Existing native traces supplied the leads below;
@@ -88,3 +93,40 @@ Raw patches, reports, logs and experiment dispositions are retained locally
 under `bench-out/autoresearch-90-scratch-budget`. All heavy work was serialized
 through the repository measurement lock. No release, tag or npm publication
 is part of this development round.
+
+## Unfinished resident-memory hardening
+
+The scratch changes above are committed and pushed as
+`bca930fb95a4713222324e3693e337a750941b14`. A subsequent source audit found
+resident query buffers that can grow without working-byte admission. Twelve
+regression tests compiled and failed at their expected assertions on that
+commit. They cover projections, aggregate groups, exact-float and Pack
+storage, shared allowances, retained charges, and scan gathering. These are
+related accounting gaps, not twelve independent defects or evidence of public
+data corruption. No production fix has been implemented.
+
+The tests are parked outside the active suite while implementation is paused.
+Their exact [source](experiments/resident-budget/resident_budget.rs.txt),
+[module binding patch](experiments/resident-budget/binding.patch),
+[run identity and failure roster](experiments/resident-budget/run.json), and
+[original test output](experiments/resident-budget/tests.log) are preserved.
+The run finished September 7, 2026 at 22:50:10 UTC with nextest exit 100.
+That is an expected negative-control failure, not a passing check or a fix.
+
+To restore the experiment after approval, put the saved source at
+`crates/bumbledb/src/exec/sink/tests/resident_budget.rs`, apply the binding
+patch, then run under the measurement lock:
+
+```sh
+scripts/measure.sh cargo nextest run -p bumbledb --lib --no-fail-fast -E 'test(resident_budget::)'
+```
+
+The broad target is growing maps, group banks, and retained Pack storage.
+Production scan gathering already uses windows of at most 256 rows, and
+aggregate batch survivors are bounded by the configured batch size (128 by
+default). Initial preparation allocations and LMDB's resident page cache are
+separate audit boundaries; a working-byte ledger is not a process RSS limit.
+Any future fix must preserve the existing 24 KiB same-ledger fallback test,
+charge retained allocations until they are actually released, and admit group
+storage before publishing an index into it. Do not increase test allowances
+or refund live storage to conceal a refusal.
