@@ -9,3 +9,4 @@
 /bench-data/
 /.claude/
 /.pnpm-store/
+**/__pycache__/

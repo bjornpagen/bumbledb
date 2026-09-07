@@ -10,8 +10,9 @@ import { EFFECT_PIN } from "./pin.ts"
  * Package boundaries checked before building and publishing:
  *
  *  1. No C product anywhere in the release tree: no `bumbledb-c` crate,
- *     no public C headers, no cbindgen tooling, no C examples/smoke
- *     programs, no C workflow lane, no crate-type carrying a public C ABI.
+ *     no public C headers, no cbindgen tooling, no public C examples/smoke
+ *     programs, no C product workflow, no crate-type carrying a public C ABI.
+ *     Private static-link regression fixtures are not a public C product.
  *  2. No public Rust product leaks: the workspace's `bumbledb` and
  *     `bumbledb-log` crates are `publish = false` (the public Rust core
  *     is a source-tree consumer surface until crate publication is

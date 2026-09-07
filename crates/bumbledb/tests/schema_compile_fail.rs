@@ -48,15 +48,42 @@ fn expected_errors(source: &str, fixture: &Path) -> Vec<String> {
 /// a current-rustc artifact below.
 fn search_dirs() -> Vec<PathBuf> {
     let exe = std::env::current_exe().expect("the test binary knows its path");
+    search_dirs_from(&exe)
+}
+
+fn search_dirs_from(exe: &Path) -> Vec<PathBuf> {
     let mut dirs = Vec::new();
-    if let Some(build) = exe
+    if let Some(profile) = exe
         .ancestors()
-        .find(|path| path.file_name().and_then(|name| name.to_str()) == Some("build"))
+        .find(|path| {
+            matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("build" | "deps")
+            )
+        })
+        .and_then(Path::parent)
     {
-        dirs.extend(unit_out_dirs(build));
-    }
-    if let Some(deps) = legacy_deps(&exe) {
-        dirs.push(deps);
+        let mut profiles = vec![profile.to_path_buf()];
+        // Explicit --target puts target libraries in <root>/<triple>/<profile>
+        // but proc-macros remain in <root>/<profile>, even for native builds.
+        if let (Some(root), Some(name)) =
+            (profile.parent().and_then(Path::parent), profile.file_name())
+        {
+            let host = root.join(name);
+            if host.is_dir() {
+                profiles.push(host);
+            }
+        }
+        for profile in profiles {
+            let build = profile.join("build");
+            if build.is_dir() {
+                dirs.extend(unit_out_dirs(&build));
+            }
+            let deps = profile.join("deps");
+            if dir_has_artifact(&deps) {
+                dirs.push(deps);
+            }
+        }
     }
     assert!(
         !dirs.is_empty(),
@@ -66,18 +93,36 @@ fn search_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-fn legacy_deps(exe: &Path) -> Option<PathBuf> {
-    for ancestor in exe.ancestors() {
-        let candidate = if ancestor.file_name().and_then(|n| n.to_str()) == Some("deps") {
-            ancestor.to_path_buf()
-        } else {
-            ancestor.join("deps")
-        };
-        if candidate.is_dir() && dir_has_artifact(&candidate) {
-            return Some(candidate);
-        }
+#[test]
+fn explicit_target_search_includes_host_proc_macros_in_both_cargo_layouts() {
+    let scratch =
+        std::env::temp_dir().join(format!("bumbledb-artifact-dirs-{}", std::process::id()));
+    std::fs::create_dir(&scratch).expect("unique artifact layout fixture");
+    for layout in ["build/example/hash/out", "deps"] {
+        let target = scratch
+            .join("aarch64-unknown-linux-musl/debug")
+            .join(layout);
+        let host = scratch.join("debug").join(layout);
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::create_dir_all(&host).unwrap();
+        std::fs::write(target.join("libexample-hash.rlib"), []).unwrap();
+        std::fs::write(host.join("libexample_macros-hash.so"), []).unwrap();
+        let dirs = search_dirs_from(&target.join("test-binary"));
+        assert!(
+            dirs.contains(&target),
+            "target library directory was omitted"
+        );
+        assert!(
+            dirs.contains(&host),
+            "host proc-macro directory was omitted"
+        );
+        let native_dirs = search_dirs_from(&host.join("test-binary"));
+        assert!(
+            native_dirs.contains(&host),
+            "implicit native layout was omitted"
+        );
     }
-    None
+    std::fs::remove_dir_all(&scratch).expect("remove fixture-owned scratch");
 }
 
 fn unit_out_dirs(build: &Path) -> Vec<PathBuf> {

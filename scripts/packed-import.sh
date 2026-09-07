@@ -21,9 +21,6 @@ TMP="$(mktemp -d "${TMPDIR:-/tmp}/packed-import.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 V="$(node -p "require('$ROOT/ts/package.json').version")"
-EFFECT="$(node -p "require('$ROOT/ts/package.json').peerDependencies.effect")"
-TYPESCRIPT="$(node -p "require('$ROOT/ts-log/package.json').devDependencies.typescript")"
-NODE_TYPES="$(node -p "require('$ROOT/ts-log/package.json').devDependencies['@types/node']")"
 STORE="$(cd "$ROOT/ts-log" && pnpm store path --silent)"
 PLATFORMS="darwin-arm64 linux-arm64 linux-x64"
 case "${1:-}" in
@@ -92,22 +89,7 @@ tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/dist/migratio
 }
 
 mkdir "$TMP/consumer"
-cat > "$TMP/consumer/package.json" <<JSON
-{
-	"name": "packed-import-consumer",
-	"private": true,
-	"type": "module",
-	"dependencies": {
-		"@bjornpagen/bumbledb": "file:../bjornpagen-bumbledb-$V.tgz",
-		"@bjornpagen/bumbledb-log": "file:../bjornpagen-bumbledb-log-$V.tgz",
-		"effect": "$EFFECT"
-	},
-	"devDependencies": {
-		"@types/node": "$NODE_TYPES",
-		"typescript": "$TYPESCRIPT"
-	}
-}
-JSON
+node "$ROOT/scripts/packed-project.mjs" "$ROOT" "$TMP/consumer"
 cat > "$TMP/consumer/pnpm-workspace.yaml" <<YAML
 packages:
   - "."
@@ -125,7 +107,9 @@ cp "$ROOT/examples/consumers/native-ledger/consumer.ts" "$TMP/consumer/native-le
 (cd "$TMP/consumer" && pnpm install --ignore-scripts --store-dir "$STORE" --prefer-offline --reporter=append-only)
 
 # No skipLibCheck, workspace path aliases, custom conditions, or repo compiler.
-(cd "$TMP/consumer" && pnpm exec tsc --strict --exactOptionalPropertyTypes --target es2024 \
+# Invoke the already installed compiler: pnpm exec can initiate an unrelated
+# second installation, losing --ignore-scripts in a new package-manager version.
+(cd "$TMP/consumer" && ./node_modules/.bin/tsc --strict --exactOptionalPropertyTypes --target es2024 \
   --module nodenext --types node --allowImportingTsExtensions \
   --declaration --emitDeclarationOnly --outDir declarations \
   packed-consumer.ts core-ts/consumer.ts log-ts/consumer.ts native-ledger/consumer.ts)
@@ -138,21 +122,7 @@ fi
 
 # D27: second isolated project — no platform overrides; optional native off.
 mkdir "$TMP/pure"
-cat > "$TMP/pure/package.json" <<JSON
-{
-	"name": "packed-pure-authoring",
-	"private": true,
-	"type": "module",
-	"dependencies": {
-		"@bjornpagen/bumbledb": "file:../bjornpagen-bumbledb-$V.tgz",
-		"effect": "$EFFECT"
-	},
-	"devDependencies": {
-		"@types/node": "$NODE_TYPES",
-		"typescript": "$TYPESCRIPT"
-	}
-}
-JSON
+node "$ROOT/scripts/packed-project.mjs" "$ROOT" "$TMP/pure" --pure
 cat > "$TMP/pure/.npmrc" <<EOF
 optional=false
 EOF

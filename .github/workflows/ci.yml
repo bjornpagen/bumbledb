@@ -1,7 +1,6 @@
-# Correctness on Apple Silicon and Amazon Linux 2023 (glibc 2.34).
-# The battery covers Rust, Lean, the native bridge and installed SDKs.
-# Miri runs nightly and on manual dispatch. Performance is measured locally,
-# not on shared CI runners. No job publishes packages.
+# One correctness/native build per platform. Performance is measured locally.
+# Miri's two targets run independently; manual Miri-only dispatch avoids
+# repeating the full platform battery after a push.
 name: ci
 
 on:
@@ -9,140 +8,44 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      miri_only:
+        description: Run only the two Miri targets
+        type: boolean
+        default: false
   schedule:
-    # Nightly Miri lane only (see the job-level `if`): 09:17 UTC.
     - cron: "17 9 * * *"
 
-env:
-  CARGO_TERM_COLOR: always
-  NEXTEST_PROFILE: ci
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.miri_only || false }}
+  cancel-in-progress: true
 
 jobs:
-  # Lane 1 — the workspace gate: env plus scripts/battery.sh.
-  # Both cells run the identical script; on linux the run itself IS
-  # the x86-64 scalar-fallback coverage (AL2023 userspace; the host
-  # kernel is not a build userspace).
   check:
-    if: github.event_name != 'schedule'
+    if: github.event_name != 'schedule' && !inputs.miri_only
+    uses: ./.github/workflows/bumbledb-log.yml
+    secrets:
+      BUMBLEDB_S3_SMOKE_BUCKET: ${{ secrets.BUMBLEDB_S3_SMOKE_BUCKET }}
+      BUMBLEDB_S3_SMOKE_REGION: ${{ secrets.BUMBLEDB_S3_SMOKE_REGION }}
+      BUMBLEDB_S3_SMOKE_ENDPOINT: ${{ secrets.BUMBLEDB_S3_SMOKE_ENDPOINT }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+  static-linux-arm64:
+    if: github.event_name != 'schedule' && !inputs.miri_only
+    uses: ./.github/workflows/static-linux-arm64.yml
+
+  miri:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.os == 'ubuntu-latest' && fromJSON('{"image":"amazonlinux:2023"}') || fromJSON('null') }}
-    timeout-minutes: 90
-    steps:
-      - name: Install the Amazon Linux 2023 toolchain
-        if: matrix.os == 'ubuntu-latest'
-        # AL2023 ships curl-minimal; --allowerasing swaps it for curl.
-        run: |
-          dnf -y install --allowerasing \
-            gcc \
-            gcc-c++ \
-            make \
-            binutils \
-            git \
-            tar \
-            gzip \
-            xz \
-            unzip \
-            python3 \
-            sed \
-            gawk \
-            diffutils \
-            findutils \
-            ca-certificates \
-            curl \
-            nodejs24 \
-            nodejs24-npm
-          alternatives --set node /usr/bin/node-24
-      - uses: actions/checkout@v5
-      - name: Trust this checkout inside the container
-        if: matrix.os == 'ubuntu-latest'
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install rustup
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: install the pinned toolchain
-        # rust-toolchain.toml owns the channel and components;
-        # `rustup show` resolves and installs it.
-        run: rustup show
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          # restore-keys (every cache step here): an exact-key miss —
-          # any lockfile or toolchain repin — restores the nearest
-          # previous cache and rebuilds only the delta instead of going
-          # fully cold. Prefix-restored target/ dirs accumulate stale
-          # artifacts across saves; if cache size ever matters, rotate
-          # the key — a maintenance nuance, not a reason to stay cold.
-          # The linux key carries -al2023 so a restored cache cannot
-          # be an Ubuntu-userspace target/ from before this pass.
-          key: check-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
-          restore-keys: |
-            check-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
-      - uses: actions/setup-node@v5
-        with:
-          # ts/package.json engines pins node >=24. battery.sh runs
-          # the ts/ and ts-log/ package-script trios.
-          node-version: 24
-      - name: install pnpm
-        # ts/package.json#packageManager (pnpm@11.9.0) owns the exact
-        # version; corepack reads and activates that pin.
-        run: corepack enable pnpm
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.elan
-            lean/.lake
-          key: lean-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('lean/lean-toolchain') }}
-          restore-keys: |
-            lean-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
-      - name: install elan
-        # lean/lean-toolchain owns the exact version; elan resolves
-        # and installs it on first `lake` invocation inside lean/.
-        # A cache hit leaves the toolchain on disk; this step is PATH.
-        run: |
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: resolve the pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-        working-directory: ts
-      - uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: check-pnpm-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
-          restore-keys: |
-            check-pnpm-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
-      - run: pnpm install --frozen-lockfile
-        working-directory: ts
-      - name: build the napi bridge
-        # Exactly one current-addon build for this candidate/platform.
-        # Battery reuses it only after provenance matches the live digest.
-        run: pnpm run build
-        working-directory: ts
-      - name: stamp native provenance
-        run: node scripts/release-results.mjs --write-native-provenance
-      - run: pnpm install --frozen-lockfile
-        working-directory: ts-log
-      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
-
-  # Native arm64 and x86_64 Linux interpretation; separate from per-push tests.
-  miri:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        target: [aarch64-apple-darwin, x86_64-unknown-linux-gnu]
     runs-on: macos-latest
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
-      - name: install the pinned toolchain
+      - name: Install the pinned toolchain
         run: rustup show
       - uses: actions/cache@v5
         with:
@@ -150,110 +53,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: miri-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          key: miri-${{ matrix.target }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           restore-keys: |
-            miri-${{ runner.os }}-
-      - run: scripts/miri.sh
-
-  # Cross-platform SDK and native-bridge checks, including fingerprint parity.
-  sdk:
-    if: github.event_name != 'schedule'
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.os }}
-    container: ${{ matrix.os == 'ubuntu-latest' && fromJSON('{"image":"amazonlinux:2023"}') || fromJSON('null') }}
-    timeout-minutes: 45
-    steps:
-      - name: Install the Amazon Linux 2023 toolchain
-        if: matrix.os == 'ubuntu-latest'
-        # AL2023 ships curl-minimal; --allowerasing swaps it for curl.
-        run: |
-          dnf -y install --allowerasing \
-            gcc \
-            gcc-c++ \
-            make \
-            binutils \
-            git \
-            tar \
-            gzip \
-            xz \
-            unzip \
-            python3 \
-            sed \
-            gawk \
-            diffutils \
-            findutils \
-            ca-certificates \
-            curl \
-            nodejs24 \
-            nodejs24-npm
-          alternatives --set node /usr/bin/node-24
-      - uses: actions/checkout@v5
-      - name: Trust this checkout inside the container
-        if: matrix.os == 'ubuntu-latest'
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-      - name: Install rustup
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - name: install the pinned toolchain
-        # rust-toolchain.toml at the repo root owns the channel for
-        # ts/crate too: the crate is workspace-excluded but sits under
-        # the root, and rustup resolves the toolchain file by walking
-        # up from cwd, not from the manifest path.
-        run: rustup show
-      - uses: actions/setup-node@v5
-        with:
-          # ts/package.json engines pins node >=24 (the build script
-          # and the tests run as .ts through native type stripping).
-          node-version: 24
-      - name: install pnpm
-        # ts/package.json#packageManager (pnpm@11.9.0) owns the exact
-        # version; corepack reads and activates that pin.
-        run: corepack enable pnpm
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ts/crate/target
-          key: sdk-cargo-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('rust-toolchain.toml', 'ts/crate/Cargo.lock') }}
-          restore-keys: |
-            sdk-cargo-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
-      - name: resolve the pnpm store path
-        id: pnpm-store
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-        working-directory: ts
-      - uses: actions/cache@v5
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: sdk-pnpm-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-${{ hashFiles('ts/pnpm-lock.yaml') }}
-          restore-keys: |
-            sdk-pnpm-${{ runner.os }}${{ matrix.os == 'ubuntu-latest' && '-al2023' || '' }}-
-      - run: pnpm install --frozen-lockfile
-        working-directory: ts
-      - name: build the napi bridge + SDK from source
-        run: pnpm run build
-        working-directory: ts
-      - name: stamp native provenance
-        run: node scripts/release-results.mjs --write-native-provenance
-      - run: pnpm exec tsc --noEmit
-        working-directory: ts
-      - run: pnpm exec biome check .
-        working-directory: ts
-      - name: SDK tests without a second native rebuild
-        run: node --test 'test/**/*.test.ts'
-        working-directory: ts
-      - name: Native bridge lints
-        # ts/crate is workspace-excluded, so lane 1's clippy never reaches
-        # it; this step is what enforces the crate's own lint table
-        # (deny unsafe_code with per-site reasons, deny
-        # unsafe_op_in_unsafe_fn, the engine's clippy all+pedantic set).
-        run: cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
-      - name: the Rust half of the lock (fingerprint_lock.rs)
-        run: |
-          cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
-          cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml
+            miri-${{ matrix.target }}-
+      - run: scripts/miri.sh "${{ matrix.target }}"

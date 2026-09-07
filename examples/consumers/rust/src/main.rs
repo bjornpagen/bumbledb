@@ -96,6 +96,11 @@ fn outcome_name(outcome: &ApplyOutcome) -> &'static str {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    run()
+}
+
+/// Shared by the standalone Rust consumer and the private static-link probe.
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos();
@@ -256,6 +261,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!("joined close left {live_transactions} live transactions").into());
         }
     }
+    drop(db);
+    let reopened = Db::open(&dir, Learning, work.clone())?;
+    let snapshot = reopened.snapshot(&work)?;
+    let persisted = snapshot
+        .get(AttemptById { id: attempt_id }, &work)?
+        .expect("the witnessed correction survives close and reopen");
+    assert_eq!(persisted.score, F64::from(0.95));
+    drop(snapshot);
+    assert!(matches!(reopened.close(&work), CloseReport::Closed));
     std::fs::remove_dir_all(&dir)?;
     println!("bumbledb rust consumer fixture: OK");
     Ok(())

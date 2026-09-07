@@ -254,6 +254,12 @@ It is not a substitute for actual reports or a blanket statement that every
 historical audit obligation has been qualified. The [1.0 release scope](docs/release-1.0.md)
 records what ships and what remains deferred; missing evidence stays missing.
 
+The [static Linux ARM64 guide](docs/static-linux-arm64.md) covers the fully
+static Rust/C/LMDB/musl build, empty-filesystem tests, and full-system QEMU
+qualification. Push CI runs one full battery per supported platform plus
+this static lane. Miri's two targets run in parallel nightly, or manually
+with `miri_only=true` to avoid repeating the platform batteries.
+
 ## Repository
 
 - `crates/bumbledb/`: embedded engine.

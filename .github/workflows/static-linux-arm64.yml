@@ -1,0 +1,61 @@
+name: static-linux-arm64
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  musl:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the pinned native musl toolchain image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: scripts/static-linux-arm64/Dockerfile
+          platforms: linux/arm64
+          load: true
+          tags: bumbledb-static-linux-arm64:ci
+          cache-from: type=gha,scope=bumbledb-musl-arm64-toolchain
+          cache-to: type=gha,scope=bumbledb-musl-arm64-toolchain,mode=max
+      - uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/bumbledb-static-cache
+          key: musl-arm64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'scripts/static-linux-arm64/Dockerfile') }}-${{ github.sha }}
+          restore-keys: |
+            musl-arm64-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'scripts/static-linux-arm64/Dockerfile') }}-
+            musl-arm64-
+      - name: Static build, real Linux/QEMU execution and complete Rust tests
+        env:
+          STATIC_CACHE: ${{ runner.temp }}/bumbledb-static-cache
+          STATIC_OUTPUT: ${{ runner.temp }}/bumbledb-static-output
+          SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          mkdir -p "$STATIC_CACHE/target" "$STATIC_CACHE/registry" "$STATIC_CACHE/git" "$STATIC_OUTPUT"
+          docker run --rm --platform linux/arm64 \
+            --mount "type=bind,src=$STATIC_CACHE/target,dst=/workspace/target" \
+            --mount "type=bind,src=$STATIC_CACHE/registry,dst=/root/.cargo/registry" \
+            --mount "type=bind,src=$STATIC_CACHE/git,dst=/root/.cargo/git" \
+            --mount "type=bind,src=$STATIC_OUTPUT,dst=/out" \
+            -e CARGO_BUILD_JOBS=2 -e "BUMBLEDB_STATIC_REVISION=$SOURCE_REVISION" \
+            bumbledb-static-linux-arm64:ci bash scripts/static-linux-arm64/check.sh /out
+      - name: Preserve static artifacts and verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bumbledb-static-linux-arm64
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/bumbledb-static-output/*.json
+            ${{ runner.temp }}/bumbledb-static-output/*.log
+            ${{ runner.temp }}/bumbledb-static-output/*.map
+            ${{ runner.temp }}/bumbledb-static-output/libbumbledb.a
+            ${{ runner.temp }}/bumbledb-static-output/bumbledb-static-smoke
+            ${{ runner.temp }}/bumbledb-static-output/bumbledb-log-duty
+            ${{ runner.temp }}/bumbledb-static-output/vmlinuz-virt
+            ${{ runner.temp }}/bumbledb-static-output/initramfs.cpio.gz
+            ${{ runner.temp }}/bumbledb-static-output/notices.tar.gz
+            ${{ runner.temp }}/bumbledb-static-output/SHA256SUMS

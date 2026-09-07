@@ -9,6 +9,9 @@ cd "$(dirname "$0")/.."
 echo "==> release-evidence checker regressions (not release qualification)"
 node --test scripts/release-results.test.mjs
 
+echo "==> isolated consumer toolchain regressions"
+node --test scripts/packed-project.test.mjs
+
 echo "==> product absence gate (ts/scripts/absence-gate.ts)"
 node ts/scripts/absence-gate.ts
 

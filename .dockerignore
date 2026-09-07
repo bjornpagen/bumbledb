@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/target
+**/.pnpm-store
+**/.DS_Store
+**/__pycache__
+**/.lake
+**/.env
+**/.env.*
+bench-out
+bench-data
+.claude
+.idea
+.vscode
+ts/npm/**/bumbledb.node

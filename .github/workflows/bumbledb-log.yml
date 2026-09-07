@@ -1,42 +1,22 @@
-# The log and native-package CI lane.
-# This workflow owns crates/bumbledb-log and ts-log.
-# The linux-arm64 job is the ONE builder for the
-# two linux artifacts (the napi .node and the duty binary): the
-# GitHub-hosted arm64 runner is the host kernel, amazonlinux:2023 is
-# the userspace, glibc 2.34 is Lambda's floor. No step on that job
-# executes in the host's Ubuntu userspace. Publishing stays owner
-# ceremony — the runner uploads artifacts and stops.
-# Correctness is scripts/battery.sh. The gated S3 cell is a nextest
-# filter over the workspace, not a second manifest, and missing
-# credentials remain NotRun — never Passed.
+# Reusable correctness/native build: one full battery per supported platform.
+# ci.yml calls this once on pushes/PRs; no duplicate independent push trigger.
+# Linux artifacts retain the Amazon Linux 2023 / glibc 2.34 baseline.
+# Missing S3 credentials remain NotRun, never Passed. No job publishes packages.
 name: bumbledb-log
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "crates/bumbledb-log/**"
-      - "crates/bumbledb/**"
-      - "crates/bumbledb-theory/**"
-      - "ts-log/**"
-      - "ts/**"
-      - "Cargo.lock"
-      - ".config/nextest.toml"
-      - "scripts/battery.sh"
-      - "rust-toolchain.toml"
-      - ".github/workflows/bumbledb-log.yml"
-  pull_request:
-    paths:
-      - "crates/bumbledb-log/**"
-      - "crates/bumbledb/**"
-      - "crates/bumbledb-theory/**"
-      - "ts-log/**"
-      - "ts/**"
-      - "Cargo.lock"
-      - ".config/nextest.toml"
-      - "scripts/battery.sh"
-      - "rust-toolchain.toml"
-      - ".github/workflows/bumbledb-log.yml"
+  workflow_call:
+    secrets:
+      BUMBLEDB_S3_SMOKE_BUCKET:
+        required: false
+      BUMBLEDB_S3_SMOKE_REGION:
+        required: false
+      BUMBLEDB_S3_SMOKE_ENDPOINT:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
   workflow_dispatch:
 
 env:
