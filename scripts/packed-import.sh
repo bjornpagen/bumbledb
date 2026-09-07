@@ -151,9 +151,10 @@ cargo run --manifest-path "$ROOT/examples/consumers/rust/Cargo.toml"
 
 # Run the actual Notes app against the same packed dependencies in isolation.
 # Generate the migration history before exercising its real route handlers.
+# Keep the initial install's store: /tmp may resolve a different Linux mount.
 mkdir -p "$TMP/consumer/examples"
 git ls-files -z examples/notes examples/consumers | tar --null -T - -cf - | (cd "$TMP/consumer" && tar -xf -)
-(cd "$TMP/consumer" && pnpm add --ignore-scripts next@16.1.1 react@19.2.0 react-dom@19.2.0 server-only@0.0.1 @aws-sdk/client-s3@3.955.0)
+(cd "$TMP/consumer" && pnpm add --ignore-scripts --store-dir "$STORE" next@16.1.1 react@19.2.0 react-dom@19.2.0 server-only@0.0.1 @aws-sdk/client-s3@3.955.0)
 (cd "$TMP/consumer/examples/notes" && node --conditions react-server scripts/generate-history.ts && node --conditions react-server --test test/specimens.test.ts test/routes.test.ts)
 
 echo "packed-import: OK — platforms: $PLATFORMS; ManagedRuntime consumer; D07 tiny collect refuses; D27 addon-unavailable authoring; Rust + Notes fail-closed at $V (not PKG-07B)"
