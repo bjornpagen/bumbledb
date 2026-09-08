@@ -23,7 +23,6 @@ mod verify_store;
 
 pub(crate) mod write_families;
 
-pub(crate) use bench::alloc_missing;
 pub use bench::cmd_bench;
 pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};
 pub use corpus_float::cmd_corpus_float;

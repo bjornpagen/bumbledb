@@ -40,7 +40,7 @@ function countQueryOf<Rels extends SchemaRelations, R extends QueryRelation<Rels
 }
 
 describe("the generic full-binding law", function suite() {
-	test("the Primer-shape generic helper compiles and lowers to the concrete spelling's IR", function primerShape() {
+	test("the generic schema helper compiles and lowers to the concrete spelling's IR", function genericShape() {
 		const counted = countQueryOf(Ledger, Account)
 		type RowPin = Expect<Equal<QueryRow<typeof counted>, { readonly n: bigint }>>
 		type ParamsPin = Expect<Equal<keyof QueryParams<typeof counted>, never>>

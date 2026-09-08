@@ -73,6 +73,10 @@ class SchedulerTests(unittest.TestCase):
 
 
 class NightTests(unittest.TestCase):
+    def test_latency_measurements_default_to_one_worker(self):
+        self.assertEqual(night.parser().parse_args(["/fresh/out"]).jobs, 1)
+        self.assertIsNone(night.parser().parse_args(["/fresh/out", "--jobs", "auto"]).jobs)
+
     def test_jobs_are_positive_or_auto(self):
         self.assertIsNone(night.job_count("auto"))
         self.assertEqual(night.job_count("8"), 8)
@@ -82,8 +86,8 @@ class NightTests(unittest.TestCase):
 
     def test_full_roster_and_data_paths_are_independent(self):
         jobs = night.lanes(Path("/bin/bench"), Path("/corpus with spaces"), Path("/out"), True)
-        self.assertEqual(len(jobs), 14)
-        self.assertEqual(len({job.name for job in jobs}), 14)
+        self.assertEqual(len(jobs), 13)
+        self.assertEqual(len({job.name for job in jobs}), 13)
         data_paths = [job.command[job.command.index("--dir") + 1] for job in jobs if "--dir" in job.command]
         self.assertEqual(len(data_paths), len(set(data_paths)))
         read = next(job for job in jobs if job.name == "reads")
@@ -101,6 +105,20 @@ class NightTests(unittest.TestCase):
             self.assertTrue(night.run_jobs(jobs, 2, out, os.environ, records, persist))
             self.assertEqual(peak[0], 2)
             self.assertEqual(len(records), 5)
+
+    def test_default_worker_finishes_each_lane_before_starting_the_next(self):
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):
+            out = Path(directory)
+            records = {}
+            workers = night.parser().parse_args([str(out)]).jobs
+            peak = [0]
+            def persist():
+                peak[0] = max(peak[0], sum(row["status"] == "RUNNING" for row in records.values()))
+            jobs = [night.Job(str(i), [sys.executable, "-c", "import time; time.sleep(0.02)"]) for i in range(3)]
+            self.assertTrue(night.run_jobs(jobs, workers, out, os.environ, records, persist))
+            self.assertEqual(peak[0], 1)
+            for i in range(1, 3):
+                self.assertLessEqual(records[str(i-1)]["finished"], records[str(i)]["started"])
 
     def test_failures_and_missing_reports_do_not_hide_successful_other_jobs(self):
         with tempfile.TemporaryDirectory() as directory, redirect_stdout(io.StringIO()):

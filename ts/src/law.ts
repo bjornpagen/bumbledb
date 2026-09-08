@@ -50,7 +50,7 @@ import { AuthoringError } from "#errors.ts"
  * widened type) — the runtime map stays complete and authoritative, and
  * the wire lowering reads only the runtime map. Every loop below is
  * tail-recursive with an accumulator, so the machinery rides TypeScript's
- * tail-recursion elimination at primer scale (~40 relations, ~200 slots,
+ * tail-recursion elimination for large schemas (~40 relations, ~200 slots,
  * ~123 statements); should a schema ever exceed the compiler's limits, tsc
  * fails LOUDLY with its own instantiation-depth error — the map is never
  * silently widened.

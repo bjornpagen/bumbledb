@@ -1,6 +1,4 @@
-//! Regression: write-begin → `EINVAL` (os error 22), process-local, on
-//! macOS — struck the primer graph-builder's production store twice on
-//! 2026-07-17 (a 3.4 h writer mid-run, and a fresh reads-only process on
+//! Regression: a write must survive removal of a colliding `SysV` semaphore.
 #![cfg(target_os = "macos")]
 mod common;
 

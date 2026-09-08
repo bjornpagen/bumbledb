@@ -6,7 +6,7 @@ use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
     AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CorpusFloatArgs, CurvesArgs, HashProbeArgs, HeapArgs,
-    PrimerlaneArgs, ProfileArgs, ScenarioArgs, StorageArgs, StorageProfile, WritesArgs,
+    ProfileArgs, ScenarioArgs, StorageArgs, StorageProfile, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -383,36 +383,6 @@ fn parse_heap(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Heap(args))
 }
 
-fn parse_primerlane(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
-    let mut args = PrimerlaneArgs::default();
-    while let Some(flag) = tokens.next() {
-        let flag = flag.to_owned();
-        match flag.as_str() {
-            "--facts" => {
-                args.facts = parse_u64(&flag, tokens.value(&flag)?)?;
-                if args.facts == 0 {
-                    return Err(format!("`{flag}` rejects 0 — the lane measures facts"));
-                }
-            }
-            "--relations" => {
-                args.relations = parse_u32(&flag, tokens.value(&flag)?)?;
-                if args.relations < 2 {
-                    return Err(format!(
-                        "`{flag}` needs at least 2 — the containment chain and the \
-                         capacity statement need a parent and a child"
-                    ));
-                }
-            }
-            "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
-            "--alloc" => args.alloc = true,
-            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
-            _ => return Err(unknown("primerlane", &flag)),
-        }
-    }
-    Ok(Cmd::Primerlane(args))
-}
-
 /// Seed values for the float corpus accept `0x`-prefixed hex — the P11
 /// regeneration command pins `--seed 0xB0B`.
 fn parse_u64_maybe_hex(flag: &str, raw: &str) -> Result<u64, String> {
@@ -531,7 +501,6 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),
         "heap" => parse_heap(&mut tokens),
-        "primerlane" => parse_primerlane(&mut tokens),
         "corpus-float" => parse_corpus_float(&mut tokens),
         "hash-probe" => parse_hash_probe(&mut tokens),
         "app-perf" => parse_app_perf(&mut tokens),

@@ -878,13 +878,10 @@ fn interval_literals_compile_prepare_and_render() {
     );
 }
 
-/// Primer-shaped cycle detector: linear `reach(from, to)` with extra EDB
-/// on the step arm; main is `reach(x, x)` — a join of the finished rec,
-/// not a second SCC. Empty answers = DAG. In-tree lock; the Primer repo
-/// recut is out of this cut.
-mod primer {
+/// Cycle detection over a linear reachability relation.
+mod cycle_graph {
     bumbledb::schema! {
-        pub Primer;
+        pub CycleGraph;
 
         closed relation State as StateId = { Upheld, Broken };
 
@@ -908,11 +905,11 @@ mod primer {
     }
 }
 
-use primer::{Primer, State};
+use cycle_graph::{CycleGraph, State};
 
 #[test]
-fn primer_shaped_reach_diagonal_golden() {
-    let cycle = query!(Primer {
+fn reach_diagonal_golden() {
+    let cycle = query!(CycleGraph {
         rec reach(from, to) | Produces(grp: from, capability: cap),
             Requires(consumer: to, capability: cap, state == State::Upheld), from != to;
         rec reach(from, to) | Produces(grp: from, capability: cap),
@@ -921,7 +918,7 @@ fn primer_shaped_reach_diagonal_golden() {
         (node) | Grp(id: node), reach(node, node);
     });
     assert_eq!(
-        pin("primer-reach-diagonal", Primer, &cycle),
+        pin("reach-diagonal", CycleGraph, &cycle),
         "rec(v0, v2) | Produces(grp: v0, capability: v1), \
 Requires(consumer: v2, capability: v1, state == Upheld), v0 != v2;\n\
 rec(v0, v3) | Produces(grp: v0, capability: v1), \

@@ -527,7 +527,7 @@ fn the_recursive_arm_covers_its_contract_and_agrees_across_oracles() {
     assert!(tally.negation_of_finished_rec > 0, "{tally:?}");
     assert!(tally.fold_over_rec > 0, "{tally:?}");
     assert!(tally.empty_delta_round_one > 0, "{tally:?}");
-    assert!(tally.primer_reach_xx > 0, "{tally:?}");
+    assert!(tally.reach_diagonal > 0, "{tally:?}");
     assert!(tally.interiors_dag > 0, "{tally:?}");
     assert!(tally.interiors_anti_join > 0, "{tally:?}");
     assert!(tally.many_interiors > 0, "{tally:?}");

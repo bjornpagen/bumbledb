@@ -1014,7 +1014,7 @@ frontier discipline below *is* semi-naive evaluation's Δ, spent where a loop
 is a loop: the host. The engine-native form (below) is the same closure as
 one linear rec: `rec` declares
 the rec, the bare rule is the required main, and the driver runs the rounds
-inside one plan. Primer-shaped
+inside one plan. Cycle detection with
 `reach(x, x)` is the same family — linear rec plus a main join of the
 finished table, not a second rec.
 

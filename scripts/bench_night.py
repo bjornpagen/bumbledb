@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run independent benchmark lanes concurrently; never parallelize a timed call."""
+"""Measure lanes serially by default; opt into concurrent load explicitly."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def lanes(binary, data, out, full):
     ]
     if not full:
         return compact
-    # Start the long-running lanes first; fill every free worker from this queue.
+    # Longest lanes first also keeps explicit concurrent-load runs occupied.
     return [
         job("curves", "curves", "curves-report.json", "--scales", "S,M,L", "--warmth"),
         job("reads", "bench", "report.json", "--read-batch", "1"),
@@ -70,7 +70,6 @@ def lanes(binary, data, out, full):
         job("crud", "crud", "crud.json"),
         job("lawful", "lawful", "lawful.json"),
         job("heap", "heap", "heap-report.json"),
-        job("primerlane", "primerlane", "primerlane-report.json"),
     ]
 
 
@@ -155,8 +154,8 @@ def parser():
     ap.add_argument("--plan", action="store_true", help="print the lane roster without running or writing")
     ap.add_argument("--full", action="store_true", help="include all ordinary benchmark lanes")
     ap.add_argument("--shared", action="store_true", help="boost scheduler QoS and record shared-machine provenance")
-    ap.add_argument("--jobs", type=job_count, default=None, metavar="auto|N",
-                    help="concurrent lanes, at most the selected P-core CPU count (default: auto)")
+    ap.add_argument("--jobs", type=job_count, default=1, metavar="auto|N",
+                    help="lane workers (default: 1 for latency comparisons); auto explicitly opts into P-core-count concurrent load")
     ap.add_argument("--cpus", help="Linux performance CPU IDs, e.g. 0-7,16-23; required on Linux")
     ap.add_argument("--allow-macos-qos", action="store_true",
                     help="accept macOS QoS steering, which cannot guarantee P-core-only placement")

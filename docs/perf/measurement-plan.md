@@ -19,11 +19,15 @@ scripts/bench-night.sh bench-out/new-round --full --shared --allow-macos-qos
 ```
 
 The runner builds one ordinary release binary, acquires the measurement
-mutex, and runs verification before timing. Independent lanes run in a bounded
-process pool with separate corpus/scratch paths. On Apple Silicon, the default
-worker count is the number of performance cores: eight on the M2 Max, not all
-twelve cores. `--jobs 1` retains serial measurement; a larger explicit count
-cannot exceed the selected performance CPU count.
+mutex, and runs verification before timing. It measures one lane at a time by
+default, with separate corpus/scratch paths. Use this mode for latency reports
+and historical comparisons: unrelated database setup and durable writes must
+not run beside a timed query.
+
+`--jobs auto` explicitly opts into concurrent-load measurements, with a worker
+limit equal to the performance-core count: eight on the M2 Max, not all twelve
+cores. A larger explicit count cannot exceed the selected performance CPU count.
+This option increases suite concurrency; it does not parallelize a query.
 
 Every timed process sets and reads back user-interactive QoS on macOS. This
 steers scheduling toward P-cores but **does not provide hard CPU affinity**.
@@ -41,7 +45,7 @@ required; permission or affinity failures abort rather than silently downgrading
 Niceness is priority, not CPU affinity. Newly created threads inherit these
 Linux settings; measurement code must not reset them.
 
-Concurrent lanes contend for CPU, cache, memory bandwidth and disk. Reports
+When explicitly enabled, concurrent lanes contend for CPU, cache, memory bandwidth and disk. Reports
 record the lane-worker limit, priority policy, and whether affinity is enforced;
 charts retain the concurrency caveat. They are not isolated latency measurements
 and cannot support an unqualified speedup claim against an older serial run.
@@ -323,9 +327,8 @@ still requires real Graviton and Linux x64 runs.
 | `writes` | Durable commit/delete batch ladder and insertion stream. There is no supported no-sync engine lane. |
 | `curves` | Its four registered families (`triangle`, `point`, `busy_scan`, `closure_fanout`) at S/M/L; the warmth panel uses the first requested scale. Reopen-cold times the first execution after fresh open/prepare, not process startup or cold OS pages. Capped SQLite samples remain caps, not timings. |
 | `heap` | Frozen-instance versus LMDB access and admission-prefix comparisons. |
-| `primerlane` | Synthetic Primer-shaped builder/change/write/scan attribution. |
 
-The last nine lanes require `--full`. Native profiles and allocation
+The last seven lanes require `--full`. Native profiles and allocation
 experiments require separate diagnostic runs; they are not part of the
 ordinary release timing suite. Generators and report
 merges are not extra measurements. See `bumbledb-bench help` for exact flags.

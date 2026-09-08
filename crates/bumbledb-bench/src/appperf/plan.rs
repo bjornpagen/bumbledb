@@ -73,7 +73,7 @@ pub enum StepKind {
     Optional,
 }
 
-/// Compact default night. Overlapping curves/heap/primerlane/adversarial
+/// Compact default night. Overlapping curves/heap/adversarial
 /// timing jobs are not in this table.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "One declarative benchmark roster")]
@@ -401,7 +401,7 @@ mod tests {
         assert!(
             !script_steps()
                 .iter()
-                .any(|s| s.command.contains("primerlane") || s.command.contains("adversarial"))
+                .any(|s| s.command.contains("adversarial"))
         );
         assert!(
             script_steps()

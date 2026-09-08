@@ -1,7 +1,7 @@
 # Bumbledb 1.1.0 benchmark results
 
 The complete local suite finished on **2026-09-08T16:32:35.700086+00:00**:
-**14 reported lanes, 32 read families, and 34 scenario queries**.
+**13 reported lanes, 32 read families, and 34 scenario queries**.
 The pre-timing oracle passed **2,879 cases**. This page includes
 every current benchmark chart, the full read/scenario tables, and the slower
 results as well as the improvements.
@@ -41,8 +41,7 @@ retains the previous published evidence. Its measured engine source was
 
 All ordinary lanes report `RUN-OK`: storage; warm, cold, large-result and
 tenant application lifecycles; hash probes; reads; scenarios; CRUD; lawful
-admission; writes; S/M/L scale and warmth curves; heap; and Primer-shaped
-work. The complete runner is used, not its compact default subset.
+admission; writes; S/M/L scale and warmth curves; and heap work. The complete runner is used, not its compact default subset.
 
 The main read comparison reports **`all_win=true` against SQLite**, while
 the informational latency-budget aggregate remains **`budget_ok=false`**.
@@ -317,7 +316,7 @@ a warm OS page cache. Open and prepare are outside its timed first execution.
 Large populated corpora here do not establish larger-than-memory performance.
 
 
-## Heap and Primer-shaped workloads
+## Heap workloads
 
 The heap lane compares a frozen in-memory instance with LMDB access; it is
 not an alternative durability promise. Point/access medians are microseconds.
@@ -337,19 +336,6 @@ not an alternative durability promise. Point/access medians are microseconds.
 
 Publication took **1132.657 ms**; the 500-row join took
 **47.667 µs**. These are individual wall measurements, not percentile distributions.
-
-Primer uses **200,000 facts across 12 relations**. Its phase figures are
-single measured wall times, not medians; allocations were not instrumented.
-
-| Phase | Rows | Wall time (ms) |
-| --- | --- | --- |
-| builder_load | 200,000 | 62.440 |
-| builder_admit | 200,000 | 201.220 |
-| builder_publish | 200,000 | 613.544 |
-| delta_create | 0 | 181.975 |
-| delta_seed | 99,996 | 249.188 |
-| delta_write | 100,004 | 335.469 |
-| scan_decode | 200,000 | 20.969 |
 
 ## Hash probes
 

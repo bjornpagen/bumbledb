@@ -16,7 +16,7 @@ pub enum RecursiveVariant {
 
     EmptyDelta,
 
-    PrimerReachXx,
+    ReachDiagonal,
 
     InteriorsDag,
 
@@ -125,7 +125,7 @@ pub fn random_reach_query(rng: &mut Rng, cfg: GenConfig) -> (Query, RecursiveVar
         1 => RecursiveVariant::Negation,
         2 => RecursiveVariant::Fold,
         3 => RecursiveVariant::EmptyDelta,
-        4 => RecursiveVariant::PrimerReachXx,
+        4 => RecursiveVariant::ReachDiagonal,
         5 => RecursiveVariant::InteriorsDag,
         6 => RecursiveVariant::InteriorsAntiJoin,
         _ => RecursiveVariant::ManyInteriors,
@@ -135,7 +135,7 @@ pub fn random_reach_query(rng: &mut Rng, cfg: GenConfig) -> (Query, RecursiveVar
         RecursiveVariant::Negation => negation(rng),
         RecursiveVariant::Fold => fold(rng),
         RecursiveVariant::EmptyDelta => empty_delta(rng, &domains),
-        RecursiveVariant::PrimerReachXx => primer_reach_xx(),
+        RecursiveVariant::ReachDiagonal => reach_diagonal(),
         RecursiveVariant::InteriorsDag => interiors_dag(),
         RecursiveVariant::InteriorsAntiJoin => interiors_anti_join(),
         RecursiveVariant::ManyInteriors => many_interiors(),
@@ -211,7 +211,7 @@ fn empty_delta(rng: &mut Rng, domains: &Domains) -> Query {
     }
 }
 
-fn primer_reach_xx() -> Query {
+fn reach_diagonal() -> Query {
     Query {
         interiors: vec![],
         rec: Some(closure_rec()),
@@ -302,7 +302,7 @@ pub struct RecursiveCoverage {
     pub negation_of_finished_rec: u64,
     pub fold_over_rec: u64,
     pub empty_delta_round_one: u64,
-    pub primer_reach_xx: u64,
+    pub reach_diagonal: u64,
     pub interiors_dag: u64,
     pub interiors_anti_join: u64,
     pub many_interiors: u64,
@@ -314,7 +314,7 @@ impl RecursiveVariant {
     pub fn coverage_class(self) -> &'static str {
         match self {
             Self::InteriorsDag | Self::InteriorsAntiJoin | Self::ManyInteriors => "interiors",
-            Self::Linear | Self::Negation | Self::Fold | Self::EmptyDelta | Self::PrimerReachXx => {
+            Self::Linear | Self::Negation | Self::Fold | Self::EmptyDelta | Self::ReachDiagonal => {
                 "reach"
             }
         }
@@ -328,7 +328,7 @@ pub fn recursive_coverage(query: &Query, variant: RecursiveVariant, tally: &mut 
         RecursiveVariant::Negation => tally.negation_of_finished_rec += 1,
         RecursiveVariant::Fold => tally.fold_over_rec += 1,
         RecursiveVariant::EmptyDelta => tally.empty_delta_round_one += 1,
-        RecursiveVariant::PrimerReachXx => tally.primer_reach_xx += 1,
+        RecursiveVariant::ReachDiagonal => tally.reach_diagonal += 1,
         RecursiveVariant::InteriorsDag => tally.interiors_dag += 1,
         RecursiveVariant::InteriorsAntiJoin => tally.interiors_anti_join += 1,
         RecursiveVariant::ManyInteriors => tally.many_interiors += 1,

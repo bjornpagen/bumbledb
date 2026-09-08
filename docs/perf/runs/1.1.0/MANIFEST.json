@@ -247,23 +247,6 @@
       "finished": "2026-09-08T15:59:48.717863+00:00",
       "artifact": "heap/heap-report.json",
       "sha256": "e08ffcc036b5f49b64adce6ec2364a52eeb420b9405799d2abb4318d3bc84869"
-    },
-    "primerlane": {
-      "status": "RUN-OK",
-      "command": [
-        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
-        "primerlane",
-        "--dir",
-        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/primerlane",
-        "--out",
-        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/primerlane"
-      ],
-      "started": "2026-09-08T15:59:48.858553+00:00",
-      "pid": 33978,
-      "exit_code": 0,
-      "finished": "2026-09-08T15:59:50.644933+00:00",
-      "artifact": "primerlane/primerlane-report.json",
-      "sha256": "9f83dd87337fc565efc382e3d453490021e171a5372fd81b02942547c6f39b3c"
     }
   },
   "not_run_prerequisites": {

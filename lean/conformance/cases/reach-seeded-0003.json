@@ -1,6 +1,6 @@
 {
 "case":"reach-seeded-0003",
-"provenance":{"world_seed":12603137,"case_seed":1310724,"variant":"PrimerReachXx"},
+"provenance":{"world_seed":12603137,"case_seed":1310724,"variant":"ReachDiagonal"},
 "strings":[],
 "theory":{"relations":[{"id":7,"name":"OrgParent","closed":false,"fields":["u64","u64"]}],
 "ground_axioms":[]},

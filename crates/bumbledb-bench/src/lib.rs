@@ -28,7 +28,6 @@ pub mod largefix;
 pub mod lawful;
 pub mod naive;
 pub mod poststate;
-pub mod primerlane;
 pub mod querygen;
 pub mod report;
 pub mod scenarios;

@@ -53,13 +53,13 @@ The native bridge is version-matched, not a semver-stable binary ABI.
 ## Benchmarks and verification
 
 The [benchmark report](perf/results.md) contains the full 1.1.0 run, raw
-evidence, all charts, and the historical comparison. The runner uses up to
-eight independent workers on this M2 Max, matching its performance-core count,
-with verified user-interactive QoS. macOS does not provide hard P-core affinity.
+evidence, all charts, and the historical comparison. The runner measures
+one timed lane at a time, with verified user-interactive QoS on this M2 Max.
+macOS does not provide hard P-core affinity.
 Linux instead uses an explicit CPU mask and verified absolute nice -10.
 
-Concurrent lanes share CPU, cache, memory bandwidth and disk, so comparison
-with 1.0.1's serial run is descriptive, not a causal speedup claim. Workload
+Latency comparisons use serial lanes to avoid competing database workloads.
+Shared-host results remain descriptive, not a causal speedup claim. Workload
 sizes, samples, correctness gates and durability settings were not reduced.
 
 Required release checks cover macOS, Linux ARM64, Linux x64 and static Linux

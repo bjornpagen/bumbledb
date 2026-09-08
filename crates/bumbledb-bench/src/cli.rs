@@ -92,8 +92,6 @@ pub enum Cmd {
     /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
     Heap(HeapArgs),
 
-    Primerlane(PrimerlaneArgs),
-
     /// The deterministic float fixture corpus generator (P11's
     /// `corpus_gen::float_corpus`; a generator like `gen`, never a
     /// measurement).
@@ -119,7 +117,6 @@ impl Cmd {
             | Self::Writes(_)
             | Self::Curves(_)
             | Self::Heap(_)
-            | Self::Primerlane(_)
             | Self::HashProbe(_) => true,
             Self::AppPerf(args) => !args.plan,
             Self::Help
@@ -249,32 +246,6 @@ impl Default for CurvesArgs {
             samples: None,
             cap_ms: 30_000,
             warmth: false,
-            out: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrimerlaneArgs {
-    pub facts: u64,
-
-    pub relations: u32,
-    pub seed: u64,
-
-    pub dir: PathBuf,
-
-    pub alloc: bool,
-    pub out: Option<PathBuf>,
-}
-
-impl Default for PrimerlaneArgs {
-    fn default() -> Self {
-        Self {
-            facts: 200_000,
-            relations: 12,
-            seed: 1,
-            dir: PathBuf::from("bench-data"),
-            alloc: false,
             out: None,
         }
     }

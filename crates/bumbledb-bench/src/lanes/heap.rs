@@ -443,7 +443,6 @@ mod tests {
             assert!(row.get("facts").is_some(), "facts");
             assert!(row.get("wall_ns").is_some(), "wall_ns");
         }
-        assert!(parsed.get("primer").is_none());
         assert!(out.join("heap-report.md").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }

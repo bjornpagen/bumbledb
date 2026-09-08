@@ -1624,7 +1624,7 @@ fn closure_query() -> Query {
     }
 }
 
-fn primer_reach_xx() -> Query {
+fn reach_diagonal() -> Query {
     let edge = |a: u16, b: u16| Atom {
         source: AtomSource::Edb(GraphEdge::RELATION),
         bindings: vec![
@@ -1733,8 +1733,8 @@ fn recursive_answers_agree_scalar_and_vectorized() {
 }
 
 #[test]
-fn primer_shaped_reach_xx_is_empty_on_a_dag() {
-    let dir = common::TempDir::new("api-primer-reach-xx");
+fn reach_diagonal_is_empty_on_a_dag() {
+    let dir = common::TempDir::new("api-reach-diagonal");
     let db = Db::create(dir.path(), Graph, common::work())
         .expect("create")
         .expect("accepted");
@@ -1747,7 +1747,7 @@ fn primer_shaped_reach_xx_is_empty_on_a_dag() {
     .expect("write")
     .unwrap();
     let mut prepared = db
-        .prepare(&primer_reach_xx(), common::work())
+        .prepare(&reach_diagonal(), common::work())
         .expect("prepare");
     db.read(common::work(), |snap| {
         let answers = snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])?;

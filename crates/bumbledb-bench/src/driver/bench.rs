@@ -21,7 +21,7 @@ pub(super) fn stamp_refusal(corpus: &CorpusArgs) -> String {
     )
 }
 
-pub(crate) fn alloc_missing(what: &str) -> String {
+pub(super) fn alloc_missing(what: &str) -> String {
     format!(
         "{what} needs an alloc-counter build; run:\n\
          cargo run -p bumbledb-bench --features alloc-counter --release -- …"
