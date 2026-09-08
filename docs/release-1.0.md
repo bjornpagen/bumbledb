@@ -96,7 +96,7 @@ checks do not become successful evidence because their workflow is green.
 
 The full local benchmark completed on September 7, 2026: 32 read families,
 34 scenario queries and all ordinary storage, lifecycle, mutation, scale,
-churn, heap and Primer-shaped lanes. Results are from the Apple M2 Max on a
+heap and Primer-shaped lanes. Results are from the Apple M2 Max on a
 shared, scheduler-boosted host. The engine revision measured was
 `5e83ee60c4e5d88e8ca395daa3de4d92a0c03186`, version **1.0.1**. Subsequent
 documentation commits do not change that measurement identity.

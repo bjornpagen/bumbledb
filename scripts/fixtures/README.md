@@ -8,7 +8,7 @@ Hand-written synthetic lane reports (`host: "fixture"`, `git_rev:
 NEVER measurement output; no number in them was ever timed, and none may
 be quoted as a claim.
 
-- `fixture-storage-report.json` — 2 scales × 2 worlds + 2 churn rows
+- `fixture-storage-report.json` — 2 scales × 2 worlds
   (`bench-storage.svg`).
 - `fixture-writes-report.json` — 2 durability lanes × the commit ladder
   + deletes + insert_stream (`bench-writes-rates.svg`).

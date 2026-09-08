@@ -69,19 +69,5 @@
         }
       ]
     }
-  ],
-  "churn": [
-    {
-      "name": "c0-loaded",
-      "engine_bytes": 4200000,
-      "sqlite_bytes": 12800000,
-      "sqlite_wal_bytes": 0
-    },
-    {
-      "name": "c1-churned",
-      "engine_bytes": 5100000,
-      "sqlite_bytes": 13100000,
-      "sqlite_wal_bytes": 524288
-    }
   ]
 }

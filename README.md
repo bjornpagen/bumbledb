@@ -163,7 +163,7 @@ authoritative database for a local migration.
 On an Apple M2 Max, the September 8, 2026 suite measured a 0.50 µs median
 point lookup, a 5.17 µs range query, and 5.47 ms to construct and deliver a
 100,000-row native result. It covers 32 read families, 34 scenario queries,
-durable writes, constraints, storage, and scaling.
+durable writes, constraints, storage, scaling, and native application lifecycles.
 
 ![Read latency against indexed SQLite](assets/bench-vs-sqlite.svg)
 
