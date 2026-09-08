@@ -12,6 +12,14 @@ fn stats(p50: u64) -> Stats {
     }
 }
 
+#[test]
+fn independent_lane_concurrency_is_preserved_in_raw_provenance() {
+    let mut run = fixture();
+    run.provenance.parallel_jobs = Some(8);
+    let encoded = to_json(&run);
+    assert!(encoded.contains("\"parallel_jobs\":8"), "{encoded}");
+}
+
 fn fixture() -> RunReport {
     RunReport {
         provenance: Provenance {
@@ -20,6 +28,7 @@ fn fixture() -> RunReport {
             timestamp: "2026-01-01T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
             shared: None,
+            parallel_jobs: None,
         },
         config: RunConfig {
             scale: "S",

@@ -6,6 +6,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+echo "==> benchmark scheduler regressions (no measurements)"
+python3 -m unittest discover -s scripts -p 'test_bench_*.py'
+
 echo "==> release-evidence checker regressions (not release qualification)"
 node --test scripts/release-results.test.mjs
 

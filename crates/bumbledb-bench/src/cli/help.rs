@@ -181,9 +181,10 @@ pub fn help() -> String {
          \n\
          SHARED-MACHINE BOOST (owner ruling 2026-07-20):\n\
          \x20 BUMBLEDB_BENCH_BOOST=1  claim user-interactive QoS before any\n\
-         \x20                 measurement subcommand (macOS; no-op elsewhere)\n\
+         \x20                 measurement subcommand (macOS); on Linux set and\n\
+         \x20                 verify absolute nice -10 (needs priority permission)\n\
          \x20                 and stamp shared_machine provenance. Default off\n\
-         \x20                 (unset/0); bench-night.sh --shared sets it.\n\
+         \x20                 (unset/0); bench-night.sh always sets it.\n\
          \n\
          EXIT CODES: 0 ok / gate won; 1 verify mismatch, store findings, or\n\
          gate loss; 2 usage.\n",

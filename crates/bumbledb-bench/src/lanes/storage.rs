@@ -544,6 +544,7 @@ mod tests {
             timestamp: "2026-07-19T00:00:00Z".to_owned(),
             host: "test-host".to_owned(),
             shared: None,
+            parallel_jobs: None,
         }
     }
 

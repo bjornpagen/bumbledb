@@ -2,6 +2,8 @@ use std::path::Path;
 
 use super::{Provenance, SharedMachine};
 
+/// # Panics
+/// If `BUMBLEDB_BENCH_JOBS` is set to anything other than a positive integer.
 #[must_use]
 pub fn provenance(repo_dir: &Path) -> Provenance {
     Provenance {
@@ -10,6 +12,12 @@ pub fn provenance(repo_dir: &Path) -> Provenance {
         timestamp: timestamp_iso8601(),
         host: host_description(),
         shared: shared_stamp(crate::boost::engaged()),
+        parallel_jobs: std::env::var("BUMBLEDB_BENCH_JOBS").ok().map(|value| {
+            value
+                .parse::<std::num::NonZeroUsize>()
+                .expect("benchmark runner supplies a positive worker count")
+                .get()
+        }),
     }
 }
 

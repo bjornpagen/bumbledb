@@ -60,6 +60,9 @@ pub(crate) fn push_provenance(out: &mut String, provenance: &Provenance) {
     json::push_str_lit(out, &provenance.timestamp);
     out.push_str(",\"host\":");
     json::push_str_lit(out, &provenance.host);
+    if let Some(jobs) = provenance.parallel_jobs {
+        let _ = write!(out, ",\"parallel_jobs\":{jobs}");
+    }
     if let Some(shared) = &provenance.shared {
         out.push_str(",\"shared_machine\":true,\"boost\":");
         json::push_str_lit(out, shared.boost);

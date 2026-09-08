@@ -15,14 +15,43 @@ scripts/bench-night.sh bench-out/new-round --full --plan
 Then use a fresh output directory:
 
 ```sh
-scripts/bench-night.sh bench-out/new-round --full
+scripts/bench-night.sh bench-out/new-round --full --shared --allow-macos-qos
 ```
 
 The runner builds one ordinary release binary, acquires the measurement
-mutex, runs verification before timing, and executes lanes serially.
-Verification failure stops timing. Later lane failures are recorded while the
-remaining lanes continue. Existing report files are skipped, so a reused
-directory is not a fresh run.
+mutex, and runs verification before timing. Independent lanes run in a bounded
+process pool with separate corpus/scratch paths. On Apple Silicon, the default
+worker count is the number of performance cores: eight on the M2 Max, not all
+twelve cores. `--jobs 1` retains serial measurement; a larger explicit count
+cannot exceed the selected performance CPU count.
+
+Every timed process sets and reads back user-interactive QoS on macOS. This
+steers scheduling toward P-cores but **does not provide hard CPU affinity**.
+`--allow-macos-qos` explicitly accepts that OS limitation. Neither a worker-count
+cap nor QoS establishes that a thread never visited an E-core. The runner does
+not change system-wide scheduling, disable cores, or request real-time policy.
+
+On Linux, supply this host's performance CPU IDs using `--cpus`, for example
+`--cpus 0-7` only if those really are its P-cores. Every worker applies and reads
+back that affinity mask before executing the benchmark. CPU numbering is not
+assumed portable, and the selection must fit the current cpuset. The benchmark
+then assigns **absolute nice -10** and verifies the result, for both Bumbledb
+and SQLite in the same process. A suitable `RLIMIT_NICE` or `CAP_SYS_NICE` is
+required; permission or affinity failures abort rather than silently downgrading.
+Niceness is priority, not CPU affinity. Newly created threads inherit these
+Linux settings; measurement code must not reset them.
+
+Concurrent lanes contend for CPU, cache, memory bandwidth and disk. Reports
+record the lane-worker limit, priority policy, and whether affinity is enforced;
+charts retain the concurrency caveat. They are not isolated latency measurements
+and cannot support an unqualified speedup claim against an older serial run.
+No internal query parallelism is implied by the runner's worker count.
+
+Verification failure stops timing. Later failures are retained while other
+lanes finish. Each lane has its own log and the manifest updates as jobs finish.
+Fresh output directories are mandatory: the runner does not treat an existing
+or partially written report as a successful measurement. Chart generation runs
+only after every lane succeeds, and a renderer failure makes the run incomplete.
 
 The default without `--full` is the compact storage/lifecycle/hash subset.
 It does not include the main Free Join versus SQLite comparison.

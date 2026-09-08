@@ -478,6 +478,8 @@ def derive_pools(inputs):
             inputs["host"] = provenance.get("host", "unknown host")
             inputs["shared_machine"] = any(
                 (r.get("provenance") or {}).get("shared_machine") for r in pool)
+            inputs["parallel_jobs"] = max(
+                ((r.get("provenance") or {}).get("parallel_jobs", 1) for r in pool), default=1)
             inputs["scale"] = (pool[0].get("config") or {}).get("scale", "?")
             return
 
@@ -486,9 +488,12 @@ def prov_note(payload):
     stamp — a lane measured on a loaded machine under boosted QoS says
     so on the chart itself (owner ruling 2026-07-20)."""
     provenance = payload.get("provenance") if isinstance(payload, dict) else None
-    if isinstance(provenance, dict) and provenance.get("shared_machine"):
-        return " · shared machine, recorded system load"
-    return ""
+    if not isinstance(provenance, dict):
+        return ""
+    note = " · shared machine, recorded system load" if provenance.get("shared_machine") else ""
+    if provenance.get("parallel_jobs", 1) > 1:
+        note += f" · up to {provenance['parallel_jobs']} concurrent lanes"
+    return note
 
 def pool_note(inputs):
     """The merged-pool caption tail: min-of-N, store kind, exclusions,
@@ -502,6 +507,8 @@ def pool_note(inputs):
         note += f" · {n} contaminated run{'s' if n != 1 else ''} excluded and counted"
     if inputs.get("shared_machine"):
         note += " · shared machine, recorded system load"
+    if inputs.get("parallel_jobs", 1) > 1:
+        note += f" · up to {inputs['parallel_jobs']} concurrent lanes"
     return note
 
 def derive_write_throughput(inputs):

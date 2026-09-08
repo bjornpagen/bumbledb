@@ -10,6 +10,8 @@ pub struct Provenance {
     pub host: String,
 
     pub shared: Option<SharedMachine>,
+    /// Maximum independent lane workers, not query-engine threads.
+    pub parallel_jobs: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
