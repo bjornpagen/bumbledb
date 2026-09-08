@@ -57,7 +57,7 @@ use crate::history::{
 use crate::manifest::{self, HeadRecord, TailPolicy};
 use crate::replica::WitnessCheck;
 use crate::store::{
-    self, BackendError, ChargedBytes, ObjectError, ObjectKind, ObservedError, ReceiveLimits,
+    self, BackendError, ObjectError, ObjectKind, ObservedError, ReceiveLimits, ReceivedBody,
     ReceivedHead, ReceivingStore, TransportContext, TransportObservation, read_head_bounded,
 };
 
@@ -485,7 +485,7 @@ where
             match self.attempt_publish(
                 command,
                 &record,
-                body.as_bytes(),
+                body.as_slice(),
                 &version,
                 plan,
                 dispatched,
@@ -725,10 +725,10 @@ where
         work: &WorkContext,
     ) -> Result<UnknownResolution, SubmitFailure> {
         let head_key = store::head_key(&self.prefix);
-        let (record, current, charged) =
+        let (record, current, received) =
             read_captured_head(&self.backend, &head_key, self.limits, work)
                 .map_err(SubmitFailure::Unknown)?;
-        drop(charged);
+        drop(received);
         self.catch_up_to(&record, work)
             .map_err(SubmitFailure::Unknown)?;
         let frontier = self
@@ -1185,7 +1185,7 @@ fn read_captured_head<B>(
     head_key: &str,
     limits: Limits,
     work: &WorkContext,
-) -> Result<(HeadRecord, HeadVersion, ChargedBytes), LogError>
+) -> Result<(HeadRecord, HeadVersion, ReceivedBody), LogError>
 where
     B: ReceivingStore,
     B::Error: BackendError + ObservedError,
@@ -1199,9 +1199,8 @@ where
     .map_err(|error| map_object_error(&error))?
     {
         ReceivedHead::Present { version, body } => {
-            let charged = body.into_charged().ok_or(LogError::Backend)?;
-            let record = decode_record(charged.as_bytes(), limits)?;
-            Ok((record, version, charged.into_owner()))
+            let record = decode_record(&body, limits)?;
+            Ok((record, version, body))
         }
         ReceivedHead::Absent => Err(LogError::NotInitialized),
     }
@@ -1217,8 +1216,8 @@ where
     B: ReceivingStore,
     B::Error: BackendError + ObservedError,
 {
-    let (record, _, charged) = read_captured_head(backend, head_key, limits, work)?;
-    drop(charged);
+    let (record, _, received) = read_captured_head(backend, head_key, limits, work)?;
+    drop(received);
     Ok(record)
 }
 
@@ -1264,11 +1263,11 @@ where
         ReceivedHead::Present { body, .. } => body,
         ReceivedHead::Absent => return Err(LogError::Backend),
     };
-    if found.as_bytes() == genesis_body {
+    if found.as_slice() == genesis_body {
         drop(found);
         return Ok(());
     }
-    let record = decode_record(found.as_bytes(), limits)?;
+    let record = decode_record(found.as_slice(), limits)?;
     drop(found);
     if record.control.identity == identity
         && matches!(
@@ -1475,23 +1474,13 @@ mod tests {
     #[test]
     fn stale_captures_never_rewind_or_judge_a_newer_local_parent() {
         use bumbledb::schema::SchemaDescriptor;
-        use bumbledb::{ExecutionPolicy, Uuid};
+        use bumbledb::{Uuid, WorkContext};
 
         use crate::history::command::CommandMetadata;
         use crate::history::{CommandId, CommandResult, Condition, ReceiptEpoch, RequestId};
         use crate::store::mem::MemStore;
 
-        let work = ExecutionPolicy {
-            input_bytes: 1_000_000,
-            working_bytes: 1_000_000,
-            scratch_bytes: 1_000_000,
-            result_bytes: 1_000_000,
-            rows: 100_000,
-            work_units: 10_000_000,
-            timeout: Duration::from_secs(30),
-        }
-        .start()
-        .unwrap();
+        let work = WorkContext::new();
         let limits = Limits {
             envelope_bytes: 100_000,
             change_bytes: 90_000,
@@ -1564,7 +1553,7 @@ mod tests {
             history.attempt_publish(
                 &command,
                 &captured,
-                body.as_bytes(),
+                body.as_slice(),
                 &version,
                 Plan::Evaluate,
                 false,

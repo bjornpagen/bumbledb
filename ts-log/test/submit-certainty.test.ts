@@ -24,8 +24,7 @@ import {
 	receiptWire,
 	refWire,
 	registerChange,
-	submitOptions,
-	work
+	submitOptions
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
@@ -51,13 +50,13 @@ function plannedSeal(double: Double, machine: Machine) {
 		precondition: { kind: "blind" as const },
 		result: { attempt: "6f6f6f6f-6f6f-6f6f-6f6f-6f6f6f6f6f6f" }
 	} as unknown as CommandInput<typeof schema>
-	return machine.Command.seal(input, work)
+	return machine.Command.seal(input)
 }
 
 /** Plans one open and returns the lazy open effect. */
 function plannedOpen(double: Double, machine: Machine) {
 	double.plan("logHistoryOpen", { result: handleWire() })
-	return machine.LocalHistory.open(localBinding, schema, work)
+	return machine.LocalHistory.open(localBinding, schema)
 }
 
 function ticks(count: number): Promise<void> {
@@ -285,7 +284,7 @@ describe("interruption after publication", function suite() {
 							id: { receiptEpoch: history.receiptEpoch, requestId: refWire.requestId },
 							digest: refWire.digest
 						} as unknown as Parameters<typeof history.resolve>[0]
-						return yield* history.resolve(ref, work)
+						return yield* history.resolve(ref)
 					})
 				)
 			)
@@ -313,18 +312,18 @@ describe("interruption after publication", function suite() {
 						double.plan("logHistoryCall", {
 							result: { verb: "resolve", outcome: { kind: "command-epoch-closed" } }
 						})
-						const closed = yield* history.resolve(ref, work)
+						const closed = yield* history.resolve(ref)
 						double.plan("logHistoryCall", {
 							result: { verb: "resolve", outcome: { kind: "receipt-expired-unknown" } }
 						})
-						const expired = yield* history.resolve(ref, work)
+						const expired = yield* history.resolve(ref)
 						double.plan("logHistoryCall", {
 							result: {
 								verb: "resolve",
 								outcome: { kind: "not-recorded-at", decisionAt: receiptWire.decisionAt }
 							}
 						})
-						const absent = yield* history.resolve(ref, work)
+						const absent = yield* history.resolve(ref)
 						return { closed, expired, absent }
 					})
 				)

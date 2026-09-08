@@ -4,8 +4,8 @@ Durable named application commands over
 [Bumbledb](https://github.com/bjornpagen/bumbledb): a thin peer of
 `@bjornpagen/bumbledb` (exact peer `1.0.1`). The package adds a durable
 envelope around the exact core change/read machinery — it never duplicates
-the engine surface. Core types (`ChangeSet`, `QueryReader`,
-`ExecutionPolicy`, `DbError`, …) are the peer's own exports.
+the engine surface. Core types (`ChangeSet`, `QueryReader`, `DbError`,
+`StorageInspection`) are the peer's own exports.
 
 The API is **Effect-native**: every operation constructs a lazy
 [`Effect`](https://effect.website) and every native resource is scoped.
@@ -28,14 +28,14 @@ The surface is small:
    `ref`; `Command.encode`/`Command.decode` are the one bounded versioned
    command codec. The `changes` are the core's own `ChangeSet`.
 3. **`PublishedSnapshot`** — the read side. It extends the core
-   `QueryReader` exactly (same `get`/`execute`/`session`, policies, errors
+   `QueryReader` exactly (same `get`/`execute`/`prepare`, parameters, errors
    and result owners) and adds durable provenance: `identity`,
    `decisionStamp`, `stateStamp`, `freshness`. `ReadOptions.consistency`
    selects `cached`, `latest`, or `at-least` a known stamp.
 4. **`TenantCache`** — one bounded native registry of histories for
    multi-tenant hosts: `make`/`acquire` (a `HistoryBorrow` whose `release`
-   frees only the borrow)/`inspect`/`evict`/`close`. Pressure is byte and
-   count budgets; evicting a borrowed slot refuses instead of revoking.
+   frees only the borrow)/`inspect`/`evict`/`close`. `maxOpen` bounds the
+   number of open tenants; evicting a borrowed slot refuses.
 5. **Maintenance and migrations** — explicit admin operations
    (`checkpoint`, `pinRestorePoint`/`releaseRestorePoint`,
    `rotateReceiptEpoch`, `retireReceipts`, `collectGarbage`, `backup`/
@@ -43,6 +43,9 @@ The surface is small:
    under the `./migrations` subpath (below).
 
 ## Install
+
+This guide follows the development checkout. For an npm installation, use
+the guide from its matching Git tag.
 
 ```sh
 pnpm add @bjornpagen/bumbledb-log@1.0.1 @bjornpagen/bumbledb@1.0.1 effect@4.0.0-rc.112
@@ -57,7 +60,6 @@ and resolve the retained ref to the exact recorded outcome.
 ```ts
 import * as fs from "node:fs/promises"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { Command, DatabaseId, IncarnationId, LocalHistory, OperationId, ReceiptEpoch, RequestId } from "@bjornpagen/bumbledb-log"
 import type { DatabaseIdentity, LocalBinding, ReadOptions, SubmitOptions } from "@bjornpagen/bumbledb-log"
 import { Effect, ManagedRuntime, Result } from "effect"
@@ -65,36 +67,14 @@ import { Effect, ManagedRuntime, Result } from "effect"
 const Entry = relation("Entry", { id: u64, body: str })
 const Ledger = schema("Ledger", { Entry }, [key(Entry, ["id"])])
 
-const runtimeOptions: NativeRuntimeOptions = {
-	workers: 2,
-	queueCapacity: 16,
-	cleanupCapacity: 16,
-	ownerCapacity: 16,
-	nativeHandleCapacity: 64,
-	inputBytes: 8_000_000n,
-	workingBytes: 8_000_000n,
-	scratchBytes: 8_000_000n,
-	resultBytes: 1_000_000n,
-	chunkBytes: 1_000_000n,
-	cleanupTimeout: "2 seconds"
-}
-const work: ExecutionPolicy = {
-	inputBytes: 1_000_000n,
-	workingBytes: 1_000_000n,
-	scratchBytes: 1_000_000n,
-	resultBytes: 100_000n,
-	rows: 100_000n,
-	workUnits: 10_000_000n,
-	timeout: "10 seconds"
-}
-const submitOptions: SubmitOptions = { ...work, attempts: 4, backoff: { baseMillis: 5, capMillis: 100 } }
-const readOptions: ReadOptions = { ...work, consistency: { kind: "cached" } }
+const submitOptions: SubmitOptions = { attempts: 4, backoff: { baseMillis: 5, capMillis: 100 } }
+const readOptions: ReadOptions = { consistency: { kind: "cached" } }
 
 // Genuinely fallible small parsing is Result, not Effect.
 const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 
 const program = Effect.gen(function* () {
-	const compiled = yield* Schema.compile(Ledger, work)
+	const compiled = yield* Schema.compile(Ledger)
 	// The checked initialization artifact: the canonical schema snapshot the
 	// migration generator wrote to your checked-in repository. Its native
 	// fingerprint IS the identity's schemaId — creation re-judges both.
@@ -111,14 +91,12 @@ const program = Effect.gen(function* () {
 	// Scope 1: create, seal, submit; retain the ref and receipt.
 	const retained = yield* Effect.scoped(
 		Effect.gen(function* () {
-			const history = yield* LocalHistory.create(binding, Ledger, {
-				...work,
-				creation: {
+			const history = yield* LocalHistory.create(binding, Ledger, { creation: {
 					operationId: unwrap(OperationId.parse("e1e1e1e1-e1e1-e1e1-e1e1-e1e1e1e1e1e1")),
 					artifact
 				}
 			})
-			const draft = yield* ChangeSet.builder(Ledger, work)
+			const draft = yield* ChangeSet.builder(Ledger)
 			yield* draft.insert(Entry, [{ id: 42n, body: "hello" }])
 			const changes = yield* draft.finish()
 			const command = yield* Command.seal(
@@ -133,8 +111,7 @@ const program = Effect.gen(function* () {
 					changes,
 					precondition: { kind: "blind" },
 					result: {}
-				},
-				work
+				}
 			)
 			// Submission certainty is data; interruption remains interruption.
 			const outcome = yield* history.submit(command, submitOptions)
@@ -149,18 +126,18 @@ const program = Effect.gen(function* () {
 	// and the committed fact reads back through the core QueryReader.
 	yield* Effect.scoped(
 		Effect.gen(function* () {
-			const history = yield* LocalHistory.open(binding, Ledger, work)
-			const resolved = yield* history.resolve(retained.ref, work)
+			const history = yield* LocalHistory.open(binding, Ledger)
+			const resolved = yield* history.resolve(retained.ref)
 			if (resolved.kind === "found" && resolved.receipt.outcome.kind === "committed") {
 				const snapshot = yield* history.snapshot(readOptions)
-				const fact = yield* snapshot.get(Entry, { id: 42n }, work)
+				const fact = yield* snapshot.get(Entry, { id: 42n })
 				yield* Effect.log(fact._tag === "Some" ? fact.value.body : "missing")
 			}
 		})
 	)
 })
 
-const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+const runtime = ManagedRuntime.make(NativeRuntime.layer())
 await runtime.runPromise(program)
 await Effect.runPromise(runtime.disposeEffect)
 ```
@@ -200,7 +177,7 @@ nothing else. Interruption and finalizer defects stay in `Cause`.
 
 The same core `QueryReader` helper that lists a local `Db` snapshot lists a
 published history snapshot. There is no log-specific query wrapper. The
-packed consumer spells this as `readAttempts(snapshot, student, work)` on
+packed consumer spells this as `readAttempts(snapshot, student)` on
 both `Db.snapshot` and `history.snapshot`.
 
 Retain the command or admin `operationId` **before** `submit` / `initialize` /
@@ -211,7 +188,6 @@ A later missing receipt is not proved loss.
 
 ```ts
 import { NativeRuntime } from "@bjornpagen/bumbledb"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import {
 	backup,
 	OperationId,
@@ -221,8 +197,6 @@ import {
 } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 
-declare const runtimeOptions: NativeRuntimeOptions
-declare const work: ExecutionPolicy
 declare const binding: LocalBinding
 
 const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
@@ -230,14 +204,14 @@ const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(resul
 const cycle = Effect.gen(function* () {
 	const operationId = unwrap(OperationId.parse("a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1"))
 	const destination = { kind: "filesystem" as const, directory: "/tmp/ledger-backup" }
-	const backed = yield* backup(binding, { ...work, operationId, destination })
+	const backed = yield* backup(binding, { operationId, destination })
 	if (backed.kind !== "completed") {
 		return backed
 	}
-	yield* verifyBackup(destination, work)
-	return yield* restore(destination, binding, { ...work, operationId })
+	yield* verifyBackup(destination, {})
+	return yield* restore(destination, binding, { operationId })
 })
-void NativeRuntime.layer(runtimeOptions)
+void NativeRuntime.layer()
 void cycle
 ```
 
@@ -271,8 +245,7 @@ runtime:
   **Current limitation:** these generated migration runner verbs target local
   authorities only. The TypeScript/native bridge refuses hosted migration
   execution; a hosted tenant's cache is not an authoritative local migration
-  target. Hosted migration orchestration is not supported in 1.0; the
-  production-ready scope is local history. Real-S3 and Graviton qualification
+  target. Hosted migration orchestration is not supported. Real-S3 and Graviton qualification
   remain deferred, not passed.
 - Field arithmetic such as `Scalar.add(Scalar.field("units"), Scalar.u64(1n))`
   is valid intent metadata. Native chain compilation binds it before any

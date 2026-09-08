@@ -99,7 +99,7 @@ fn range_is_empty(summary: &RangeSummary) -> bool {
 fn eq_conflicts(first: &Const, second: &Const) -> bool {
     match (first, second) {
         (Const::WordSet(words), Const::Word(word)) | (Const::Word(word), Const::WordSet(words)) => {
-            set_refutes_eq(words, Some(*word))
+            set_refutes_eq(&words.words, Some(*word))
         }
         (Const::Word(_), Const::Word(_))
         | (Const::Byte(_), Const::Byte(_))
@@ -155,7 +155,7 @@ fn fold_occurrence(schema: &Schema, occurrence: &mut Occurrence) -> Option<Strin
         }
         if let Const::WordSet(words) = value {
             // Rule (d), the set alone: empty after sentinel-trim.
-            if set_refutes_eq(words, None) {
+            if set_refutes_eq(&words.words, None) {
                 return Some(format!(
                     "{}: {} ∈ {{}}",
                     relation.name(),
@@ -421,6 +421,7 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
 pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Const) {
     match value {
         Const::Word(word) => render_scalar(out, value_type, *word),
+        Const::Text(text) => literal(out, &Value::String(text.text.as_ref().into())),
         Const::Byte(byte) => literal(out, &Value::Bool(*byte != 0)),
         Const::Interval { start, end } => {
             literal(out, &decoded_interval(value_type, (*start, *end)));
@@ -443,7 +444,7 @@ pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Con
         ),
         Const::WordSet(words) => {
             out.push('{');
-            for (index, word) in words.iter().enumerate() {
+            for (index, word) in words.words.iter().enumerate() {
                 if index > 0 {
                     out.push_str(", ");
                 }

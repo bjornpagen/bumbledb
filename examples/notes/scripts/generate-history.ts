@@ -18,7 +18,7 @@ import type { GenerationReport } from "@bjornpagen/bumbledb-log/migrations"
 import { generateMigrations } from "@bjornpagen/bumbledb-log/migrations"
 import { Effect } from "effect"
 import { App0, App1, App2, App3, App4, evolution1, evolution2, evolution3 } from "../src/db/evolution-stages.ts"
-import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
+import { runtimePolicy } from "../src/db/runtime-policy.ts"
 
 const repository = { directory: "bumbledb/migrations" }
 
@@ -30,31 +30,28 @@ function announce(label: string) {
 }
 
 const program = Effect.gen(function* () {
-	yield* generateMigrations({ schema: App0, label: "initialize", repository, work: adminWork }).pipe(
+	yield* generateMigrations({ schema: App0, label: "initialize", repository }).pipe(
 		Effect.flatMap(announce("initialize"))
 	)
 	yield* generateMigrations({
 		schema: App1,
 		intent: evolution1,
 		label: "note-pinned",
-		repository,
-		work: adminWork
+		repository
 	}).pipe(Effect.flatMap(announce("note-pinned")))
 	yield* generateMigrations({
 		schema: App2,
 		intent: evolution2,
 		label: "create-tag-seed-tag",
-		repository,
-		work: adminWork
+		repository
 	}).pipe(Effect.flatMap(announce("create-tag-seed-tag")))
 	yield* generateMigrations({
 		schema: App3,
 		intent: evolution3,
 		label: "note-text",
-		repository,
-		work: adminWork
+		repository
 	}).pipe(Effect.flatMap(announce("note-text")))
-	yield* generateMigrations({ schema: App4, label: "outbox-attachment", repository, work: adminWork }).pipe(
+	yield* generateMigrations({ schema: App4, label: "outbox-attachment", repository }).pipe(
 		Effect.flatMap(announce("outbox-attachment"))
 	)
 })

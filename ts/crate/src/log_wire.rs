@@ -5,7 +5,7 @@
 //! the native-backed typed tenant cache, and the one `logAdmin` verb family
 //! (maintenance, retention, backup/restore/erase, migration workflow).
 //!
-//! Every operation registers in the ONE runtime registry (charged,
+//! Every operation registers in the ONE runtime registry (owned,
 //! cancellable, drained at shutdown); take-functions throw the typed
 //! `{ source: "core" | "protocol", reason }` error frame; close verbs are
 //! join-idempotent. No protocol transition, CAS loop, lock, TTL or timer
@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use bumbledb::canonical::result::{ResultError, decode_result, encode_result};
-use bumbledb::work::{Resource, WorkContext};
+use bumbledb::work::WorkContext;
 use bumbledb::{F64, SchemaDescriptor, SchemaFingerprint, Uuid, Value};
 use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
 use bumbledb_log::codec::StreamLimits;
@@ -44,7 +44,7 @@ use crate::marshal;
 use crate::runtime::owners::{DbLease, DirectoryOwner, ManagedDb};
 use crate::runtime::{Output, RetainedNative, Runtime, RuntimeError};
 use crate::runtime_wire::{
-    CloseWire, OperationHandle, PolicyWire, RuntimeHandle, notification, operation_handle,
+    CloseWire, OperationHandle, RuntimeHandle, notification, operation_handle,
     owner as runtime_owner, reason_object, reporter, take_output, thrown,
 };
 
@@ -351,29 +351,6 @@ pub(crate) fn fail_of_log(error: LogError) -> LogFail {
              reopen the history (or re-acquire the tenant) so recovery hydration rebuilds it \
              natively",
         ),
-    }
-}
-
-/// Lifecycle stream/manifest bounds derived from this operation's work
-/// context — receiving caps intersect the deployment defaults (C6/C7).
-pub(crate) fn stream_limits(context: &WorkContext) -> StreamLimits {
-    let record = usize::try_from(
-        context
-            .limit(Resource::InputBytes)
-            .min(StreamLimits::DEFAULT.record_bytes as u64)
-            .max(1),
-    )
-    .unwrap_or(StreamLimits::DEFAULT.record_bytes);
-    let manifest = usize::try_from(
-        context
-            .limit(Resource::WorkingBytes)
-            .min(StreamLimits::DEFAULT.manifest_bytes as u64)
-            .max(1),
-    )
-    .unwrap_or(StreamLimits::DEFAULT.manifest_bytes);
-    StreamLimits {
-        record_bytes: record,
-        manifest_bytes: manifest,
     }
 }
 
@@ -689,28 +666,9 @@ fn result_cell_in(value: &Unknown, ctx: &str) -> napi::Result<Value> {
     }
 }
 
-/// A bounded local budget for take-side result decodes: take-functions run
-/// on the JS thread outside any registered job, and the record is already
-/// capped by `LIMITS.result_bytes`, so the charge is local by construction.
-fn result_take_work() -> Option<WorkContext> {
-    let cap = LIMITS.result_bytes as u64;
-    bumbledb::work::ExecutionPolicy {
-        input_bytes: cap,
-        working_bytes: cap,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 1,
-        work_units: cap.saturating_mul(4).max(1 << 20),
-        timeout: std::time::Duration::from_secs(10),
-    }
-    .start()
-    .ok()
-}
-
 fn result_record_wire<'e>(env: &'e Env, bytes: &[u8]) -> napi::Result<Object<'e>> {
     let mut obj = Object::new(env)?;
-    let work = result_take_work()
-        .ok_or_else(|| throw_frame(*env, &LogFail::Core(RuntimeError::Internal)))?;
+    let work = WorkContext::new();
     // Decode failure is not an empty application result. Submit retains
     // the command ref and reports uncertainty; resolve remains fallible.
     let entries = decode_result_record(bytes, &work).map_err(|fail| throw_frame(*env, &fail))?;
@@ -1229,7 +1187,7 @@ pub(crate) fn open_history(
     context: &WorkContext,
 ) -> MachineResult<HistoryOpened> {
     context.checkpoint().map_err(RuntimeError::from)?;
-    let owner_id = runtime.reserve_owner_slot(spec.directory.len())?;
+    let owner_id = runtime.reserve_owner_slot()?;
     match open_history_at(runtime, owner_id, spec, context) {
         Ok(opened) => Ok(opened),
         Err(fail) => {
@@ -1475,7 +1433,7 @@ fn finish_local_create(
             return Err(fail);
         }
     };
-    let retained = match runtime.retain_native(0) {
+    let retained = match runtime.retain_native() {
         Ok(retained) => retained,
         Err(error) => {
             drop(lease);
@@ -1545,7 +1503,7 @@ fn finish_local_existing(
             return Err(fail);
         }
     };
-    let retained = match runtime.retain_native(0) {
+    let retained = match runtime.retain_native() {
         Ok(retained) => retained,
         Err(error) => {
             drop(lease);
@@ -1627,7 +1585,7 @@ fn open_hosted(
                     return Err(fail_of_log(other));
                 }
             };
-            let retained = match runtime.retain_native(0) {
+            let retained = match runtime.retain_native() {
                 Ok(retained) => retained,
                 Err(error) => {
                     drop(lease);
@@ -1663,7 +1621,7 @@ fn open_hosted(
             &origin,
             prefix,
             LIMITS,
-            stream_limits(context),
+            StreamLimits::DEFAULT,
             LIMITS.envelope_bytes,
             context,
         ) {
@@ -1681,7 +1639,7 @@ fn open_hosted(
                     &origin,
                     prefix,
                     LIMITS,
-                    stream_limits(context),
+                    StreamLimits::DEFAULT,
                     LIMITS.envelope_bytes,
                     context,
                 )
@@ -1737,7 +1695,7 @@ fn open_hosted(
                 Ok(live) => live.receipts.open_epoch().get(),
                 Err(_) => 0,
             };
-            let retained = match runtime.retain_native(0) {
+            let retained = match runtime.retain_native() {
                 Ok(retained) => retained,
                 Err(error) => {
                     drop(lease);
@@ -1823,7 +1781,7 @@ pub enum SubmitOwned {
         health: LocalHealth,
         /// Present exactly when the receipt is invariant-rejected: the
         /// canonical evidence decoded INSIDE the job (where the schema and
-        /// the work budget live) into owned public rows.
+        /// the cancellation context live) into owned public rows.
         violations: Option<ViolationsOwned>,
         phase: PublicationPhase,
     },
@@ -1886,8 +1844,7 @@ pub struct InspectionOwned {
     pub root_count: u32,
     pub root_capacity: u32,
     pub gc: Option<&'static str>,
-    pub disk_bytes: u64,
-    pub working_bytes: u64,
+    pub storage: bumbledb::store::MapReport,
     pub queued: u64,
     pub active: u64,
 }
@@ -1938,10 +1895,9 @@ pub struct BorrowOwned {
 pub struct CacheReportOwned {
     pub open_count: usize,
     pub opening: usize,
-    pub budget_bytes: u64,
     pub max_open: usize,
     pub evictions: u64,
-    pub slots: Vec<(String, &'static str, usize, u64)>,
+    pub slots: Vec<(String, &'static str, usize)>,
 }
 
 /// One refusal frame carried as a job OUTPUT (the take throws it): protocol
@@ -2021,7 +1977,6 @@ fn open_spec_in(env: Env, request: &Object) -> napi::Result<OpenSpec> {
 pub fn log_history_open(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -2030,10 +1985,10 @@ pub fn log_history_open(
     let shared = Arc::clone(runtime);
     let operation = runtime
         .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             notification(callback)?,
             move |context| {
-                context.input(spec.directory.len() as u64)?;
+                context.checkpoint()?;
                 Ok(Box::new(move |context| {
                     match open_history(&shared, &spec, context) {
                         Ok(opened) => Ok(Output::Machine(MachineOutput::History(opened))),
@@ -2245,7 +2200,6 @@ fn history_verb_in(request: &Object) -> napi::Result<HistoryVerb> {
 pub fn log_history_call(
     env: Env,
     handle: &External<LogHistoryHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -2262,7 +2216,7 @@ pub fn log_history_call(
     let operation = runtime
         .submit_db(
             &resource.managed,
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             notification(callback)?,
             move |_| {
                 Ok(Box::new(move |context| {
@@ -2509,8 +2463,7 @@ fn inspect_history(
         root_count: u32::try_from(status.roots_held).unwrap_or(u32::MAX),
         root_capacity: saturating_u32(bumbledb_log::manifest::RootPolicy::DEFAULT.max_roots),
         gc: inspect_gc_tag(status.gc),
-        disk_bytes: report.populated_file_bytes,
-        working_bytes: report.non_free_page_bytes,
+        storage: report,
         queued,
         active: resource.active.load(Ordering::Acquire),
     })
@@ -2701,7 +2654,7 @@ fn open_published_snapshot(
                 && let HistoryKind::Hosted { history, .. } = kind
             {
                 // Behind the requested coordinate: ONE read-side catch-up
-                // under THIS operation's budget (the same lane `latest`
+                // under THIS operation's context (the same lane `latest`
                 // uses), then ONE retake of the pinned frame — never a
                 // hidden repair loop. The pure judge below issues the
                 // typed NotYetAvailable if the retake is still behind.
@@ -2988,8 +2941,7 @@ pub fn log_history_result(
             inspection.set("rootCapacity", owned.root_capacity)?;
             inspection.set("gc", owned.gc)?;
             inspection.set("lastMaintenanceError", Option::<String>::None)?;
-            inspection.set("diskBytes", BigInt::from(owned.disk_bytes))?;
-            inspection.set("workingBytes", BigInt::from(owned.working_bytes))?;
+            inspection.set("storage", marshal::storage_report(&env, &owned.storage)?)?;
             inspection.set("queued", BigInt::from(owned.queued))?;
             inspection.set("active", BigInt::from(owned.active))?;
             wire.set("inspection", inspection)?;
@@ -3084,7 +3036,6 @@ fn precondition_in(obj: &Object, ctx: &str) -> napi::Result<Condition> {
 pub fn log_command_seal(
     env: Env,
     change: &External<crate::db_wire::ChangesHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -3105,7 +3056,7 @@ pub fn log_command_seal(
     let operation = runtime
         .submit_payload(
             cap,
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             notification(callback)?,
             move |context| {
                 context.checkpoint()?;
@@ -3113,7 +3064,7 @@ pub fn log_command_seal(
                     let opened = crate::db_wire::changes_from_payload(payload)?;
                     let change_set = opened.changes;
                     let fingerprint = opened.fingerprint;
-                    context.input(change_set.as_bytes().len() as u64)?;
+                    context.checkpoint()?;
                     context.checkpoint()?;
                     // The scope's schema must be the change's schema —
                     // re-judged natively regardless of the host's claim.
@@ -3182,13 +3133,12 @@ fn fail_of_command(error: bumbledb_log::history::command::CommandError) -> LogFa
 pub fn log_command_decode(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     bytes: Unknown,
     schema: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
-    let bytes = crate::runtime_wire::unshared_input(env, bytes, runtime.options.chunk_bytes)?;
+    let bytes = crate::runtime_wire::unshared_input(env, bytes)?;
     let (descriptor, _attrs) = match crate::descriptor_of(&schema)? {
         Ok(parsed) => parsed,
         Err(
@@ -3203,10 +3153,10 @@ pub fn log_command_decode(
     };
     let operation = runtime
         .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             notification(callback)?,
             move |context| {
-                context.input(bytes.len() as u64)?;
+                context.checkpoint()?;
                 let owned = bytes.to_vec();
                 Ok(Box::new(move |context| {
                     use bumbledb::schema::ValidateDescriptor as _;
@@ -3246,7 +3196,7 @@ pub fn log_command_take(env: Env, handle: &External<OperationHandle>) -> napi::R
     match take_output(env, handle)? {
         Output::Machine(MachineOutput::Command(owned)) => {
             let retained = runtime
-                .retain_native(owned.command.changes().as_bytes().len() as u64)
+                .retain_native()
                 .map_err(|error| thrown(env, error))?;
             let mut wire = Object::new(&env)?;
             wire.set(
@@ -3276,25 +3226,20 @@ pub fn log_command_take(env: Env, handle: &External<OperationHandle>) -> napi::R
 pub fn log_command_encode(
     env: Env,
     handle: &External<LogCommandHandle>,
-    policy: PolicyWire,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let (command, _reference) = command_entry(handle).map_err(|error| thrown(env, error))?;
     let runtime = Arc::clone(&handle.runtime);
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    match command.encode(LIMITS) {
-                        Ok(bytes) => Ok(Output::Machine(MachineOutput::Bytes(bytes))),
-                        Err(error) => Ok(fail_output(protocol("Corruption", format!("{error:?}")))),
-                    }
-                }))
-            },
-        )
+        .submit(WorkContext::new(), notification(callback)?, move |_| {
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                match command.encode(LIMITS) {
+                    Ok(bytes) => Ok(Output::Machine(MachineOutput::Bytes(bytes))),
+                    Err(error) => Ok(fail_output(protocol("Corruption", format!("{error:?}")))),
+                }
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -3348,7 +3293,6 @@ pub(crate) struct CacheShared {
     descriptor: SchemaDescriptor,
     attrs: crate::FieldAttrsTable,
     expected: Option<(SchemaFingerprint, [u8; 32])>,
-    budget_bytes: u64,
     max_open: usize,
     evictions: std::sync::atomic::AtomicU64,
     closing: AtomicBool,
@@ -3382,15 +3326,12 @@ fn cache_shared(handle: &LogCacheHandle) -> Result<&Arc<CacheShared>, RuntimeErr
 pub fn log_cache_make(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let ctx = "cache make";
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
     let max_open = marshal::ordinal(marshal::req::<f64>(&request, "maxOpen", ctx)?, ctx)? as usize;
-    let budget_bytes =
-        marshal::u64_in(&marshal::req::<BigInt>(&request, "budgetBytes", ctx)?, ctx)?;
     let expected = match optional_object(&request, "expected")? {
         None => None,
         Some(expected) => {
@@ -3419,33 +3360,28 @@ pub fn log_cache_make(
     };
     let shared = Arc::clone(runtime);
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    if max_open == 0 {
-                        return Err(RuntimeError::InvalidArgument);
-                    }
-                    let retained = shared.retain_native(0)?;
-                    Ok(Output::Machine(MachineOutput::Cache(CacheOpened {
-                        shared: Arc::new(CacheShared {
-                            runtime: Arc::clone(&shared),
-                            registry: Mutex::new(TenantRegistry::new(TenantOptions { max_open })),
-                            descriptor,
-                            attrs,
-                            expected,
-                            budget_bytes,
-                            max_open,
-                            evictions: std::sync::atomic::AtomicU64::new(0),
-                            closing: AtomicBool::new(false),
-                            retained: Mutex::new(Some(retained)),
-                        }),
-                    })))
-                }))
-            },
-        )
+        .submit(WorkContext::new(), notification(callback)?, move |_| {
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                if max_open == 0 {
+                    return Err(RuntimeError::InvalidArgument);
+                }
+                let retained = shared.retain_native()?;
+                Ok(Output::Machine(MachineOutput::Cache(CacheOpened {
+                    shared: Arc::new(CacheShared {
+                        runtime: Arc::clone(&shared),
+                        registry: Mutex::new(TenantRegistry::new(TenantOptions { max_open })),
+                        descriptor,
+                        attrs,
+                        expected,
+                        max_open,
+                        evictions: std::sync::atomic::AtomicU64::new(0),
+                        closing: AtomicBool::new(false),
+                        retained: Mutex::new(Some(retained)),
+                    }),
+                })))
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -3576,7 +3512,6 @@ fn applied_prefix_of(
 pub fn log_cache_acquire(
     env: Env,
     handle: &External<LogCacheHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -3587,10 +3522,10 @@ pub fn log_cache_acquire(
     let runtime = Arc::clone(&shared.runtime);
     let operation = runtime
         .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             notification(callback)?,
             move |context| {
-                context.input(directory.len() as u64)?;
+                context.checkpoint()?;
                 Ok(Box::new(move |context| {
                     match acquire_borrow(&shared, &directory, identity, &backend, context) {
                         Ok(owned) => Ok(Output::Machine(MachineOutput::Borrow(owned))),
@@ -3652,8 +3587,8 @@ fn acquire_borrow(
                 });
             }
             Acquire::Joined { .. } => {
-                // Join the one in-flight open: bounded poll under this
-                // operation's own deadline; the opener installs or fails.
+                // Join the one in-flight open, observing this operation's
+                // cancellation between polls; the opener installs or fails.
                 std::thread::sleep(std::time::Duration::from_millis(2));
             }
             Acquire::Open(ticket) => {
@@ -3840,50 +3775,34 @@ pub fn log_borrow_take(env: Env, handle: &External<OperationHandle>) -> napi::Re
 pub fn log_cache_inspect(
     env: Env,
     handle: &External<LogCacheHandle>,
-    policy: PolicyWire,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let shared = Arc::clone(cache_shared(handle).map_err(|error| thrown(env, error))?);
     let runtime = Arc::clone(&shared.runtime);
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    let report = {
-                        let registry = shared.lock_registry();
-                        registry.report()
-                    };
-                    let opening = report.iter().filter(|slot| slot.state == "opening").count();
-                    let slots = report
-                        .into_iter()
-                        .map(|slot| {
-                            (
-                                slot.binding.location.to_string(),
-                                slot.state,
-                                slot.borrows,
-                                0u64,
-                            )
-                        })
-                        .collect();
-                    Ok(Output::Machine(MachineOutput::CacheReport(
-                        CacheReportOwned {
-                            open_count: {
-                                let registry = shared.lock_registry();
-                                registry.open_count()
-                            },
-                            opening,
-                            budget_bytes: shared.budget_bytes,
-                            max_open: shared.max_open,
-                            evictions: shared.evictions.load(Ordering::Relaxed),
-                            slots,
-                        },
-                    )))
-                }))
-            },
-        )
+        .submit(WorkContext::new(), notification(callback)?, move |_| {
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                let (report, open_count) = {
+                    let registry = shared.lock_registry();
+                    (registry.report(), registry.open_count())
+                };
+                let opening = report.iter().filter(|slot| slot.state == "opening").count();
+                let slots = report
+                    .into_iter()
+                    .map(|slot| (slot.binding.location.to_string(), slot.state, slot.borrows))
+                    .collect();
+                Ok(Output::Machine(MachineOutput::CacheReport(
+                    CacheReportOwned {
+                        open_count,
+                        opening,
+                        max_open: shared.max_open,
+                        evictions: shared.evictions.load(Ordering::Relaxed),
+                        slots,
+                    },
+                )))
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -3898,16 +3817,14 @@ pub fn log_cache_inspect_take(
             let mut wire = Object::new(&env)?;
             wire.set("openCount", saturating_u32(owned.open_count))?;
             wire.set("opening", saturating_u32(owned.opening))?;
-            wire.set("budgetBytes", BigInt::from(owned.budget_bytes))?;
             wire.set("maxOpen", saturating_u32(owned.max_open))?;
             wire.set("evictions", BigInt::from(owned.evictions))?;
             let mut slots = Vec::with_capacity(owned.slots.len());
-            for (binding, state, borrows, disk) in owned.slots {
+            for (binding, state, borrows) in owned.slots {
                 let mut slot = Object::new(&env)?;
                 slot.set("binding", binding)?;
                 slot.set("state", state)?;
                 slot.set("borrows", saturating_u32(borrows))?;
-                slot.set("diskBytes", BigInt::from(disk))?;
                 slots.push(slot);
             }
             wire.set("slots", slots)?;
@@ -3925,7 +3842,6 @@ pub fn log_cache_inspect_take(
 pub fn log_cache_evict(
     env: Env,
     handle: &External<LogCacheHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -3935,71 +3851,67 @@ pub fn log_cache_evict(
     let (directory, identity, backend) = binding_spec_in(&binding, ctx)?;
     let runtime = Arc::clone(&shared.runtime);
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    let binding = tenant_binding_of(identity, &backend, &directory);
-                    let owner = {
-                        let mut registry = shared.lock_registry();
-                        match registry.counts(&binding) {
-                            None => None,
-                            Some((borrows, leases)) if borrows > 0 || leases > 0 => {
-                                return Ok(fail_output(protocol(
-                                    "SlotBorrowed",
-                                    "eviction never revokes a live borrow or operation",
-                                )));
-                            }
-                            Some(_) => {
-                                registry.begin_close(&binding);
-                                match registry.finish_close(&binding) {
-                                    Ok(owner) => Some(owner),
-                                    // The slot's resources are NOT reclaimed:
-                                    // surface the state honestly instead of
-                                    // fabricating `Closed` (finding #13).
-                                    Err(CloseBlocked::StillOpening) => {
-                                        return Ok(fail_output(LogFail::Structured(
-                                            StructuredReason::Contention {
-                                                attempts: 1,
-                                                detail: "the slot is still opening; the \
+        .submit(WorkContext::new(), notification(callback)?, move |_| {
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                let binding = tenant_binding_of(identity, &backend, &directory);
+                let owner = {
+                    let mut registry = shared.lock_registry();
+                    match registry.counts(&binding) {
+                        None => None,
+                        Some((borrows, leases)) if borrows > 0 || leases > 0 => {
+                            return Ok(fail_output(protocol(
+                                "SlotBorrowed",
+                                "eviction never revokes a live borrow or operation",
+                            )));
+                        }
+                        Some(_) => {
+                            registry.begin_close(&binding);
+                            match registry.finish_close(&binding) {
+                                Ok(owner) => Some(owner),
+                                // The slot's resources are NOT reclaimed:
+                                // surface the state honestly instead of
+                                // fabricating `Closed` (finding #13).
+                                Err(CloseBlocked::StillOpening) => {
+                                    return Ok(fail_output(LogFail::Structured(
+                                        StructuredReason::Contention {
+                                            attempts: 1,
+                                            detail: "the slot is still opening; the \
                                                          in-flight opener completes the close \
                                                          — nothing is reclaimed yet"
-                                                    .into(),
-                                            },
-                                        )));
-                                    }
-                                    Err(CloseBlocked::Operations(count)) => {
-                                        return Ok(fail_output(protocol(
-                                            "SlotBorrowed",
-                                            format!("{count} operation leases in flight"),
-                                        )));
-                                    }
-                                    // A concurrent close/evict already took the
-                                    // slot between begin and finish: nothing of
-                                    // ours to reclaim, the winner reports it.
-                                    Err(CloseBlocked::NotClosing) => None,
+                                                .into(),
+                                        },
+                                    )));
                                 }
+                                Err(CloseBlocked::Operations(count)) => {
+                                    return Ok(fail_output(protocol(
+                                        "SlotBorrowed",
+                                        format!("{count} operation leases in flight"),
+                                    )));
+                                }
+                                // A concurrent close/evict already took the
+                                // slot between begin and finish: nothing of
+                                // ours to reclaim, the winner reports it.
+                                Err(CloseBlocked::NotClosing) => None,
                             }
                         }
-                    };
-                    let report = match owner {
-                        // An unknown binding holds nothing here: vacuously
-                        // closed (idempotent evict).
-                        None => crate::runtime::CloseReport::Closed,
-                        Some(owner) => {
-                            shared.evictions.fetch_add(1, Ordering::Relaxed);
-                            // `Closed` only when native teardown COMPLETED
-                            // (environment dropped, kernel lock released) —
-                            // the log_history_close drain discipline.
-                            drain_resource_report(&shared.runtime, &owner)
-                        }
-                    };
-                    Ok(Output::Machine(MachineOutput::Evicted(report)))
-                }))
-            },
-        )
+                    }
+                };
+                let report = match owner {
+                    // An unknown binding holds nothing here: vacuously
+                    // closed (idempotent evict).
+                    None => crate::runtime::CloseReport::Closed,
+                    Some(owner) => {
+                        shared.evictions.fetch_add(1, Ordering::Relaxed);
+                        // `Closed` only when native teardown COMPLETED
+                        // (environment dropped, kernel lock released) —
+                        // the log_history_close drain discipline.
+                        drain_resource_report(&shared.runtime, &owner)
+                    }
+                };
+                Ok(Output::Machine(MachineOutput::Evicted(report)))
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(&runtime, operation))
 }
@@ -4118,11 +4030,10 @@ pub fn log_cache_close(
 pub fn log_admin(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     request: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
-    admin_verb(env, handle, policy, &request, callback)
+    admin_verb(env, handle, &request, callback)
 }
 
 #[napi]

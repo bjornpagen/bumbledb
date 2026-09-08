@@ -1323,14 +1323,6 @@ pub enum Error {
         statement: StatementId,
     },
 
-    /// (`lean/Bumbledb/Exec/Reach.lean: reach_den_finite`), but derived
-    /// refusal: aborts the query, the snapshot
-    DerivedBudgetExceeded {
-        rounds: u32,
-
-        tuples: u64,
-    },
-
     Overflow(OverflowKind),
     Scalar {
         find: FindIndex,
@@ -1374,7 +1366,6 @@ pub enum ErrorFamily {
     ForeignWitness,
     Param,
     CapacityRayMeasure,
-    DerivedBudgetExceeded,
     Overflow,
     Scalar,
     ResultBytesOverflow,
@@ -1449,7 +1440,6 @@ impl Error {
             | Self::ParamElementTypeMismatch { .. }
             | Self::PointParamAtCeiling { .. } => family_only(ErrorFamily::Param),
             Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
-            Self::DerivedBudgetExceeded { .. } => family_only(ErrorFamily::DerivedBudgetExceeded),
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),

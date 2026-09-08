@@ -22,11 +22,11 @@ pub(crate) const BYTE_QUANTUM: usize = 4096;
 
 pub(crate) fn chunked_eq(a: &[u8], b: &[u8], work: &WorkContext) -> StoreResult<bool> {
     if a.len() != b.len() {
-        work.step(1)?;
+        work.checkpoint()?;
         return Ok(false);
     }
     for (left, right) in a.chunks(BYTE_QUANTUM).zip(b.chunks(BYTE_QUANTUM)) {
-        work.step(left.len() as u64)?;
+        work.checkpoint()?;
         if left != right {
             return Ok(false);
         }
@@ -40,7 +40,7 @@ pub(crate) fn chunked_cmp(
     work: &WorkContext,
 ) -> StoreResult<std::cmp::Ordering> {
     for (left, right) in a.chunks(BYTE_QUANTUM).zip(b.chunks(BYTE_QUANTUM)) {
-        work.step(left.len().min(right.len()) as u64)?;
+        work.checkpoint()?;
         let order = left.cmp(right);
         if order != std::cmp::Ordering::Equal {
             return Ok(order);
@@ -151,7 +151,7 @@ fn exact_lookup_hashed(
         .prefix_iter(txn, bucket.as_slice())
         .map_err(StoreError::from_heed)?;
     for entry in range {
-        work.step(1)?;
+        work.checkpoint()?;
         let (key, _) = entry.map_err(StoreError::from_heed)?;
         let candidate = RowLocator::unclustered(inner.keys.decode_membership(key)?.2);
         let Some(stored) = fetch_row(inner, txn, relation, candidate)? else {
@@ -222,7 +222,7 @@ fn visit_determinants<I: RowIndexer + ?Sized>(
                 return Err(error.clone());
             }
             let result = (|| {
-                work.step(1)?;
+                work.checkpoint()?;
                 let compiled = inner
                     .det
                     .projection(projection)
@@ -254,7 +254,7 @@ fn persist_insert<I: RowIndexer + ?Sized>(
     work: &WorkContext,
     compiled: impl FnOnce(super::ProjectionEmitter<'_>) -> StoreResult<()>,
 ) -> StoreResult<()> {
-    work.step(row.len() as u64)?;
+    work.checkpoint()?;
     inner
         .data
         .put(txn, inner.keys.row_key(relation, locator)?.as_slice(), row)
@@ -286,7 +286,7 @@ fn persist_insert<I: RowIndexer + ?Sized>(
                 }
                 return Ok(());
             }
-            work.step(1)?;
+            work.checkpoint()?;
             inner
                 .data
                 .put(
@@ -341,7 +341,7 @@ fn persist_remove<I: RowIndexer + ?Sized>(
                 }
                 return Ok(());
             }
-            work.step(1)?;
+            work.checkpoint()?;
             inner
                 .data
                 .delete(
@@ -404,7 +404,7 @@ pub(crate) fn probe_determinant_bucket<'txn>(
         work.checkpoint()?;
         return Ok(());
     };
-    work.step(1)?;
+    work.checkpoint()?;
     let locator = primary_bucket_locator(inner, compiled, routing, first_key)?;
     if !visit(locator, first_value)? {
         return Ok(());
@@ -425,7 +425,7 @@ pub(crate) fn probe_determinant_bucket<'txn>(
         Ok((key, _)) => key.starts_with(bucket.as_slice()),
         Err(_) => true,
     }) {
-        work.step(1)?;
+        work.checkpoint()?;
         let (key, value) = entry.map_err(StoreError::from_heed)?;
         let locator = primary_bucket_locator(inner, compiled, routing, key)?;
         if !visit(locator, value)? {
@@ -493,7 +493,7 @@ pub(crate) fn count_determinant_bucket_bounded(
         .prefix_iter(txn, bucket)
         .map_err(StoreError::from_heed)?
     {
-        work.step(1)?;
+        work.checkpoint()?;
         let (key, _) = entry.map_err(StoreError::from_heed)?;
         if key.len() != bucket.len() + 8 {
             return Err(StoreError::Corruption(StoreCorruption::MalformedKey(
@@ -529,7 +529,7 @@ pub(crate) fn visit_determinant_bucket<'txn>(
     let mut visited = false;
     for entry in range {
         visited = true;
-        work.step(1)?;
+        work.checkpoint()?;
         let (key, value) = entry.map_err(StoreError::from_heed)?;
         let (locator, bytes) = if home {
             (
@@ -556,7 +556,7 @@ pub(crate) fn visit_determinant_bucket<'txn>(
     }
     if !visited {
         // The first next() performs the seek, which can fault in pages.
-        // Empty buckets still observe cancellation/deadlines after that
+        // Empty buckets still observe cancellation after that
         // seek; hits retain their existing per-row check and charge.
         work.checkpoint()?;
     }

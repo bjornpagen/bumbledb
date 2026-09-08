@@ -1,50 +1,40 @@
-//! Streaming charged named-map append: the one production write visitor.
+//! Streaming named-map append: the one production write visitor.
 //! Callers stream rows here; they do not collect a whole-stage `Vec`.
 
-use super::{
-    SPILL_BATCH, ScratchMapId, ScratchRelation, ScratchWriteBatch, charge, entry_retained,
-    work_error,
-};
+use super::{SPILL_BATCH, ScratchMapId, ScratchRelation, ScratchWriteBatch, work_error};
 use crate::error::Result;
-use crate::work::ByteReservation;
 
-/// Streaming charged append onto an existing [`ScratchRelation`].
+/// Streaming append onto an existing [`ScratchRelation`].
 ///
-/// Each [`Self::append`] reserves before owning another staged copy and
-/// flushes a bounded batch onto the substrate. Failure returns immediately;
+/// Each [`Self::append`] stages one write and flushes a bounded batch onto
+/// the substrate. Failure returns immediately;
 /// Drop aborts the uncommitted tail. There is no infallible callback twin.
 pub struct ScratchAppend<'a> {
     relation: &'a mut ScratchRelation,
     batch: ScratchWriteBatch,
-    staging: Vec<ByteReservation>,
-    staging_bytes: usize,
-    staging_charged: usize,
 }
 
 impl<'a> ScratchAppend<'a> {
-    /// Bind the visitor to a live relation (and its execute ledger).
+    /// Bind the visitor to a live relation and its cancellation context.
     #[must_use]
     pub fn new(relation: &'a mut ScratchRelation) -> Self {
         Self {
             relation,
             batch: ScratchWriteBatch::new(),
-            staging: Vec::new(),
-            staging_bytes: 0,
-            staging_charged: 0,
         }
     }
 
-    /// Charge, then stage one named-map write. Flushes a bounded batch
+    /// Stage one named-map write. Flushes a bounded batch
     /// (same size as the RAM→disk copy). A refusal does not keep collecting.
     ///
     /// # Errors
-    /// Stopped work, reservation refusal, or scratch I/O. The failing
+    /// Cancellation, allocation failure, or scratch I/O. The failing
     /// entry is not retained; call [`Self::finish`] only after a complete
     /// stream. Drop aborts the uncommitted tail.
     pub fn append(&mut self, map: ScratchMapId, key: &[u8], value: &[u8]) -> Result<()> {
-        self.reserve_staging(entry_retained(key, value))?;
+        self.relation.work.checkpoint().map_err(work_error)?;
         self.batch.put(map, key, value)?;
-        if self.batch.pending_entries() >= i64::from(SPILL_BATCH) {
+        if self.batch.pending_entries() >= usize::from(SPILL_BATCH) {
             self.flush()?;
         }
         Ok(())
@@ -59,27 +49,12 @@ impl<'a> ScratchAppend<'a> {
         self.flush()
     }
 
-    fn reserve_staging(&mut self, grown: usize) -> Result<()> {
-        self.relation.work.step(1).map_err(work_error)?;
-        charge(
-            &self.relation.work,
-            &mut self.staging_bytes,
-            &mut self.staging_charged,
-            &mut self.staging,
-            grown,
-        )
-    }
-
     fn flush(&mut self) -> Result<()> {
         let batch = std::mem::take(&mut self.batch);
-        let result = if batch.pending_entries() == 0 {
+        if batch.pending_entries() == 0 {
             Ok(())
         } else {
             batch.commit(self.relation)
-        };
-        self.staging.clear();
-        self.staging_bytes = 0;
-        self.staging_charged = 0;
-        result
+        }
     }
 }

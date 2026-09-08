@@ -2,22 +2,21 @@
  * Private database bridge over worker-owned core snapshots and results.
  * The implementation lives in `ts/crate/src/`; this is not a public API.
  * Every verb runs on the shared bounded executor, registers under its
- * operation accounting, takes a `PolicyWire` converted once at admission,
- * and completes through the registered callback; `runtimeCancel` cancels
+ * operation ownership and completes through the registered callback; `runtimeCancel` cancels
  * and joins any of them. Close verbs report the real drain outcome through
  * `CloseWire`.
  */
 import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
 import { native } from "#native.ts"
 import type { CellValue } from "#rows.ts"
-import type { CloseWire, OperationHandle, PolicyWire, RuntimeHandle } from "#runtime-native.ts"
+import type { CloseWire, OperationHandle, RuntimeHandle } from "#runtime-native.ts"
 import type { SchemaSpec } from "#spec.ts"
 
 export interface SnapshotHandle {
 	readonly __snapshot: unique symbol
 }
-export interface SessionHandle {
-	readonly __session: unique symbol
+export interface PreparedHandle {
+	readonly __prepared: unique symbol
 }
 export interface ResultHandle {
 	readonly __result: unique symbol
@@ -51,10 +50,7 @@ export type ApplyOutcomeWire =
 /** Bounded database diagnostics: measurements, never retained row payloads. */
 export interface DbInspectionWire {
 	readonly generation: bigint
-	readonly mapBytes: bigint
-	readonly populatedBytes: bigint
-	readonly diskBytes: bigint
-	readonly residentEstimateBytes: bigint
+	readonly storage: import("#db.ts").StorageInspection
 	readonly retainedOperations: bigint
 }
 
@@ -74,29 +70,24 @@ export interface MutationReportWire {
 }
 
 interface DbBridge {
-	/** Charged schema admission/compilation; take yields detached descriptor data. */
-	runtimeSchemaCompile(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		spec: SchemaSpec,
-		callback: () => void
-	): OperationHandle
+	/** Schema admission/compilation; take yields detached descriptor data. */
+	runtimeSchemaCompile(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
 	runtimeSchemaTake(operation: OperationHandle): SealedDescriptor
 
 	/** Coherent owned snapshot acquisition off a managed database. */
-	runtimeDbSnapshot(db: DbHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	runtimeDbSnapshot(db: DbHandle, callback: () => void): OperationHandle
 	runtimeSnapshotTake(operation: OperationHandle): SnapshotWire
 	runtimeSnapshotClose(snapshot: SnapshotHandle, callback: (report: CloseWire) => void): void
 
-	/** Reusable snapshot-bound execution session (worker-affine natively). */
-	runtimeSnapshotSession(snapshot: SnapshotHandle, policy: PolicyWire, callback: () => void): OperationHandle
-	runtimeSessionTake(operation: OperationHandle): SessionHandle
-	runtimeSessionClose(session: SessionHandle, callback: (report: CloseWire) => void): void
+	/** One compiled query, with an independent share of the snapshot pin. */
+	runtimeSnapshotPrepare(snapshot: SnapshotHandle, query: ParsedQuery, callback: () => void): OperationHandle
+	runtimePreparedTake(operation: OperationHandle): PreparedHandle
+	runtimePreparedClose(prepared: PreparedHandle, callback: (report: CloseWire) => void): void
+	runtimePreparedReleaseMemory(prepared: PreparedHandle, callback: () => void): OperationHandle
 
 	/** Exact-key point read; take yields one owned row or null (absent). */
 	runtimeSnapshotGet(
 		snapshot: SnapshotHandle,
-		policy: PolicyWire,
 		relationId: number,
 		keyStatementId: number,
 		keyCells: readonly CellValue[],
@@ -105,34 +96,25 @@ interface DbBridge {
 	runtimeRowTake(operation: OperationHandle): readonly CellValue[] | null
 
 	/**
-	 * Complete bounded execution. The snapshot variant owns an internal
-	 * one-shot session and closes it before publishing the result; the
-	 * session variant reuses the caller's session. Either way the result is
+	 * Complete execution. One-shot preparation drops before publication;
+	 * explicit preparation reuses its compiled plan and scratch. The result is
 	 * sealed and independent only after ALL evaluation succeeded.
 	 */
 	runtimeSnapshotExecute(
 		snapshot: SnapshotHandle,
-		policy: PolicyWire,
 		query: ParsedQuery,
 		params: readonly QueryParam[],
 		callback: () => void
 	): OperationHandle
-	runtimeSessionExecute(
-		session: SessionHandle,
-		policy: PolicyWire,
-		query: ParsedQuery,
-		params: readonly QueryParam[],
-		callback: () => void
-	): OperationHandle
+	runtimePreparedExecute(prepared: PreparedHandle, params: readonly QueryParam[], callback: () => void): OperationHandle
 	runtimeResultTake(operation: OperationHandle): ResultHandle
 	runtimeResultClose(result: ResultHandle, callback: (report: CloseWire) => void): void
 
 	/**
-	 * Bounded total materialization: refuses (ResourceLimit) BEFORE
-	 * allocating past `policy.resultBytes`; a cap failure leaves the sealed
-	 * backing available. Take yields owned row arrays.
+	 * Explicit full materialization into final native row arrays.
+	 * Failure leaves the sealed backing available.
 	 */
-	runtimeResultCollect(result: ResultHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	runtimeResultCollect(result: ResultHandle, callback: () => void): OperationHandle
 	runtimeRowsTake(operation: OperationHandle): readonly (readonly CellValue[])[]
 
 	/**
@@ -140,25 +122,24 @@ interface DbBridge {
 	 * private cursor. A second transfer, or transfer racing collect,
 	 * refuses (SpentHandle) before touching the backing.
 	 */
-	runtimeResultCursor(result: ResultHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	runtimeResultCursor(result: ResultHandle, callback: () => void): OperationHandle
 	runtimeCursorTake(operation: OperationHandle): CursorHandle
-	/** One owned page bounded by `policy.resultBytes`; null is EOF (cursor storage reclaimed). */
-	runtimeCursorNext(cursor: CursorHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	/** One bounded delivery batch; null is EOF. Execution is already complete. */
+	runtimeCursorNext(cursor: CursorHandle, callback: () => void): OperationHandle
 	runtimePageTake(operation: OperationHandle): readonly (readonly CellValue[])[] | null
 	runtimeCursorClose(cursor: CursorHandle, callback: (report: CloseWire) => void): void
 
 	/** Database-free draft acquisition (schema compiled/checked on the executor). */
-	runtimeDraftOpen(runtime: RuntimeHandle, policy: PolicyWire, spec: SchemaSpec, callback: () => void): OperationHandle
+	runtimeDraftOpen(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
 	runtimeDraftTake(operation: OperationHandle): DraftHandle
 	/**
 	 * One bounded ingestion chunk (rows × arity cells, row-major, sealed
-	 * field order). Chunks share the draft's cumulative aggregate budget —
-	 * they never reset it. Failure spends the draft and starts tracked
+	 * field order). Rows are owned by the draft until finish. Failure spends
+	 * the draft and starts tracked
 	 * drain natively.
 	 */
 	runtimeDraftInsert(
 		draft: DraftHandle,
-		policy: PolicyWire,
 		relationId: number,
 		rows: bigint,
 		cells: readonly CellValue[],
@@ -166,7 +147,6 @@ interface DbBridge {
 	): OperationHandle
 	runtimeDraftDelete(
 		draft: DraftHandle,
-		policy: PolicyWire,
 		relationId: number,
 		rows: bigint,
 		cells: readonly CellValue[],
@@ -174,28 +154,22 @@ interface DbBridge {
 	): OperationHandle
 	runtimeReportTake(operation: OperationHandle): MutationReportWire
 	/** Consumes the draft into an immutable schema-bound ChangeSet (one command, add-wins normalization). */
-	runtimeDraftFinish(draft: DraftHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	runtimeDraftFinish(draft: DraftHandle, callback: () => void): OperationHandle
 	runtimeChangesTake(operation: OperationHandle): ChangesWire
 	runtimeDraftClose(draft: DraftHandle, callback: (report: CloseWire) => void): void
 	runtimeChangesClose(changes: ChangesHandle, callback: (report: CloseWire) => void): void
 
 	/** One immutable final-state admission/commit under the managed owner. */
-	runtimeDbApply(
-		db: DbHandle,
-		policy: PolicyWire,
-		changes: ChangesHandle,
-		expected: ExpectedWire,
-		callback: () => void
-	): OperationHandle
+	runtimeDbApply(db: DbHandle, changes: ChangesHandle, expected: ExpectedWire, callback: () => void): OperationHandle
 	runtimeApplyTake(operation: OperationHandle): ApplyOutcomeWire
 
-	runtimeDbInspect(db: DbHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	runtimeDbInspect(db: DbHandle, callback: () => void): OperationHandle
+	runtimeDbClearCache(db: DbHandle, callback: () => void): OperationHandle
 	runtimeDbInspectTake(operation: OperationHandle): DbInspectionWire
 
 	/** Shared canonical row codec (also the log/migration encoding). */
 	runtimeEncodeRows(
 		runtime: RuntimeHandle,
-		policy: PolicyWire,
 		spec: SchemaSpec,
 		relationId: number,
 		rows: bigint,
@@ -205,7 +179,6 @@ interface DbBridge {
 	runtimeBytesTake(operation: OperationHandle): Uint8Array
 	runtimeDecodeRows(
 		runtime: RuntimeHandle,
-		policy: PolicyWire,
 		spec: SchemaSpec,
 		relationId: number,
 		bytes: Uint8Array,
@@ -219,18 +192,8 @@ interface DbBridge {
 	 * cancellable operation. Neither verb opens, initializes, freezes or
 	 * migrates a database.
 	 */
-	runtimeMigrationSchema(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		spec: SchemaSpec,
-		callback: () => void
-	): OperationHandle
-	runtimeMigrationRead(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		request: Uint8Array,
-		callback: () => void
-	): OperationHandle
+	runtimeMigrationSchema(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
+	runtimeMigrationRead(runtime: RuntimeHandle, request: Uint8Array, callback: () => void): OperationHandle
 }
 
 // The fresh-addon roster test pins this private declaration exactly as it

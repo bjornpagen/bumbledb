@@ -95,7 +95,7 @@ pub enum LogError {
     NotInitialized,
     /// A retained row / control / decision frame was malformed or foreign.
     Corruption,
-    /// Bounded work/deadline/cancellation reached actual native/I/O work.
+    /// Cancellation or unavailable allocation capacity stopped native/I/O work.
     Work(WorkError),
     /// A core admission/change/storage failure, retaining its typed cause.
     Core(CommandError),

@@ -161,7 +161,7 @@ export function convert<R extends AnyRelation, K extends keyof Fact<R> & string>
 /**
  * Declarative fixed seed facts with explicitly supplied application IDs.
  * The iterable stays caller-owned and stable until generation settles; it is
- * read once, under the generation policy's cell/row/total budgets.
+ * read once in cooperative batches, with native validation before publication.
  */
 export function seed<R extends AnyRelation>(relation: R, rows: Iterable<Fact<R>>): MigrationIntentEntry {
 	if (rows === null || typeof rows !== "object" || !(Symbol.iterator in rows)) {

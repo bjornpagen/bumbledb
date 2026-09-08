@@ -83,14 +83,6 @@ fn source_reach(through_interior: bool) -> Query {
     }
 }
 
-fn reach_limits(prepared: &mut PreparedQuery<T>, rounds: u32, tuples: u64) {
-    let PreparedPipeline::Reach { rounds_budget, .. } = &mut prepared.pipeline else {
-        panic!("recursive pipeline");
-    };
-    *rounds_budget = rounds;
-    prepared.tuples_budget = tuples;
-}
-
 fn node_ids(answers: &Answers) -> Vec<u64> {
     let mut ids: Vec<_> = (0..answers.len())
         .map(|row| {
@@ -104,59 +96,68 @@ fn node_ids(answers: &Answers) -> Vec<u64> {
     ids
 }
 
-/// Limits count interiors plus the distinct closure, not the sum of
-/// repeated prefixes. Exact boundaries also discriminate the round
-/// ceiling from the tuple ceiling, with atomic failure and handle reuse.
+/// Cancellation publishes no partial closure and leaves preparation reusable.
 #[test]
-fn reach_budgets_are_exact_and_refusal_does_not_poison_reuse() {
+fn cancelled_reach_publishes_no_prefix_and_allows_reuse() {
     let fix = chain_fixture();
     for through_interior in [false, true] {
-        let total = if through_interior { 6 } else { 3 };
         for fallback in [false, true] {
-            for ram in [0, usize::MAX] {
-                let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
-                prepared.force_cursor_fallback(fallback);
-                prepared.set_sink_ram(ram);
-                let mut out = Answers::new();
-                let params = [BindValue::U64(0)];
-                for (rounds, tuples, succeeds) in [
-                    (3, total, true),
-                    (3, total - 1, false),
-                    (2, total, false),
-                    (3, total, true),
-                ] {
-                    reach_limits(&mut prepared, rounds, tuples);
-                    let result = fix.execute_into(&mut prepared, &params, &mut out);
-                    if succeeds {
-                        result.unwrap();
-                        assert_eq!(node_ids(&out), [1, 2, 3]);
-                    } else {
-                        assert!(
-                            matches!(result, Err(Error::DerivedBudgetExceeded { rounds: 2, tuples }) if tuples == total),
-                            "{result:?}"
-                        );
-                        assert!(out.is_empty(), "a refusal publishes no partial answers");
-                    }
-                    let PreparedPipeline::Reach { driver, .. } = &mut prepared.pipeline else {
-                        unreachable!()
-                    };
-                    assert!(
-                        driver.frontier.is_uniquely_owned(),
-                        "a round must release every frontier consumer"
-                    );
+            let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
+            prepared.force_cursor_fallback(fallback);
+            let mut out = Answers::new();
+            for (round, cancelled) in [false, true, false].into_iter().enumerate() {
+                let work = crate::work::WorkContext::new();
+                if cancelled {
+                    work.cancel();
                 }
+                let source =
+                    super::super::source::QuerySource::heap(&fix.instance, round as u64, work);
+                let result = prepared.execute_source(&source, &[BindValue::U64(0)], &mut out);
+                if cancelled {
+                    assert!(matches!(result, Err(Error::Store(error))
+                        if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
+                    assert!(out.is_empty(), "no stale or partial closure");
+                } else {
+                    result.unwrap();
+                    assert_eq!(node_ids(&out), [1, 2, 3]);
+                }
+                let PreparedPipeline::Reach { driver, .. } = &mut prepared.pipeline else {
+                    unreachable!()
+                };
+                assert!(
+                    driver.frontier.is_uniquely_owned(),
+                    "release every frontier consumer"
+                );
             }
         }
     }
 }
 
 #[test]
-fn an_empty_frontier_needs_no_round_or_tuple_allowance() {
+fn empty_frontier_finishes_without_allocating_recursive_rows() {
     let fix = chain_fixture();
     let mut prepared = fix.prepare(&source_reach(false)).unwrap();
-    reach_limits(&mut prepared, 0, 0);
     let answers = fix.execute(&mut prepared, &[BindValue::U64(99)]).unwrap();
     assert!(answers.is_empty());
+}
+
+#[test]
+fn release_preserves_recursive_and_interior_plans_and_owned_answers() {
+    let fix = chain_fixture();
+    for through_interior in [false, true] {
+        for fallback in [false, true] {
+            let mut prepared = fix.prepare(&source_reach(through_interior)).unwrap();
+            prepared.force_cursor_fallback(fallback);
+            let expected = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
+            for _ in 0..3 {
+                prepared.release_memory();
+                assert!(prepared.derived.published.is_empty());
+                assert_eq!(node_ids(&expected), [1, 2, 3]);
+                let actual = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
+                assert_eq!(node_ids(&actual), node_ids(&expected));
+            }
+        }
+    }
 }
 
 #[test]
@@ -178,11 +179,9 @@ fn recursive_arms_share_one_immutable_frontier_and_one_exact_set() {
     };
     rec.rec.rest.push(reverse);
     for fallback in [false, true] {
-        for ram in [0, usize::MAX] {
+        for _ in 0..2 {
             let mut prepared = fix.prepare(&query).unwrap();
             prepared.force_cursor_fallback(fallback);
-            prepared.set_sink_ram(ram);
-            reach_limits(&mut prepared, 3, 4);
             for _ in 0..2 {
                 let answers = fix.execute(&mut prepared, &[BindValue::U64(0)]).unwrap();
                 assert_eq!(node_ids(&answers), [0, 1, 2, 3]);
@@ -404,32 +403,29 @@ fn spilled_rec_seen_and_frontier_state_preserves_the_closure() {
         "the shortcut rejoins the chain"
     );
 
-    // Forced transitions before the first frontier row (zero allowance),
-    // during round 0 (a few rows in), and after several rounds' frontiers
-    // already ran resident (G05: not only at a large final size).
-    for ram_bytes in [0usize, 256, 4096] {
+    // The cursor executor consumes the same immutable frontier per round.
+    for fallback in [false, true] {
         let mut spilled = fix.prepare(&closure).expect("prepare");
-        spilled.set_sink_ram(ram_bytes);
+        spilled.force_cursor_fallback(fallback);
         let got = pairs(
             &fix.execute(&mut spilled, &[] as &[BindValue])
                 .expect("spilled"),
         );
         assert_eq!(
             got, expected,
-            "allowance {ram_bytes}: the spilled closure is the closure"
+            "fallback={fallback}: the spilled closure is the closure"
         );
 
-        // Success → success reuse on the same spilled plan (Q-ATOMIC
-        // shape): the next run re-creates scratch from a clean reset.
+        // Repeat after releasing query scratch; the compiled plan survives.
+        spilled.release_memory();
         let again = pairs(
             &fix.execute(&mut spilled, &[] as &[BindValue])
                 .expect("re-execute"),
         );
-        assert_eq!(again, expected, "allowance {ram_bytes}");
+        assert_eq!(again, expected, "fallback={fallback}");
     }
 
-    // The empty-base rec under a zero allowance: no frontier, no rows, no
-    // spill artifacts leaking into the answer.
+    // An empty base creates no frontier rows.
     let empty = Fix::heap(
         SchemaDescriptor {
             relations: vec![RelationDescriptor {
@@ -451,7 +447,6 @@ fn spilled_rec_seen_and_frontier_state_preserves_the_closure() {
         &[(EDGE, vec![])],
     );
     let mut prepared = empty.prepare(&closure).expect("prepare");
-    prepared.set_sink_ram(0);
     let none = empty
         .execute(&mut prepared, &[] as &[BindValue])
         .expect("empty closure");

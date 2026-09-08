@@ -1,6 +1,12 @@
 use super::{LOAD_DEN, WordMap, ctrl_tag, hash_core, hash_words};
 
 impl<V: Copy> WordMap<V> {
+    #[must_use]
+    pub(crate) fn contains_key(&self, key: &[u64]) -> bool {
+        assert_eq!(key.len(), self.arity);
+        self.len != 0 && self.probe(key, hash_words(key)).0
+    }
+
     /// Insert complete, nonempty-width rows in their original order.
     /// Zero-width keys require explicit row counts and use `insert` instead.
     ///
@@ -37,8 +43,7 @@ impl<V: Copy> WordMap<V> {
         V: Default,
     {
         for row in words.as_chunks::<K>().0 {
-            // Keep growth before duplicate lookup and preserve each new
-            // entry's allocation and publication sequence.
+            // Scalar and bulk insertion share lookup, growth and publication.
             self.entry_core::<K>(row, V::default);
         }
     }
@@ -92,6 +97,16 @@ impl<V: Copy> WordMap<V> {
     ) -> (&mut V, bool) {
         debug_assert_eq!(key.len(), K);
         if (self.len + 1) * LOAD_DEN > self.capacity() {
+            // Only new keys need capacity. Probe on this cold boundary
+            // before allocating replacement arrays; ordinary inserts still
+            // use the single probe below. Empty maps have no probe backing.
+            if self.len != 0 {
+                let (found, idx) = self.probe_core::<K>(key, hash);
+                if found {
+                    // SAFETY: the matching live slot has an initialized V.
+                    return (unsafe { self.values[idx].assume_init_mut() }, false);
+                }
+            }
             self.grow();
         }
         let (found, idx) = self.probe_core::<K>(key, hash);
@@ -124,6 +139,13 @@ impl<V: Copy> WordMap<V> {
     ) -> (&mut V, bool) {
         debug_assert_eq!(key.len(), self.arity);
         if (self.len + 1) * LOAD_DEN > self.capacity() {
+            if self.len != 0 {
+                let (found, idx) = self.probe(key, hash);
+                if found {
+                    // SAFETY: the matching live slot has an initialized V.
+                    return (unsafe { self.values[idx].assume_init_mut() }, false);
+                }
+            }
             self.grow();
         }
         let (found, idx) = self.probe(key, hash);

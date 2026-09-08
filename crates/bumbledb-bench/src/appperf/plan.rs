@@ -270,12 +270,12 @@ pub fn l21_semantic_checks() -> &'static [(&'static str, &'static str, &'static 
         (
             "D08",
             "work-without-output-stops",
-            "WorkContext work_units below exploration fails the query; visit count < relation cardinality",
+            "cancellation during exploration fails the query before a full walk, even without further output",
         ),
         (
             "D09",
             "derived-scratch",
-            "aggregate/negation/recursion accept Scratch; peak OwnerSnapshot.scratch_bytes bounded; no whole-image resurrection",
+            "aggregate/negation/recursion consume scratch-backed stages without reconstructing whole images",
         ),
         (
             "D11",
@@ -285,17 +285,17 @@ pub fn l21_semantic_checks() -> &'static [(&'static str, &'static str, &'static 
         (
             "D29",
             "tenant-ownership",
-            "two owners: paused payload must not hold a runtime-global mutex; retained charge returns to baseline after close cycles",
+            "two owners: paused payload must not hold a runtime-global mutex; allocations are released after close cycles",
         ),
         (
             "G05",
             "beyond-ram-and-32gib",
-            "enforced resident budget + allocated-block >40 GiB; sparse maps refuse the large cell",
+            "OS-constrained resident memory + allocated-block >40 GiB; sparse maps do not qualify the large cell",
         ),
         (
             "G12",
             "work-queue-scratch",
-            "OwnerSnapshot + queue wait + event-loop delay columns; cancellation joins",
+            "allocator measurements + queue wait + event-loop delay columns; cancellation joins",
         ),
         (
             "G15",

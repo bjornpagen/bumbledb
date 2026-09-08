@@ -287,9 +287,8 @@ fn physical_compaction_grows_and_copies_overflow_values_without_reencoding() {
 }
 
 #[test]
-fn physical_compaction_budget_failure_rolls_back_data_and_fresh_metadata() {
-    use crate::work::{Resource, WorkError};
-
+fn physical_compaction_cancellation_rolls_back_data_and_fresh_metadata() {
+    use crate::work::WorkError;
     let dir = TempDir::new("physical-compact-abort");
     let schema = schema();
     let source = create_default(&dir.path().join("source"));
@@ -297,47 +296,37 @@ fn physical_compaction_budget_failure_rolls_back_data_and_fresh_metadata() {
         &source,
         &change_set(&schema, &[(NOTE, note(1, "kept"))], &[]),
     );
-    // Fail while copying metadata: the data tree has already been populated
-    // and the fresh metadata tree cleared. Both must roll back together.
+    // The only overflow value is metadata. Its first chunk is copied after
+    // the data tree was populated and the fresh metadata tree was cleared.
     attach_receipt(&source, &schema, &work(), &[0xAB; 8192]);
-    let pinned = source.snapshot(&work()).expect("snapshot");
-    for resource in [Resource::InputBytes, Resource::WorkUnits] {
+    let pinned = source.snapshot(&work()).unwrap();
+    for before_start in [true, false] {
         let (dest, fresh) = Store::create(
-            &dir.path().join(format!("dest-{resource:?}")),
+            &dir.path().join(if before_start {
+                "before"
+            } else {
+                "mid-metadata"
+            }),
             &schema,
             MapPolicy::default(),
         )
-        .expect("dest");
-        let initial_metadata = entries(&dest.snapshot(&work()).expect("fresh snapshot"), true);
-        let budget = ExecutionPolicy {
-            input_bytes: if resource == Resource::InputBytes {
-                4096
-            } else {
-                1 << 20
-            },
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 16,
-            work_units: if resource == Resource::WorkUnits {
-                5000
-            } else {
-                1 << 20
-            },
-            timeout: Duration::from_secs(10),
+        .unwrap();
+        let initial_metadata = entries(&dest.snapshot(&work()).unwrap(), true);
+        let context = WorkContext::new();
+        let interrupted = super::super::copy::cancellation_test::after_overflow_chunks(1);
+        if before_start {
+            context.cancel();
         }
-        .start()
-        .expect("budget");
-        assert!(
-            matches!(dest.compact_snapshot(&pinned, fresh, &budget), Err(StoreError::Work(WorkError::Exhausted { resource: actual, .. })) if actual == resource)
+        assert_eq!(
+            dest.compact_snapshot(&pinned, fresh, &context),
+            Err(StoreError::Work(WorkError::Cancelled))
         );
-        if resource == Resource::WorkUnits {
-            assert!(
-                budget.used(Resource::WorkUnits) >= 4096,
-                "first overflow chunk was copied before refusal"
-            );
-        }
-        let copied = dest.snapshot(&work()).expect("after refusal");
+        assert_eq!(
+            super::super::copy::cancellation_test::Guard::copied(),
+            usize::from(!before_start)
+        );
+        drop(interrupted);
+        let copied = dest.snapshot(&work()).unwrap();
         assert!(entries(&copied, false).is_empty());
         assert_eq!(entries(&copied, true), initial_metadata);
     }

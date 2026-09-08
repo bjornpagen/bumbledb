@@ -57,15 +57,7 @@ impl<S> Db<S> {
     /// Storage failure or exhausted work; never a shortened report.
     #[doc(hidden)]
     pub fn verify_store(&self) -> Result<StoreReport> {
-        let work = crate::start_operation(crate::ExecutionPolicy {
-            input_bytes: 1 << 30,
-            working_bytes: 1 << 30,
-            scratch_bytes: 1 << 30,
-            result_bytes: 1 << 30,
-            rows: 1 << 30,
-            work_units: 1 << 30,
-            timeout: std::time::Duration::from_secs(3600),
-        })?;
+        let work = crate::WorkContext::new();
         let snapshot = self
             .integration_store()
             .snapshot(&work)

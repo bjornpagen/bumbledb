@@ -161,7 +161,7 @@ pub fn encode_result(
 
     let mut total = HEADER_LEN;
     for (rank, &index) in order.iter().enumerate() {
-        work.step(1)?;
+        work.checkpoint()?;
         let (name, value) = entries[index];
         if name.is_empty() || name.len() > MAX_NAME_BYTES {
             return Err(ResultError::InvalidName { entry: index });
@@ -190,7 +190,7 @@ pub fn encode_result(
         return Err(ResultError::LengthOverflow);
     }
 
-    work.step(total as u64)?;
+    work.checkpoint()?;
     let mut out = Vec::new();
     out.try_reserve_exact(total)
         .map_err(|_| ResultError::Allocation)?;
@@ -299,7 +299,7 @@ pub fn decode_result(
     if bytes.is_empty() {
         return Ok(Vec::new());
     }
-    work.input(bytes.len() as u64)?;
+    work.checkpoint()?;
     let mut input = Reader { bytes, at: 0 };
     if input.take(FAMILY.len())? != FAMILY {
         return Err(ResultError::Family);
@@ -321,7 +321,7 @@ pub fn decode_result(
     out.try_reserve_exact(count)
         .map_err(|_| ResultError::Allocation)?;
     for entry in 0..count {
-        work.step(1)?;
+        work.checkpoint()?;
         let name_len = usize::from(u16::from_be_bytes(input.array()?));
         if name_len == 0 || name_len > MAX_NAME_BYTES {
             return Err(ResultError::InvalidName { entry });
@@ -358,7 +358,7 @@ pub fn decode_result(
                 let len = usize::try_from(u64::from_be_bytes(input.array()?))
                     .map_err(|_| ResultError::LengthOverflow)?;
                 let span = input.take(len)?;
-                work.step(len as u64)?;
+                work.checkpoint()?;
                 let text =
                     std::str::from_utf8(span).map_err(|_| ResultError::InvalidUtf8 { entry })?;
                 let mut owned = String::new();
@@ -372,7 +372,7 @@ pub fn decode_result(
                 let len = usize::try_from(u64::from_be_bytes(input.array()?))
                     .map_err(|_| ResultError::LengthOverflow)?;
                 let span = input.take(len)?;
-                work.step(len as u64)?;
+                work.checkpoint()?;
                 let mut owned = Vec::new();
                 owned
                     .try_reserve_exact(span.len())
@@ -399,22 +399,11 @@ pub fn decode_result(
 #[cfg(test)]
 mod tests {
     use super::{FAMILY, LAYOUT, MAX_NAME_BYTES, ResultError, decode_result, encode_result};
-    use crate::work::ExecutionPolicy;
-    use crate::{F64, Interval, Uuid, Value, WorkContext};
-    use std::time::Duration;
+    use crate::work::WorkContext;
+    use crate::{F64, Interval, Uuid, Value};
 
     fn work() -> WorkContext {
-        ExecutionPolicy {
-            input_bytes: 1_000_000,
-            working_bytes: 1_000_000,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 100_000,
-            work_units: 1_000_000,
-            timeout: Duration::from_secs(60),
-        }
-        .start()
-        .unwrap()
+        WorkContext::new()
     }
 
     const BUDGET: usize = 4096;

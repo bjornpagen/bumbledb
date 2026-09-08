@@ -14,7 +14,7 @@
  * read-only: they never open, initialize, freeze or migrate a database.
  */
 
-import type { ExecutionPolicy, SchemaSpec } from "@bjornpagen/bumbledb"
+import type { SchemaSpec } from "@bjornpagen/bumbledb"
 import { internalMigrationRead, internalMigrationSchema } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Schema } from "effect"
 import type { LogError } from "#errors.ts"
@@ -105,12 +105,9 @@ function decodeResponse(operation: string, bytes: Uint8Array): Effect.Effect<unk
 // The production codec.
 // ---------------------------------------------------------------------------
 
-const schemaIdentity = Effect.fn("bumbledb-log.migrations.schemaIdentity")(function* (
-	spec: SchemaSpec,
-	work: ExecutionPolicy
-) {
+const schemaIdentity = Effect.fn("bumbledb-log.migrations.schemaIdentity")(function* (spec: SchemaSpec) {
 	const operation = "migrations.schemaIdentity"
-	const raw = yield* internalMigrationSchema(spec, work)
+	const raw = yield* internalMigrationSchema(spec)
 	const response = yield* decodeResponse(operation, raw)
 	const decoded = decodeSchemaResponse(response)
 	if (decoded._tag === "None") {
@@ -123,10 +120,7 @@ const schemaIdentity = Effect.fn("bumbledb-log.migrations.schemaIdentity")(funct
 	return identity
 })
 
-const verifyChain = Effect.fn("bumbledb-log.migrations.verifyChain")(function* (
-	request: ChainRequest,
-	work: ExecutionPolicy
-) {
+const verifyChain = Effect.fn("bumbledb-log.migrations.verifyChain")(function* (request: ChainRequest) {
 	const operation = "migrations.verifyChain"
 	const raw = yield* internalMigrationRead(
 		requestBytes({
@@ -137,8 +131,7 @@ const verifyChain = Effect.fn("bumbledb-log.migrations.verifyChain")(function* (
 			plans: request.plans,
 			append: request.append,
 			planSet: request.planSet === null ? null : { first: request.planSet.first, count: request.planSet.count }
-		}),
-		work
+		})
 	)
 	const response = yield* decodeResponse(operation, raw)
 	const decoded = decodeChainResponse(response)

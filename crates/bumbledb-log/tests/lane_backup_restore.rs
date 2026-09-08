@@ -33,7 +33,7 @@ fn fetch_verified(
     store: &MemStore,
     prefix: &str,
     reference: &bumbledb_log::store::ObjectRef,
-) -> bumbledb::work::ChargedBytes {
+) -> bumbledb_log::store::ReceivedBody {
     get_verified(
         store,
         prefix,
@@ -47,7 +47,7 @@ fn fetch_chunk_owners(
     store: &MemStore,
     prefix: &str,
     chunks: &[bumbledb_log::store::ObjectRef],
-) -> Vec<bumbledb::work::ChargedBytes> {
+) -> Vec<bumbledb_log::store::ReceivedBody> {
     chunks
         .iter()
         .map(|chunk| fetch_verified(store, prefix, chunk))
@@ -55,14 +55,14 @@ fn fetch_chunk_owners(
 }
 
 fn charged_chunk_views(
-    owners: &[bumbledb::work::ChargedBytes],
+    owners: &[bumbledb_log::store::ReceivedBody],
 ) -> impl Iterator<Item = Result<&[u8], bumbledb_log::recovery::RecoveryError>> + '_ {
-    owners.iter().map(|charged| Ok(charged.as_bytes()))
+    owners.iter().map(|charged| Ok(charged.as_slice()))
 }
 
-fn release_owners(owners: Vec<bumbledb::work::ChargedBytes>) {
+fn release_owners(owners: Vec<bumbledb_log::store::ReceivedBody>) {
     for charged in owners {
-        drop(charged.into_owner());
+        drop(charged);
     }
 }
 
@@ -146,7 +146,7 @@ fn backup01_05_backup_verifies_and_restores_from_the_destination_only() {
     let checkpoint_ref = manifest.checkpoint.expect("checkpoint copied");
     let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
     let checkpoint =
-        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_bytes(), ckpt_policy().stream)
+        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_slice(), ckpt_policy().stream)
             .expect("decodes");
     let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
     let tail_work = work();
@@ -171,7 +171,7 @@ fn backup01_05_backup_verifies_and_restores_from_the_destination_only() {
     )
     .expect("restore reaches the tip");
     release_owners(chunk_owners);
-    drop(checkpoint_bytes.into_owner());
+    drop(checkpoint_bytes);
     // Exact captured facts: all three users, byte-preserved entity values.
     let mut users = Vec::new();
     restored
@@ -286,7 +286,7 @@ fn backup04_corruption_wrong_operation_and_conflicts_refuse_with_evidence() {
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
     let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
     let checkpoint =
-        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_bytes(), ckpt_policy().stream)
+        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_slice(), ckpt_policy().stream)
             .expect("decodes");
     let chunk_key = checkpoint.chunks[0].key("vault");
     assert!(destination.corrupt_object(&chunk_key, |bytes| bytes[7] ^= 0xff));
@@ -321,7 +321,7 @@ fn restore02_read_only_inspection_grants_no_mutation_capability() {
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
     let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
     let checkpoint =
-        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_bytes(), ckpt_policy().stream)
+        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_slice(), ckpt_policy().stream)
             .expect("decodes");
     let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
     let scratch = temp_dir("bk-inspect-scratch").join("db");
@@ -336,7 +336,7 @@ fn restore02_read_only_inspection_grants_no_mutation_capability() {
     )
     .expect("inspection materializes");
     release_owners(chunk_owners);
-    drop(checkpoint_bytes.into_owner());
+    drop(checkpoint_bytes);
     // Original provenance and stamps are retained; reads work; the type
     // exposes NO write/submit surface (compile-time: `Inspection` has only
     // `read`/`provenance`).
@@ -413,7 +413,7 @@ fn restore03_restored_outbox_style_facts_document_duplicate_delivery_hazard() {
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
     let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
     let checkpoint =
-        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_bytes(), ckpt_policy().stream)
+        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_slice(), ckpt_policy().stream)
             .expect("decodes");
     let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
     let tail_work = work();
@@ -437,7 +437,7 @@ fn restore03_restored_outbox_style_facts_document_duplicate_delivery_hazard() {
     )
     .expect("restore");
     release_owners(chunk_owners);
-    drop(checkpoint_bytes.into_owner());
+    drop(checkpoint_bytes);
     let mut pending = 0;
     restored
         .db
@@ -490,14 +490,14 @@ fn d16_relocated_backup_uses_manifest_refs_not_source_locators() {
     let mut count = 0u64;
     for body in relocated_tail(&destination, "vault", &report.manifest, LIMITS, &work()) {
         let body = body.expect("relocated body");
-        let envelope = bumbledb_log::history::decision::decode_decision(body.as_bytes(), LIMITS)
+        let envelope = bumbledb_log::history::decision::decode_decision(body.as_slice(), LIMITS)
             .expect("historical bytes decode");
         assert_eq!(
             envelope.parent, parent,
             "parent stamp commitment is unchanged; no source locator chase"
         );
         parent = envelope.stamp();
-        drop(body.into_owner());
+        drop(body);
         count += 1;
     }
     assert_eq!(count, report.manifest.decisions.len() as u64);
@@ -517,7 +517,7 @@ fn d17_wrong_tip_with_tail_leaves_destination_absent() {
     let checkpoint_ref = report.manifest.checkpoint.expect("checkpoint");
     let checkpoint_bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
     let checkpoint =
-        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_bytes(), ckpt_policy().stream)
+        bumbledb_log::codec::decode_manifest(checkpoint_bytes.as_slice(), ckpt_policy().stream)
             .expect("decodes");
     let chunk_owners = fetch_chunk_owners(&destination, "vault", &checkpoint.chunks);
     let tail_work = work();
@@ -541,7 +541,7 @@ fn d17_wrong_tip_with_tail_leaves_destination_absent() {
         &work(),
     );
     release_owners(chunk_owners);
-    drop(checkpoint_bytes.into_owner());
+    drop(checkpoint_bytes);
     assert!(
         refused.is_err(),
         "expected_tip at the checkpoint (not the backed-up tip) refuses, got {:?}",

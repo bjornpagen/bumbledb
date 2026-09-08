@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::authority::{DeleteOutcome, DeletedReason};
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
@@ -75,20 +75,12 @@ fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
     )
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 1_000_000,
-        result_bytes: 1_000_000,
-        rows: 100_000,
-        work_units: 10_000_000,
-        timeout: Duration::from_secs(60),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn work() -> WorkContext {
-    policy().start().unwrap()
+    policy()
 }
 
 fn receive_head(store: &MemStore, key: &str, work: &WorkContext) -> ReceivedHead {
@@ -206,7 +198,7 @@ fn single_writer_publishes_composed_heads_and_deduplicates_retries() {
         ReceivedHead::Present { body, .. } => body,
         ReceivedHead::Absent => panic!("head must exist"),
     };
-    let record = manifest::decode_head(body.as_bytes(), LIMITS.envelope_bytes).unwrap();
+    let record = manifest::decode_head(body.as_slice(), LIMITS.envelope_bytes).unwrap();
     drop(body);
     assert_eq!(record.object_epoch, EPOCH);
     let recovery = record.recovery.expect("live head names its recovery root");
@@ -360,7 +352,7 @@ fn read_side_catch_up_advances_a_stale_local_materialization() {
     let record = match receive_head(&store, "tenants/catchup/HEAD", &ctx) {
         ReceivedHead::Present { version, body } => {
             assert_eq!(version, version_before, "catch-up never writes the head");
-            let record = manifest::decode_head(body.as_bytes(), LIMITS.envelope_bytes).unwrap();
+            let record = manifest::decode_head(body.as_slice(), LIMITS.envelope_bytes).unwrap();
             drop(body);
             record
         }

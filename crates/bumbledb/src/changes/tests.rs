@@ -2,8 +2,7 @@ use super::*;
 use crate::schema::{
     FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValidateDescriptor, ValueType,
 };
-use crate::work::{ExecutionPolicy, Resource};
-use std::time::Duration;
+use crate::work::WorkContext;
 
 fn schema() -> Schema {
     SchemaDescriptor {
@@ -21,17 +20,7 @@ fn schema() -> Schema {
     .unwrap()
 }
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 10000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap()
+    WorkContext::new()
 }
 
 fn permutations(indices: &mut [usize], at: usize, f: &mut impl FnMut(&[usize])) {
@@ -72,7 +61,6 @@ fn normalized_change_bytes_ignore_order_and_repetition_with_add_winning() {
         }
         let changes = builder.finish().unwrap();
         assert_eq!(changes.len(), 3);
-        assert_eq!(ctx.used(Resource::Rows), 6);
         let bytes = changes.as_bytes();
         assert_eq!(&bytes[..10], b"BDBCSET\0\0\x01");
         assert_eq!(bytes[HEADER], 1);
@@ -90,10 +78,9 @@ fn normalized_change_bytes_ignore_order_and_repetition_with_add_winning() {
             bytes
         );
         let retained = changes.clone();
+        assert!(Arc::ptr_eq(&changes.0, &retained.0));
         drop(changes);
-        assert!(ctx.used(Resource::WorkingBytes) > 0);
         drop(retained);
-        assert_eq!(ctx.used(Resource::WorkingBytes), 0);
     });
 }
 
@@ -134,19 +121,15 @@ fn strict_parser_rejects_truncation_duplicates_reordering_and_foreign_schema() {
 }
 
 #[test]
-fn ordered_pending_seals_identical_wire_with_one_retained_payload_charge() {
+fn ordered_records_seal_identical_wire_and_share_the_payload() {
     let schema = schema();
     let mut builder = ChangeSet::builder(&schema, work());
     builder.insert(RelationId(0), &[Value::U64(9)]).unwrap();
     builder.delete(RelationId(0), &[Value::U64(3)]).unwrap();
     builder.insert(RelationId(0), &[Value::U64(5)]).unwrap();
     let expected = builder.finish().unwrap();
-    let pending: BTreeMap<_, _> = expected
-        .records()
-        .map(|record| ((record.relation, Box::from(record.row)), record.kind))
-        .collect();
     let ctx = work();
-    let sealed = ChangeSet::from_ordered_rows(&schema, &pending, &ctx).unwrap();
+    let sealed = ChangeSet::from_ordered_records(&schema, expected.records(), &ctx).unwrap();
     assert_eq!(sealed.as_bytes(), expected.as_bytes());
     assert_eq!(
         ChangeSet::parse(&schema, sealed.as_bytes(), &work())
@@ -154,19 +137,15 @@ fn ordered_pending_seals_identical_wire_with_one_retained_payload_charge() {
             .as_bytes(),
         expected.as_bytes()
     );
-    assert_eq!(
-        ctx.used(Resource::WorkingBytes),
-        (sealed.as_bytes().len() + std::mem::size_of::<Payload>()) as u64
-    );
     let retained = sealed.clone();
+    assert!(Arc::ptr_eq(&sealed.0, &retained.0));
     drop(sealed);
-    assert!(ctx.used(Resource::WorkingBytes) > 0);
+    assert_eq!(retained.as_bytes(), expected.as_bytes());
     drop(retained);
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
 }
 
 #[test]
-fn ordered_pending_refuses_bad_rows_and_exhaustion_without_retained_memory() {
+fn ordered_records_refuse_bad_rows_and_cancellation() {
     let schema = schema();
     let canonical = CanonicalRow::encode(
         schema.relation(RelationId(0)).fields(),
@@ -174,39 +153,27 @@ fn ordered_pending_refuses_bad_rows_and_exhaustion_without_retained_memory() {
         &work(),
     )
     .unwrap();
-    let mut pending = BTreeMap::from([(
-        (RelationId(0), Box::<[u8]>::from(canonical.as_bytes())),
-        ChangeKind::Add,
-    )]);
+    let mut records = vec![ChangeRef {
+        relation: RelationId(0),
+        row: canonical.as_bytes(),
+        kind: ChangeKind::Add,
+    }];
     let cancelled = work();
     cancelled.cancel();
     assert!(matches!(
-        ChangeSet::from_ordered_rows(&schema, &pending, &cancelled),
+        ChangeSet::from_ordered_records(&schema, records.iter().copied(), &cancelled),
         Err(ChangeError::Work(WorkError::Cancelled))
     ));
-    let limited = work();
-    let held = limited
-        .reserve(ByteKind::Working, limited.limit(Resource::WorkingBytes))
-        .unwrap();
-    assert!(matches!(
-        ChangeSet::from_ordered_rows(&schema, &pending, &limited),
-        Err(ChangeError::Work(WorkError::Exhausted {
-            resource: Resource::WorkingBytes,
-            ..
-        }))
-    ));
-    drop(held);
-    assert_eq!(limited.used(Resource::WorkingBytes), 0);
-    pending.insert(
-        (RelationId(0), Box::from(&b"malformed"[..])),
-        ChangeKind::Add,
-    );
+    records.push(ChangeRef {
+        relation: RelationId(0),
+        row: b"malformed",
+        kind: ChangeKind::Add,
+    });
     let ctx = work();
     assert!(matches!(
-        ChangeSet::from_ordered_rows(&schema, &pending, &ctx),
+        ChangeSet::from_ordered_records(&schema, records.iter().copied(), &ctx),
         Err(ChangeError::Row(_))
     ));
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
 }
 
 #[test]
@@ -215,11 +182,9 @@ fn failed_ingestion_spends_draft_and_releases_owned_memory() {
     let ctx = work();
     let mut builder = ChangeSet::builder(&schema, ctx.clone());
     builder.insert(RelationId(0), &[Value::U64(1)]).unwrap();
-    assert!(ctx.used(Resource::WorkingBytes) > 0);
     let failure = builder
         .insert(RelationId(0), &[Value::Bool(false)])
         .unwrap_err();
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
     assert_eq!(
         builder.insert(RelationId(0), &[Value::U64(2)]),
         Err(failure)
@@ -228,7 +193,7 @@ fn failed_ingestion_spends_draft_and_releases_owned_memory() {
 }
 
 #[test]
-fn sorting_cancellation_returns_no_payload_or_live_reservation() {
+fn sorting_cancellation_returns_no_payload() {
     let schema = schema();
     let ctx = work();
     let mut builder = ChangeSet::builder(&schema, ctx.clone());
@@ -240,5 +205,4 @@ fn sorting_cancellation_returns_no_payload_or_live_reservation() {
         builder.finish(),
         Err(ChangeError::Work(WorkError::Cancelled))
     ));
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
 }

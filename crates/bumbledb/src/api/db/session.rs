@@ -107,8 +107,8 @@ pub struct CoreCommit {
 impl<S> Db<S> {
     /// Native integration only, not a general key/value or callback API.
     /// # Errors
-    /// Refuses reentrancy, cancellation/deadline or storage failure. Waiting
-    /// for a writer consumes the same deadline as preparing and sealing it.
+    /// Refuses reentrancy, cancellation or storage failure. Writer admission,
+    /// preparation and sealing observe the same cancellation context.
     #[doc(hidden)]
     pub fn integration_writer(
         &self,
@@ -231,7 +231,7 @@ impl<S> ReadFrame<'_, S> {
     /// ascending key order, within this read's one committed transaction.
     /// Key and value bytes borrow the
     /// snapshot only for the duration of each visit — copy before
-    /// returning; charged against this lease's work allowance per record.
+    /// returning if they must be retained. Checks cancellation per record.
     /// # Errors
     /// Host-key grammar or storage failure, stopped work, or the visitor's
     /// own refusal.

@@ -10,7 +10,7 @@ use crate::ir::Value;
 
 fn canonical_bytes(values: &[Value]) -> Vec<u8> {
     let schema = schema();
-    let work = crate::api::prepared::source::unbounded_work().expect("ledger");
+    let work = crate::api::prepared::source::unbounded_work();
     crate::canonical::CanonicalRow::encode(schema.relation(super::R).fields(), values, &work)
         .expect("fixture rows are canonical")
         .as_bytes()
@@ -27,8 +27,8 @@ fn walk(bytes: &[u8]) -> Result<Vec<u64>, Error> {
         bytes,
         &mut text,
         &mut out,
-    )?
-    .expect_ready("lookup never spills");
+        &mut Vec::new(),
+    )?;
     Ok(out)
 }
 
@@ -97,7 +97,7 @@ fn noncanonical_floats_and_inverted_intervals_refuse() {
             statements: vec![],
         })
         .expect("valid fixture");
-    let work = crate::api::prepared::source::unbounded_work().expect("ledger");
+    let work = crate::api::prepared::source::unbounded_work();
     let healthy = crate::canonical::CanonicalRow::encode(
         float_schema.relation(super::R).fields(),
         &[
@@ -119,8 +119,8 @@ fn noncanonical_floats_and_inverted_intervals_refuse() {
             bytes,
             &mut text,
             &mut out,
-        )?
-        .expect_ready("lookup never spills");
+            &mut Vec::new(),
+        )?;
         Ok(out)
     };
     assert!(walk_f(&healthy).is_ok());
@@ -155,7 +155,7 @@ fn f64_interval_with_nan_endpoint_refuses_like_strict_decode() {
             statements: vec![],
         })
         .expect("valid fixture");
-    let work = crate::api::prepared::source::unbounded_work().expect("ledger");
+    let work = crate::api::prepared::source::unbounded_work();
     let nan = bumbledb_theory::F64::NAN;
     let finite = bumbledb_theory::F64::from(1.0);
     let mut bytes = vec![0, 1, 9];
@@ -173,7 +173,8 @@ fn f64_interval_with_nan_endpoint_refuses_like_strict_decode() {
             float_schema.relation(super::R).fields(),
             &bytes,
             &mut text,
-            &mut out
+            &mut out,
+            &mut Vec::new(),
         )
         .is_err()
     );

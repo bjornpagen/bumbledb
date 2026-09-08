@@ -8,10 +8,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::checkpointer::read_live_head;
 use bumbledb_log::history::authority::HeadAuthority;
@@ -74,20 +73,12 @@ pub fn theory() -> SchemaDescriptor {
     }
 }
 
-pub fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 100_000_000,
-        working_bytes: 100_000_000,
-        scratch_bytes: 100_000_000,
-        result_bytes: 100_000_000,
-        rows: 10_000_000,
-        work_units: 1_000_000_000,
-        timeout: Duration::from_secs(600),
-    }
+pub fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 pub fn work() -> WorkContext {
-    policy().start().expect("work budget starts")
+    policy()
 }
 
 pub fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
@@ -235,7 +226,7 @@ where
         )
         .expect("head reads")
     {
-        ReceivedHead::Present { body, .. } => body.as_bytes().to_vec(),
+        ReceivedHead::Present { body, .. } => body.as_slice().to_vec(),
         ReceivedHead::Absent => panic!("head exists"),
     }
 }

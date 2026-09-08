@@ -12,7 +12,7 @@ use super::{
     Bindings, EitherSink, FreeJoinRule, PreparedInterior, PreparedPipeline, PreparedQuery,
     PreparedRule, ProjectionSink,
 };
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::exec::run::Counters;
 use crate::exec::scratch::ScratchRelation;
 use crate::exec::sink::FindSpec;
@@ -41,14 +41,6 @@ impl StageSink for EitherSink {
         self.aim(finds, slot_count, spans);
     }
 }
-
-/// The default rec-round budget. Generous by the safety theorem's own
-/// measure: a real closure's round count is its graph's diameter.
-pub const DEFAULT_REACH_ROUNDS: u32 = 1 << 16;
-
-/// The default derived-tuple budget: the 10⁷-row scale axiom, applied
-/// to every derived sink (each interior, then the rec table).
-pub const DEFAULT_DERIVED_TUPLES: u64 = 10_000_000;
 
 pub(crate) struct ReachDriver {
     pub(super) base: Vec<PreparedRule>,
@@ -103,9 +95,8 @@ impl DerivedImages {
     }
 
     /// Seal one finished projection stage/rec table: drains the sink's
-    /// distinct rows ACROSS BOTH TIERS (a spilled rec seen-set refills the
-    /// sealed image from its scratch log), with the image slabs charged
-    /// before allocation.
+    /// distinct rows across both representations. A scratch-backed seen-set
+    /// is consumed through its ordered row visitor.
     fn stash_finished(
         &mut self,
         id: usize,
@@ -119,8 +110,8 @@ impl DerivedImages {
             id,
             "derived tables seal in declaration order"
         );
-        let stage = if sink.spilled() {
-            seal_projection_scratch(field_types, sink, work)?
+        let stage = if sink.spilled() || u32::try_from(sink.len()).is_err() {
+            seal_scratch_range(sink, work, field_types, generation, 0)?
         } else {
             let rows = sink.len();
             let image = self.working[id].refill_drained(
@@ -140,10 +131,6 @@ impl DerivedImages {
     /// Finalize small stages directly into columnar images, preserving
     /// the Free Join path for their consumers. Larger/spilled stages
     /// stream to one RAM-first scratch relation without reconstruction.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-    )]
     fn stash_aggregate(
         &mut self,
         id: usize,
@@ -152,7 +139,6 @@ impl DerivedImages {
         answer_scratch: &mut Vec<u64>,
         work: &crate::work::WorkContext,
         generation: &crate::work::GenerationHandle,
-        ram_bytes: usize,
     ) -> Result<u64> {
         debug_assert_eq!(
             self.published.len(),
@@ -162,52 +148,37 @@ impl DerivedImages {
         if let Some(bound) = sink.resident_row_bound()
             && u32::try_from(bound).is_ok()
         {
-            let bytes = crate::image::estimated_slab_bytes(field_types, bound)?;
-            let remaining = work
-                .limit(crate::work::Resource::WorkingBytes)
-                .saturating_sub(work.used(crate::work::Resource::WorkingBytes));
-            if bytes <= ram_bytes && bytes as u64 <= remaining {
-                let image = self.working[id].refill_bounded(
-                    work,
-                    field_types,
-                    bound,
-                    generation,
-                    |_, write| {
-                        sink.finalize_into(answer_scratch, |row| {
-                            write(row);
-                            Ok(())
-                        })
-                    },
-                )?;
-                let count = image.row_count() as u64;
-                self.published.push(SealedStage::Resident(image));
-                return Ok(count);
-            }
+            let image = self.working[id].refill_bounded(
+                work,
+                field_types,
+                bound,
+                generation,
+                |_, write| {
+                    sink.finalize_into(answer_scratch, |row| {
+                        write(row);
+                        Ok(())
+                    })
+                },
+            )?;
+            let count = image.row_count() as u64;
+            self.published.push(SealedStage::Resident(image));
+            return Ok(count);
         }
-        let mut dest = crate::exec::sink::AggregateSink::admit_dest(work, ram_bytes);
-        let count = sink.stream_finalize(&mut dest, answer_scratch)?;
+        let mut dest = ScratchRelation::new(work);
+        let mut texts = crate::image::TextOwners::default();
+        let count = sink.stream_finalize(&mut dest, answer_scratch, |row| {
+            texts.pin_row(row, field_types, generation)
+        })?;
         // dest.spilled() / dest.scratch_path() — never force_spill first.
-        self.published
-            .push(SealedStage::from_aggregate_dest(dest, field_types, count));
+        self.published.push(SealedStage::from_aggregate_dest(
+            dest,
+            field_types,
+            count,
+            generation.clone(),
+            texts,
+        ));
         Ok(count)
     }
-}
-
-fn seal_projection_scratch(
-    field_types: &[ValueType],
-    sink: &mut ProjectionSink,
-    work: &crate::work::WorkContext,
-) -> Result<SealedStage> {
-    let row_words = stage_row_words(field_types);
-    let mut rows = ScratchRelation::new(work, 0);
-    rows.force_spill()?;
-    let count = sink.stream_into_scratch(&mut rows, 0, 0)?;
-    Ok(SealedStage::Scratch(Box::new(ScratchStage {
-        rows,
-        field_types: field_types.to_vec(),
-        row_words,
-        count,
-    })))
 }
 
 /// Feed a projection drain into an image-slab write. The write itself is
@@ -237,52 +208,22 @@ fn stage_row_words(field_types: &[ValueType]) -> usize {
 /// its sink; an aggregate/computed stage FINALIZES here — its overflow /
 /// cardinality / scalar errors surface now, before any consumer runs
 /// (the producer error boundary; a later filter cannot hide them).
-/// Returns the sealed row count for the derived-tuples budget.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-)]
+/// Returns the sealed row count.
 fn seal_interior(
     interior: &mut PreparedInterior,
     id: usize,
     derived: &mut DerivedImages,
     answer_scratch: &mut Vec<u64>,
-    tuples_so_far: u64,
-    tuples_budget: u64,
+
     work: &crate::work::WorkContext,
     generation: &crate::work::GenerationHandle,
-    ram_bytes: usize,
 ) -> Result<u64> {
-    // The derived-tuples budget is judged BEFORE finalization/refill
-    // materializes anything further (charge before growth, Q-BUDGET);
-    // group counts and projection lengths are already known.
-    let over = |rows: u64| -> Result<()> {
-        let total = tuples_so_far.saturating_add(rows);
-        if total > tuples_budget {
-            return Err(Error::DerivedBudgetExceeded {
-                rounds: 0,
-                tuples: total,
-            });
-        }
-        Ok(())
-    };
     let field_types = &interior.field_types;
     let mut seal_aggregate = |sink: &mut crate::exec::sink::AggregateSink| -> Result<u64> {
-        over(sink.group_count() as u64)?;
-        derived.stash_aggregate(
-            id,
-            field_types,
-            sink,
-            answer_scratch,
-            work,
-            generation,
-            ram_bytes,
-        )
+        derived.stash_aggregate(id, field_types, sink, answer_scratch, work, generation)
     };
     match &mut interior.sink {
         EitherSink::Projection(sink) => {
-            let rows = sink.len() as u64;
-            over(rows)?;
             derived.stash_finished(id, field_types, sink, work, generation)
         }
         EitherSink::Computed(computed) => {
@@ -291,8 +232,6 @@ fn seal_interior(
             }
             match &mut computed.inner {
                 EitherSink::Projection(sink) => {
-                    let rows = sink.len() as u64;
-                    over(rows)?;
                     derived.stash_finished(id, field_types, sink, work, generation)
                 }
                 EitherSink::Aggregate(sink) => seal_aggregate(sink),
@@ -316,7 +255,7 @@ struct RunCtx<'a> {
     /// forcing, or the one bounded restart after reservation refusal).
     fallback: bool,
     published: &'a mut [SealedStage],
-    nonresident: &'a mut Option<crate::image::NonresidentTextStore>,
+    retained_texts: &'a mut crate::image::TextOwners,
 }
 
 pub(super) fn rule_uses_scratch_derived(
@@ -362,7 +301,6 @@ impl<S> PreparedQuery<S> {
         }
         let fast_eligible = self.params.is_empty();
         let mut ran = false;
-        let mut derived_tuples: u64 = 0;
         let interner = images.interner();
 
         let n_interiors = self.pipeline.interiors().len();
@@ -372,18 +310,10 @@ impl<S> PreparedQuery<S> {
                     let interiors = self.pipeline.interiors_mut();
                     unbind_interior_views(&mut interiors[i], &mut self.derived.retired);
                     interiors[i].sink.reset();
-                    // Interior stage sinks judge their dedup/group state
-                    // against the same per-execution allowance as the main
-                    // sink (audit-core #4; chapter 12 §5): under genuine
-                    // pressure the state continues in the one scratch map
-                    // instead of growing unbounded RAM until seal. The
-                    // threshold governs — small stages never spill.
+                    // Main, interior and recursive sinks share cancellation.
                     interiors[i]
                         .sink
-                        .begin_execution(Some(crate::exec::sink::SinkBudget {
-                            work: images.source().work().clone(),
-                            ram_bytes: self.sink_ram,
-                        }));
+                        .begin_execution(Some(images.source().work().clone()));
                 }
                 let rule_count = self.pipeline.interiors()[i].rules.len();
                 for rule_idx in 0..rule_count {
@@ -400,7 +330,7 @@ impl<S> PreparedQuery<S> {
                         fast_eligible,
                         fallback: self.forced_fallback,
                         published: &mut self.derived.published,
-                        nonresident: &mut self.nonresident,
+                        retained_texts: &mut self.execution_texts,
                     };
                     let occ_images = std::mem::take(&mut self.derived.occ_images);
                     let mut retired = std::mem::take(&mut self.derived.retired);
@@ -426,39 +356,26 @@ impl<S> PreparedQuery<S> {
                 // so a required producer error (overflow, cardinality,
                 // scalar failure) fails the query before any consumer
                 // could discard it (the stage error boundary, Q-IR).
-                let sealed = {
-                    let tuples_budget = self.tuples_budget;
+                {
                     let interiors = self.pipeline.interiors_mut();
                     seal_interior(
                         &mut interiors[i],
                         i,
                         &mut self.derived,
                         &mut self.answer_scratch,
-                        derived_tuples,
-                        tuples_budget,
                         images.source().work(),
                         images.generation(),
-                        self.sink_ram,
                     )?
                 };
-                derived_tuples += sealed;
             }
         }
 
         let rec_ran = match &mut self.pipeline {
-            PreparedPipeline::Reach {
-                driver,
-                rec_id,
-                rounds_budget,
-                ..
-            } => {
+            PreparedPipeline::Reach { driver, rec_id, .. } => {
                 let rec_id = usize::try_from(rec_id.0).expect("rec_id stored at validate");
                 run_reach(
                     driver,
                     rec_id,
-                    *rounds_budget,
-                    self.tuples_budget,
-                    self.sink_ram,
                     &mut self.derived,
                     &mut self.bindings,
                     &mut self.key_scratch,
@@ -469,9 +386,8 @@ impl<S> PreparedQuery<S> {
                     &self.missed_params,
                     fast_eligible,
                     self.forced_fallback,
-                    &mut self.nonresident,
+                    &mut self.execution_texts,
                     counters,
-                    derived_tuples,
                 )?
             }
             PreparedPipeline::Cq { .. } | PreparedPipeline::PointProbe { .. } => false,
@@ -494,19 +410,13 @@ impl<S> PreparedQuery<S> {
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the driver reads as one protocol: reset, round 0, Δ loop, budget"
-)]
 fn run_reach<Cnt: Counters>(
     driver: &mut ReachDriver,
     rec_id: usize,
-    rounds_budget: u32,
-    tuples_budget: u64,
-    sink_ram: usize,
+
     derived: &mut DerivedImages,
     bindings: &mut Bindings,
-    key_scratch: &mut Vec<u64>,
+    key_scratch: &mut crate::image::view::ResolvedWords,
     schema: &Schema,
     images: &SourceImages<'_>,
     interner: &InternerHandle<'_>,
@@ -514,20 +424,14 @@ fn run_reach<Cnt: Counters>(
     missed_params: &[bool],
     fast_eligible: bool,
     forced_fallback: bool,
-    nonresident: &mut Option<crate::image::NonresidentTextStore>,
+    retained_texts: &mut crate::image::TextOwners,
     counters: &mut Cnt,
-    derived_tuples: u64,
 ) -> Result<bool> {
     let mut ran = false;
 
     driver.sink.reset();
-    // The rec seen/frontier state is charged like the main sink's distinct
-    // state: past this execution's RAM allowance it continues in the one
-    // scratch map, and the watermark drains below read across both tiers.
-    driver.sink.begin(Some(crate::exec::sink::SinkBudget {
-        work: images.source().work().clone(),
-        ram_bytes: sink_ram,
-    }));
+    // Watermark drains preserve insertion order in either representation.
+    driver.sink.begin(Some(images.source().work().clone()));
     for rule in &mut driver.base {
         if let PreparedRule::FreeJoin(fj) = rule {
             unbind_interior_rule(fj, &mut derived.retired);
@@ -548,7 +452,7 @@ fn run_reach<Cnt: Counters>(
             fast_eligible,
             fallback: forced_fallback,
             published: &mut derived.published,
-            nonresident,
+            retained_texts,
         };
         ran |= run_into_projection(
             &mut ctx,
@@ -563,31 +467,25 @@ fn run_reach<Cnt: Counters>(
             counters,
         )?;
     }
-    let mut rounds: u32 = 0;
     let mut watermark = 0;
     loop {
         let len = driver.sink.len();
-        // Earlier interiors plus the ONE accumulated set. Repeated
-        // derivations and earlier prefixes are not new derived tuples.
-        let tuples = derived_tuples.saturating_add(len as u64);
+        images
+            .source()
+            .work()
+            .checkpoint()
+            .map_err(super::source::work_error)?;
         let any_delta = len > watermark;
         if !any_delta {
-            let ReachDriver {
-                sink, field_types, ..
-            } = &mut *driver;
             let _rows = derived.stash_finished(
                 rec_id,
-                field_types,
-                sink,
+                &driver.field_types,
+                &mut driver.sink,
                 images.source().work(),
                 images.generation(),
             )?;
             break;
         }
-        if rounds >= rounds_budget || tuples > tuples_budget {
-            return Err(Error::DerivedBudgetExceeded { rounds, tuples });
-        }
-        rounds += 1;
         // Validation admits exactly one self-read per arm. Its source
         // slot holds this round's immutable frontier, not another copy
         // of the accumulated set. All consumers use the ordinary stage
@@ -599,6 +497,7 @@ fn run_reach<Cnt: Counters>(
             images.generation(),
             watermark,
             len,
+            retained_texts,
         )?);
         watermark = len;
 
@@ -613,7 +512,7 @@ fn run_reach<Cnt: Counters>(
                 fast_eligible,
                 fallback: forced_fallback,
                 published: &mut derived.published,
-                nonresident,
+                retained_texts,
             };
             let result = run_free_join_into_projection(
                 &mut ctx,
@@ -688,6 +587,7 @@ fn next_frontier(
     generation: &crate::work::GenerationHandle,
     since: usize,
     len: usize,
+    retained_texts: &mut crate::image::TextOwners,
 ) -> Result<SealedStage> {
     let ReachDriver {
         sink,
@@ -695,41 +595,49 @@ fn next_frontier(
         field_types,
         ..
     } = driver;
-    if sink.spilled() {
-        return seal_scratch_range(sink, work, field_types, since);
+    if sink.spilled() || u32::try_from(len - since).is_err() {
+        // The scratch publication owns this round; the accumulator also
+        // needs its tokens after that publication is dropped.
+        let stage = seal_scratch_range(sink, work, field_types, generation, since)?;
+        if let SealedStage::Scratch(stage) = &stage {
+            retained_texts.extend_from(&stage.texts);
+        }
+        return Ok(stage);
     }
     // The round publication and all COLT views have been released. One
     // reusable SoA buffer suffices; the set remains the sole accumulator.
     debug_assert!(frontier.is_uniquely_owned());
-    match frontier.refill_drained(
+    let image = frontier.refill_drained(
         Some(work),
         field_types,
         len - since,
         generation,
         |_, write| write_projection_rows(sink, since, write),
-    ) {
-        Ok(delta) => Ok(SealedStage::Resident(delta)),
-        Err(error) if super::source::is_working_exhaustion(&error) => {
-            seal_scratch_range(sink, work, field_types, since)
-        }
-        Err(error) => Err(error),
-    }
+    )?;
+    retained_texts.extend_from(image.texts());
+    Ok(SealedStage::Resident(image))
 }
 
 fn seal_scratch_range(
     sink: &mut ProjectionSink,
     work: &crate::work::WorkContext,
     field_types: &[ValueType],
+    generation: &crate::work::GenerationHandle,
     since: usize,
 ) -> Result<SealedStage> {
-    let mut rows = ScratchRelation::new(work, 0);
+    let mut rows = ScratchRelation::new(work);
     rows.force_spill()?;
-    let count = sink.stream_into_scratch(&mut rows, since, 0)?;
+    let mut texts = crate::image::TextOwners::default();
+    let count = sink.stream_into_scratch(&mut rows, since, 0, |row| {
+        texts.pin_row(row, field_types, generation)
+    })?;
     Ok(SealedStage::Scratch(Box::new(ScratchStage {
         rows,
         field_types: field_types.to_vec(),
         row_words: stage_row_words(field_types),
         count,
+        generation: generation.clone(),
+        texts,
     })))
 }
 
@@ -761,7 +669,7 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
     retired: &mut Vec<Vec<u32>>,
     sink: &mut S,
     bindings: &mut Bindings,
-    key_scratch: &mut Vec<u64>,
+    key_scratch: &mut crate::image::view::ResolvedWords,
     counters: &mut Cnt,
 ) -> Result<bool> {
     let multi_unit = units > 1;
@@ -776,7 +684,6 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
                 ctx.images.source(),
                 ctx.schema,
                 ctx.interner,
-                ctx.nonresident,
                 ctx.resolved_params,
                 &mut rule.row,
                 key_scratch,
@@ -796,10 +703,6 @@ fn run_into_projection<S: StageSink, Cnt: Counters>(
     clippy::too_many_arguments,
     reason = "the prepared query's split borrows are clearer unpacked"
 )]
-#[expect(
-    clippy::too_many_lines,
-    reason = "Keep the ordered execution and cleanup transitions together"
-)]
 fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
     ctx: &mut RunCtx<'_>,
     rule: &mut FreeJoinRule,
@@ -813,7 +716,6 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
     let multi_unit = units > 1;
     bindings.resize(rule.plan.slot_count());
     if ctx.fallback
-        || ctx.nonresident.is_some()
         || rule_uses_scratch_derived(&rule.plan, ctx.published)
         || resident_edb_overflow(ctx.images.source(), &rule.plan)?
     {
@@ -826,7 +728,7 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
             interner: ctx.interner,
             params: ctx.resolved_params,
             missed: ctx.missed_params,
-            nonresident: ctx.nonresident,
+            retained_texts: ctx.retained_texts,
         };
         super::fallback::run_fallback(
             &mut rule.fallback,
@@ -842,7 +744,6 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
     } else {
         let complete = super::bind::LiteralResolution {
             interner: ctx.interner,
-            store: ctx.nonresident,
             work: ctx.images.source().work(),
             params: ctx.resolved_params,
             missed: ctx.missed_params,
@@ -862,31 +763,10 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
     if !resolved {
         return Ok(false);
     }
-    if ctx.nonresident.is_some() {
-        if multi_unit {
-            sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
-        }
-        let mut fallback_ctx = super::fallback::FallbackCtx {
-            source: ctx.images.source(),
-            schema: ctx.schema,
-            interner: ctx.interner,
-            params: ctx.resolved_params,
-            missed: ctx.missed_params,
-            nonresident: ctx.nonresident,
-        };
-        super::fallback::run_fallback(
-            &mut rule.fallback,
-            &mut fallback_ctx,
-            ctx.published,
-            bindings,
-            sink,
-        )?;
-        return Ok(true);
-    }
     if multi_unit {
         sink.aim_stage(&rule.finds, rule.plan.slot_count(), &rule.dedup_spans);
     }
-    let joined = run_join(
+    run_join(
         &rule.plan,
         ctx.schema,
         ctx.images,
@@ -898,27 +778,9 @@ fn run_free_join_into_projection<S: StageSink, Cnt: Counters>(
         &mut rule.memo,
         occ_images,
         retired,
-        ctx.nonresident,
         sink,
         counters,
     )?;
-    if !joined {
-        let mut fallback_ctx = super::fallback::FallbackCtx {
-            source: ctx.images.source(),
-            schema: ctx.schema,
-            interner: ctx.interner,
-            params: ctx.resolved_params,
-            missed: ctx.missed_params,
-            nonresident: ctx.nonresident,
-        };
-        super::fallback::run_fallback(
-            &mut rule.fallback,
-            &mut fallback_ctx,
-            ctx.published,
-            bindings,
-            sink,
-        )?;
-    }
     Ok(true)
 }
 

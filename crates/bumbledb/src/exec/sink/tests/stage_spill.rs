@@ -1,37 +1,16 @@
-//! Spill-bounded stage drain (D09). Independent of reach.rs seals: those
-//! must call [`ProjectionSink::stream_into_scratch`] /
-//! [`AggregateSink::stream_finalize`] on an admitted dest. Visitor `Err`
-//! stops immediately. Tiny dests never open an environment; `ScratchBytes`
-//! and `WorkingBytes` are not that witness. No `type_name`/`size_of`.
+//! Borrowed sink drains, explicit scratch transitions, and cancellation.
+//! Completed sink rows are materialized results, not streaming execution.
 
 use crate::error::Error;
 use crate::exec::run::{Bindings, Sink as _};
-use crate::exec::scratch::{DEFAULT_RAM_BYTES, ScratchRelation};
+use crate::exec::scratch::ScratchRelation;
 use crate::exec::sink::{
-    AggSpec, AggregateSink, FindSpec, ProjectionSink, STEP_QUANTUM, SinkBudget, SinkProgress,
-    SpillSet,
+    AggSpec, AggregateSink, FindSpec, ProjectionSink, STEP_QUANTUM, SinkProgress, SpillSet,
 };
-use crate::work::{ExecutionPolicy, Resource};
-use std::time::Duration;
+use crate::work::WorkContext;
 
 fn work() -> crate::work::WorkContext {
-    crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("unbounded ledger")
-}
-
-fn tight_work(scratch: u64, units: u64) -> crate::work::WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: scratch,
-        result_bytes: 1 << 20,
-        rows: 1 << 20,
-        work_units: units,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .expect("valid policy")
+    WorkContext::new()
 }
 
 fn assert_hashed_kernel_state(actual: &SpillSet, dynamic: &SpillSet) {
@@ -42,170 +21,115 @@ fn assert_hashed_kernel_state(actual: &SpillSet, dynamic: &SpillSet) {
     assert_eq!(actual.progress(), dynamic.progress());
     assert_eq!(
         actual.error.as_ref().map(ToString::to_string),
-        dynamic.error.as_ref().map(ToString::to_string),
+        dynamic.error.as_ref().map(ToString::to_string)
     );
-    if let (Some(actual), Some(dynamic)) = (&actual.budget, &dynamic.budget) {
-        for resource in [
-            Resource::InputBytes,
-            Resource::WorkingBytes,
-            Resource::ScratchBytes,
-            Resource::ResultBytes,
-            Resource::Rows,
-            Resource::WorkUnits,
-        ] {
-            assert_eq!(
-                actual.work.used(resource),
-                dynamic.work.used(resource),
-                "{resource:?}"
-            );
-        }
-    }
 }
 
 #[test]
-fn direct_hashed_kernel_preserves_duplicate_results_order_and_spill_boundary() {
-    for (arity, allowance) in [(0, usize::MAX), (1, usize::MAX), (2, 64), (3, 0)] {
-        let mut direct = SpillSet::with_capacity_hint(arity, 0, true);
-        let mut dynamic = SpillSet::with_capacity_hint(arity, 0, true);
-        for budgeted in [true, false] {
-            for set in [&mut direct, &mut dynamic] {
-                set.clear();
-                set.begin(budgeted.then(|| SinkBudget {
-                    work: work(),
-                    ram_bytes: allowance,
-                }));
-            }
-            let mut expected = Vec::new();
-            for emit in 0..20u64 {
-                let row: Vec<_> = (0..arity)
-                    .map(|word| emit / 2 + u64::try_from(word).unwrap())
-                    .collect();
-                let new = !expected.contains(&row);
-                if new {
-                    expected.push(row.clone());
+fn direct_hashed_kernel_preserves_duplicates_and_order_across_explicit_transition() {
+    for arity in [0, 1, 2, 3] {
+        for transition in [None, Some(0), Some(3)] {
+            let mut direct = SpillSet::with_capacity_hint(arity, 0, true);
+            let mut dynamic = SpillSet::with_capacity_hint(arity, 0, true);
+            for _ in 0..2 {
+                for set in [&mut direct, &mut dynamic] {
+                    set.clear();
+                    set.begin(Some(work()));
                 }
-                assert_eq!(direct.insert_inner::<false>(&row), new);
-                assert_eq!(dynamic.insert(&row), new);
-                assert_hashed_kernel_state(&direct, &dynamic);
-                if budgeted && arity == 2 && emit == 2 {
-                    assert!(!direct.spilled(), "two rows exactly fit the allowance");
+                let mut expected = Vec::new();
+                for emit in 0..20u64 {
+                    if transition == Some(emit) {
+                        direct.spill().unwrap();
+                        dynamic.spill().unwrap();
+                    }
+                    let row: Vec<_> = (0..arity).map(|word| emit / 2 + word as u64).collect();
+                    let new = !expected.contains(&row);
+                    if new {
+                        expected.push(row.clone());
+                    }
+                    assert_eq!(direct.insert_inner::<false>(&row), new);
+                    assert_eq!(dynamic.insert(&row), new);
+                    assert_hashed_kernel_state(&direct, &dynamic);
                 }
-                if budgeted && arity == 2 && emit == 3 {
-                    assert!(
-                        direct.spilled(),
-                        "even a duplicate triggers the conservative pre-probe threshold"
-                    );
+                for set in [&mut direct, &mut dynamic] {
+                    let mut actual = Vec::new();
+                    set.for_each_since(0, &mut |row| {
+                        actual.push(row.to_vec());
+                        Ok(true)
+                    })
+                    .unwrap();
+                    assert_eq!(actual, expected);
                 }
-            }
-            for set in [&mut direct, &mut dynamic] {
-                let mut actual = Vec::new();
-                set.for_each_since(0, &mut |row| {
-                    actual.push(row.to_vec());
-                    Ok(true)
-                })
-                .unwrap();
-                assert_eq!(
-                    actual, expected,
-                    "first-emission order survives scratch and reset"
-                );
             }
         }
     }
 }
 
 #[test]
-fn direct_hashed_kernel_preserves_refusal_polling_stickiness_and_reuse() {
-    for (allowance, scratch, units, cancelled) in [
-        (64, 0, u64::MAX, false),
-        (usize::MAX, 1 << 20, u64::from(STEP_QUANTUM - 1), false),
-        (usize::MAX, 1 << 20, u64::MAX, true),
-    ] {
-        let mut direct = SpillSet::with_capacity_hint(2, 0, true);
-        let mut dynamic = SpillSet::with_capacity_hint(2, 0, true);
-        for set in [&mut direct, &mut dynamic] {
-            let ledger = tight_work(scratch, units);
-            if cancelled {
-                ledger.cancel();
-            }
-            set.begin(Some(SinkBudget {
-                work: ledger,
-                ram_bytes: allowance,
-            }));
-        }
-        let emits = if scratch == 0 { 3 } else { STEP_QUANTUM };
-        for emit in 0..emits {
-            let row = if scratch == 0 {
-                [u64::from(emit), 7]
-            } else {
-                [1, 7]
-            };
-            let result = direct.insert_inner::<false>(&row);
-            assert_eq!(result, dynamic.insert(&row));
-            assert_hashed_kernel_state(&direct, &dynamic);
-            if emit + 1 < emits {
-                assert_eq!(direct.progress(), SinkProgress::Continue);
-            } else {
-                assert!(!result);
-                assert_eq!(direct.progress(), SinkProgress::Stop);
-            }
-        }
-        assert_eq!(direct.len(), if scratch == 0 { 2 } else { 1 });
-        assert!(!direct.insert_inner::<false>(&[999, 7]));
-        assert!(!dynamic.insert(&[999, 7]));
+fn direct_hashed_kernel_preserves_cancellation_stickiness_and_reuse() {
+    let mut direct = SpillSet::with_capacity_hint(2, 0, true);
+    let mut dynamic = SpillSet::with_capacity_hint(2, 0, true);
+    for set in [&mut direct, &mut dynamic] {
+        let context = work();
+        context.cancel();
+        set.begin(Some(context));
+    }
+    for emit in 0..STEP_QUANTUM {
+        assert_eq!(
+            direct.insert_inner::<false>(&[1, 7]),
+            dynamic.insert(&[1, 7])
+        );
         assert_hashed_kernel_state(&direct, &dynamic);
-        for set in [&mut direct, &mut dynamic] {
-            set.clear();
-            set.begin(None);
-        }
-        assert!(direct.insert_inner::<false>(&[99, 8]));
-        assert!(dynamic.insert(&[99, 8]));
-        assert_hashed_kernel_state(&direct, &dynamic);
-        assert_eq!(direct.progress(), SinkProgress::Continue);
-        assert_eq!(direct.len(), 1);
+        assert_eq!(
+            direct.progress(),
+            if emit + 1 < STEP_QUANTUM {
+                SinkProgress::Continue
+            } else {
+                SinkProgress::Stop
+            }
+        );
     }
+    assert_eq!(direct.len(), 1);
+    assert!(!direct.insert_inner::<false>(&[999, 7]));
+    assert!(!dynamic.insert(&[999, 7]));
+    assert_hashed_kernel_state(&direct, &dynamic);
+    for set in [&mut direct, &mut dynamic] {
+        set.clear();
+        set.begin(None);
+    }
+    assert!(direct.insert_inner::<false>(&[99, 8]));
+    assert!(dynamic.insert(&[99, 8]));
+    assert_hashed_kernel_state(&direct, &dynamic);
+    assert_eq!(direct.progress(), SinkProgress::Continue);
+    assert_eq!(direct.len(), 1);
 }
 
 #[test]
-fn bulk_hashed_insert_preserves_duplicate_spill_boundaries_and_ordered_early_stop() {
+fn bulk_hashed_insert_preserves_transition_order_and_early_stop() {
     for arity in [1, 2, 9] {
-        for allowance in [None, Some(usize::MAX), Some(2 * (arity * 8 + 16)), Some(0)] {
+        for transition in [None, Some(0), Some(3)] {
             let mut bulk = SpillSet::with_capacity_hint(arity, 0, true);
             let mut control = SpillSet::with_capacity_hint(arity, 0, true);
             for set in [&mut bulk, &mut control] {
-                set.begin(allowance.map(|ram_bytes| SinkBudget {
-                    work: work(),
-                    ram_bytes,
-                }));
+                set.begin(Some(work()));
             }
             let rows: Vec<u64> = (0..20u64)
-                .flat_map(|id| (0..arity).map(move |word| id / 2 + u64::try_from(word).unwrap()))
+                .flat_map(|id| (0..arity).map(move |word| id / 2 + word as u64))
                 .collect();
-            for (start, end) in [(0, 0), (0, 1), (1, 2), (2, 3), (3, 4), (4, 10), (10, 20)] {
+            for (start, end) in [(0, 1), (1, 2), (2, 3), (3, 4), (4, 10), (10, 20)] {
+                if transition == Some(start) {
+                    bulk.spill().unwrap();
+                    control.spill().unwrap();
+                }
                 let words = &rows[start * arity..end * arity];
                 for row in words.chunks_exact(arity) {
                     control.insert_inner::<false>(row);
                 }
                 bulk.insert_hashed_rows(words);
                 assert_hashed_kernel_state(&bulk, &control);
-                if !bulk.spilled() {
-                    assert_eq!(
-                        bulk.ram_iter_since(0).collect::<Vec<_>>(),
-                        control.ram_iter_since(0).collect::<Vec<_>>()
-                    );
-                }
-                if allowance == Some(2 * (arity * 8 + 16)) && end == 3 {
-                    assert!(!bulk.spilled(), "two distinct rows exactly fit");
-                }
-                if allowance == Some(2 * (arity * 8 + 16)) && end == 4 {
-                    assert!(bulk.spilled(), "the next duplicate still triggers spill");
-                }
             }
             let expected: Vec<Vec<u64>> = (0..10u64)
-                .map(|id| {
-                    (0..arity)
-                        .map(|word| id + u64::try_from(word).unwrap())
-                        .collect()
-                })
+                .map(|id| (0..arity).map(|word| id + word as u64).collect())
                 .collect();
             for cap in [2, 10] {
                 for set in [&mut bulk, &mut control] {
@@ -224,31 +148,15 @@ fn bulk_hashed_insert_preserves_duplicate_spill_boundaries_and_ordered_early_sto
 }
 
 #[test]
-fn bulk_hashed_insert_matches_poll_refusal_stickiness_and_reuse() {
-    for (allowance, scratch, units, cancelled) in [
-        (usize::MAX, 1 << 20, 0, false),
-        (usize::MAX, 1 << 20, 255, false),
-        (usize::MAX, 1 << 20, 256, false),
-        (usize::MAX, 1 << 20, 511, false),
-        (usize::MAX, 1 << 20, 512, false),
-        (usize::MAX, 1 << 20, u64::MAX, true),
-        (64, 0, u64::MAX, false),
-    ] {
+fn bulk_hashed_insert_matches_cancellation_boundaries_stickiness_and_reuse() {
+    for cancel_at in [None, Some(0), Some(255), Some(256), Some(257)] {
         for duplicates in [false, true] {
             let mut bulk = SpillSet::with_capacity_hint(2, 0, true);
             let mut control = SpillSet::with_capacity_hint(2, 0, true);
             for set in [&mut bulk, &mut control] {
-                let ledger = tight_work(scratch, units);
-                if cancelled {
-                    ledger.cancel();
-                }
-                set.begin(Some(SinkBudget {
-                    work: ledger,
-                    ram_bytes: allowance,
-                }));
+                set.begin(Some(work()));
             }
             for (start, end) in [
-                (0, 0),
                 (0, 1),
                 (1, 250),
                 (250, 255),
@@ -256,6 +164,10 @@ fn bulk_hashed_insert_matches_poll_refusal_stickiness_and_reuse() {
                 (256, 257),
                 (257, 520),
             ] {
+                if cancel_at == Some(start) {
+                    bulk.work.as_ref().unwrap().cancel();
+                    control.work.as_ref().unwrap().cancel();
+                }
                 let words: Vec<_> = (start..end)
                     .flat_map(|id| [if duplicates { id / 2 } else { id }, 7])
                     .collect();
@@ -264,14 +176,20 @@ fn bulk_hashed_insert_matches_poll_refusal_stickiness_and_reuse() {
                 }
                 bulk.insert_hashed_rows(&words);
                 assert_hashed_kernel_state(&bulk, &control);
-                assert!(!bulk.spilled(), "either resident or failed before spilling");
+                assert!(!bulk.spilled());
                 assert_eq!(
                     bulk.ram_iter_since(0).collect::<Vec<_>>(),
                     control.ram_iter_since(0).collect::<Vec<_>>()
                 );
             }
-            // A fresh execution must discard sticky refusal/pending state
-            // without changing the retained map's ordinary growth behavior.
+            assert_eq!(
+                bulk.progress(),
+                if cancel_at.is_some() {
+                    SinkProgress::Stop
+                } else {
+                    SinkProgress::Continue
+                }
+            );
             for set in [&mut bulk, &mut control] {
                 set.clear();
                 set.begin(None);
@@ -336,22 +254,20 @@ fn output_key_witness() -> crate::plan::fj::ProjectionDistinctWitness {
 #[test]
 fn proved_output_append_matches_ordered_set_across_ram_spill_and_reuse() {
     let witness = output_key_witness();
-    for allowance in [0, 64, usize::MAX] {
+    for transition in [None, Some(0), Some(2)] {
         let mut hashed = SpillSet::with_capacity_hint(2, 0, true);
         let mut append = SpillSet::with_capacity_hint(2, 0, true);
         append.elide_output_hashing(witness);
         for round in 0..2 {
             hashed.clear();
             append.clear();
-            hashed.begin(Some(SinkBudget {
-                work: work(),
-                ram_bytes: allowance,
-            }));
-            append.begin(Some(SinkBudget {
-                work: work(),
-                ram_bytes: allowance,
-            }));
-            for i in (0..259u64).rev() {
+            hashed.begin(Some(work()));
+            append.begin(Some(work()));
+            for (emitted, i) in (0..259u64).rev().enumerate() {
+                if transition == Some(emitted) {
+                    hashed.spill().unwrap();
+                    append.spill().unwrap();
+                }
                 let row = [i + round * 1000, i % 7];
                 assert!(hashed.insert(&row));
                 assert!(append.insert(&row));
@@ -408,17 +324,14 @@ fn proved_output_append_matches_ordered_set_across_ram_spill_and_reuse() {
 
 #[test]
 fn proved_output_append_keeps_work_quantum_failure_sticky_and_reuses_capacity() {
-    let ledger = tight_work(1 << 20, u64::from(STEP_QUANTUM - 1));
+    let ledger = work();
     let mut append = SpillSet::with_capacity_hint(2, 0, true);
     append.elide_output_hashing(output_key_witness());
-    append.begin(Some(SinkBudget {
-        work: ledger.clone(),
-        ram_bytes: usize::MAX,
-    }));
+    append.begin(Some(ledger.clone()));
     for i in 0..STEP_QUANTUM - 1 {
         assert!(append.insert(&[u64::from(i), 0]));
     }
-    assert_eq!(ledger.used(Resource::WorkUnits), 0);
+    ledger.cancel();
     assert_eq!(append.pending_steps, STEP_QUANTUM - 1);
     assert!(!append.insert(&[u64::from(STEP_QUANTUM), 0]));
     assert_eq!(append.progress(), SinkProgress::Stop);
@@ -426,10 +339,7 @@ fn proved_output_append_keeps_work_quantum_failure_sticky_and_reuses_capacity() 
     assert!(!append.insert(&[9999, 0]));
     let capacity = append.unique_rows.as_ref().unwrap().words.capacity();
     append.clear();
-    append.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: usize::MAX,
-    }));
+    append.begin(Some(work()));
     assert_eq!(
         append.unique_rows.as_ref().unwrap().words.capacity(),
         capacity
@@ -443,38 +353,47 @@ fn proved_output_append_keeps_work_quantum_failure_sticky_and_reuses_capacity() 
 }
 
 #[test]
-fn failed_proved_output_spill_retains_the_previous_ordered_rows() {
+fn failed_proved_output_transition_preserves_rows_and_can_retry() {
+    let context = work();
     let mut append = SpillSet::with_capacity_hint(2, 0, true);
     append.elide_output_hashing(output_key_witness());
-    append.begin(Some(SinkBudget {
-        work: tight_work(0, 1 << 20),
-        ram_bytes: 64,
-    }));
+    append.begin(Some(context.clone()));
     assert!(append.insert(&[1, 2]));
     assert!(append.insert(&[3, 4]));
-    assert!(!append.insert(&[5, 6]));
+    context.cancel();
+    assert!(append.spill().is_err());
     assert!(!append.spilled());
-    assert!(append.error.is_some());
     assert_eq!(append.len(), 2);
-    assert!(!append.insert(&[7, 8]));
     assert_eq!(
         append.ram_iter_since(0).collect::<Vec<_>>(),
         vec![&[1, 2][..], &[3, 4][..]]
     );
+    append.begin(Some(work()));
+    append.spill().unwrap();
+    assert!(append.spilled());
+    assert!(append.insert(&[5, 6]));
+    let mut rows = Vec::new();
+    append
+        .for_each_since(0, &mut |row| {
+            rows.push(row.to_vec());
+            Ok(true)
+        })
+        .unwrap();
+    assert_eq!(rows, vec![vec![1, 2], vec![3, 4], vec![5, 6]]);
 }
 
-fn bulk_unique_set(allowance: usize, scratch: u64, units: u64) -> SpillSet {
+fn bulk_unique_set() -> SpillSet {
     let mut set = SpillSet::with_capacity_hint(2, 0, true);
     set.elide_output_hashing(output_key_witness());
-    // Exactly three words: the two-word rows leave a one-word tail.
     let rows = set.unique_rows.as_mut().unwrap();
     rows.words = vec![0; 3].into_boxed_slice().into_vec();
     rows.words.clear();
-    assert_eq!(rows.words.capacity(), 3);
-    set.begin(Some(SinkBudget {
-        work: tight_work(scratch, units),
-        ram_bytes: allowance,
-    }));
+    assert_eq!(
+        rows.words.capacity(),
+        3,
+        "capacity deliberately ends mid-row"
+    );
+    set.begin(Some(work()));
     set
 }
 
@@ -513,31 +432,14 @@ fn assert_bulk_unique_state(actual: &SpillSet, expected: &SpillSet) {
     assert_eq!(actual_rows.len, expected_rows.len);
     assert_eq!(actual_rows.words, expected_rows.words);
     assert_eq!(actual_rows.words.capacity(), expected_rows.words.capacity());
-    for resource in [
-        Resource::InputBytes,
-        Resource::WorkingBytes,
-        Resource::ScratchBytes,
-        Resource::ResultBytes,
-        Resource::Rows,
-        Resource::WorkUnits,
-    ] {
-        assert_eq!(
-            actual.budget.as_ref().unwrap().work.used(resource),
-            expected.budget.as_ref().unwrap().work.used(resource),
-            "{resource:?}"
-        );
-    }
 }
 
 #[test]
 fn bulk_unique_append_matches_each_row_at_capacity_and_poll_boundaries() {
-    for units in [0, 255, 256, 511, 512, 1 << 20] {
-        let mut control = bulk_unique_set(usize::MAX, 1 << 20, units);
-        let mut bulk = bulk_unique_set(usize::MAX, 1 << 20, units);
-        // Separate calls exercise empty input, partial pending quanta, the
-        // boundary row itself, and growth with non-row-aligned capacity.
+    for cancel_at in [None, Some(0), Some(255), Some(256), Some(257)] {
+        let mut control = bulk_unique_set();
+        let mut bulk = bulk_unique_set();
         for (start, end) in [
-            (0, 0),
             (0, 1),
             (1, 250),
             (250, 255),
@@ -545,6 +447,10 @@ fn bulk_unique_append_matches_each_row_at_capacity_and_poll_boundaries() {
             (256, 257),
             (257, 520),
         ] {
+            if cancel_at == Some(start) {
+                control.work.as_ref().unwrap().cancel();
+                bulk.work.as_ref().unwrap().cancel();
+            }
             let rows: Vec<u64> = (start..end).flat_map(|id| [id, id % 7]).collect();
             for row in rows.as_chunks::<2>().0 {
                 control.insert(row);
@@ -552,23 +458,15 @@ fn bulk_unique_append_matches_each_row_at_capacity_and_poll_boundaries() {
             bulk.insert_unique_rows(&rows);
             assert_bulk_unique_state(&bulk, &control);
         }
-        let expected_prefix = if units < 256 {
-            255
-        } else if units < 512 {
-            511
-        } else {
-            520
+        let expected_prefix = match cancel_at {
+            Some(0 | 255) => 255,
+            Some(_) => 511,
+            None => 520,
         };
         assert_eq!(bulk.len(), expected_prefix);
-
-        // A successful new execution reuses precisely the retained capacity
-        // and no old sticky failure or partial quantum.
         for set in [&mut control, &mut bulk] {
             set.clear();
-            set.begin(Some(SinkBudget {
-                work: work(),
-                ram_bytes: usize::MAX,
-            }));
+            set.begin(Some(work()));
         }
         let rows: Vec<u64> = (1000..1300).flat_map(|id| [id, 3]).collect();
         for row in rows.as_chunks::<2>().0 {
@@ -581,67 +479,47 @@ fn bulk_unique_append_matches_each_row_at_capacity_and_poll_boundaries() {
 }
 
 #[test]
-fn bulk_unique_append_matches_spill_threshold_order_and_failure_prefix() {
-    // Spill before any row, between rows, immediately before a poll,
-    // or immediately after a poll. One-byte slack must not admit another row.
-    for allowance in [0, 65, 255 * 32, 256 * 32] {
-        let mut control = bulk_unique_set(allowance, 1 << 20, 1 << 20);
-        let mut bulk = bulk_unique_set(allowance, 1 << 20, 1 << 20);
+fn bulk_unique_append_preserves_order_across_explicit_transition_boundaries() {
+    for transition in [0, 2, 255, 256] {
+        let mut control = bulk_unique_set();
+        let mut bulk = bulk_unique_set();
         let rows: Vec<u64> = (0..259u64).rev().flat_map(|id| [id, id % 7]).collect();
-        for row in rows.as_chunks::<2>().0 {
-            control.insert(row);
+        for (start, end) in [(0, transition), (transition, 259)] {
+            if start == transition && !bulk.spilled() {
+                control.spill().unwrap();
+                bulk.spill().unwrap();
+            }
+            let words = &rows[start * 2..end * 2];
+            for row in words.as_chunks::<2>().0 {
+                control.insert(row);
+            }
+            bulk.insert_unique_rows(words);
         }
-        bulk.insert_unique_rows(&rows);
         assert_bulk_unique_state(&bulk, &control);
         assert!(bulk.spilled());
-        let mut drained = Vec::new();
-        bulk.for_each_since(0, &mut |row| {
-            drained.extend_from_slice(row);
-            Ok(true)
-        })
-        .unwrap();
-        assert_eq!(drained, rows);
-        let mut control_drained = Vec::new();
-        control
-            .for_each_since(0, &mut |row| {
-                control_drained.extend_from_slice(row);
+        for set in [&mut bulk, &mut control] {
+            let mut drained = Vec::new();
+            set.for_each_since(0, &mut |row| {
+                drained.extend_from_slice(row);
                 Ok(true)
             })
             .unwrap();
-        assert_eq!(drained, control_drained);
-        assert_bulk_unique_state(&bulk, &control);
-    }
-
-    for (allowance, prefix) in [(64, 2), (255 * 32, 255)] {
-        let mut control = bulk_unique_set(allowance, 0, 1 << 20);
-        let mut bulk = bulk_unique_set(allowance, 0, 1 << 20);
-        let rows: Vec<u64> = (0..259).flat_map(|id| [id, 0]).collect();
-        for row in rows.as_chunks::<2>().0 {
-            control.insert(row);
+            assert_eq!(drained, rows);
         }
-        bulk.insert_unique_rows(&rows);
-        assert_bulk_unique_state(&bulk, &control);
-        assert!(bulk.error.is_some());
-        assert!(!bulk.spilled());
-        assert_eq!(bulk.len(), prefix);
-        control.insert(&[9999, 0]);
-        bulk.insert_unique_rows(&[9999, 0]);
-        assert_bulk_unique_state(&bulk, &control);
-        assert_eq!(bulk.len(), prefix);
     }
 }
 
 #[test]
 fn bulk_unique_append_observes_cancellation_at_the_same_poll_row() {
-    let mut control = bulk_unique_set(usize::MAX, 1 << 20, 1 << 20);
-    let mut bulk = bulk_unique_set(usize::MAX, 1 << 20, 1 << 20);
+    let mut control = bulk_unique_set();
+    let mut bulk = bulk_unique_set();
     let prefix: Vec<u64> = (0..250).flat_map(|id| [id, 0]).collect();
     for row in prefix.as_chunks::<2>().0 {
         control.insert(row);
     }
     bulk.insert_unique_rows(&prefix);
     for set in [&control, &bulk] {
-        set.budget.as_ref().unwrap().work.cancel();
+        set.work.as_ref().unwrap().cancel();
     }
     let tail: Vec<u64> = (250..270).flat_map(|id| [id, 0]).collect();
     for row in tail.as_chunks::<2>().0 {
@@ -660,7 +538,7 @@ fn bulk_unique_append_observes_cancellation_at_the_same_poll_row() {
     reason = "The interrupted writer only initializes, never deinitializes, words"
 )]
 fn generated_unique_rows_do_not_publish_an_unfinished_span_on_panic() {
-    let mut set = bulk_unique_set(usize::MAX, 1 << 20, 1 << 20);
+    let mut set = bulk_unique_set();
     set.insert_unique_rows(&[1, 2]);
     set.unique_rows.as_mut().unwrap().words.reserve(4);
     let pending = set.pending_steps;
@@ -685,18 +563,15 @@ fn generated_unique_rows_do_not_publish_an_unfinished_span_on_panic() {
 
 #[test]
 fn resident_dedup_polls_duplicates_at_the_exact_work_quantum_and_stops_stickily() {
-    let ledger = tight_work(1 << 20, u64::from(STEP_QUANTUM - 1));
+    let ledger = work();
     let mut seen = SpillSet::with_capacity_hint(1, 0, false);
-    seen.begin(Some(SinkBudget {
-        work: ledger.clone(),
-        ram_bytes: usize::MAX,
-    }));
+    seen.begin(Some(ledger.clone()));
     assert!(seen.insert(&[7]));
     for _ in 1..STEP_QUANTUM - 1 {
         assert!(!seen.insert(&[7]));
     }
     assert_eq!(seen.pending_steps, STEP_QUANTUM - 1);
-    assert_eq!(ledger.used(Resource::WorkUnits), 0);
+    ledger.cancel();
     assert_eq!(seen.progress(), SinkProgress::Continue);
     assert!(
         !seen.insert(&[8]),
@@ -713,23 +588,14 @@ fn resident_dedup_polls_duplicates_at_the_exact_work_quantum_and_stops_stickily(
 }
 
 #[test]
-fn exact_spill_threshold_preserves_duplicates_and_insertion_order_across_tiers() {
+fn explicit_transition_preserves_duplicates_and_insertion_order() {
     let mut seen = SpillSet::with_capacity_hint(2, 0, true);
-    seen.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 64, // two conservatively charged two-word keys
-    }));
+    seen.begin(Some(work()));
     assert!(seen.insert(&[1, 2]));
     assert!(seen.insert(&[3, 4]));
-    assert!(
-        !seen.spilled(),
-        "equality with the threshold remains resident"
-    );
     assert!(!seen.insert(&[1, 2]));
-    assert!(
-        seen.spilled(),
-        "the pre-probe threshold also applies to duplicates"
-    );
+    assert!(!seen.spilled(), "duplicates do not choose a storage policy");
+    seen.spill().unwrap();
     assert!(seen.insert(&[5, 6]));
     assert!(!seen.insert(&[3, 4]));
     let mut rows = Vec::new();
@@ -743,21 +609,28 @@ fn exact_spill_threshold_preserves_duplicates_and_insertion_order_across_tiers()
 }
 
 #[test]
-fn failed_spill_keeps_the_resident_set_and_refuses_all_later_insertions() {
+fn failed_hashed_transition_keeps_the_resident_set_and_can_retry() {
+    let context = work();
     let mut seen = SpillSet::with_capacity_hint(2, 0, true);
-    seen.begin(Some(SinkBudget {
-        work: tight_work(0, 1 << 20),
-        ram_bytes: 64,
-    }));
+    seen.begin(Some(context.clone()));
     assert!(seen.insert(&[1, 2]));
     assert!(seen.insert(&[3, 4]));
-    assert!(!seen.insert(&[5, 6]));
+    context.cancel();
+    assert!(seen.spill().is_err());
     assert!(!seen.spilled());
-    assert!(seen.error.is_some());
-    assert!(!seen.insert(&[7, 8]));
     assert_eq!(seen.len(), 2);
-    let rows: Vec<_> = seen.ram_iter_since(0).map(<[u64]>::to_vec).collect();
-    assert_eq!(rows, vec![vec![1, 2], vec![3, 4]]);
+    assert_eq!(
+        seen.ram_iter_since(0)
+            .map(<[u64]>::to_vec)
+            .collect::<Vec<_>>(),
+        vec![vec![1, 2], vec![3, 4]]
+    );
+    seen.begin(Some(work()));
+    seen.spill().unwrap();
+    assert!(seen.spilled());
+    assert!(!seen.insert(&[1, 2]));
+    assert!(seen.insert(&[5, 6]));
+    assert_eq!(seen.len(), 3);
 }
 
 fn decode_stage_rows(dest: &mut ScratchRelation) -> Vec<Vec<u64>> {
@@ -804,16 +677,14 @@ fn d09_projection_stream_into_scratch_matches_resident() {
     expected.sort();
 
     let mut spilled = ProjectionSink::with_capacity_hint(&finds, 2, 0);
-    spilled.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 0,
-    }));
+    spilled.begin(Some(work()));
     feed(&mut spilled);
+    spilled.seen.spill().unwrap();
     assert!(spilled.spilled());
-    let mut dest = ScratchRelation::new(&work(), 0);
+    let mut dest = ScratchRelation::new(&work());
     dest.force_spill().expect("dest");
     let written = spilled
-        .stream_into_scratch(&mut dest, 0, 0)
+        .stream_into_scratch(&mut dest, 0, 0, |_| Ok(()))
         .expect("stream");
     assert_eq!(written, 32);
     assert_eq!(decode_stage_rows(&mut dest), expected);
@@ -834,10 +705,7 @@ fn d09_drain_since_propagates_failure_immediately() {
     let refused = sink.drain_since(0, &mut |_| {
         seen += 1;
         if seen == 3 {
-            return Err(Error::DerivedBudgetExceeded {
-                rounds: 0,
-                tuples: 3,
-            });
+            return Err(Error::ResultBytesOverflow);
         }
         Ok(true)
     });
@@ -873,10 +741,7 @@ fn d09_aggregate_stream_finalize_stays_one_row_per_group() {
         FindSpec::Agg(AggSpec::Count),
     ];
     let mut sink = AggregateSink::new(&finds, 2);
-    sink.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 0,
-    }));
+    sink.begin(Some(work()));
     let mut bindings = Bindings::new(2);
     for i in 0..40u64 {
         bindings.reset();
@@ -884,44 +749,51 @@ fn d09_aggregate_stream_finalize_stays_one_row_per_group() {
         bindings.set(1, i);
         sink.emit(&bindings);
     }
+    sink.spill_groups().unwrap();
     assert!(sink.group_state_spilled());
-    let mut dest = ScratchRelation::new(&work(), 0);
+    let mut dest = ScratchRelation::new(&work());
     dest.force_spill().expect("dest");
     let mut answer = Vec::new();
     let written = sink
-        .stream_finalize_into_scratch(&mut dest, &mut answer)
+        .stream_finalize(&mut dest, &mut answer, |_| Ok(()))
         .expect("stream finalize");
     assert_eq!(written, 8);
     assert_eq!(dest.len(), 8);
     assert_eq!(sink.progress(), SinkProgress::Finish);
 }
 
-/// D09: a refused dest put leaves only the rows that committed.
 #[test]
-fn d09_stream_put_refusal_does_not_buffer_the_rest() {
+fn cancelled_destination_refuses_stream_without_consuming_source() {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
     let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
-    sink.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 0,
-    }));
     let mut bindings = Bindings::new(1);
-    for i in 0..16u64 {
+    for i in 0..4096u64 {
         bindings.set(0, i);
         sink.emit(&bindings);
     }
-    let ledger = tight_work(64, 32);
-    let baseline = ledger.used(Resource::ScratchBytes);
-    let mut dest = ScratchRelation::new(&ledger, 0);
-    let refused = dest
-        .force_spill()
-        .and_then(|()| sink.stream_into_scratch(&mut dest, 0, 0));
-    assert!(refused.is_err(), "tiny scratch must refuse a 16-row stream");
+    let context = work();
+    let mut dest = ScratchRelation::new(&context);
+    context.cancel();
+    #[cfg(feature = "alloc-counter")]
+    let before = crate::alloc_counter::snapshot().window;
+    let refused = sink.stream_into_scratch(&mut dest, 0, 0, |_| Ok(()));
+    #[cfg(feature = "alloc-counter")]
+    let after = crate::alloc_counter::snapshot().window;
+    assert!(refused.is_err());
+    assert_eq!(dest.len(), 0);
+    assert!(!dest.spilled());
+    #[cfg(feature = "alloc-counter")]
     assert!(
-        dest.len() < 16,
-        "failure must not finish a second full collection"
+        after.alloc_bytes - before.alloc_bytes < 4096,
+        "early failure must not build a 4096-row destination copy"
     );
-    let _ = baseline;
+    let mut retry = ScratchRelation::new(&work());
+    assert_eq!(
+        sink.stream_into_scratch(&mut retry, 0, 0, |_| Ok(()))
+            .unwrap(),
+        4096
+    );
+    assert_eq!(retry.len(), 4096);
 }
 
 /// D09: a tiny nonempty finalize stays on the admitted dest RAM tier.
@@ -943,18 +815,18 @@ fn d09_tiny_finalize_never_opens_scratch_env() {
         sink.emit(&bindings);
     }
     assert!(!sink.group_state_spilled());
-    let mut dest = AggregateSink::admit_dest(&work(), DEFAULT_RAM_BYTES);
+    let mut dest = ScratchRelation::new(&work());
     assert!(!dest.spilled());
     assert!(dest.scratch_path().is_none());
     let mut answer = Vec::new();
     let written = sink
-        .stream_finalize(&mut dest, &mut answer)
+        .stream_finalize(&mut dest, &mut answer, |_| Ok(()))
         .expect("tiny finalize");
     assert_eq!(written, 3);
     assert!(!dest.spilled(), "tiny dest must not open an environment");
     assert!(
         dest.scratch_path().is_none(),
-        "admit_dest + stream_finalize must not force_spill"
+        "stream_finalize must not choose the destination representation"
     );
     assert_eq!(dest.len(), 3);
     assert_eq!(sink.progress(), SinkProgress::Finish);
@@ -970,9 +842,9 @@ fn d09_tiny_projection_stream_never_opens_scratch_env() {
         bindings.set(0, i);
         sink.emit(&bindings);
     }
-    let mut dest = ProjectionSink::admit_dest(&work(), DEFAULT_RAM_BYTES);
+    let mut dest = ScratchRelation::new(&work());
     let written = sink
-        .stream_into_scratch(&mut dest, 0, 0)
+        .stream_into_scratch(&mut dest, 0, 0, |_| Ok(()))
         .expect("tiny stream");
     assert_eq!(written, 3);
     assert!(!dest.spilled());
@@ -980,7 +852,7 @@ fn d09_tiny_projection_stream_never_opens_scratch_env() {
     assert_eq!(dest.len(), 3);
 }
 
-/// D09: a dest admitted with no RAM allowance continues onto scratch
+/// An explicitly disk-backed destination consumes the finalize stream
 /// boundedly — one row per published group, not a reconstructed claim set.
 #[test]
 fn d09_large_finalize_dest_spills_boundedly() {
@@ -996,38 +868,40 @@ fn d09_large_finalize_dest_spills_boundedly() {
         bindings.set(1, i);
         sink.emit(&bindings);
     }
-    let mut dest = AggregateSink::admit_dest(&work(), 0);
+    let mut dest = ScratchRelation::new(&work());
+    dest.force_spill().unwrap();
     let mut answer = Vec::new();
     let written = sink
-        .stream_finalize(&mut dest, &mut answer)
+        .stream_finalize(&mut dest, &mut answer, |_| Ok(()))
         .expect("bounded spill dest");
     assert_eq!(written, 8);
-    assert!(dest.spilled(), "zero-RAM dest must continue onto scratch");
+    assert!(dest.spilled(), "the caller selected temporary disk storage");
     assert!(dest.scratch_path().is_some());
     assert_eq!(dest.len(), 8);
     assert_eq!(sink.progress(), SinkProgress::Finish);
 }
 
-/// D09: a producer finalize error surfaces before dest opens an environment.
 #[test]
-fn d09_finalize_preserves_producer_error_without_opening_dest() {
-    let finds = vec![
+fn finalize_preserves_producer_cancellation_without_opening_destination() {
+    let finds = [
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Agg(AggSpec::Count),
     ];
-    let mut sink = AggregateSink::new(&finds, 2);
-    sink.begin(Some(SinkBudget {
-        work: tight_work(0, 1),
-        ram_bytes: 0,
-    }));
+    let context = work();
+    let mut sink = AggregateSink::new(finds, 2);
+    sink.begin(Some(context.clone()));
     let mut bindings = Bindings::new(2);
     bindings.set(0, 1);
     bindings.set(1, 1);
-    sink.emit(&bindings);
-    let mut dest = AggregateSink::admit_dest(&work(), DEFAULT_RAM_BYTES);
-    let mut answer = Vec::new();
-    let refused = sink.stream_finalize(&mut dest, &mut answer);
-    assert!(refused.is_err(), "sticky producer error must surface");
+    context.cancel();
+    for _ in 0..STEP_QUANTUM {
+        sink.emit(&bindings);
+    }
+    assert_eq!(sink.progress(), SinkProgress::Stop);
+    let mut dest = ScratchRelation::new(&work());
+    let refused = sink.stream_finalize(&mut dest, &mut Vec::new(), |_| Ok(()));
+    assert!(refused.is_err());
+    assert_eq!(dest.len(), 0);
     assert!(!dest.spilled());
     assert!(dest.scratch_path().is_none());
 }

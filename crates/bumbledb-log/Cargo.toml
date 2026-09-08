@@ -10,6 +10,8 @@ default = ["store"]
 # vector, sidecar/manifest documents, keys/scratch, fs/mem stores —
 # compiles dependency-lean.
 store = ["dep:object_store", "dep:tokio"]
+# Process-global allocation regressions; run measured tests in isolated nextest processes.
+alloc-counter = ["bumbledb/alloc-counter"]
 
 [dependencies]
 bumbledb = { path = "../bumbledb" }

@@ -1,7 +1,6 @@
 use super::{Answers, ResolveMemo};
 
 use crate::error::{CorruptionError, Error, Result};
-use crate::image::NonresidentTextStore;
 use crate::image::intern::InternerHandle;
 
 impl ResolveMemo {
@@ -9,7 +8,6 @@ impl ResolveMemo {
         Self {
             ranges: crate::exec::wordmap::WordMap::new(1),
             last: None,
-            scratch_epoch: None,
         }
     }
 
@@ -18,70 +16,30 @@ impl ResolveMemo {
         self.last = None;
     }
 
-    /// Drop per-finalize mappings that named scratch tokens. Called
-    /// before the store that minted them disappears.
-    pub(super) fn forget_scratch(&mut self) {
-        self.ranges.clear();
-        self.last = None;
-        self.scratch_epoch = None;
-    }
-
-    /// Resolve one token into this finalize's answer heap. Intern text
-    /// is read from the generation owner; scratch text from the live
-    /// store. No persistent uncharged dictionary is retained.
+    /// Resolve one token into this finalize's answer heap. The text is
+    /// borrowed from the pinned generation and copied once per distinct token.
     #[inline]
     pub(super) fn resolve(
         &mut self,
         interner: &InternerHandle<'_>,
-        store: Option<&mut NonresidentTextStore>,
         word: u64,
         buffer: &mut Answers,
     ) -> Result<(usize, usize)> {
-        // The resident last-token hit needs no lookup or owner check.
-        // Scratch tokens must still validate their live store and epoch
-        // before consulting the same cached range.
-        if !crate::image::is_scratch_token(word)
-            && let Some((last_word, range)) = self.last
+        if let Some((last_word, range)) = self.last
             && last_word == word
         {
             return Ok(range);
         }
-        self.resolve_checked(interner, store, word, buffer)
+        self.resolve_checked(interner, word, buffer)
     }
 
     #[inline(never)]
     fn resolve_checked(
         &mut self,
         interner: &InternerHandle<'_>,
-        store: Option<&mut NonresidentTextStore>,
         word: u64,
         buffer: &mut Answers,
     ) -> Result<(usize, usize)> {
-        if crate::image::is_scratch_token(word) {
-            let Some(live) = store.as_deref() else {
-                return Err(Error::Corruption(CorruptionError::DanglingInternId(
-                    crate::encoding::InternId::from_raw(word),
-                )));
-            };
-            match self.scratch_epoch {
-                Some(stamp) => {
-                    let eq = interner
-                        .generation()
-                        .text_eq(Some(live))
-                        .with_memo_stamp(stamp);
-                    if !eq.accepts_stamp(stamp) {
-                        self.forget_scratch();
-                        self.scratch_epoch = Some(live.epoch());
-                    }
-                }
-                None => self.scratch_epoch = Some(live.epoch()),
-            }
-            if !live.live(word) {
-                return Err(Error::Corruption(CorruptionError::DanglingInternId(
-                    crate::encoding::InternId::from_raw(word),
-                )));
-            }
-        }
         if let Some((last_word, range)) = self.last
             && last_word == word
         {
@@ -100,10 +58,9 @@ impl ResolveMemo {
         // map. Retain the inserted slot instead of probing (and possibly
         // growing before a duplicate lookup) a second time.
         let resolved = (|| {
-            let Some(len) = super::text::resolve_tagged(interner, store, word, |text| {
+            let Some(len) = super::text::resolve_text(interner, word, |text| {
                 buffer.text.push_str(text);
-            })?
-            else {
+            }) else {
                 return Err(Error::Corruption(CorruptionError::DanglingInternId(
                     crate::encoding::InternId::from_raw(word),
                 )));

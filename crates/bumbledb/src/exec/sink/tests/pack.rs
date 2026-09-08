@@ -7,34 +7,17 @@
 use crate::error::Error;
 use crate::exec::run::{Bindings, Sink as _};
 use crate::exec::sink::aggregate::spill::{PACK_WIDE_CLAIM_BYTES, pack_requires_wide};
-use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, SinkBudget, SinkProgress};
+use crate::exec::sink::{AggSpec, AggregateSink, FindSpec, SinkProgress};
 use crate::interval::sweep::{Continuation, sweep};
-use crate::work::{ExecutionPolicy, Resource};
+use crate::work::WorkContext;
 use bumbledb_theory::F64;
 use std::collections::BTreeMap;
-use std::time::Duration;
 
 /// First word count that forces wide (token) Pack keys.
 const WIDE_WORDS: usize = 49;
 
 fn work() -> crate::work::WorkContext {
-    crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("unbounded ledger")
-}
-
-fn tight_work(working: u64, scratch: u64, units: u64) -> crate::work::WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: working,
-        scratch_bytes: scratch,
-        result_bytes: 1 << 20,
-        rows: 1 << 20,
-        work_units: units,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .expect("valid policy")
+    WorkContext::new()
 }
 
 fn independent_pack(claims: &[(Vec<u64>, u64, u64)]) -> Vec<Vec<u64>> {
@@ -102,17 +85,17 @@ fn feed_pack(sink: &mut AggregateSink, slots: usize, claims: &[(Vec<u64>, u64, u
 fn spilled_pack(
     finds: Vec<FindSpec>,
     slots: usize,
-    ram_bytes: usize,
+    partition: usize,
     claims: &[(Vec<u64>, u64, u64)],
 ) -> Vec<Vec<u64>> {
     let mut sink = AggregateSink::new(finds, slots);
-    sink.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes,
-    }));
-    feed_pack(&mut sink, slots, claims);
-    assert!(sink.group_state_spilled(), "ram_bytes={ram_bytes}");
-    let mut got = sink.into_answers().expect("spilled pack");
+    sink.begin(Some(work()));
+    for chunk in claims.chunks(partition) {
+        feed_pack(&mut sink, slots, chunk);
+        sink.spill_groups().unwrap();
+    }
+    assert!(sink.group_state_spilled());
+    let mut got = sink.into_answers().unwrap();
     got.sort();
     got
 }
@@ -138,13 +121,13 @@ fn d11_reverse_overlap_across_flushes_unions_to_one_segment() {
     resident_rows.sort();
     assert_eq!(resident_rows, expected);
 
-    for ram_bytes in [0usize, 32] {
+    for partition in [1usize, 2] {
         let mut sink = AggregateSink::new(finds.clone(), 4);
-        sink.begin(Some(SinkBudget {
-            work: work(),
-            ram_bytes,
-        }));
-        feed_pack(&mut sink, 4, &claims);
+        sink.begin(Some(work()));
+        for chunk in claims.chunks(partition) {
+            feed_pack(&mut sink, 4, chunk);
+            sink.spill_groups().unwrap();
+        }
         assert!(sink.group_state_spilled());
         assert_eq!(sink.pack_wide_mode(), Some(false));
         assert_eq!(sink.progress(), SinkProgress::Continue);
@@ -155,7 +138,7 @@ fn d11_reverse_overlap_across_flushes_unions_to_one_segment() {
         })
         .expect("spilled reverse overlap");
         got.sort();
-        assert_eq!(got, expected, "ram_bytes={ram_bytes}");
+        assert_eq!(got, expected, "partition={partition}");
         assert_eq!(sink.progress(), SinkProgress::Finish);
     }
 }
@@ -197,7 +180,7 @@ fn d11_interleaved_adjacent_gapped_and_duplicate_claims() {
     resident_rows.sort();
     assert_eq!(resident_rows, expected);
 
-    let got = spilled_pack(finds, 4, 0, &claims);
+    let got = spilled_pack(finds, 4, 1, &claims);
     assert_eq!(got, expected);
 }
 
@@ -215,11 +198,9 @@ fn d11_leading_0xfe_narrow_group_is_not_token_mode() {
     assert_eq!(expected, vec![vec![fe, 1, 9]]);
 
     let mut sink = AggregateSink::new(finds, 4);
-    sink.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 0,
-    }));
+    sink.begin(Some(work()));
     feed_pack(&mut sink, 4, &claims);
+    sink.spill_groups().unwrap();
     assert!(sink.group_state_spilled());
     assert_eq!(
         sink.pack_wide_mode(),
@@ -264,11 +245,9 @@ fn d11_wide_groups_use_scratch_tokens_and_survive_collisions() {
     assert_eq!(resident_rows, expected);
 
     let mut sink = AggregateSink::new(finds, slots);
-    sink.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 0,
-    }));
+    sink.begin(Some(work()));
     feed_pack(&mut sink, slots, &claims);
+    sink.spill_groups().unwrap();
     assert!(sink.group_state_spilled());
     assert_eq!(
         sink.pack_wide_mode(),
@@ -294,7 +273,7 @@ fn d11_d19_float_endpoints_keep_canonical_order_across_spills() {
     let d = F64::INFINITY.to_order_key();
     let claims = vec![(vec![1], b, d), (vec![1], a, c), (vec![1], b, d)];
     let expected = independent_pack(&claims);
-    let got = spilled_pack(finds, 4, 0, &claims);
+    let got = spilled_pack(finds, 4, 1, &claims);
     assert_eq!(got, expected);
     assert_eq!(
         got.len(),
@@ -355,90 +334,63 @@ fn d19_exact_sum_count_not_rounded_before_emit() {
     assert_eq!(resident.into_answers().expect("resident"), expected);
 
     let mut spilled = AggregateSink::new(finds, 2);
-    spilled.begin(Some(SinkBudget {
-        work: work(),
-        ram_bytes: 0,
-    }));
+    spilled.begin(Some(work()));
     feed(&mut spilled);
+    spilled.spill_groups().unwrap();
     assert!(spilled.group_state_spilled());
     assert_eq!(spilled.into_answers().expect("spilled"), expected);
 }
 
-/// D01: a zero scratch/working ceiling refuses before the scratch env
-/// retains group state; later finalize publishes nothing.
 #[test]
-fn d01_zero_capacity_refuses_before_sink_growth() {
-    let finds = vec![
+fn cancelled_pack_stops_at_its_poll_quantum_and_finalizes_no_rows() {
+    let finds = [
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
     ];
     let mut sink = AggregateSink::new(finds, 4);
-    let ledger = tight_work(0, 0, 8);
-    let baseline_scratch = ledger.used(Resource::ScratchBytes);
-    let baseline_working = ledger.used(Resource::WorkingBytes);
-    sink.begin(Some(SinkBudget {
-        work: ledger.clone(),
-        ram_bytes: 0,
-    }));
+    let context = work();
+    sink.begin(Some(context.clone()));
+    context.cancel();
     let mut bindings = Bindings::new(4);
     bindings.set(0, 1);
     bindings.set(1, 10);
     bindings.set(2, 20);
-    bindings.set(3, 0);
-    sink.emit(&bindings);
-    assert_ne!(
-        sink.progress(),
-        SinkProgress::Continue,
-        "zero allowance must stop or error before retaining a pack bank"
-    );
+    for _ in 0..crate::exec::sink::STEP_QUANTUM {
+        sink.emit(&bindings);
+    }
+    assert_eq!(sink.progress(), SinkProgress::Stop);
     let mut emitted = 0;
-    let refused = sink.finalize_into(&mut Vec::new(), |_| {
-        emitted += 1;
-        Ok(())
-    });
-    assert!(refused.is_err());
-    assert_eq!(emitted, 0, "Q-ATOMIC: no partial pack row");
-    assert!(
-        ledger.used(Resource::ScratchBytes) == baseline_scratch
-            || matches!(refused, Err(Error::Store(_))),
-        "failed reservation must not leave an uncharged scratch payload"
-    );
-    let _ = baseline_working;
+    let failure = sink
+        .finalize_into(&mut Vec::new(), |_| {
+            emitted += 1;
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(matches!(failure, Error::Store(error) if matches!(
+        error.as_ref(), crate::storage::store::StoreError::Work(crate::WorkError::Cancelled)
+    )));
+    assert_eq!(emitted, 0);
 }
 
-/// D01: successful spill keeps L03 scratch charge until the sink drops.
 #[test]
-fn d01_spill_charge_survives_until_sink_release() {
-    let finds = vec![
+fn pack_spill_directory_is_owned_until_sink_release() {
+    let finds = [
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Pack { slot: 1 },
     ];
-    let ledger = work();
-    let before = ledger.used(Resource::ScratchBytes);
     let mut sink = AggregateSink::new(finds, 4);
-    sink.begin(Some(SinkBudget {
-        work: ledger.clone(),
-        ram_bytes: 0,
-    }));
-    let mut bindings = Bindings::new(4);
-    bindings.set(0, 1);
-    bindings.set(1, 0);
-    bindings.set(2, 15);
-    bindings.set(3, 0);
-    sink.emit(&bindings);
-    bindings.set(1, 10);
-    bindings.set(2, 20);
-    bindings.set(3, 1);
-    sink.emit(&bindings);
-    assert!(sink.group_state_spilled());
+    sink.begin(Some(work()));
+    feed_pack(&mut sink, 4, &[(vec![1], 0, 15), (vec![1], 10, 20)]);
+    sink.spill_groups().unwrap();
+    let path = sink.spill.as_ref().unwrap().table.scratch_path().unwrap();
+    assert!(path.exists());
     assert_eq!(sink.progress(), SinkProgress::Continue);
-    let charged = ledger.used(Resource::ScratchBytes);
-    assert!(
-        charged >= before,
-        "scratch owners remain charged while the spilled sink is live"
-    );
-    let rows = sink.into_answers().expect("charged finalize");
+    let rows = sink.into_answers().unwrap();
     assert_eq!(rows, vec![vec![1, 0, 20]]);
+    assert!(
+        !path.exists(),
+        "consuming the sink releases its private directory"
+    );
 }
 
 /// Finish is recorded only after a successful finalize.

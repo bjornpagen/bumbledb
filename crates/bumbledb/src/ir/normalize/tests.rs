@@ -143,7 +143,7 @@ fn repeated_variable_lowers_and_executes_through_the_evaluator() {
         &norm.occurrences[0].filters,
         &[],
         Vec::new(),
-        image.generation().text_eq(None),
+        image.generation().text_eq(),
     )
     .expect("view");
 

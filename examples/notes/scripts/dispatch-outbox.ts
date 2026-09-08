@@ -17,7 +17,7 @@ import { LocalHistory, HostedHistory } from "@bjornpagen/bumbledb-log"
 import { Effect } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
 import { App } from "../src/db/schema.ts"
-import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
+import { runtimePolicy } from "../src/db/runtime-policy.ts"
 import { dispatchOutbox } from "../src/outbox.ts"
 
 const tenantId = process.argv[2]
@@ -31,9 +31,9 @@ const program = Effect.scoped(
 		const binding = yield* bindingFor(tenantId)
 		const history =
 			binding.kind === "local"
-				? yield* LocalHistory.open(binding, App, adminWork)
-				: yield* HostedHistory.open(binding, App, adminWork)
-		return yield* dispatchOutbox(history, tenantId, adminWork)
+				? yield* LocalHistory.open(binding, App)
+				: yield* HostedHistory.open(binding, App)
+		return yield* dispatchOutbox(history, tenantId)
 	})
 )
 

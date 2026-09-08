@@ -5,7 +5,7 @@
 //! (`runtime_wire.rs`): databases live behind kernel-held directory
 //! owners, `!Send` engine transactions and prepared queries live inside
 //! worker-affine sessions (`runtime/session.rs`), and every operation is
-//! registered, charged and drainable. The historical raw-pointer
+//! registered, cancellable and drainable. The historical raw-pointer
 //! `InstanceHandle`/`TxHandle` scoped-borrow surface — a JavaScript
 //! callback executing inside a native transaction frame — is deleted, as
 //! are the libuv `AsyncTask` entrypoints and the fresh/reserve issuance

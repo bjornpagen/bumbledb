@@ -6,10 +6,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
 use bumbledb_log::history::{
@@ -67,20 +66,12 @@ fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
     )
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 1_000_000,
-        result_bytes: 1_000_000,
-        rows: 100_000,
-        work_units: 10_000_000,
-        timeout: Duration::from_secs(60),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn work() -> WorkContext {
-    policy().start().unwrap()
+    policy()
 }
 
 fn identity(db: &Db<SchemaDescriptor>) -> DatabaseIdentity {

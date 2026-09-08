@@ -11,7 +11,7 @@ fn distinct_counts_are_exact() {
     let schema = schema();
     let source = source_of(&schema, default_rows());
     let (_cache, image) = source.image_with_cache(R);
-    let work = crate::api::prepared::source::unbounded_work().unwrap();
+    let work = crate::api::prepared::source::unbounded_work();
     assert!(image.distincts.iter().all(|count| count.get().is_none()));
 
     assert_eq!(

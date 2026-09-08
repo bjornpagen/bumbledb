@@ -99,7 +99,7 @@ fn snapshot_witness<S>(snapshot: &crate::storage::store::OwnedSnapshot) -> Witne
 }
 
 impl<S> Db<S> {
-    /// One durable write under an explicit operation allowance: in-memory
+    /// One durable write with cooperative cancellation: in-memory
     /// set arithmetic inside the closure, then incremental judgment under
     /// the admitted lawful parent, then one LMDB commit.
     /// # Errors
@@ -119,7 +119,7 @@ impl<S> Db<S> {
         }
     }
 
-    /// Conditional write under an explicit operation allowance: the engine
+    /// Conditional write with cooperative cancellation: the engine
     /// ships the outcome, never a loop — retry is host policy.
     /// # Errors
     /// `ForeignWitness` for a witness from another environment; otherwise
@@ -136,7 +136,7 @@ impl<S> Db<S> {
         self.write_witnessed(work, Some(witness.generation), f)
     }
 
-    /// Apply a sealed change set under an explicit work budget.
+    /// Apply a sealed change set with cooperative cancellation.
     ///
     /// # Errors
     /// `ForeignWitness` for a witness from another environment; otherwise

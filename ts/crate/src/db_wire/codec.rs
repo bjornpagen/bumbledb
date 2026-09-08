@@ -1,44 +1,35 @@
 //! The one `ChangeSet` row codec. No duplicate row encoder lives here.
-//! Decode converts each charged row directly into the queued output.
-//! Source and destination reservations overlap during the one required copy.
+//! Decode converts each borrowed row into its final queued output.
 
-use bumbledb::work::{ByteKind, WorkContext};
+use bumbledb::work::{WorkContext, WorkError};
 use bumbledb::{ChangeSet, RelationId, Value};
 
-use crate::marshal::{ValueOut, output_vec, row_out};
+use crate::marshal::{output_vec, row_out};
 use crate::runtime::{QueuedBytes, QueuedOutput, RuntimeError};
 
-use super::{INPUT_VALUE_BASE, change_error, value_bytes};
+use super::change_error;
 
-/// Admit the unavoidable per-cell input charge before trusting the stated
-/// row count as an allocation size. The payload remainder is charged after
-/// decoding each row, so successful ingestion keeps its exact old byte cost.
+/// Reserve only after the stated row count matches the actual input shape.
 pub(super) fn reserve_input_rows(
     stated: u64,
-    arity: usize,
     context: &WorkContext,
 ) -> Result<Vec<Vec<Value>>, RuntimeError> {
     let count = usize::try_from(stated).map_err(|_| RuntimeError::InvalidArgument)?;
-    let base = stated
-        .checked_mul(arity as u64)
-        .and_then(|cells| cells.checked_mul(INPUT_VALUE_BASE))
-        .ok_or(RuntimeError::InvalidArgument)?;
-    context.input(base)?;
+    context.checkpoint()?;
     let mut rows = Vec::new();
     rows.try_reserve_exact(count)
-        .map_err(|_| RuntimeError::Internal)?;
+        .map_err(|_| WorkError::Allocation)?;
     Ok(rows)
 }
 
-/// Own and charge the same host row shape for change drafts and encoding.
-/// The worker receives these values without another input copy or charge.
+/// Copy JS input into owned values before dispatch to the worker.
 pub(crate) fn parse_input_rows(
     sealed: &crate::Sealed,
     relation: u32,
     stated: u64,
     cells: &napi::bindgen_prelude::Array,
     context: &WorkContext,
-) -> Result<(Vec<Vec<Value>>, u64), RuntimeError> {
+) -> Result<Vec<Vec<Value>>, RuntimeError> {
     let roster = sealed
         .rosters
         .get(relation as usize)
@@ -55,14 +46,11 @@ pub(crate) fn parse_input_rows(
         } else {
             vec![Vec::new()]
         };
-        return Ok((rows, 0));
+        return Ok(rows);
     }
-    let mut rows = reserve_input_rows(stated, arity, context)?;
-    let row_base = (arity as u64) * INPUT_VALUE_BASE;
-    let mut bytes = 0u64;
+    let mut rows = reserve_input_rows(stated, context)?;
     for start in (0..cells.len()).step_by(arity) {
-        let mut row = Vec::with_capacity(arity);
-        let mut row_bytes = 0u64;
+        let mut row = output_vec(arity)?;
         for (offset, field) in roster.fields.iter().enumerate() {
             let index = start + u32::try_from(offset).expect("field count fits u32");
             let value = crate::marshal::req_at::<napi::Unknown>(cells, index, "row cells")
@@ -74,14 +62,12 @@ pub(crate) fn parse_input_rows(
                 &field.name,
             )
             .map_err(|_| RuntimeError::InvalidArgument)?;
-            row_bytes = row_bytes.saturating_add(value_bytes(&value));
             row.push(value);
         }
-        context.input(row_bytes - row_base)?;
-        bytes = bytes.saturating_add(row_bytes);
+        context.checkpoint()?;
         rows.push(row);
     }
-    Ok((rows, bytes))
+    Ok(rows)
 }
 
 pub(crate) fn encode_rows_bytes(
@@ -92,7 +78,7 @@ pub(crate) fn encode_rows_bytes(
 ) -> Result<QueuedBytes, RuntimeError> {
     let mut builder = ChangeSet::builder(schema, context.clone());
     for values in rows {
-        context.step(1)?;
+        context.checkpoint()?;
         builder
             .insert(relation, values)
             .map_err(|error| change_error(&error))?;
@@ -113,15 +99,9 @@ pub(crate) fn decode_rows_values(
     };
     let fields = relation_ref.fields();
     let count = usize::try_from(changes.len()).map_err(|_| RuntimeError::InvalidArgument)?;
-    let outer_bytes = count
-        .checked_mul(size_of::<Vec<ValueOut>>())
-        .ok_or_else(|| {
-            crate::runtime::session::engine_error(&bumbledb::Error::ResultBytesOverflow)
-        })?;
-    let mut charge = context.reserve(ByteKind::Result, outer_bytes as u64)?;
     let mut rows = output_vec(count)?;
     for record in changes.records() {
-        context.step(1)?;
+        context.checkpoint()?;
         if record.relation != relation || record.kind != bumbledb::changes::ChangeKind::Add {
             return Err(RuntimeError::Engine {
                 kind: crate::tags::error_family::VALIDATION,
@@ -139,7 +119,7 @@ pub(crate) fn decode_rows_values(
                 },
             },
         )?;
-        rows.push(row_out(context, &decoded, &mut charge)?);
+        rows.push(row_out(context, &decoded)?);
     }
-    Ok(QueuedOutput { rows, charge })
+    Ok(QueuedOutput { rows })
 }

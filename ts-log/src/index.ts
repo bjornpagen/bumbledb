@@ -5,7 +5,7 @@
  * published snapshots satisfying the core QueryReader, one native-backed
  * TenantCache, and explicit maintenance/migration operations. Effect-only;
  * the one protocol implementation is crates/bumbledb-log behind the shared
- * native runtime. Core types (ChangeSet, QueryReader, ExecutionPolicy,
+ * native runtime. Core types (ChangeSet, QueryReader,
  * DbError, …) are the peer @bjornpagen/bumbledb's own exports, never
  * re-exported here.
  */
@@ -71,7 +71,6 @@ export type {
 	HostedOrigin,
 	LocalBinding,
 	LocalCreateOptions,
-	LocalOpenOptions,
 	ReadOptions,
 	RuntimeExpectation,
 	SubmitOptions

@@ -4,11 +4,9 @@
  * backend's fields — and are trusted host configuration, not tenant-label
  * authority. Credentials are configuration handed to the one native
  * machine's supported provider path; they never construct a second JS
- * S3 client, cache, or protocol machine. All options extend the core
- * `ExecutionPolicy`; there is no second cancellation channel, TTL, or
- * Effect `Schedule` slot anywhere in this file.
+ * S3 client, cache, or protocol machine. Cancellation uses the caller's
+ * Effect scope, not an execution-policy record.
  */
-import type { ExecutionPolicy } from "@bjornpagen/bumbledb"
 import type { DatabaseIdentity, OperationId, ReadConsistency } from "#identity.ts"
 
 /** Rust-side supported credential resolution; no static default. */
@@ -45,9 +43,7 @@ export interface HostedBinding {
 
 export type HistoryBinding = LocalBinding | HostedBinding
 
-export interface LocalOpenOptions extends ExecutionPolicy {}
-
-export interface HostedOpenOptions extends ExecutionPolicy {
+export interface HostedOpenOptions {
 	/**
 	 * Explicit policy for a cache whose verified binding mismatches: close/
 	 * quarantine and rebuild in a newly owned location. It never submits the
@@ -68,7 +64,7 @@ export interface CreationOptions {
 	readonly artifact: Uint8Array
 }
 
-export interface LocalCreateOptions extends LocalOpenOptions {
+export interface LocalCreateOptions {
 	readonly creation: CreationOptions
 }
 
@@ -76,17 +72,17 @@ export interface HostedCreateOptions extends HostedOpenOptions {
 	readonly creation: CreationOptions
 }
 
-/** Read consistency plus the shared core execution policy. */
-export interface ReadOptions extends ExecutionPolicy {
+/** The requested read consistency. */
+export interface ReadOptions {
 	readonly consistency: ReadConsistency
 }
 
 /**
  * A finite native publication-attempt limit and backoff bounds. The native
- * protocol owns catch-up/CAS retries; retries consume this one operation
- * budget, not a fresh deadline per attempt.
+ * protocol owns catch-up/CAS retries within this attempt count; interruption
+ * stops them through the shared cancellation context.
  */
-export interface SubmitOptions extends ExecutionPolicy {
+export interface SubmitOptions {
 	readonly attempts: number
 	readonly backoff: {
 		readonly baseMillis: number
@@ -105,13 +101,10 @@ export interface RuntimeExpectation {
 
 /**
  * One bounded native tenant registry configuration. There is no wall-clock
- * TTL, renewal, or pre-lock cleanup: pressure is byte/count budgets, and
- * eviction of a borrowed slot refuses.
+ * TTL, renewal, or pre-lock cleanup. The open-tenant count provides
+ * admission backpressure; eviction of a borrowed slot refuses.
  */
 export interface TenantCacheOptions {
 	readonly maxOpen: number
-	readonly budgetBytes: bigint
-	/** Charged against maintenance work (inspect/evict), not acquires. */
-	readonly maintenance: ExecutionPolicy
 	readonly expected?: RuntimeExpectation
 }

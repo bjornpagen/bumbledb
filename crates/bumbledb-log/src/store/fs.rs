@@ -560,7 +560,7 @@ impl ReceivingStore for FsStore {
         let path = self.path_of("receive_head", head_key)?;
         match receive_path(&path, ctx) {
             Ok(Some(body)) => Ok(ReceivedHead::Present {
-                version: content_version(body.as_bytes()),
+                version: content_version(body.as_slice()),
                 body,
             }),
             Ok(None) => Ok(ReceivedHead::Absent),
@@ -607,7 +607,7 @@ mod tests {
             .receive_head("t/HEAD", TransportContext::limited(64))
             .unwrap()
         {
-            ReceivedHead::Present { body, .. } => assert_eq!(body.as_bytes(), b"rev2"),
+            ReceivedHead::Present { body, .. } => assert_eq!(body.as_slice(), b"rev2"),
             ReceivedHead::Absent => panic!("head exists"),
         }
         let _ = fs::remove_dir_all(&root);

@@ -114,12 +114,7 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
             })
             .collect()
     };
-    for (reverse, fallback, ram) in [
-        (false, false, usize::MAX),
-        (true, false, usize::MAX),
-        (true, false, 0),
-        (true, true, usize::MAX),
-    ] {
+    for (reverse, fallback) in [(false, false), (true, false), (true, true)] {
         let mut rule = base.clone();
         if reverse {
             rule.atoms.reverse();
@@ -139,16 +134,12 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
         ));
         for prepared in [&mut append, &mut hashed] {
             prepared.force_cursor_fallback(fallback);
-            prepared.set_sink_ram(ram);
         }
         for symbol in ["common", "missing", "other", "common"] {
             let params = [BindValue::Str(symbol)];
             let actual = pairs(&fix.execute(&mut append, &params).unwrap());
             let control = pairs(&fix.execute(&mut hashed, &params).unwrap());
-            assert_eq!(
-                actual, control,
-                "first-emission order, including spill/reuse"
-            );
+            assert_eq!(actual, control, "first-emission order, including reuse");
             let expected: Vec<_> = postings
                 .iter()
                 .filter(|(_, _, instrument)| {
@@ -162,7 +153,7 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
             sorted.sort_unstable();
             assert_eq!(
                 sorted, expected,
-                "independent join and symbol-filter denotation: reverse={reverse}, fallback={fallback}, ram={ram}, symbol={symbol}"
+                "independent join and symbol-filter denotation: reverse={reverse}, fallback={fallback}, symbol={symbol}"
             );
         }
     }
@@ -215,7 +206,7 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
         negated: vec![atom(RelationId(2))],
         conditions: vec![],
     });
-    for (fallback, ram) in [(false, usize::MAX), (false, 0), (true, usize::MAX)] {
+    for fallback in [false, true] {
         let mut append = fix.prepare(&query).unwrap();
         assert!(elided(&append));
         let mut hashed = fix.prepare(&query).unwrap();
@@ -227,9 +218,8 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
         ));
         for prepared in [&mut append, &mut hashed] {
             prepared.force_cursor_fallback(fallback);
-            prepared.set_sink_ram(ram);
         }
-        // Reuse both sinks, including after their scratch-backed drain.
+        // Reuse both sinks, including after delivery.
         for _ in 0..2 {
             let actual = fix.execute(&mut append, &[] as &[BindValue]).unwrap();
             let control = fix.execute(&mut hashed, &[] as &[BindValue]).unwrap();
@@ -262,6 +252,13 @@ fn computed_heads_and_derived_occurrences_do_not_install_projection_witnesses() 
         "two bindings collapse to one computed row"
     );
     assert_eq!(answers.get(0, 0), AnswerValue::U64(0));
+    for _ in 0..3 {
+        computed.release_memory();
+        let after = fix.execute(&mut computed, &[] as &[BindValue]).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after.get(0, 0), AnswerValue::U64(0));
+        assert!(!elided(&computed));
+    }
 
     let mut outer = id_rule();
     outer.atoms[0].source = AtomSource::Interior(InteriorId(0));
@@ -356,14 +353,13 @@ fn keyed_interval_membership_keeps_hashing_for_hidden_points_through_real_normal
         normalized[0].occurrences[0].point_vars,
         vec![(FieldId(1), VarId(1), false)]
     );
-    for (fallback, ram) in [(false, usize::MAX), (false, 0), (true, usize::MAX)] {
+    for fallback in [false, true] {
         let mut prepared = fix.prepare(&query).unwrap();
         assert!(
             !elided(&prepared),
             "a determined interval does not determine its membership point"
         );
         prepared.force_cursor_fallback(fallback);
-        prepared.set_sink_ram(ram);
         let answers = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
         assert_eq!(
             answers.len(),
@@ -382,45 +378,18 @@ fn unique_projection_refusals_publish_no_partial_rows_and_allow_reuse() {
     assert!(elided(&prepared));
     let mut out = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
     assert_eq!(out.len(), rows.len());
-    for cancelled in [true, false] {
+    for _ in 0..2 {
         fix.db
-            .read(crate::api::db::test_operation().unwrap(), |instance| {
-                let work = crate::work::ExecutionPolicy {
-                    input_bytes: u64::MAX,
-                    working_bytes: u64::MAX,
-                    scratch_bytes: u64::MAX,
-                    result_bytes: if cancelled { u64::MAX } else { 0 },
-                    rows: u64::MAX,
-                    work_units: u64::MAX,
-                    timeout: std::time::Duration::from_secs(3600),
-                }
-                .start()
-                .unwrap();
-                if cancelled {
-                    work.cancel();
-                }
+            .read(crate::api::db::test_operation(), |instance| {
+                let work = crate::work::WorkContext::new();
+                work.cancel();
                 let source =
                     crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
-                let mut charge = crate::api::prepared::result::ResultCharge::new(&work, usize::MAX);
-                let result = prepared.execute_source_charged(
-                    &source,
-                    &[] as &[BindValue],
-                    &mut out,
-                    Some(&mut charge),
-                );
-                let expected = if cancelled {
-                    matches!(&result, Err(Error::Store(store)) if matches!(
-                        &**store,
-                        crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled)
-                    ))
-                } else {
-                    matches!(&result, Err(Error::Store(store)) if matches!(
-                        &**store,
-                        crate::storage::store::StoreError::Work(crate::work::WorkError::Exhausted {
-                            resource: crate::work::Resource::ResultBytes, ..
-                        })
-                    ))
-                };
+                let result = prepared.execute_source(&source, &[] as &[BindValue], &mut out);
+                let expected = matches!(&result, Err(Error::Store(store)) if matches!(
+                    &**store,
+                    crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled)
+                ));
                 assert!(expected, "unexpected execution result: {result:?}");
                 assert!(
                     out.is_empty(),

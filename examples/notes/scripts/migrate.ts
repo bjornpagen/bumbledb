@@ -26,7 +26,7 @@ import { OperationId } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
 import { generatedDirectory, loadGeneratedMigrations } from "../src/db/generated.ts"
-import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
+import { runtimePolicy } from "../src/db/runtime-policy.ts"
 
 const MIGRATIONS_DIR = generatedDirectory()
 const OUTCOME_DIR = path.join(process.cwd(), ".bumbledb", "admin")
@@ -65,7 +65,7 @@ async function main(): Promise<void> {
 		const status = await Effect.runPromise(
 			Effect.gen(function* () {
 				const binding = yield* bindingFor(tenantId)
-				return yield* migrationStatus(binding, plans, adminWork)
+				return yield* migrationStatus(binding, plans, {})
 			}).pipe(Effect.provide(layer))
 		)
 		saveOutcome(`status-${tenantId}`, status)
@@ -84,7 +84,7 @@ async function main(): Promise<void> {
 		const outcome = await Effect.runPromise(
 			Effect.gen(function* () {
 				const binding = yield* bindingFor(tenantId)
-				return yield* migrate(binding, plans, { ...adminWork, operationId })
+				return yield* migrate(binding, plans, { operationId })
 			}).pipe(Effect.provide(layer))
 		)
 		saveOutcome(`migrate-${tenantId}`, outcome)
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
 			return
 		}
 		const outcome = await Effect.runPromise(
-			activateMigration(activation.value, adminWork).pipe(Effect.provide(layer))
+			activateMigration(activation.value, {}).pipe(Effect.provide(layer))
 		)
 		saveOutcome(`activate-${tenantId}`, outcome)
 		console.log(`activate: ${outcome.kind}`)

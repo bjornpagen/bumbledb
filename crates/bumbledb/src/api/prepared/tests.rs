@@ -42,6 +42,7 @@ mod selection;
 mod sets;
 mod snapshot;
 mod statically_empty;
+mod text_retention;
 mod view_memo;
 
 /// The one dynamic test theory: any descriptor as a `Theory`.
@@ -65,9 +66,8 @@ impl Fix {
         descriptor: SchemaDescriptor,
         rows: &[(RelationId, Vec<Vec<Value>>)],
     ) -> Self {
-        let mut builder =
-            InstanceBuilder::new(T(descriptor), crate::api::db::test_operation().unwrap())
-                .expect("valid fixture schema");
+        let mut builder = InstanceBuilder::new(T(descriptor), crate::api::db::test_operation())
+            .expect("valid fixture schema");
         for (relation, facts) in rows {
             builder
                 .load_dyn(*relation, facts.iter())
@@ -113,19 +113,16 @@ pub(super) struct StoreFix {
 impl StoreFix {
     pub(super) fn store(name: &'static str, descriptor: SchemaDescriptor) -> Self {
         let dir = TempDir::new(name);
-        let db = crate::api::db::Db::create(
-            dir.path(),
-            T(descriptor),
-            crate::api::db::test_operation().unwrap(),
-        )
-        .expect("create store")
-        .expect("empty state admits");
+        let db =
+            crate::api::db::Db::create(dir.path(), T(descriptor), crate::api::db::test_operation())
+                .expect("create store")
+                .expect("empty state admits");
         Self { db, _dir: dir }
     }
 
     pub(super) fn insert_dyn(&self, relation: RelationId, facts: &[Vec<Value>]) {
         self.db
-            .write(crate::api::db::test_operation().unwrap(), |tx| {
+            .write(crate::api::db::test_operation(), |tx| {
                 for fact in facts {
                     tx.insert_dyn(relation, [fact.as_slice()])?;
                 }
@@ -136,10 +133,9 @@ impl StoreFix {
     }
 
     pub(super) fn prepare(&self, query: &Query) -> crate::error::Result<PreparedQuery<T>> {
-        self.db
-            .read(crate::api::db::test_operation().unwrap(), |instance| {
-                instance.prepare(query)
-            })
+        self.db.read(crate::api::db::test_operation(), |instance| {
+            instance.prepare(query)
+        })
     }
 
     pub(super) fn execute_into<'p, P: BindArgs<'p>>(
@@ -148,10 +144,9 @@ impl StoreFix {
         params: P,
         out: &mut Answers,
     ) -> crate::error::Result<()> {
-        self.db
-            .read(crate::api::db::test_operation().unwrap(), |instance| {
-                instance.execute(prepared, params, out)
-            })
+        self.db.read(crate::api::db::test_operation(), |instance| {
+            instance.execute(prepared, params, out)
+        })
     }
 
     pub(super) fn execute<'p, P: BindArgs<'p>>(

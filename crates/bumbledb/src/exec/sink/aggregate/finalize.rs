@@ -3,7 +3,6 @@ use crate::exec::kernel::numeric::ExactF64Accumulator;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
 use crate::exec::sink::{Acc, AggregateSink, GroupState, SinkSpec, encode_stage_row, i64_to_word};
 use crate::interval::sweep::{Continuation, sweep};
-use crate::work::WorkContext;
 
 impl AggregateSink {
     /// # Errors
@@ -49,32 +48,25 @@ impl AggregateSink {
         Ok(())
     }
 
-    /// Admit a RAM-first dest for [`Self::stream_finalize`]. Does not open
-    /// a scratch environment; dest continues to disk only when its RAM
-    /// allowance is crossed during append.
-    #[must_use]
-    pub(crate) fn admit_dest(work: &WorkContext, ram_bytes: usize) -> ScratchRelation {
-        ScratchRelation::new(work, ram_bytes)
-    }
-
     /// One fallible finalize stream: each published group/segment is
     /// appended onto `dest` through [`ScratchAppend`]. `dest` must be
-    /// admitted (`admit_dest` / `ScratchRelation::new`) — this method
-    /// never `force_spill`s. Tiny outputs stay on dest's RAM tier;
-    /// larger stages continue onto dest's scratch when dest's allowance
-    /// is crossed. Producer finalize errors return immediately (drop,
-    /// no `finish`).
+    /// created by the caller; this method does not choose or switch its
+    /// storage representation. Producer finalize errors return immediately
+    /// (drop, no `finish`).
+    /// `retain` transfers any payload ownership before its row is appended.
     /// # Errors
     /// As [`Self::finalize_into`], or a refused scratch append.
     pub(crate) fn stream_finalize(
         &mut self,
         dest: &mut ScratchRelation,
         answer_scratch: &mut Vec<u64>,
+        mut retain: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<u64> {
         let mut count = 0u64;
         let mut encoded = Vec::new();
         let mut append = ScratchAppend::new(dest);
         let streamed = self.finalize_into(answer_scratch, |row| {
+            retain(row)?;
             encode_stage_row(row, &mut encoded);
             append.append(ScratchMapId::Default, &count.to_be_bytes(), &encoded)?;
             count += 1;
@@ -93,16 +85,6 @@ impl AggregateSink {
                 Err(error)
             }
         }
-    }
-
-    /// Same stream as [`Self::stream_finalize`].
-    #[cfg(test)]
-    pub(crate) fn stream_finalize_into_scratch(
-        &mut self,
-        dest: &mut ScratchRelation,
-        answer_scratch: &mut Vec<u64>,
-    ) -> Result<u64> {
-        self.stream_finalize(dest, answer_scratch)
     }
 
     fn emit_group(

@@ -32,7 +32,7 @@ function hex(): string {
 async function jsonObject(response: Response): Promise<Record<string, unknown>> {
 	const body: unknown = await response.json()
 	assert.ok(typeof body === "object" && body !== null && !Array.isArray(body))
-	return body
+	return body as Record<string, unknown>
 }
 
 async function provision(tenantId: string): Promise<void> {
@@ -77,7 +77,7 @@ async function provision(tenantId: string): Promise<void> {
 					}
 				},
 				plans,
-				{ ...policy.adminWork, operationId: operation.success }
+				{ operationId: operation.success }
 			)
 			.pipe(Effect.provide(NativeRuntime.layer(policy.runtimePolicy.native)))
 	)
@@ -110,11 +110,10 @@ before(async () => {
 	const { Effect, Exit } = await import("effect")
 	const { appRuntime, Databases } = await import("../src/db/server.ts")
 	const { bindingFor } = await import("../src/db/bindings.ts")
-	const { maintenanceWork } = await import("../src/db/runtime-policy.ts")
 	const opened = await appRuntime.runPromiseExit(Effect.scoped(Effect.gen(function* () {
 		const binding = yield* bindingFor(TENANT_A)
 		const databases = yield* Databases
-		yield* databases.acquire(binding, maintenanceWork)
+		yield* databases.acquire(binding)
 	})))
 	assert.ok(Exit.isSuccess(opened), inspect(opened, { depth: 10 }))
 })
@@ -145,7 +144,7 @@ test("create is idempotent under the client-supplied id", async () => {
 	assert.equal(first.status, 200, await first.clone().text())
 	const firstBody = await jsonObject(first)
 	assert.equal(firstBody.outcome, "committed")
-	assert.equal(typeof firstBody.command, "string")
+	assert.ok(typeof firstBody.command === "string")
 	assert.ok(firstBody.command.length > 0, "the durable command ref is returned")
 	const retry = await routes.POST(request("POST", "/api/notes", token, { id: noteId, text: "hello" }))
 	assert.equal(retry.status, 200)

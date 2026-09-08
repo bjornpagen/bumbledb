@@ -3,54 +3,54 @@
  * core snapshot and on a published log snapshot. No adapter, no scan of
  * a whole relation when a key or template exists.
  */
-import type { ExecutionPolicy, Uuid, QueryReader } from "@bjornpagen/bumbledb"
+import type { Uuid, QueryReader } from "@bjornpagen/bumbledb"
 import { Effect, Option, Stream } from "effect"
 import { allNotes, attachmentsFor, noteById, pendingOutbox } from "./queries.ts"
 import { App, Note } from "./schema.ts"
 
 export const listNotes = Effect.fn("reads.listNotes")(
-	function* (reader: QueryReader<typeof App>, work: ExecutionPolicy) {
-		const result = yield* reader.execute(allNotes, {}, work)
-		return yield* result.collect({ maxBytes: work.resultBytes }, work)
+	function* (reader: QueryReader<typeof App>) {
+		const result = yield* reader.execute(allNotes, {})
+		return yield* result.collect()
 	},
 	Effect.scoped
 )
 
 export const pageNotes = Effect.fn("reads.pageNotes")(
-	function* (reader: QueryReader<typeof App>, work: ExecutionPolicy, pageBytes: bigint) {
-		const result = yield* reader.execute(allNotes, {}, work)
-		return yield* result.pages({ pageBytes }, work).pipe(Stream.runFold(0, (rows, page) => rows + page.length))
+	function* (reader: QueryReader<typeof App>) {
+		const result = yield* reader.execute(allNotes, {})
+		return yield* result.pages().pipe(Stream.runFold(() => 0, (rows, page) => rows + page.length))
 	},
 	Effect.scoped
 )
 
 export const getNote = Effect.fn("reads.getNote")(
-	function* (reader: QueryReader<typeof App>, id: Uuid, work: ExecutionPolicy) {
-		return yield* reader.get(Note, { id }, work)
+	function* (reader: QueryReader<typeof App>, id: Uuid) {
+		return yield* reader.get(Note, { id })
 	}
 )
 
 export const findNote = Effect.fn("reads.findNote")(
-	function* (reader: QueryReader<typeof App>, id: Uuid, work: ExecutionPolicy) {
-		const result = yield* reader.execute(noteById, { id }, work)
-		const rows = yield* result.collect({ maxBytes: work.resultBytes }, work)
+	function* (reader: QueryReader<typeof App>, id: Uuid) {
+		const result = yield* reader.execute(noteById, { id })
+		const rows = yield* result.collect()
 		return rows[0] === undefined ? Option.none() : Option.some(rows[0])
 	},
 	Effect.scoped
 )
 
 export const listPendingOutbox = Effect.fn("reads.listPendingOutbox")(
-	function* (reader: QueryReader<typeof App>, work: ExecutionPolicy) {
-		const result = yield* reader.execute(pendingOutbox, {}, work)
-		return yield* result.collect({ maxBytes: work.resultBytes }, work)
+	function* (reader: QueryReader<typeof App>) {
+		const result = yield* reader.execute(pendingOutbox, {})
+		return yield* result.collect()
 	},
 	Effect.scoped
 )
 
 export const listAttachments = Effect.fn("reads.listAttachments")(
-	function* (reader: QueryReader<typeof App>, note: Uuid, work: ExecutionPolicy) {
-		const result = yield* reader.execute(attachmentsFor, { note }, work)
-		return yield* result.collect({ maxBytes: work.resultBytes }, work)
+	function* (reader: QueryReader<typeof App>, note: Uuid) {
+		const result = yield* reader.execute(attachmentsFor, { note })
+		return yield* result.collect()
 	},
 	Effect.scoped
 )

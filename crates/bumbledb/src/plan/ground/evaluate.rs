@@ -13,7 +13,7 @@ use crate::ir::normalize::{FoldedMark, NormalizedQuery, Role};
 use crate::ir::{VarId, WordCmp};
 use crate::plan::fj::OccBind;
 use crate::schema::{Relation, Schema};
-use crate::work::{CacheLedger, GenerationHandle, GenerationState};
+use crate::work::{GenerationHandle, GenerationState};
 use bumbledb_theory::schema::{FieldId, RelationId, ValueType};
 
 use super::var_is_dead;
@@ -375,9 +375,8 @@ fn fold_surviving_ids(relation: &Relation, filters: &[FilterPredicate]) -> Optio
     }
     let generation = GenerationHandle::new(GenerationState::new(
         crate::image::CacheGeneration::initial(),
-        CacheLedger::unbounded(),
     ));
-    surviving_ids(relation, filters, generation.text_eq(None)).ok()
+    surviving_ids(relation, filters, generation.text_eq()).ok()
 }
 
 pub(super) fn membership_binders(
@@ -456,7 +455,7 @@ fn attach_membership(normalized: &mut NormalizedQuery, binders: &[(usize, FieldI
             .push(FilterPredicate::Compare {
                 field: (*field).into(),
                 op: WordCmp::Eq,
-                value: Const::WordSet(ids.to_vec()),
+                value: Const::WordSet(ids.to_vec().into()),
             });
     }
 }

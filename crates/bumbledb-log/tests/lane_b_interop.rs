@@ -72,7 +72,7 @@ fn mixed_fleet_acknowledged_swaps_equal_the_final_counter_exactly() {
                         ReceivedHead::Present { version, body } => (version, body),
                         ReceivedHead::Absent => panic!("head exists"),
                     };
-                    let next = (counter_of(body.as_bytes()) + 1).to_be_bytes();
+                    let next = (counter_of(body.as_slice()) + 1).to_be_bytes();
                     match store.replace_head("t/HEAD", &version, &next).expect("swap") {
                         ConditionalOutcome::Published { .. } => acked += 1,
                         ConditionalOutcome::PreconditionFailed => {}
@@ -95,7 +95,7 @@ fn mixed_fleet_acknowledged_swaps_equal_the_final_counter_exactly() {
         .expect("final read")
     {
         ReceivedHead::Present { body, .. } => assert_eq!(
-            counter_of(body.as_bytes()),
+            counter_of(body.as_slice()),
             total_acked,
             "every acknowledged swap is exactly one linearized increment"
         ),
@@ -147,7 +147,7 @@ fn a_paused_holder_with_a_stale_version_loses_after_another_writer_publishes() {
         .receive_head("t/HEAD", TransportContext::limited(64))
         .expect("read")
     {
-        ReceivedHead::Present { body, .. } => assert_eq!(body.as_bytes(), b"value-2-from-b"),
+        ReceivedHead::Present { body, .. } => assert_eq!(body.as_slice(), b"value-2-from-b"),
         ReceivedHead::Absent => panic!("head exists"),
     }
     let _ = std::fs::remove_dir_all(&root);

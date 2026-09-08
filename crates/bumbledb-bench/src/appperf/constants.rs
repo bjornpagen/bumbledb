@@ -99,12 +99,12 @@ pub const CONSTANTS: &[Constant] = &[
         disposition: "elastic map; no 32 GiB ceiling. Map ≠ file ≠ RSS",
     },
     Constant {
-        id: "scratch-ram",
-        source: "crates/bumbledb/src/exec/scratch.rs DEFAULT_RAM_BYTES",
-        value: "8 MiB",
+        id: "scratch-copy-batch",
+        source: "crates/bumbledb/src/exec/scratch.rs SPILL_BATCH",
+        value: "1024 entries per copy transaction",
         class: ConstantClass::HostPolicy,
         owner_lane: "L03",
-        disposition: "RAM-first then LMDB; charged owner, not an RSS identity",
+        disposition: "bounded copying for an explicit LMDB transition; no automatic spill threshold",
     },
     Constant {
         id: "join-batch",
@@ -136,7 +136,7 @@ pub const CONSTANTS: &[Constant] = &[
         value: "4",
         class: ConstantClass::MeasuredCrossover,
         owner_lane: "L05",
-        disposition: "entry count is not a memory budget; tenant cell reports charge",
+        disposition: "entry count is not a memory budget; inspect retained allocations separately",
     },
     Constant {
         id: "set-stride",

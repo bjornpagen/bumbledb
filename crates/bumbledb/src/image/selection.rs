@@ -3,7 +3,7 @@
 //! physical index, executor, or shared partial-image cache.
 use std::sync::Arc;
 
-use super::{RelationImage, ResidentAdmit, SourceImages};
+use super::{RelationImage, SourceImages};
 use crate::api::prepared::source::{QuerySource, compile_error};
 use crate::error::Result;
 use crate::plan::fj::Selection;
@@ -21,8 +21,8 @@ pub(super) fn build(
     schema: &Schema,
     relation: RelationId,
     selections: &[Selection],
-    keys: &[Vec<u64>],
-) -> Result<Option<ResidentAdmit<Arc<RelationImage>>>> {
+    keys: &[crate::image::view::ResolvedWords],
+) -> Result<Option<Arc<RelationImage>>> {
     let source = images.source();
     if selections.is_empty()
         || !matches!(source, QuerySource::Store { .. })
@@ -52,7 +52,7 @@ pub(super) fn build(
                     selections
                         .iter()
                         .position(|s| s.field == *field)
-                        .is_some_and(|index| keys[index].len() == 1)
+                        .is_some_and(|index| keys[index].words.len() == 1)
                 })
         })
         .max_by_key(|p| p.projection.len())
@@ -67,7 +67,7 @@ pub(super) fn build(
                 .iter()
                 .position(|s| s.field == *field)
                 .expect("bound projection coordinate");
-            keys[index][0]
+            keys[index].words[0]
         })
         .collect();
     let limit = (source.row_count(relation)? / INDEXED_ROW_COST).max(1);

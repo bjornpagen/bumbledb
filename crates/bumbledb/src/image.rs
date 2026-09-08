@@ -16,26 +16,18 @@ mod decode;
 mod distinct;
 mod epoch;
 pub(crate) mod intern;
-mod nonresident;
 mod selection;
 mod stride;
 #[cfg(test)]
 pub(crate) mod testsupport;
+mod text_eq;
 
 pub(crate) use bind::{ImageBind, SourceImages};
-pub(crate) use build::{build_from_source, estimated_slab_bytes};
+pub(crate) use build::build_from_source;
 pub(crate) use epoch::{CacheGeneration, ViewEpoch};
 
 pub use build::{TransientImage, synthesize_closed};
-/// Production intern/image refusal. L05 execute/spill matches
-/// [`ResidentAdmit::BeyondMemory`] and calls
-/// [`ResidentTextExhausted::open_nonresident`]. The one equality is
-/// [`TextEq::tokens_equal`] / [`TextEq::canonical`] (`Result`, not raw
-/// `u64 ==`; resolver failure is `Err`, never inequality).
-/// Stamp memos with [`NonresidentTextStore::epoch`] (full owner id, not
-/// packed into tokens). Invalidate on mismatch or drop.
-pub use intern::{ResidentAdmit, ResidentTextExhausted, is_resident_token, is_scratch_token};
-pub use nonresident::{NonresidentTextStore, TextEq, TextStoreEpoch};
+pub use text_eq::TextEq;
 
 // M2 Max's measured stream-tracker pitch period. Small nonzero residues
 // near its multiples are the harmful band; exact multiples are allowed.
@@ -144,9 +136,8 @@ pub enum ColumnView<'a> {
 }
 
 /// The immutable full-width columnar image of one relation at one
-/// generation. The shared allocation owns the generation handle and,
-/// when cache-admitted, the slab charge. Dropping a cache map entry
-/// does not refund a still-held image.
+/// generation. The shared allocation owns its slabs, generation handle,
+/// and canonical text. Eviction cannot invalidate a still-held image.
 #[derive(Debug)]
 pub struct RelationImage {
     row_count: usize,
@@ -162,22 +153,100 @@ pub struct RelationImage {
     bytes: Vec<u8>,
 
     generation: crate::work::GenerationHandle,
-    _charge: Option<SlabCharge>,
     strings: Box<[bool]>,
+
+    /// One shared owner per distinct resident text used by these columns.
+    /// Holding a resolver namespace alone must not retain its whole history.
+    texts: TextOwners,
 }
 
-/// The allocation, not the cache slot or builder, retains its budget.
+#[derive(Debug, Default)]
+pub(crate) struct TextOwners(std::collections::HashMap<u64, TextOwner>);
+
 #[derive(Debug)]
-enum SlabCharge {
-    Cache {
-        _owner: crate::work::ChargedImage,
-    },
-    Working {
-        _owner: crate::work::ByteReservation,
-    },
+struct TextOwner {
+    text: std::sync::Arc<str>,
+    observed: bool,
+}
+
+impl TextOwners {
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn pin(
+        &mut self,
+        word: u64,
+        resolve: impl FnOnce() -> Option<std::sync::Arc<str>>,
+    ) -> crate::error::Result<()> {
+        if word == intern::SENTINEL_WORD {
+            return Ok(());
+        }
+        match self.0.entry(word) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().observed = true;
+            }
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let text = resolve().ok_or(crate::error::Error::Corruption(
+                    crate::error::CorruptionError::MalformedValue("retained text token"),
+                ))?;
+                entry.insert(TextOwner {
+                    text,
+                    observed: true,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn begin_refill(&mut self) {
+        for text in self.0.values_mut() {
+            text.observed = false;
+        }
+    }
+
+    fn finish_refill(&mut self) {
+        self.0.retain(|_, text| text.observed);
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub(crate) fn extend_from(&mut self, other: &Self) {
+        for (&word, owner) in &other.0 {
+            self.0.entry(word).or_insert_with(|| TextOwner {
+                text: std::sync::Arc::clone(&owner.text),
+                observed: true,
+            });
+        }
+    }
+
+    /// Pin only the string columns of a flat, typed row, without copying payloads.
+    pub(crate) fn pin_row(
+        &mut self,
+        row: &[u64],
+        types: &[bumbledb_theory::schema::ValueType],
+        generation: &crate::work::GenerationHandle,
+    ) -> crate::error::Result<()> {
+        let mut slot = 0;
+        for ty in types {
+            if *ty == bumbledb_theory::schema::ValueType::String {
+                let word = row[slot];
+                self.pin(word, || generation.resolver().owned_text(word))?;
+            }
+            slot += crate::ir::normalize::SlotWidth::of(ty).slots();
+        }
+        Ok(())
+    }
 }
 
 impl RelationImage {
+    pub(crate) fn texts(&self) -> &TextOwners {
+        &self.texts
+    }
+
     /// Retained word/byte slab capacity, excluding fixed metadata and text.
     #[cfg(test)]
     #[must_use]
@@ -190,20 +259,7 @@ impl RelationImage {
         &self.generation
     }
 
-    #[must_use]
-    #[cfg(test)]
-    #[expect(
-        clippy::used_underscore_binding,
-        reason = "Tests inspect the live reservation owned by the RAII charge guard"
-    )]
-    pub fn charged_bytes(&self) -> Option<u64> {
-        self._charge.as_ref().map(|charge| match charge {
-            SlabCharge::Cache { _owner: charge } => charge.charged_bytes(),
-            SlabCharge::Working { _owner: charge } => charge.bytes(),
-        })
-    }
-
-    /// True when this field's column words are intern/scratch text tokens.
+    /// True when this field's column words are generation-scoped text tokens.
     #[must_use]
     pub fn field_is_string(&self, field: bumbledb_theory::schema::FieldId) -> bool {
         self.strings

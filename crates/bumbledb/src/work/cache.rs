@@ -1,152 +1,15 @@
-//! The database-owned retained-cache ledger: cross-operation capacity
-//! distinct from any single operation's [`super::ExecutionPolicy`].
-//!
-//! A [`GenerationHandle`] is the synchronized owner of one resolver and
-//! generation identity. Cache map entries are eviction references, not
-//! charge owners: image-slab charges live inside the shared image and
-//! refund only when the last strong owner is dropped.
-
-use std::sync::{
-    Arc, Mutex, Weak,
-    atomic::{AtomicU64, Ordering},
-};
-
+//! Shared text resolver generations. Live images and resolved query state
+//! pin canonical text owners independently of cache membership.
 use crate::image::CacheGeneration;
 use crate::image::intern::TextInterner;
-
-/// Cross-operation resident-cache allowance. Zero means no retention.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CachePolicy {
-    pub cache_bytes: u64,
-}
-
-impl CachePolicy {
-    /// A host-policy default large enough for ordinary single-tenant use;
-    /// explicit product configuration replaces this at open time.
-    #[must_use]
-    pub const fn platform_default() -> Self {
-        Self {
-            cache_bytes: 512 << 20,
-        }
-    }
-
-    #[must_use]
-    pub fn unbounded() -> Self {
-        Self {
-            cache_bytes: u64::MAX,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CacheError {
-    Exhausted {
-        used: u64,
-        requested: u64,
-        limit: u64,
-    },
-}
-
-impl std::fmt::Display for CacheError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Exhausted {
-                used,
-                requested,
-                limit,
-            } => write!(
-                f,
-                "cache bytes exhausted: {used} used + {requested} requested, limit {limit}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for CacheError {}
-
-#[derive(Debug)]
-struct CacheLedgerInner {
-    limit: u64,
-    used: AtomicU64,
-}
-
-/// Shared retained-cache accounting for one database instance.
-#[derive(Debug, Clone)]
-pub struct CacheLedger(Arc<CacheLedgerInner>);
-
-impl CacheLedger {
-    #[must_use]
-    pub fn new(policy: CachePolicy) -> Self {
-        Self(Arc::new(CacheLedgerInner {
-            limit: policy.cache_bytes,
-            used: AtomicU64::new(0),
-        }))
-    }
-
-    #[must_use]
-    pub fn unbounded() -> Self {
-        Self::new(CachePolicy::unbounded())
-    }
-
-    #[must_use]
-    pub fn used(&self) -> u64 {
-        self.0.used.load(Ordering::Acquire)
-    }
-
-    #[must_use]
-    pub fn limit(&self) -> u64 {
-        self.0.limit
-    }
-
-    /// Reserve before cache growth; retain the owner until release.
-    /// # Errors
-    /// Refuses bytes beyond the cache allowance.
-    pub fn reserve(&self, bytes: u64) -> Result<CacheReservation, CacheError> {
-        let limit = self.0.limit;
-        self.0
-            .used
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|next| *next <= limit)
-            })
-            .map(|_| CacheReservation {
-                ledger: Arc::clone(&self.0),
-                bytes,
-            })
-            .map_err(|used| CacheError::Exhausted {
-                used,
-                requested: bytes,
-                limit,
-            })
-    }
-}
-
-/// Linear cache reservation: refunds exactly once at drop.
-#[derive(Debug)]
-pub struct CacheReservation {
-    ledger: Arc<CacheLedgerInner>,
-    bytes: u64,
-}
-
-impl CacheReservation {
-    #[must_use]
-    pub const fn bytes(&self) -> u64 {
-        self.bytes
-    }
-}
-
-impl Drop for CacheReservation {
-    fn drop(&mut self) {
-        self.ledger.used.fetch_sub(self.bytes, Ordering::AcqRel);
-    }
-}
+use std::sync::{Arc, Mutex, Weak};
 
 /// Shared generation owner: resolver storage and generation identity (C3).
-/// Every token-bearing image holds this owner. Cache map entries are
-/// eviction references, not charge owners.
+/// Every token-bearing image holds this owner. Individual text payloads
+/// are pinned separately, so keeping a generation does not retain its history.
 #[derive(Debug)]
 pub struct GenerationState {
     identity: CacheGeneration,
-    ledger: CacheLedger,
     resolver: Mutex<TextInterner>,
 }
 
@@ -173,10 +36,9 @@ pub struct ResolverView<'a> {
 
 impl GenerationState {
     #[must_use]
-    pub fn new(identity: CacheGeneration, ledger: CacheLedger) -> Self {
+    pub fn new(identity: CacheGeneration) -> Self {
         Self {
             identity,
-            ledger,
             resolver: Mutex::new(TextInterner::default()),
         }
     }
@@ -184,11 +46,6 @@ impl GenerationState {
     #[must_use]
     pub const fn identity(&self) -> CacheGeneration {
         self.identity
-    }
-
-    #[must_use]
-    pub fn ledger(&self) -> &CacheLedger {
-        &self.ledger
     }
 
     pub(crate) fn lock_resolver(&self) -> std::sync::MutexGuard<'_, TextInterner> {
@@ -210,11 +67,6 @@ impl GenerationHandle {
     #[must_use]
     pub fn identity(&self) -> CacheGeneration {
         self.0.identity
-    }
-
-    #[must_use]
-    pub fn ledger(&self) -> &CacheLedger {
-        &self.0.ledger
     }
 
     /// True when both handles own the same resolver allocation.
@@ -249,24 +101,18 @@ impl GenerationHandle {
         self.0.lock_resolver()
     }
 
-    /// The one production text equality: intern, scratch, and mixed.
-    /// `TextEq::tokens_equal` is `Result<bool, _>` —
-    /// resolver failure is `Err`, not inequality. Stamp retained tokens
-    /// with `eq.scratch_epoch()` and rebind via
-    /// `TextEq::with_memo_stamp` after a store replace.
+    /// Compare pinned tokens in this generation without copying text.
     #[must_use]
-    pub fn text_eq<'a>(
-        &'a self,
-        scratch: Option<&'a crate::image::NonresidentTextStore>,
-    ) -> crate::image::TextEq<'a> {
-        crate::image::TextEq::bind(self, scratch)
+    pub fn text_eq(&self) -> crate::image::TextEq<'_> {
+        crate::image::TextEq::bind(self)
     }
 
-    /// Resident-only compare. Scratch-tagged ids are not this resolver's
-    /// words — mixed intern/scratch uses [`Self::text_eq`].
+    /// Compare live tokens, using exact bytes across different generations.
     #[must_use]
     pub fn tokens_equal(&self, left: u64, other: &Self, right: u64) -> bool {
-        if !crate::image::is_resident_token(left) || !crate::image::is_resident_token(right) {
+        if left == crate::image::intern::SENTINEL_WORD
+            || right == crate::image::intern::SENTINEL_WORD
+        {
             return false;
         }
         if self.ptr_eq(other) {
@@ -314,7 +160,7 @@ impl ResolverView<'_> {
         intern.text_of(token).map(read)
     }
 
-    /// Copies resolved text. Prefer [`Self::with_text`] on the hot path.
+    /// Share the canonical allocation without copying text bytes.
     #[must_use]
     pub fn owned_text(&self, token: u64) -> Option<std::sync::Arc<str>> {
         self.state.lock_resolver().owned_text(token)
@@ -329,11 +175,10 @@ pub struct GenerationProtocol {
 
 impl GenerationProtocol {
     #[must_use]
-    pub fn new(ledger: CacheLedger) -> Self {
+    pub fn new() -> Self {
         Self {
             current: Mutex::new(GenerationHandle::new(GenerationState::new(
                 CacheGeneration::initial(),
-                ledger,
             ))),
         }
     }
@@ -356,15 +201,18 @@ impl GenerationProtocol {
     /// Install a fresh generation as current. The previous handle is
     /// returned so the caller can drop the cache's strong pin after
     /// detaching map entries. Live image owners keep the old resolver.
-    pub fn rotate(&self, ledger: &CacheLedger) -> (GenerationHandle, GenerationHandle) {
+    pub fn rotate(&self) -> (GenerationHandle, GenerationHandle) {
         let mut current = self.lock();
         let previous = current.clone();
-        let next = GenerationHandle::new(GenerationState::new(
-            previous.identity().next(),
-            ledger.clone(),
-        ));
+        let next = GenerationHandle::new(GenerationState::new(previous.identity().next()));
         *current = next.clone();
         (previous, next)
+    }
+}
+
+impl Default for GenerationProtocol {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -374,11 +222,10 @@ mod tests {
 
     #[test]
     fn acquire_and_rotate_do_not_alias_resolvers() {
-        let ledger = CacheLedger::unbounded();
-        let protocol = GenerationProtocol::new(ledger.clone());
+        let protocol = GenerationProtocol::new();
         let first = protocol.acquire();
         assert_eq!(first.identity(), CacheGeneration::initial());
-        let (previous, next) = protocol.rotate(&ledger);
+        let (previous, next) = protocol.rotate();
         assert!(first.ptr_eq(&previous));
         assert!(!first.ptr_eq(&next));
         assert_eq!(next.identity().as_u64(), 1);
@@ -387,22 +234,11 @@ mod tests {
 
     #[test]
     fn weak_idle_handle_fails_after_last_strong_drop() {
-        let ledger = CacheLedger::unbounded();
-        let handle =
-            GenerationHandle::new(GenerationState::new(CacheGeneration::initial(), ledger));
+        let handle = GenerationHandle::new(GenerationState::new(CacheGeneration::initial()));
         let weak = handle.downgrade();
         assert_eq!(weak.identity(), CacheGeneration::initial());
         assert!(weak.upgrade().is_some());
         drop(handle);
         assert!(weak.upgrade().is_none());
-    }
-
-    #[test]
-    fn cache_reservation_refunds_on_drop() {
-        let ledger = CacheLedger::new(CachePolicy { cache_bytes: 1024 });
-        let reservation = ledger.reserve(512).expect("reserve");
-        assert_eq!(ledger.used(), 512);
-        drop(reservation);
-        assert_eq!(ledger.used(), 0);
     }
 }

@@ -5,31 +5,22 @@ import { dbNative } from "#db-native.ts"
 import type { FindColumn } from "#query/atom.ts"
 import { decodeAnswers } from "#query/run.ts"
 import type { CellValue } from "#rows.ts"
-import type { ExecutionPolicy } from "#runtime.ts"
-import { deliveryResultBytes, nativeOperationWith, policyWire } from "#runtime.ts"
+import { nativeOperationWith } from "#runtime.ts"
 import type { CloseReport, DbError } from "#runtime-errors.ts"
 
 /**
- * `CompleteResult<A>` — the sealed owner of one completed query answer:
- * published only after all evaluation/finalization succeeded,
- * possibly backed by temporary LMDB scratch. Owned and independent of its
- * source snapshot/session.
+ * One complete answer set, sealed after evaluation and independent of its
+ * source snapshot. collect() explicitly materializes all rows into JS and
+ * leaves the result available. pages() consumes it once through bounded
+ * delivery batches; it does not stream query execution.
  *
- * `collect` materializes a bounded owned array and leaves the result
- * available; it refuses (`ResourceLimit`) before allocating past
- * `maxBytes`, and a cap failure leaves the sealed backing available for
- * `pages`. `pages` is a one-shot consuming stream over the
- * completed result: its first execution atomically spends the result and
- * moves the backing storage into a private cursor owned by the stream's
- * scope — construction alone spends nothing, a second run fails
- * `SpentHandle`, and a run after the result's scope closed fails
- * `ClosedHandle`. Early take, downstream failure and interruption all
- * close/drain the private cursor; EOF cleanup is identical. There is no
- * public cursor, `next`, AsyncIterable, clone or second streaming API.
+ * The stream owns its cursor through Effect scope. Early termination,
+ * failure, interruption and EOF close/drain it. Creating the stream does
+ * not spend the result; running it twice fails with SpentHandle.
  */
 interface CompleteResult<A> {
-	collect(options: { readonly maxBytes: bigint }, work: ExecutionPolicy): Effect.Effect<ReadonlyArray<A>, DbError>
-	pages(options: { readonly pageBytes: bigint }, work: ExecutionPolicy): Stream.Stream<ReadonlyArray<A>, DbError>
+	collect(): Effect.Effect<ReadonlyArray<A>, DbError>
+	pages(): Stream.Stream<ReadonlyArray<A>, DbError>
 	close(): Effect.Effect<CloseReport>
 }
 
@@ -52,42 +43,27 @@ function decodePage<A>(finds: readonly FindColumn[], rows: readonly (readonly Ce
 
 /**
  * Internal constructor: `db.ts` publishes results through this after
- * execution completes. Delivery (`collect`/`pages`) starts a fresh bounded
- * operation under the caller's delivery policy — never the completed query's
- * expired execution deadline.
+ * execution completes. Each delivery has independent cooperative cancellation.
  */
 function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[]): CompleteResult<A> {
-	function deliveryWire(operation: string, delivery: ExecutionPolicy, requested: bigint) {
-		return policyWire({ ...delivery, resultBytes: deliveryResultBytes(requested, delivery) }, operation)
-	}
 	const value: CompleteResult<A> = {
-		collect(options, work) {
+		collect() {
 			return Effect.suspend(() =>
 				nativeOperationWith(
 					"CompleteResult.collect",
-					(callback) =>
-						dbNative.runtimeResultCollect(
-							handle,
-							deliveryWire("CompleteResult.collect", work, options.maxBytes),
-							callback
-						),
+					(callback) => dbNative.runtimeResultCollect(handle, callback),
 					dbNative.runtimeRowsTake,
 					(rows) => decodePage<A>(finds, rows)
 				)
 			)
 		},
-		pages(options, work) {
+		pages() {
 			return Stream.unwrap(
 				Effect.gen(function* () {
 					const cursor: CursorHandle = yield* Effect.acquireRelease(
 						nativeOperationWith(
 							"CompleteResult.pages",
-							(callback) =>
-								dbNative.runtimeResultCursor(
-									handle,
-									deliveryWire("CompleteResult.pages", work, options.pageBytes),
-									callback
-								),
+							(callback) => dbNative.runtimeResultCursor(handle, callback),
 							dbNative.runtimeCursorTake,
 							(taken) => taken
 						),
@@ -97,12 +73,7 @@ function makeCompleteResult<A>(handle: ResultHandle, finds: readonly FindColumn[
 					return Stream.paginate(undefined, () =>
 						nativeOperationWith(
 							"CompleteResult.page",
-							(callback) =>
-								dbNative.runtimeCursorNext(
-									cursor,
-									deliveryWire("CompleteResult.page", work, options.pageBytes),
-									callback
-								),
+							(callback) => dbNative.runtimeCursorNext(cursor, callback),
 							dbNative.runtimePageTake,
 							(page) => page
 						).pipe(

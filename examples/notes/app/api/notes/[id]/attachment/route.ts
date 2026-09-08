@@ -12,7 +12,6 @@ import { requirePrincipal } from "../../../../../src/auth.ts"
 import { putBlob } from "../../../../../src/blob.ts"
 import { bindingFor } from "../../../../../src/db/bindings.ts"
 import { addAttachment } from "../../../../../src/db/commands.ts"
-import { requestPolicy } from "../../../../../src/db/runtime-policy.ts"
 import { appRuntime, Databases } from "../../../../../src/db/server.ts"
 import { exitResponse, respond, submitResponse } from "../../../../../src/http.ts"
 
@@ -26,7 +25,6 @@ const postAttachment = Effect.fn("routes.postAttachment")(
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
 		const noteId = yield* Effect.fromResult(Uuid.parse(rawId))
-		const work = requestPolicy(request)
 		// 1. Immutable blob first — app-owned S3, content-addressed key.
 		const uploaded = yield* putBlob(principal.tenantId, body).pipe(Effect.result)
 		if (Result.isFailure(uploaded)) {
@@ -34,8 +32,8 @@ const postAttachment = Effect.fn("routes.postAttachment")(
 		}
 		// 2. Reference/receipt second — one atomic tenant command.
 		const databases = yield* Databases
-		const db = yield* databases.acquire(binding, work)
-		const outcome = yield* addAttachment(db, principal.tenantId, noteId, uploaded.success, work)
+		const db = yield* databases.acquire(binding)
+		const outcome = yield* addAttachment(db, principal.tenantId, noteId, uploaded.success)
 		return submitResponse(outcome)
 	},
 	Effect.scoped

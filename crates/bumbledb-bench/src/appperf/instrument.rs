@@ -1,13 +1,12 @@
-//! Visit, capacity-owner and index-roster counters.
+//! Visit and index-roster counters.
 //!
-//! Counts come from visitor returns and [`WorkContext::used`] snapshots —
-//! not default-build atomics on every tuple (L01/L03). Timing cells must
+//! Counts come from visitor returns, not default-build atomics on every
+//! tuple (L01/L03). Timing cells must
 //! not enable per-row atomics; allocation windows stay a separate pass.
 
 use bumbledb::schema::{
     CompiledTheory, DistinctnessWitness, ProjectionId, VisitControl, VisitOutcome,
 };
-use bumbledb::work::{Resource, WorkContext};
 
 /// One compiled access path as the scorecard's index roster row.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,37 +21,11 @@ pub struct RosterEntry {
     pub encoding: &'static str,
 }
 
-/// Snapshot of charged owners after a cell. Logical native charges, not RSS.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct OwnerSnapshot {
-    pub input_bytes: u64,
-    pub working_bytes: u64,
-    pub scratch_bytes: u64,
-    pub result_bytes: u64,
-    pub rows: u64,
-    pub work_units: u64,
-}
-
-impl OwnerSnapshot {
-    #[must_use]
-    pub fn from_work(work: &WorkContext) -> Self {
-        Self {
-            input_bytes: work.used(Resource::InputBytes),
-            working_bytes: work.used(Resource::WorkingBytes),
-            scratch_bytes: work.used(Resource::ScratchBytes),
-            result_bytes: work.used(Resource::ResultBytes),
-            rows: work.used(Resource::Rows),
-            work_units: work.used(Resource::WorkUnits),
-        }
-    }
-}
-
-/// Source/group visits recorded by the visitor, plus the roster and owners.
+/// Source/group visits recorded by the visitor, plus the index roster.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Instrument {
     pub source_visits: u64,
     pub group_visits: u64,
-    pub owners: OwnerSnapshot,
     pub roster: Vec<RosterEntry>,
 }
 

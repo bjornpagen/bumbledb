@@ -16,7 +16,7 @@
 //!   nondeterminism or a caller's timeout. Historical replay recomputes the
 //!   judgment at the exact predecessor and must reproduce the recorded
 //!   evidence byte for byte (`bumbledb-log::apply` compares exactly).
-//!   Insufficient work allowance is an error, never different bytes.
+//!   Cancellation is an error, never different bytes.
 //! - **Complete or refused.** Every violated statement always appears; only
 //!   EXAMPLES are dropped under the byte budget, deterministically and with
 //!   a per-violation truncation label. If even the example-free statement
@@ -264,7 +264,7 @@ impl ViolationEvidence {
         out.try_reserve_exact(self.violations.len())
             .map_err(|_| EvidenceInterpretError::Row(RowError::Allocation))?;
         for violation in &self.violations {
-            work.step(1)?;
+            work.checkpoint()?;
             check_statement(schema, violation)?;
             let direction = match violation.kind {
                 StatementKind::Containment => match violation.direction {
@@ -331,7 +331,7 @@ impl ViolationEvidence {
             .try_reserve_exact(self.violations.len())
             .map_err(|_| EvidenceInterpretError::Row(RowError::Allocation))?;
         for violation in &self.violations {
-            work.step(1)?;
+            work.checkpoint()?;
             let view = check_statement(schema, violation)?;
             let reference = match view {
                 StatementView::Key(id, _) => StatementRef::Key(id),
@@ -472,7 +472,7 @@ pub fn encode_violations(
         .try_reserve_exact(violations.len())
         .map_err(|_| EvidenceError::Allocation)?;
     for (index, (violation, cited)) in violations.citations().enumerate() {
-        work.step(1)?;
+        work.checkpoint()?;
         let (statement, kind) = statement_slot(schema, violation.statement())?;
         let (direction, measure) = match violation {
             Violation::Functionality { conflict, .. } => {
@@ -529,7 +529,7 @@ pub fn encode_judged(
         .try_reserve_exact(judged.len())
         .map_err(|_| EvidenceError::Allocation)?;
     for violation in judged {
-        work.step(1)?;
+        work.checkpoint()?;
         let direction = match violation.kind {
             StatementKind::Containment => Some(match violation.direction {
                 Some(JudgedDirection::SourceUnsatisfied) | None => Direction::SourceUnsatisfied,
@@ -637,7 +637,7 @@ fn encode_parts(
     'ranks: for rank in 0..max_rank {
         let mut next = total;
         for part in parts {
-            work.step(1)?;
+            work.checkpoint()?;
             if let Some((_, row)) = part.examples.get(rank) {
                 let example_len = EXAMPLE_FIXED_LEN
                     .checked_add(row.as_bytes().len())
@@ -658,7 +658,7 @@ fn encode_parts(
         return Err(EvidenceError::LengthOverflow);
     }
 
-    work.step(total as u64)?;
+    work.checkpoint()?;
     let mut out = Vec::new();
     out.try_reserve_exact(total)
         .map_err(|_| EvidenceError::Allocation)?;

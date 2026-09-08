@@ -8,7 +8,7 @@
  * replays the delivery with the SAME key, and the receiver deduplicates.
  * The database never promises exactly-once external networking.
  */
-import type { ExecutionPolicy, Uuid } from "@bjornpagen/bumbledb"
+import type { Uuid } from "@bjornpagen/bumbledb"
 import type { History, HistoryBorrow } from "@bjornpagen/bumbledb-log"
 import { Effect, Schema } from "effect"
 import { retireOutbox } from "./db/commands.ts"
@@ -55,17 +55,17 @@ const deliver = Effect.fn("outbox.deliver")(function* (row: OutboxRow) {
  * idempotency key. Returns the number retired.
  */
 export const dispatchOutbox = Effect.fn("outbox.dispatch")(
-	function* (history: History<typeof App> | HistoryBorrow<typeof App>, tenantId: string, work: ExecutionPolicy) {
+	function* (history: History<typeof App> | HistoryBorrow<typeof App>, tenantId: string) {
 		const rows = yield* Effect.scoped(
 			Effect.gen(function* () {
-				const snapshot = yield* history.snapshot({ ...work, consistency: { kind: "latest" } })
-				return yield* listPendingOutbox(snapshot, work)
+				const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
+				return yield* listPendingOutbox(snapshot)
 			})
 		)
 		let retired = 0
 		for (const row of rows) {
 			yield* deliver(row)
-			const outcome = yield* retireOutbox(history, tenantId, row, work)
+			const outcome = yield* retireOutbox(history, tenantId, row)
 			if (outcome.kind === "decided") {
 				retired += 1
 				continue

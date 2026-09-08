@@ -28,9 +28,7 @@
 //! publication and the local commit needs no extra detection state: replay is
 //! safe to repeat.
 
-use std::time::Duration;
-
-use bumbledb::{Db, ExecutionPolicy, WorkContext};
+use bumbledb::{Db, WorkContext};
 
 use crate::history::authority::{HeadAuthority, decode_control};
 use crate::history::command::{Command, Limits, UnverifiedOutcome};
@@ -207,17 +205,7 @@ pub fn require_published_destination<S>(db: &Db<S>, work: &WorkContext) -> Resul
 
 fn read_committed_authority<S>(db: &Db<S>, cap: usize) -> Result<HeadAuthority, LogError> {
     let mut owned: Option<Vec<u8>> = None;
-    let work = ExecutionPolicy {
-        input_bytes: 64 * 1024 * 1024,
-        working_bytes: 64 * 1024 * 1024,
-        scratch_bytes: 64 * 1024 * 1024,
-        result_bytes: 64 * 1024 * 1024,
-        rows: 1_000_000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(3600),
-    }
-    .start()
-    .map_err(LogError::Work)?;
+    let work = WorkContext::new();
     db.read(work, |read| {
         owned = read.integration_host_attachment()?.map(<[u8]>::to_vec);
         Ok(())

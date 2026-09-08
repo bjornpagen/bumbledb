@@ -1,4 +1,4 @@
-//! Contextual bounded object reception (C6): work/deadline checkpoints,
+//! Contextual bounded object reception (C6): cancellation checkpoints,
 //! maximum bytes before allocation, and incremental digest verification while
 //! bytes stream in. Adapters report what they observed; the composition layer
 //! decides verification refusal before interpretation.
@@ -6,12 +6,10 @@
 //! A length header or filesystem stat is not a receiving bound. Production
 //! reads push bounded chunks through [`ReceiveAccumulator`]; `receive_whole`
 //! and `receive_head_whole` are deleted. [`ReceiveAccumulator::finish`]
-//! returns a [`ReceivedBody`] so a live work reservation travels with the
-//! bytes until the caller decodes or drops them.
+//! transfers its buffer to the caller without copying or shrinking it.
 
 use std::io;
 
-use bumbledb::work::{ByteKind, ChargedBuffer, ChargedBytes};
 use bumbledb::{WorkContext, WorkError};
 
 use super::{ObjectKind, ObjectRef};
@@ -108,48 +106,9 @@ impl<T: ObservedError + ?Sized> ObservedError for &T {
     }
 }
 
-/// Received object bytes. When a [`WorkContext`] was present, the receive
-/// reservation travels with the payload until the caller drops or decodes it.
-#[derive(Debug)]
-pub enum ReceivedBody {
-    Charged(ChargedBytes),
-    Plain(Box<[u8]>),
-}
-
-impl ReceivedBody {
-    #[must_use]
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            Self::Charged(body) => body.as_bytes(),
-            Self::Plain(body) => body,
-        }
-    }
-
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.as_bytes().len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.as_bytes().is_empty()
-    }
-
-    /// Take the charged owner. `None` when the receive had no work context.
-    #[must_use]
-    pub fn into_charged(self) -> Option<ChargedBytes> {
-        match self {
-            Self::Charged(body) => Some(body),
-            Self::Plain(_) => None,
-        }
-    }
-}
-
-impl PartialEq<[u8]> for ReceivedBody {
-    fn eq(&self, other: &[u8]) -> bool {
-        self.as_bytes() == other
-    }
-}
+/// One received object. Ordinary owned bytes, independent of the operation
+/// that fetched them. Verification is performed before interpretation.
+pub type ReceivedBody = Vec<u8>;
 
 /// Head receive that keeps the same output owner as [`ReceivedBody`].
 #[derive(Debug)]
@@ -161,28 +120,12 @@ pub enum ReceivedHead {
     Absent,
 }
 
-enum AccBuf {
-    Empty,
-    Charged(ChargedBuffer),
-    Plain(Vec<u8>),
-}
-
-impl AccBuf {
-    fn len(&self) -> usize {
-        match self {
-            Self::Empty => 0,
-            Self::Charged(buf) => buf.len(),
-            Self::Plain(buf) => buf.len(),
-        }
-    }
-}
-
-/// Incremental receive session: cap, deadline, overlap-admitted copy, and
-/// optional domain-separated digest. Never allocates past the envelope.
-/// Reservations stay on the buffer until [`Self::finish`].
+/// Incremental receive session: checked input length, cancellation, and an
+/// optional domain-separated digest. Payload never exceeds the envelope;
+/// Vec capacity grows geometrically, clamped to that envelope.
 pub struct ReceiveAccumulator<'a> {
     ctx: TransportContext<'a>,
-    buf: AccBuf,
+    buf: Vec<u8>,
     hasher: Option<blake3::Hasher>,
     expected_length: Option<u64>,
     expected_digest: Option<[u8; 32]>,
@@ -249,7 +192,7 @@ impl<'a> ReceiveAccumulator<'a> {
     pub fn new(ctx: TransportContext<'a>) -> Self {
         Self {
             ctx,
-            buf: AccBuf::Empty,
+            buf: Vec::new(),
             hasher: None,
             expected_length: None,
             expected_digest: None,
@@ -266,7 +209,7 @@ impl<'a> ReceiveAccumulator<'a> {
                 work: ctx.work,
                 receive: ReceiveLimits { max_bytes },
             },
-            buf: AccBuf::Empty,
+            buf: Vec::new(),
             hasher: Some(blake3::Hasher::new_derive_key(kind.digest_domain())),
             expected_length: Some(reference.length),
             expected_digest: Some(reference.digest),
@@ -280,7 +223,7 @@ impl<'a> ReceiveAccumulator<'a> {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.buf.len() == 0
+        self.buf.is_empty()
     }
 
     #[must_use]
@@ -292,10 +235,11 @@ impl<'a> ReceiveAccumulator<'a> {
         self.ctx.checkpoint().map_err(ReceiveFault::Work)
     }
 
-    /// Copy `chunk` only after the envelope and a work reservation admit it.
+    /// Copy `chunk` only after checking its complete input length. Even a
+    /// direct caller's large chunk is copied and hashed in bounded quanta.
     ///
     /// # Errors
-    /// Deadline, cancellation, envelope overrun, or allocation refusal.
+    /// Cancellation, envelope overrun, length overflow, or allocation refusal.
     pub fn push(&mut self, chunk: &[u8]) -> Result<(), ReceiveFault> {
         self.ctx.checkpoint().map_err(ReceiveFault::Work)?;
         if chunk.is_empty() {
@@ -319,36 +263,23 @@ impl<'a> ReceiveAccumulator<'a> {
                 got: next,
             });
         }
-        match &mut self.buf {
-            AccBuf::Empty => {
-                if let Some(work) = self.ctx.work {
-                    let mut charged =
-                        ChargedBuffer::with_capacity(work, ByteKind::Working, chunk.len())
-                            .map_err(ReceiveFault::Work)?;
-                    charged
-                        .try_extend_from_slice(chunk)
-                        .map_err(ReceiveFault::Work)?;
-                    self.buf = AccBuf::Charged(charged);
-                } else {
-                    let mut plain = Vec::new();
-                    plain
-                        .try_reserve(chunk.len())
-                        .map_err(|_| ReceiveFault::Alloc)?;
-                    plain.extend_from_slice(chunk);
-                    self.buf = AccBuf::Plain(plain);
-                }
-            }
-            AccBuf::Charged(buf) => buf
-                .try_extend_from_slice(chunk)
-                .map_err(ReceiveFault::Work)?,
-            AccBuf::Plain(buf) => {
-                buf.try_reserve(chunk.len())
-                    .map_err(|_| ReceiveFault::Alloc)?;
-                buf.extend_from_slice(chunk);
-            }
+        let next = usize::try_from(next).map_err(|_| ReceiveFault::Overflow)?;
+        if next > self.buf.capacity() {
+            let capacity = (self.buf.capacity() as u64)
+                .saturating_mul(2)
+                .max(next as u64)
+                .min(self.ctx.receive.max_bytes);
+            let capacity = usize::try_from(capacity).map_err(|_| ReceiveFault::Overflow)?;
+            self.buf
+                .try_reserve_exact(capacity - self.buf.len())
+                .map_err(|_| ReceiveFault::Alloc)?;
         }
-        if let Some(hasher) = &mut self.hasher {
-            hasher.update(chunk);
+        for chunk in chunk.chunks(RECEIVE_CHUNK_BYTES) {
+            self.ctx.checkpoint().map_err(ReceiveFault::Work)?;
+            self.buf.extend_from_slice(chunk);
+            if let Some(hasher) = &mut self.hasher {
+                hasher.update(chunk);
+            }
         }
         Ok(())
     }
@@ -357,8 +288,9 @@ impl<'a> ReceiveAccumulator<'a> {
     /// was constructed with [`Self::verified`].
     ///
     /// # Errors
-    /// Length or digest disagreement with the reference.
+    /// Cancellation, length or digest disagreement with the reference.
     pub fn finish(self) -> Result<ReceivedBody, ReceiveFault> {
+        self.ctx.checkpoint().map_err(ReceiveFault::Work)?;
         if let Some(expected) = self.expected_length
             && self.len() != expected
         {
@@ -372,16 +304,7 @@ impl<'a> ReceiveAccumulator<'a> {
         {
             return Err(ReceiveFault::WrongDigest);
         }
-        match self.buf {
-            AccBuf::Charged(buf) => Ok(ReceivedBody::Charged(buf.into_bytes())),
-            AccBuf::Plain(buf) => Ok(ReceivedBody::Plain(buf.into_boxed_slice())),
-            AccBuf::Empty => match self.ctx.work {
-                Some(work) => ChargedBytes::adopt(work, ByteKind::Working, Box::from([]))
-                    .map(ReceivedBody::Charged)
-                    .map_err(ReceiveFault::Work),
-                None => Ok(ReceivedBody::Plain(Box::from([]))),
-            },
-        }
+        Ok(self.buf)
     }
 }
 
@@ -413,7 +336,9 @@ pub(crate) fn verify_body(
     kind: ObjectKind,
     reference: &ObjectRef,
     body: &[u8],
+    ctx: TransportContext<'_>,
 ) -> Result<(), super::ObjectError> {
+    ctx.checkpoint().map_err(super::backend)?;
     if body.len() as u64 != reference.length {
         return Err(super::ObjectError::WrongLength {
             key: key.to_string(),
@@ -421,7 +346,12 @@ pub(crate) fn verify_body(
             got: body.len() as u64,
         });
     }
-    if super::object_digest(kind, body) != reference.digest {
+    let mut hasher = blake3::Hasher::new_derive_key(kind.digest_domain());
+    for chunk in body.chunks(RECEIVE_CHUNK_BYTES) {
+        ctx.checkpoint().map_err(super::backend)?;
+        hasher.update(chunk);
+    }
+    if *hasher.finalize().as_bytes() != reference.digest {
         return Err(super::ObjectError::WrongDigest {
             key: key.to_string(),
         });
@@ -469,22 +399,7 @@ impl<T: ReceivingStore + ?Sized> ReceivingStore for std::sync::Arc<T> {
 mod tests {
     use super::*;
     use crate::store::object_digest;
-    use bumbledb::ExecutionPolicy;
-    use std::time::Duration;
-
-    fn work(working: u64, timeout: Duration) -> WorkContext {
-        ExecutionPolicy {
-            input_bytes: 0,
-            working_bytes: working,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 0,
-            work_units: 1_024,
-            timeout,
-        }
-        .start()
-        .expect("start")
-    }
+    use bumbledb::WorkContext;
 
     #[test]
     fn accumulator_refuses_past_the_envelope_without_retaining_the_overflow() {
@@ -503,30 +418,44 @@ mod tests {
     }
 
     #[test]
-    fn accumulator_reserves_before_copy_and_refunds_on_drop() {
-        let ctx = work(64, Duration::from_secs(5));
-        let baseline = ctx.used(bumbledb::work::Resource::WorkingBytes);
-        {
-            let mut acc =
-                ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
-            acc.push(b"payload").expect("push");
-            assert!(ctx.used(bumbledb::work::Resource::WorkingBytes) > baseline);
-            drop(acc);
+    fn accumulator_grows_geometrically_without_preallocating_the_envelope() {
+        let mut acc = ReceiveAccumulator::new(TransportContext::limited(65_536));
+        assert_eq!(acc.buf.capacity(), 0);
+        let mut growths = 0;
+        for len in 1..=8193 {
+            let before = acc.buf.capacity();
+            acc.push(b"x").unwrap();
+            growths += usize::from(acc.buf.capacity() != before);
+            assert_eq!(acc.buf.len(), len);
+            assert!(acc.buf.capacity() <= 2 * len);
         }
-        assert_eq!(ctx.used(bumbledb::work::Resource::WorkingBytes), baseline);
+        assert!(
+            growths <= 15,
+            "tiny chunks must not cause linear reallocations"
+        );
+        assert!(acc.finish().unwrap().iter().all(|&byte| byte == b'x'));
     }
 
     #[test]
-    fn accumulator_checkpoints_deadline_between_chunks() {
-        let ctx = work(1_024, Duration::from_millis(1));
-        std::thread::sleep(Duration::from_millis(3));
+    fn accumulator_checkpoints_cancellation_between_chunks_and_at_finish() {
+        let ctx = WorkContext::new();
         let mut acc =
             ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
+        acc.push(b"first").unwrap();
+        ctx.cancel();
         assert!(matches!(
             acc.push(b"late"),
-            Err(ReceiveFault::Work(WorkError::DeadlineExceeded))
+            Err(ReceiveFault::Work(WorkError::Cancelled))
         ));
-        assert_eq!(acc.len(), 0);
+        assert_eq!(acc.len(), 5, "a refused chunk is not copied");
+        assert!(matches!(
+            acc.push(&[]),
+            Err(ReceiveFault::Work(WorkError::Cancelled))
+        ));
+        assert!(matches!(
+            acc.finish(),
+            Err(ReceiveFault::Work(WorkError::Cancelled))
+        ));
     }
 
     #[test]
@@ -546,8 +475,8 @@ mod tests {
             acc.push(piece).expect("chunk");
         }
         let got = acc.finish().expect("verified");
-        assert_eq!(got.as_bytes(), bytes);
-        assert_eq!(object_digest(kind, got.as_bytes()), reference.digest);
+        assert_eq!(got.as_slice(), bytes);
+        assert_eq!(object_digest(kind, &got), reference.digest);
 
         let mut short = ReceiveAccumulator::verified(
             TransportContext {
@@ -565,21 +494,59 @@ mod tests {
     }
 
     #[test]
-    fn finish_keeps_the_receive_charge_until_the_owner_drops() {
-        let ctx = work(64, Duration::from_secs(5));
-        let baseline = ctx.used(bumbledb::work::Resource::WorkingBytes);
-        let body = {
-            let mut acc =
-                ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
-            acc.push(b"payload").expect("push");
-            acc.finish().expect("finish")
-        };
+    fn finish_moves_the_receive_buffer_and_drop_frees_its_actual_capacity() {
+        let ctx = WorkContext::new();
+        let mut acc =
+            ReceiveAccumulator::new(TransportContext::new(&ctx, ReceiveLimits::capped(32)));
+        acc.push(b"payload").unwrap();
+        acc.push(b"!").unwrap();
+        let pointer = acc.buf.as_ptr();
+        let capacity = acc.buf.capacity();
         assert!(
-            ctx.used(bumbledb::work::Resource::WorkingBytes) > baseline,
-            "finish must not refund the receive reservation"
+            capacity > acc.buf.len(),
+            "exercise spare capacity at finish"
         );
-        assert_eq!(body.as_bytes(), b"payload");
+        #[cfg(feature = "alloc-counter")]
+        let before = bumbledb::alloc_counter::snapshot();
+        let body = acc.finish().unwrap();
+        assert_eq!(body.as_ptr(), pointer);
+        assert_eq!(
+            body.capacity(),
+            capacity,
+            "no shrink/reallocation on transfer"
+        );
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(bumbledb::alloc_counter::snapshot().window, before.window);
+        ctx.cancel();
+        assert_eq!(
+            body.as_slice(),
+            b"payload!",
+            "completed bytes own their lifetime"
+        );
         drop(body);
-        assert_eq!(ctx.used(bumbledb::work::Resource::WorkingBytes), baseline);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(
+            bumbledb::alloc_counter::snapshot().absolute.live_bytes + capacity as u64,
+            before.absolute.live_bytes,
+        );
+    }
+
+    #[test]
+    fn verified_session_rejects_same_length_wrong_bytes_and_accepts_empty_objects() {
+        let reference = ObjectRef::of(1, ObjectKind::Chunk, b"abc");
+        let mut acc = ReceiveAccumulator::verified(
+            TransportContext::limited(3),
+            ObjectKind::Chunk,
+            &reference,
+        );
+        acc.push(b"abd").unwrap();
+        assert!(matches!(acc.finish(), Err(ReceiveFault::WrongDigest)));
+        let empty = ObjectRef::of(1, ObjectKind::Chunk, b"");
+        assert!(
+            ReceiveAccumulator::verified(TransportContext::limited(0), ObjectKind::Chunk, &empty,)
+                .finish()
+                .unwrap()
+                .is_empty()
+        );
     }
 }

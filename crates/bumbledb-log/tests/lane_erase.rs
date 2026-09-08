@@ -19,7 +19,7 @@ use lane_support::{HEAD_CAP, LIMITS, Mirror, delete_user, insert_user, op, work}
 fn try_verified(
     store: &MemStore,
     reference: &ObjectRef,
-) -> Result<bumbledb::work::ChargedBytes, bumbledb_log::store::ObjectError> {
+) -> Result<bumbledb_log::store::ReceivedBody, bumbledb_log::store::ObjectError> {
     get_verified(
         store,
         "t",
@@ -91,10 +91,9 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
         .checkpoint
         .expect("ckpt");
     let current_bytes = try_verified(&store, &current_ref).expect("current manifest");
-    let current =
-        bumbledb_log::codec::decode_manifest(current_bytes.as_bytes(), ckpt_policy().stream)
-            .expect("decodes");
-    drop(current_bytes.into_owner());
+    let current = bumbledb_log::codec::decode_manifest(&current_bytes, ckpt_policy().stream)
+        .expect("decodes");
+    drop(current_bytes);
     assert_eq!(
         current.rows, 0,
         "the current logical state excludes the value"
@@ -102,9 +101,9 @@ fn erase01_fact_deletion_is_a_command_and_history_retains_until_release() {
     // The retained root still holds the old state until explicit release.
     let old_ref = pinned.recovery.checkpoint.expect("pinned ckpt");
     let old_bytes = try_verified(&store, &old_ref).expect("old manifest");
-    let old = bumbledb_log::codec::decode_manifest(old_bytes.as_bytes(), ckpt_policy().stream)
-        .expect("decodes");
-    drop(old_bytes.into_owner());
+    let old =
+        bumbledb_log::codec::decode_manifest(&old_bytes, ckpt_policy().stream).expect("decodes");
+    drop(old_bytes);
     assert_eq!(
         old.rows, 1,
         "retained history intentionally keeps the value"

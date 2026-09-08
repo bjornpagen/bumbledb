@@ -1,29 +1,31 @@
 use super::{Bindings, EitherSink};
 
 use crate::exec::run::Sink;
-use crate::exec::sink::{FindSpec, SinkBudget};
+use crate::exec::sink::FindSpec;
 
 impl EitherSink {
-    /// Install this execution's distinct-state allowance (the main sink
-    /// and interior stage sinks alike: past the RAM allowance the state
-    /// continues in the one scratch map; the derived-tuples budget still
-    /// judges stage row counts at seal).
-    pub(super) fn begin_execution(&mut self, budget: Option<SinkBudget>) {
+    /// Install this execution's cooperative cancellation context.
+    pub(super) fn begin_execution(&mut self, work: Option<crate::work::WorkContext>) {
         match self {
-            Self::Computed(sink) => sink.inner.begin_execution(budget),
-            Self::Projection(sink) => sink.begin(budget),
-            Self::Aggregate(sink) => sink.begin(budget),
+            Self::Computed(sink) => sink.inner.begin_execution(work),
+            Self::Projection(sink) => sink.begin(work),
+            Self::Aggregate(sink) => sink.begin(work),
         }
     }
 
     pub(super) fn reset(&mut self) {
         match self {
-            Self::Computed(sink) => {
-                sink.error = None;
-                sink.inner.reset();
-            }
+            Self::Computed(sink) => sink.reset(),
             Self::Projection(sink) => sink.reset(),
             Self::Aggregate(sink) => sink.reset(),
+        }
+    }
+
+    pub(super) fn release_memory(&mut self) {
+        match self {
+            Self::Computed(sink) => sink.release_memory(),
+            Self::Projection(sink) => sink.release_memory(),
+            Self::Aggregate(sink) => sink.release_memory(),
         }
     }
 
@@ -73,6 +75,14 @@ impl EitherSink {
 }
 
 impl Sink for EitherSink {
+    fn retains_binding_slot(&self, slot: usize) -> bool {
+        match self {
+            Self::Computed(sink) => sink.retains_binding_slot(slot),
+            Self::Projection(sink) => sink.retains_binding_slot(slot),
+            Self::Aggregate(sink) => sink.retains_binding_slot(slot),
+        }
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> crate::exec::run::Flow {
         let flow = match self {
             Self::Computed(sink) => sink.emit(bindings),

@@ -2,10 +2,10 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Cause, Effect, Exit, Fiber, Layer, ManagedRuntime } from "effect"
 import { native } from "#native.ts"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
+import type { NativeRuntimeOptions } from "#runtime.ts"
 import { finalizeClose, hashChunk, NativeRuntime, nativeOperation } from "#runtime.ts"
-import { CloseFailure, DbError, runtimeErrorCodes } from "#runtime-errors.ts"
-import type { CloseWire, OptionsWire, PolicyWire, RuntimeHandle } from "#runtime-native.ts"
+import { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
+import type { CloseWire, OptionsWire, RuntimeHandle } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
 
 const configuration: NativeRuntimeOptions = {
@@ -14,60 +14,40 @@ const configuration: NativeRuntimeOptions = {
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 32,
-	inputBytes: 8_000_000n,
-	workingBytes: 8_000_000n,
-	scratchBytes: 0n,
-	resultBytes: 4096n,
-	chunkBytes: 1_000_000n,
 	cleanupTimeout: "1 second"
 }
 const wire: OptionsWire = { ...configuration, cleanupTimeoutMs: 1000 }
-const work: ExecutionPolicy = {
-	inputBytes: 1_000_000n,
-	workingBytes: 1_000_000n,
-	scratchBytes: 0n,
-	resultBytes: 32n,
-	rows: 0n,
-	workUnits: 1_000_000n,
-	timeout: "5 seconds"
-}
-const policy: PolicyWire = { ...work, timeoutMs: 5000 }
-const inspectWork: ExecutionPolicy = {
-	inputBytes: 0n,
-	workingBytes: 0n,
-	scratchBytes: 0n,
-	resultBytes: 0n,
-	rows: 0n,
-	workUnits: 1n,
-	timeout: "5 seconds"
-}
-
 const close = (handle: RuntimeHandle) =>
 	new Promise<CloseWire>((resolve) => runtimeNative.runtimeClose(handle, resolve))
 
-test("native runtime error roster is complete and structured reasons preserve exact counters", async () => {
+test("native error roster matches; structured backpressure preserves exact counters", async () => {
 	assert.deepEqual(runtimeNative.runtimeErrorCodes(), runtimeErrorCodes)
-	const runtime = ManagedRuntime.make(NativeRuntime.layer(configuration))
+	const exact = (1n << 63n) + 1n
+	const error = dbError("test.handles", {
+		_tag: "ResourceLimit",
+		dimension: "nativeHandleCount",
+		used: exact,
+		requested: 1n,
+		limit: exact
+	})
+	assert.deepEqual(error.reason, {
+		_tag: "ResourceLimit",
+		dimension: "nativeHandleCount",
+		used: exact,
+		requested: 1n,
+		limit: exact
+	})
+	const recovered = Effect.fail(error).pipe(
+		Effect.catchReason("DbError", "ResourceLimit", (reason) => Effect.succeed(reason.limit))
+	)
+	assert.equal(await Effect.runPromise(recovered), exact)
+	const runtime = ManagedRuntime.make(NativeRuntime.layer({ workers: 0 }))
 	try {
-		const exit = await runtime.runPromiseExit(hashChunk(new Uint8Array(10), { ...work, workingBytes: 9n }))
-		assert.equal(exit._tag, "Failure")
-		if (exit._tag !== "Failure") return
+		const exit = await runtime.runPromiseExit(NativeRuntime)
+		assert.ok(Exit.isFailure(exit))
 		const reason = exit.cause.reasons.find(Cause.isFailReason)
-		assert.ok(reason)
-		assert.ok(reason.error instanceof DbError)
-		assert.deepEqual(reason.error.reason, {
-			_tag: "ResourceLimit",
-			dimension: "workingBytes",
-			used: 0n,
-			requested: 10n,
-			limit: 9n
-		})
-		const recovered = hashChunk(new Uint8Array(10), { ...work, workingBytes: 9n }).pipe(
-			Effect.catchReason("DbError", "ResourceLimit", (reason) => Effect.succeed(reason.limit))
-		)
-		// catchReason retains DbError in E in the pinned RC; don't erase it.
-		const typed: Effect.Effect<Uint8Array | bigint, DbError, NativeRuntime> = recovered
-		assert.equal(await runtime.runPromise(typed), 9n)
+		assert.ok(reason?.error instanceof DbError)
+		assert.equal(reason.error.code, "InvalidArgument")
 	} finally {
 		await Effect.runPromise(runtime.disposeEffect)
 	}
@@ -76,7 +56,7 @@ test("native runtime error roster is complete and structured reasons preserve ex
 test("layer and hash effects are lazy, repeatable and accept independently owned input", async () => {
 	const layer = NativeRuntime.layer(configuration)
 	const input = new Uint8Array([1, 2, 3])
-	const effect = hashChunk(input, work)
+	const effect = hashChunk(input)
 	// Merely constructing the layer/effect has not opened the singleton.
 	const proof = runtimeNative.runtimeOpen(wire)
 	assert.equal((await close(proof)).kind, "closed")
@@ -91,11 +71,11 @@ test("layer and hash effects are lazy, repeatable and accept independently owned
 		assert.notDeepEqual(first, second)
 		const inspection = await runtime.runPromise(
 			Effect.gen(function* () {
-				return yield* (yield* NativeRuntime).inspect(inspectWork)
+				return yield* (yield* NativeRuntime).inspect()
 			})
 		)
 		assert.equal(inspection.retained, 0n)
-		assert.equal(inspection.workingBytes, 0n)
+		assert.equal(inspection.active, 0n)
 	} finally {
 		await Effect.runPromise(runtime.disposeEffect)
 	}
@@ -124,6 +104,30 @@ test("one reused Layer shares the runtime, independent layers refuse", async () 
 	}
 })
 
+test("native admission bounds outstanding jobs and releases their slots on take", async () => {
+	const handle = runtimeNative.runtimeOpen(wire)
+	try {
+		const operations = []
+		// Outstanding operations include the worker slots plus the queue.
+		// Wait for each completion, retaining outputs so queue timing is irrelevant.
+		for (let byte = 0; byte < 10; byte++) {
+			const input = new Uint8Array([byte])
+			const ready = Promise.withResolvers<void>()
+			const operation = runtimeNative.runtimeHash(handle, input, ready.resolve)
+			await ready.promise
+			operations.push({ operation, input })
+		}
+		assert.equal(runtimeNative.runtimeInspect(handle).retained, 10n)
+		assert.throws(() => runtimeNative.runtimeReady(handle, () => {}), { _tag: "QueueFull" })
+		for (const { operation, input } of operations) {
+			assert.deepEqual(runtimeNative.runtimeTake(operation), native.blake3Hash(input))
+		}
+		assert.equal(runtimeNative.runtimeInspect(handle).retained, 0n)
+	} finally {
+		assert.equal((await close(handle)).kind, "closed")
+	}
+})
+
 test("native ownership rejects shared, detached and forged-buffer typed arrays before reading", async () => {
 	const handle = runtimeNative.runtimeOpen(wire)
 	try {
@@ -132,7 +136,7 @@ test("native ownership rejects shared, detached and forged-buffer typed arrays b
 		const detached = new Uint8Array(8)
 		structuredClone(detached.buffer, { transfer: [detached.buffer] })
 		for (const input of [shared, detached]) {
-			assert.throws(() => runtimeNative.runtimeHash(handle, policy, input, () => assert.fail("invalid input ran")), {
+			assert.throws(() => runtimeNative.runtimeHash(handle, input, () => assert.fail("invalid input ran")), {
 				_tag: "InvalidArgument"
 			})
 		}
@@ -142,25 +146,16 @@ test("native ownership rejects shared, detached and forged-buffer typed arrays b
 	}
 })
 
-test("native finite integer/chunk checks reject without reserving work", async () => {
+test("scheduling defaults work, invalid counts refuse, and hash inputs have no chunk quota", async () => {
 	for (const workers of [-1, 0, 1.5, Number.NaN, 0x100000000]) {
-		assert.throws(() => runtimeNative.runtimeOpen({ ...wire, workers }), { _tag: "InvalidArgument" })
+		assert.throws(() => runtimeNative.runtimeOpen({ workers }), { _tag: "InvalidArgument" })
 	}
-	const handle = runtimeNative.runtimeOpen(wire)
+	const runtime = ManagedRuntime.make(NativeRuntime.layer())
 	try {
-		for (const value of [-1n, 1n << 64n]) {
-			assert.throws(
-				() => runtimeNative.runtimeHash(handle, { ...policy, workUnits: value }, new Uint8Array(), () => {}),
-				{ _tag: "InvalidArgument" }
-			)
-		}
-		assert.throws(() => runtimeNative.runtimeHash(handle, policy, new Uint8Array(1_000_001), () => {}), {
-			_tag: "ResourceLimit",
-			dimension: "chunkBytes"
-		})
-		assert.equal(runtimeNative.runtimeInspect(handle).retained, 0n)
+		const input = new Uint8Array(1_000_001).fill(17)
+		assert.deepEqual(await runtime.runPromise(hashChunk(input)), native.blake3Hash(input))
 	} finally {
-		assert.equal((await close(handle)).kind, "closed")
+		await Effect.runPromise(runtime.disposeEffect)
 	}
 })
 
@@ -195,7 +190,7 @@ test("Effect interruption cancels and joins native work before the fiber finishe
 			const effect = nativeOperation(
 				"interruption-test",
 				(callback) => {
-					const lease = runtimeNative.runtimeHash(handle, policy, input, callback)
+					const lease = runtimeNative.runtimeHash(handle, input, callback)
 					started.resolve()
 					return lease
 				},
@@ -208,7 +203,7 @@ test("Effect interruption cancels and joins native work before the fiber finishe
 			assert.equal(Exit.hasInterrupts(exit), true)
 			const inspection = runtimeNative.runtimeInspect(handle)
 			assert.equal(inspection.retained, 0n)
-			assert.equal(inspection.workingBytes, 0n)
+			assert.equal(inspection.active, 0n)
 		}
 	} finally {
 		assert.equal((await close(handle)).kind, "closed")
@@ -221,10 +216,10 @@ test("scope close reclaims workers with wrappers retained and permits a successo
 		const runtime = ManagedRuntime.make(NativeRuntime.layer(configuration))
 		const service = await runtime.runPromise(NativeRuntime)
 		retained.push(service)
-		await runtime.runPromise(hashChunk(new Uint8Array([count]), work))
+		await runtime.runPromise(hashChunk(new Uint8Array([count])))
 		await Effect.runPromise(runtime.disposeEffect)
 		assert.equal((await Effect.runPromise(service.close())).kind, "closed")
-		const exit = await Effect.runPromiseExit(service.inspect(inspectWork))
+		const exit = await Effect.runPromiseExit(service.inspect())
 		assert.equal(exit._tag, "Failure")
 	}
 	assert.equal(retained.length, 30)
@@ -246,11 +241,7 @@ test("incomplete finalization remains a structured defect alongside a known resu
 							retained: 1n,
 							owners: 0n,
 							databases: 0n,
-							natives: 0n,
-							inputBytes: 1n,
-							workingBytes: 1n,
-							scratchBytes: 0n,
-							resultBytes: 0n
+							natives: 0n
 						}
 					})
 				)
@@ -273,11 +264,7 @@ test("callback interrupt cleanup joins without replacing the interrupt Cause", a
 		retained: 1n,
 		owners: 0n,
 		databases: 0n,
-		natives: 1n,
-		inputBytes: 0n,
-		workingBytes: 0n,
-		scratchBytes: 0n,
-		resultBytes: 0n
+		natives: 1n
 	}
 	const report = { kind: "incomplete" as const, outstanding }
 	const started = Promise.withResolvers<void>()

@@ -199,13 +199,13 @@ fn shared_batch_reductions_follow_selection_and_layout_changes() {
         i64_to_word(5),
         f(-1e16),
     ];
-    for ram_bytes in [usize::MAX, 0] {
+    for disk in [false, true] {
         let mut sink = AggregateSink::new(&finds, 3);
         let mut reference = AggregateSink::new(&finds, 3);
-        sink.begin(Some(SinkBudget {
-            work: crate::api::db::test_operation().unwrap(),
-            ram_bytes,
-        }));
+        sink.begin(Some(crate::api::db::test_operation()));
+        if disk {
+            sink.spill_groups().unwrap();
+        }
         let mut feed = |key_slots: &[usize], keys: &[u64], survivors: &[u32], outer: [u64; 3]| {
             feed_batch_and_reference(
                 &mut sink,
@@ -374,20 +374,20 @@ fn constant_group_batches_fold_once_per_run() {
     };
 
     let mut reference: Option<Vec<Vec<u64>>> = None;
-    for (batch, distinct, ram_bytes) in [
-        (1usize, true, usize::MAX),
-        (7, true, usize::MAX),
-        (128, true, usize::MAX),
-        (128, false, usize::MAX),
-        (128, true, 0),
+    for (batch, distinct, disk) in [
+        (1usize, true, false),
+        (7, true, false),
+        (128, true, false),
+        (128, false, false),
+        (128, true, true),
     ] {
         let mut colts = colts_for(&plan, &views);
         let mut bindings = crate::exec::run::Bindings::new(plan.slot_count());
         let mut sink = aggregate_sink(&plan, finds(&plan), distinct);
-        sink.begin(Some(SinkBudget {
-            work: crate::api::db::test_operation().unwrap(),
-            ram_bytes,
-        }));
+        sink.begin(Some(crate::api::db::test_operation()));
+        if disk {
+            sink.spill_groups().unwrap();
+        }
         let mut execute = |sink: &mut AggregateSink| {
             Executor::with_batch_size(&plan, batch)
                 .execute(
@@ -909,7 +909,7 @@ fn group_state_spill_matches_resident_bits_before_during_and_after_first_group()
             signed: true,
         }),
     ];
-    let feed = |sink: &mut AggregateSink| {
+    let feed = |sink: &mut AggregateSink, partition: Option<usize>| {
         let mut bindings = Bindings::new(3);
         // Catastrophic-cancellation floats across interleaved groups, so
         // flush partitions cut through every group repeatedly.
@@ -927,43 +927,38 @@ fn group_state_spill_matches_resident_bits_before_during_and_after_first_group()
             );
             bindings.set(2, i64_to_word(i.cast_signed() - 48));
             sink.emit(&bindings);
+            if partition.is_some_and(|rows| (usize::try_from(i).unwrap() + 1).is_multiple_of(rows))
+            {
+                sink.spill_groups().unwrap();
+            }
         }
     };
-    let work = crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("unbounded ledger");
+    let work = crate::work::WorkContext::new();
     let mut resident = AggregateSink::new(finds.clone(), 3);
-    feed(&mut resident);
+    feed(&mut resident, None);
     assert!(!resident.group_state_spilled());
     let mut expected = resident.into_answers().expect("resident");
     expected.sort_unstable();
     assert_eq!(expected.len(), 5, "five groups");
 
-    // Zero / tiny / late allowances: before, during, after the first group.
-    for ram_bytes in [0usize, 700, 2000] {
+    // Explicit partitions cut across groups at different points.
+    for partition in [1usize, 7, 29] {
         let mut spilled = AggregateSink::new(finds.clone(), 3);
-        spilled.begin(Some(crate::exec::sink::SinkBudget {
-            work: work.clone(),
-            ram_bytes,
-        }));
-        feed(&mut spilled);
+        spilled.begin(Some(work.clone()));
+        feed(&mut spilled, Some(partition));
         assert!(
             spilled.group_state_spilled(),
-            "allowance {ram_bytes} forces the transition"
+            "partition {partition} forces the transition"
         );
         let mut got = spilled.into_answers().expect("spilled");
         got.sort_unstable();
-        assert_eq!(got, expected, "allowance {ram_bytes}: exact word parity");
+        assert_eq!(got, expected, "partition {partition}: exact word parity");
     }
 
-    // A budget that is never crossed stays resident — the spill is a
-    // pressure response, not a mode.
+    // Ordinary execution remains resident for this representable fixture.
     let mut roomy = AggregateSink::new(finds, 3);
-    roomy.begin(Some(crate::exec::sink::SinkBudget {
-        work,
-        ram_bytes: 1 << 20,
-    }));
-    feed(&mut roomy);
+    roomy.begin(Some(work));
+    feed(&mut roomy, None);
     assert!(!roomy.group_state_spilled());
     let mut got = roomy.into_answers().expect("roomy");
     got.sort_unstable();
@@ -991,7 +986,7 @@ fn pack_group_spill_streams_the_same_maximal_segments() {
         (1, 30, 40), // duplicate claim from a distinct binding
         (3, 7, 8),
     ];
-    let feed = |sink: &mut AggregateSink| {
+    let feed = |sink: &mut AggregateSink, partition: Option<usize>| {
         let mut bindings = Bindings::new(4);
         for (i, (group, start, end)) in claims.iter().enumerate() {
             bindings.reset();
@@ -1003,11 +998,14 @@ fn pack_group_spill_streams_the_same_maximal_segments() {
             bindings.set(2, *end);
             bindings.set(3, i as u64);
             sink.emit(&bindings);
+            if partition.is_some_and(|rows| (i + 1).is_multiple_of(rows)) {
+                sink.spill_groups().unwrap();
+            }
         }
     };
     // Pack claims sit in slots (1, 2): slot 1 carries start, slot 1+1 end.
     let mut resident = AggregateSink::new(finds.clone(), 4);
-    feed(&mut resident);
+    feed(&mut resident, None);
     let mut expected = resident.into_answers().expect("resident");
     expected.sort_unstable();
     assert_eq!(
@@ -1021,20 +1019,15 @@ fn pack_group_spill_streams_the_same_maximal_segments() {
         ]
     );
 
-    let work = crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("unbounded ledger");
-    for ram_bytes in [0usize, 96] {
+    let work = crate::work::WorkContext::new();
+    for partition in [1usize, 3] {
         let mut spilled = AggregateSink::new(finds.clone(), 4);
-        spilled.begin(Some(crate::exec::sink::SinkBudget {
-            work: work.clone(),
-            ram_bytes,
-        }));
-        feed(&mut spilled);
-        assert!(spilled.group_state_spilled(), "allowance {ram_bytes}");
+        spilled.begin(Some(work.clone()));
+        feed(&mut spilled, Some(partition));
+        assert!(spilled.group_state_spilled(), "partition {partition}");
         let mut got = spilled.into_answers().expect("spilled");
         got.sort_unstable();
-        assert_eq!(got, expected, "allowance {ram_bytes}");
+        assert_eq!(got, expected, "partition {partition}");
     }
 }
 
@@ -1049,23 +1042,21 @@ fn spilled_partition_merge_refuses_cardinality_overflow() {
         FindSpec::Var { slot: 0, width: 1 },
         FindSpec::Agg(AggSpec::Count),
     ];
-    let work = crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("unbounded ledger");
+    let work = crate::work::WorkContext::new();
     let mut sink = AggregateSink::new(finds, 2);
-    sink.begin(Some(crate::exec::sink::SinkBudget { work, ram_bytes: 0 }));
+    sink.begin(Some(work));
     let mut bindings = Bindings::new(2);
     bindings.set(0, 7);
     bindings.set(1, 1);
     sink.emit(&bindings); // group 7 folds in RAM
+    sink.spill_groups().unwrap(); // retain count one in scratch
     bindings.set(1, 2);
-    sink.emit(&bindings); // entry flush moves count 1 to scratch; folds again
+    sink.emit(&bindings); // fresh RAM partition counts the second binding
     assert!(sink.group_state_spilled());
     // Synthetic boundary (no impossible allocation): the next flush merges
     // RAM count u64::MAX into the spilled count 1.
     sink.group_counts[0] = u64::MAX;
-    bindings.set(1, 3);
-    sink.emit(&bindings);
+
     let mut emitted = 0;
     let refused = sink.finalize_into(&mut Vec::new(), |_| {
         emitted += 1;
@@ -1085,11 +1076,10 @@ fn spilled_partition_merge_refuses_cardinality_overflow() {
     assert_eq!(sink.into_answers().unwrap(), vec![vec![9, 1]]);
 }
 
-/// Legal multi-word Pack group heads must spill under pressure — spill is
-/// not disabled for large groups. Ten words remain the narrow
+/// Legal multi-word Pack group heads survive a partition flush. Ten words remain the narrow
 /// (inline-key) regime; token tables start only past `MAX_INLINE_KEY`.
 #[test]
-fn wide_pack_group_heads_spill_under_a_zero_ram_allowance() {
+fn wide_pack_group_heads_survive_explicit_partition_flush() {
     use crate::exec::run::{Bindings, Sink as _};
 
     // Ten u64 group-key words plus interval endpoints still fit inline.
@@ -1097,11 +1087,9 @@ fn wide_pack_group_heads_spill_under_a_zero_ram_allowance() {
         FindSpec::Var { slot: 0, width: 10 },
         FindSpec::Pack { slot: 10 },
     ];
-    let work = crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("unbounded ledger");
+    let work = crate::work::WorkContext::new();
     let mut sink = AggregateSink::new(finds, 12);
-    sink.begin(Some(crate::exec::sink::SinkBudget { work, ram_bytes: 0 }));
+    sink.begin(Some(work));
     let mut bindings = Bindings::new(12);
     for word in 0..10 {
         bindings.set(word, word as u64 + 1);
@@ -1109,6 +1097,7 @@ fn wide_pack_group_heads_spill_under_a_zero_ram_allowance() {
     bindings.set(10, 5);
     bindings.set(11, 20);
     sink.emit(&bindings);
+    sink.spill_groups().unwrap();
     assert!(
         sink.group_state_spilled(),
         "wide Pack must not opt out of spill"

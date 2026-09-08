@@ -80,25 +80,21 @@ fn growth_survives_reopen_and_the_populated_file_is_reported_distinctly() {
 }
 
 #[test]
-fn a_pinned_reader_blocks_growth_as_a_typed_refusal_with_age() {
+fn cancelling_reader_blocked_growth_preserves_diagnostics_and_restores_admission() {
     let (_dir, path) = store_dir("resize-blocked");
     let store = Store::create(&path, &schema(), tiny_map())
         .expect("create")
         .0;
     let pinned = store.snapshot(&work()).expect("pinned reader");
     std::thread::sleep(std::time::Duration::from_millis(5));
-    match store.grow(&short_work(std::time::Duration::from_millis(50)), None) {
-        Err(StoreError::ResizeBlockedByReaders {
-            live_transactions,
-            oldest_age,
-        }) => {
-            assert_eq!(live_transactions, 1);
-            let age = oldest_age.expect("oldest age reported");
-            assert!(age >= std::time::Duration::from_millis(5));
-        }
-        other => panic!("expected ResizeBlockedByReaders, got {other:?}"),
-    }
-    // The refusal restored admission: the pinned snapshot still reads and
+    assert!(matches!(
+        store.grow(&cancel_after(std::time::Duration::from_millis(50)), None),
+        Err(StoreError::Work(crate::WorkError::Cancelled))
+    ));
+    let live = store.inner.gate.live();
+    assert_eq!(live.live, 1);
+    assert!(live.oldest_age.unwrap() >= std::time::Duration::from_millis(5));
+    // Cancellation restored admission: the pinned snapshot still reads and
     // new snapshots are admitted.
     assert_eq!(pinned.row_count(NOTE).expect("pinned reads"), 0);
     drop(store.snapshot(&work()).expect("admission restored"));
@@ -298,12 +294,13 @@ fn a_callers_own_pinned_reader_blocks_same_thread_growth() {
         .expect("create")
         .0;
     let pinned = store.snapshot(&work()).expect("own pin");
-    match store.grow(&short_work(std::time::Duration::from_millis(50)), None) {
-        Err(StoreError::ResizeBlockedByReaders {
-            live_transactions, ..
-        }) => assert_eq!(live_transactions, 1),
-        other => panic!("expected ResizeBlockedByReaders, got {other:?}"),
-    }
+    assert!(matches!(
+        store.grow(&cancel_after(std::time::Duration::from_millis(50)), None),
+        Err(StoreError::Work(crate::WorkError::Cancelled))
+    ));
+    assert_eq!(store.inner.gate.live().live, 1);
+    assert_eq!(pinned.row_count(NOTE).unwrap(), 0);
+    drop(store.snapshot(&work()).expect("admission restored"));
     drop(pinned);
     store.grow(&work(), None).expect("grow after own pin drops");
 }

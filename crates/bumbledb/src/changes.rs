@@ -1,11 +1,9 @@
 //! One immutable schema-bound final-state change, shared by core and history.
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::canonical::{CanonicalRow, RowError};
 use crate::schema::fingerprint::fingerprint;
-use crate::work::{ByteKind, ByteReservation};
 use crate::{RelationId, Schema, SchemaFingerprint, Value, WorkContext, WorkError};
 
 const MAGIC: &[u8; 8] = b"BDBCSET\0";
@@ -57,36 +55,15 @@ impl std::error::Error for ChangeError {}
 struct Payload {
     bytes: Vec<u8>,
     schema: SchemaFingerprint,
-    _reservation: ByteReservation,
 }
 
-/// Clones retain the same sealed native bytes and their original memory charge.
+/// Clones share the same sealed native bytes.
 #[derive(Debug, Clone)]
 pub struct ChangeSet(Arc<Payload>);
 
 impl ChangeSet {
-    /// Seal the embedded writer's ordered net delta without serializing a
-    /// temporary wire payload and parsing it back. The map proves unique
-    /// canonical ordering, but its raw rows still cross strict shape
-    /// validation here; only checked bytes enter the sealed owner.
-    pub(crate) fn from_ordered_rows(
-        schema: &Schema,
-        pending: &BTreeMap<(RelationId, Box<[u8]>), ChangeKind>,
-        work: &WorkContext,
-    ) -> Result<Self, ChangeError> {
-        Self::from_ordered_records(
-            schema,
-            pending.iter().map(|((relation, row), kind)| ChangeRef {
-                relation: *relation,
-                kind: *kind,
-                row,
-            }),
-            work,
-        )
-    }
-
-    /// Callers supply a unique relation/full-row ordered traversal. Input
-    /// owners remain charged while the sealed payload is allocated/copied.
+    /// Callers supply a unique relation/full-row ordered traversal. Borrow
+    /// those rows directly; only the final sealed payload is allocated.
     pub(crate) fn from_ordered_records<'a>(
         schema: &Schema,
         records: impl Iterator<Item = ChangeRef<'a>> + Clone,
@@ -95,14 +72,16 @@ impl ChangeSet {
         let (count, size) = records
             .clone()
             .try_fold((0u64, HEADER), |(count, size), record| {
+                work.checkpoint()?;
+                let count = count.checked_add(1).ok_or(ChangeError::LengthOverflow)?;
                 size.checked_add(RECORD)
                     .and_then(|size| size.checked_add(record.row.len()))
-                    .map(|size| (count + 1, size))
+                    .map(|size| (count, size))
                     .ok_or(ChangeError::LengthOverflow)
             })?;
-        work.input(size as u64)?;
+        work.checkpoint()?;
         for record in records.clone() {
-            work.rows(1)?;
+            work.checkpoint()?;
             crate::canonical::validate(
                 writable_fields(schema, record.relation)?,
                 record.row,
@@ -118,7 +97,6 @@ impl ChangeSet {
             schema,
             work,
             pending: Ok(Vec::new()),
-            capacity_charge: None,
         }
     }
     #[must_use]
@@ -150,13 +128,14 @@ impl ChangeSet {
     /// canonical bytes, at most one action per row. Signed/hashed input is
     /// rejected rather than silently normalized.
     /// # Errors
-    /// Rejects malformed, foreign-schema, noncanonical or over-budget data.
+    /// Rejects malformed, foreign-schema or noncanonical data, cancellation,
+    /// or an unallocatable capacity.
     #[expect(
         clippy::missing_panics_doc,
         reason = "header and record widths are checked before fixed-array conversions"
     )]
     pub fn parse(schema: &Schema, bytes: &[u8], work: &WorkContext) -> Result<Self, ChangeError> {
-        work.input(bytes.len() as u64)?;
+        work.checkpoint()?;
         if bytes.len() < HEADER {
             return Err(ChangeError::Truncated);
         }
@@ -177,8 +156,7 @@ impl ChangeSet {
         }
         let mut previous: Option<(RelationId, &[u8])> = None;
         for _ in 0..count {
-            work.rows(1)?;
-            work.step(1)?;
+            work.checkpoint()?;
             let record = take(&mut rest, RECORD)?;
             if record[0] > 1 {
                 return Err(ChangeError::InvalidKind);
@@ -203,7 +181,6 @@ impl ChangeSet {
         if !rest.is_empty() {
             return Err(ChangeError::TrailingBytes);
         }
-        let reservation = reserve_payload(work, bytes.len())?;
         let mut owned = Vec::new();
         owned
             .try_reserve_exact(bytes.len())
@@ -212,13 +189,13 @@ impl ChangeSet {
         Ok(Self(Arc::new(Payload {
             bytes: owned,
             schema: identity,
-            _reservation: reservation,
         })))
     }
 }
 
 /// Bridge-facing view of one accepted change record. Not embedding API.
 #[doc(hidden)]
+#[derive(Clone, Copy)]
 pub struct ChangeRef<'a> {
     pub relation: RelationId,
     pub kind: ChangeKind,
@@ -229,7 +206,7 @@ impl ChangeSet {
     /// Bridge-facing record walk (the one canonical decoder rides it).
     /// Not embedding API.
     #[doc(hidden)]
-    pub fn records(&self) -> impl Iterator<Item = ChangeRef<'_>> {
+    pub fn records(&self) -> impl Iterator<Item = ChangeRef<'_>> + Clone {
         let mut rest = &self.0.bytes[HEADER..];
         std::iter::from_fn(move || {
             if rest.is_empty() {
@@ -270,17 +247,16 @@ pub struct ChangeSetBuilder<'s> {
     schema: &'s Schema,
     work: WorkContext,
     pending: Result<Vec<Pending>, ChangeError>,
-    capacity_charge: Option<ByteReservation>,
 }
 
 impl ChangeSetBuilder<'_> {
     /// # Errors
-    /// Rejects unknown/closed relations, wrong shapes and exhausted work.
+    /// Rejects unknown/closed relations, wrong shapes, or cancellation.
     pub fn insert(&mut self, relation: RelationId, values: &[Value]) -> Result<(), ChangeError> {
         self.ingest(relation, ChangeKind::Add, values)
     }
     /// # Errors
-    /// Rejects unknown/closed relations, wrong shapes and exhausted work.
+    /// Rejects unknown/closed relations, wrong shapes, or cancellation.
     pub fn delete(&mut self, relation: RelationId, values: &[Value]) -> Result<(), ChangeError> {
         self.ingest(relation, ChangeKind::Remove, values)
     }
@@ -294,7 +270,6 @@ impl ChangeSetBuilder<'_> {
         let result = self.push(relation, kind, values);
         if let Err(error) = result {
             self.pending = Err(error);
-            self.capacity_charge = None;
         }
         result
     }
@@ -307,22 +282,9 @@ impl ChangeSetBuilder<'_> {
         let pending = self.pending.as_mut().map_err(|error| *error)?;
         let row =
             CanonicalRow::encode(writable_fields(self.schema, relation)?, values, &self.work)?;
-        if pending.len() == pending.capacity() {
-            let capacity = pending
-                .capacity()
-                .max(1)
-                .checked_mul(2)
-                .ok_or(ChangeError::LengthOverflow)?;
-            let bytes = capacity
-                .checked_mul(std::mem::size_of::<Pending>())
-                .ok_or(ChangeError::LengthOverflow)?;
-            // Old capacity stays charged during the allocation/transfer.
-            let charge = self.work.reserve(ByteKind::Working, bytes as u64)?;
-            pending
-                .try_reserve_exact(capacity - pending.len())
-                .map_err(|_| ChangeError::Allocation)?;
-            self.capacity_charge = Some(charge);
-        }
+        pending
+            .try_reserve(1)
+            .map_err(|_| ChangeError::Allocation)?;
         pending.push(Pending {
             relation,
             kind,
@@ -334,13 +296,14 @@ impl ChangeSetBuilder<'_> {
     /// Add wins over remove for the identical fact in this one command. Across
     /// separately ordered commands this is ordinary set mutation, not a CRDT.
     /// # Errors
-    /// Refuses exhausted work/memory without returning a partial change set.
+    /// Refuses cancellation or allocation failure without returning a partial change set.
     pub fn finish(self) -> Result<ChangeSet, ChangeError> {
+        self.work.checkpoint()?;
         let mut pending = self.pending?;
         sort(&mut pending, &self.work)?;
         let mut unique = 0;
         for read in 0..pending.len() {
-            self.work.step(1)?;
+            self.work.checkpoint()?;
             let duplicate = unique > 0
                 && compare_fact(&pending[unique - 1], &pending[read], &self.work)?
                     == Ordering::Equal;
@@ -378,7 +341,7 @@ fn seal_records<'a>(
     records: impl Iterator<Item = ChangeRef<'a>>,
     work: &WorkContext,
 ) -> Result<ChangeSet, ChangeError> {
-    let reservation = reserve_payload(work, size)?;
+    work.checkpoint()?;
     let mut bytes = Vec::new();
     bytes
         .try_reserve_exact(size)
@@ -388,7 +351,7 @@ fn seal_records<'a>(
     bytes.extend_from_slice(&identity.0);
     bytes.extend_from_slice(&count.to_be_bytes());
     for record in records {
-        work.step(1)?;
+        work.checkpoint()?;
         bytes.push(u8::from(record.kind == ChangeKind::Add));
         bytes.extend_from_slice(&record.relation.0.to_be_bytes());
         bytes.extend_from_slice(&(record.row.len() as u64).to_be_bytes());
@@ -398,16 +361,9 @@ fn seal_records<'a>(
     Ok(ChangeSet(Arc::new(Payload {
         bytes,
         schema: identity,
-        _reservation: reservation,
     })))
 }
 
-fn reserve_payload(work: &WorkContext, bytes: usize) -> Result<ByteReservation, ChangeError> {
-    let bytes = bytes
-        .checked_add(std::mem::size_of::<Payload>())
-        .ok_or(ChangeError::LengthOverflow)?;
-    Ok(work.reserve(ByteKind::Working, bytes as u64)?)
-}
 fn writable_fields(
     schema: &Schema,
     relation: RelationId,
@@ -427,14 +383,14 @@ fn take<'a>(rest: &mut &'a [u8], len: usize) -> Result<&'a [u8], ChangeError> {
 }
 fn copy(out: &mut Vec<u8>, bytes: &[u8], work: &WorkContext) -> Result<(), ChangeError> {
     for chunk in bytes.chunks(BYTE_QUANTUM) {
-        work.step(chunk.len() as u64)?;
+        work.checkpoint()?;
         out.extend_from_slice(chunk);
     }
     Ok(())
 }
 fn compare_bytes(left: &[u8], right: &[u8], work: &WorkContext) -> Result<Ordering, ChangeError> {
     for (a, b) in left.chunks(BYTE_QUANTUM).zip(right.chunks(BYTE_QUANTUM)) {
-        work.step(a.len().min(b.len()) as u64)?;
+        work.checkpoint()?;
         let order = a.cmp(b);
         if order != Ordering::Equal {
             return Ok(order);
@@ -445,14 +401,14 @@ fn compare_bytes(left: &[u8], right: &[u8], work: &WorkContext) -> Result<Orderi
 fn compare_fact(a: &Pending, b: &Pending, work: &WorkContext) -> Result<Ordering, ChangeError> {
     let relation = a.relation.cmp(&b.relation);
     if relation != Ordering::Equal {
-        work.step(1)?;
+        work.checkpoint()?;
         return Ok(relation);
     }
     compare_bytes(a.row.as_bytes(), b.row.as_bytes(), work)
 }
 
 // In-place heapsort permits fallible comparisons and bounded polling. An
-// infallible std sort callback cannot propagate exhaustion without unwinding.
+// infallible std sort callback cannot propagate cancellation without unwinding.
 fn sort(rows: &mut [Pending], work: &WorkContext) -> Result<(), ChangeError> {
     fn greater(a: &Pending, b: &Pending, work: &WorkContext) -> Result<bool, ChangeError> {
         Ok(compare_fact(a, b, work)?.then_with(|| {

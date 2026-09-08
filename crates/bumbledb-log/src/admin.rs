@@ -17,7 +17,7 @@
 use bumbledb::integration::{
     AttachmentChange, HostChanges, HostRecordChange, HostSealError, IntegrationError,
 };
-use bumbledb::{Db, ExecutionPolicy, WorkContext, WorkError};
+use bumbledb::{Db, WorkContext, WorkError};
 
 use crate::certainty::AdminCertainty;
 use crate::checkpointer::read_live_head;
@@ -200,18 +200,7 @@ impl From<IntegrationError> for AdminError {
 const CAS_ATTEMPTS: u32 = 16;
 
 pub(crate) fn internal_read_work() -> WorkContext {
-    use std::time::Duration;
-    ExecutionPolicy {
-        input_bytes: 64 * 1024 * 1024,
-        working_bytes: 64 * 1024 * 1024,
-        scratch_bytes: 64 * 1024 * 1024,
-        result_bytes: 64 * 1024 * 1024,
-        rows: 1_000_000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(3600),
-    }
-    .start()
-    .expect("internal read work")
+    WorkContext::new()
 }
 
 /// What a transition step decided against the exact observed head.

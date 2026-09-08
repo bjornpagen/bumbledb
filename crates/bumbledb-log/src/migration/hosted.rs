@@ -52,7 +52,7 @@ use crate::history::command::Limits;
 use crate::history::decision::{GenesisProvenance, GenesisRecord, genesis_stamp};
 use crate::history::{AccessMode, DatabaseIdentity, OperationId};
 use crate::manifest::{self, GcPhase, HeadRecord, RecoveryRoot};
-use crate::recovery::{begin_staged, fetch_charged_chunks, import_stream, settlement_failed};
+use crate::recovery::{begin_staged, import_stream, settlement_failed, verified_chunks};
 use crate::store::{
     BackendError, ObjectError, ObservedError, ReceiveLimits, ReceivedHead, ReceivingStore,
     TransportContext, get_verified, read_head_bounded,
@@ -479,7 +479,7 @@ where
     {
         ReceivedHead::Absent => Ok(None),
         ReceivedHead::Present { version, body } => {
-            let record = manifest::decode_head(body.as_bytes(), cap).map_err(LogError::from)?;
+            let record = manifest::decode_head(body.as_slice(), cap).map_err(LogError::from)?;
             Ok(Some((version, record)))
         }
     }
@@ -670,16 +670,16 @@ where
     let checkpoint = recovery
         .checkpoint
         .ok_or(MigrationError::Log(LogError::Corruption))?;
-    let charged = get_verified(
+    let received = get_verified(
         store,
         target_prefix,
         &checkpoint,
         TransportContext::new(work, ReceiveLimits::exact(checkpoint.length)),
     )
     .map_err(|error| MigrationError::Checkpoint(CheckpointError::Object(error)))?;
-    let ckpt =
-        codec::decode_manifest(charged.as_bytes(), policy.stream).map_err(MigrationError::Frame)?;
-    drop(charged.into_owner());
+    let ckpt = codec::decode_manifest(received.as_slice(), policy.stream)
+        .map_err(MigrationError::Frame)?;
+    drop(received);
     if ckpt.identity != expected.identity {
         return Err(MigrationError::TargetConflict);
     }
@@ -701,24 +701,17 @@ where
     }
     let staged = begin_staged(&scratch, expected.descriptor.clone(), work)
         .map_err(MigrationError::Hydration)?;
-    let owners = fetch_charged_chunks(store, target_prefix, &ckpt.chunks, work)
-        .map_err(MigrationError::Hydration)?;
     let mut keep = |_key: &[u8], _value: &[u8]| true;
     import_stream(
         &staged,
         &ckpt,
-        owners
-            .iter()
-            .map(|charged| Ok::<_, crate::recovery::RecoveryError>(charged.as_bytes())),
+        verified_chunks(store, target_prefix, &ckpt.chunks, work),
         &mut keep,
         None,
         policy.stream,
         work,
     )
     .map_err(MigrationError::Hydration)?;
-    for charged in owners {
-        drop(charged.into_owner());
-    }
 
     let control_bytes = encode_control(&ckpt.control_at_capture, cap).map_err(LogError::from)?;
     staged

@@ -7,7 +7,7 @@ mod sink;
 /// ancestor and leaf keys; compare contents, never allocation addresses.
 /// Separate scan/batch owners prevent either layout from poisoning the
 /// other. Both output lists are bounded by the fixed projection arity.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(super) struct ProjectionRoute {
     key_slots: Vec<usize>,
     keys: Vec<(usize, usize)>,
@@ -119,18 +119,55 @@ mod tests {
 
     #[test]
     fn generated_resident_rows_preserve_mixed_columns_order_boundaries_and_reuse() {
-        assert_generated_scans(&[usize::MAX]);
+        assert_generated_scans(&[false]);
     }
 
     #[test]
     fn generated_rows_preserve_mixed_columns_and_order_across_spill_and_reuse() {
-        assert_generated_scans(&[65, 0]);
+        assert_generated_scans(&[true]);
     }
 
-    fn assert_generated_scans(allowances: &[usize]) {
+    #[test]
+    fn scan_gather_grows_geometrically_within_one_window() {
         use crate::exec::colt::SuffixRun;
         use crate::exec::run::{LeafScan, ScanOffer};
-        use crate::exec::sink::SinkBudget;
+
+        let (colt, _) = generated_scan_case();
+        let mut bindings = Bindings::new(3);
+        bindings.set(0, 7);
+        let scan = LeafScan {
+            colt: &colt,
+            level: 1,
+            key_slots: &[1, 2],
+            bindings: &bindings,
+        };
+        let mut sink = ProjectionSink::new(vec![0, 2, 1]);
+        sink.prepare_scan(scan.key_slots);
+        let mut capacity = 0;
+        for round in 0..2 {
+            sink.reset();
+            assert_eq!(sink.begin_scan(&scan), ScanOffer::Open);
+            let mut growths = 0;
+            for len in 17..=256 {
+                sink.scan_run(&scan, SuffixRun::Identity { start: 0, len });
+                let next = sink.scan_rows.capacity();
+                if next != capacity {
+                    growths += 1;
+                    capacity = next;
+                }
+                assert!(capacity <= 256 * 3);
+            }
+            assert!(
+                growths <= if round == 0 { 5 } else { 0 },
+                "growths={growths}"
+            );
+            assert_eq!(sink.answers().count(), 256);
+        }
+    }
+
+    fn assert_generated_scans(representations: &[bool]) {
+        use crate::exec::colt::SuffixRun;
+        use crate::exec::run::{LeafScan, ScanOffer};
 
         let (colt, witness) = generated_scan_case();
         let crate::image::ColumnView::Bytes(flags) = colt.suffix_column(1, 0) else {
@@ -140,7 +177,7 @@ mod tests {
             panic!("word column")
         };
         let positions: Vec<u32> = (300..580).rev().collect();
-        for &allowance in allowances {
+        for &disk in representations {
             let mut dense = ProjectionSink::new(vec![0, 2, 1]);
             dense.elide_output_hashing(witness);
             let mut hashed = ProjectionSink::new(vec![0, 2, 1]);
@@ -165,10 +202,10 @@ mod tests {
                 };
                 for sink in [&mut dense, &mut hashed] {
                     sink.reset();
-                    sink.begin(Some(SinkBudget {
-                        work: crate::api::db::test_operation().unwrap(),
-                        ram_bytes: allowance,
-                    }));
+                    sink.begin(Some(crate::api::db::test_operation()));
+                    if disk {
+                        sink.seen.spill().unwrap();
+                    }
                     sink.prepare_scan(scan.key_slots);
                     assert_eq!(sink.begin_scan(&scan), ScanOffer::Open);
                     sink.scan_run(&scan, SuffixRun::Identity { start: 3, len: 259 });
@@ -194,13 +231,27 @@ mod tests {
                         Ok(())
                     })
                     .unwrap();
-                    assert_eq!(actual, expected, "allowance={allowance}, outer={outer}");
+                    assert_eq!(actual, expected, "disk={disk}, outer={outer}");
                 }
                 assert_eq!(
                     dense.scan_rows.capacity(),
                     0,
                     "proved scans allocate no intermediate batch"
                 );
+                assert!(
+                    hashed.scan_rows.capacity()
+                        <= crate::exec::sink::STEP_QUANTUM as usize * hashed.scratch.len(),
+                    "direct scan callers reuse at most one gather window"
+                );
+                // Both compiled representations must survive release and
+                // restore their scratch on the next reset, without re-aiming.
+                for sink in [&mut dense, &mut hashed] {
+                    sink.release_memory();
+                    assert_eq!(sink.scan_rows.capacity(), 0);
+                    assert_eq!(sink.scratch.capacity(), 0);
+                }
+                assert!(dense.output_hashing_is_elided());
+                assert!(!hashed.output_hashing_is_elided());
             }
         }
     }

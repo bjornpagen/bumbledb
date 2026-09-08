@@ -172,9 +172,8 @@ fn mean_requires_explicit_float_input() {
 }
 
 #[test]
-fn spilled_and_resident_float_reductions_agree_bit_for_bit() {
-    // F-RESOURCE / F-AGG (execution half): a zero sink-RAM allowance moves
-    // the dedup/result state to scratch; sum/mean bits are unchanged.
+fn cursor_and_resident_float_reductions_agree_bit_for_bit() {
+    // The alternate executor preserves exact deduplication and sum/mean bits.
     let rows: Vec<(u64, u64, F64)> = (0..64)
         .map(|i| {
             (
@@ -189,7 +188,7 @@ fn spilled_and_resident_float_reductions_agree_bit_for_bit() {
     let mut resident = fix.prepare(&query).unwrap();
     let expected = fix.execute(&mut resident, &[] as &[BindValue]).unwrap();
     let mut spilled = fix.prepare(&query).unwrap();
-    spilled.set_sink_ram(0);
+    spilled.force_cursor_fallback(true);
     let got = fix.execute(&mut spilled, &[] as &[BindValue]).unwrap();
     let render = |answers: &Answers| -> Vec<(u64, u64, u64, u64)> {
         let mut rows: Vec<_> = (0..answers.len())

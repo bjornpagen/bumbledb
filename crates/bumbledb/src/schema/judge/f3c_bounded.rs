@@ -1,13 +1,5 @@
-//! F3 finding C regressions: the judge streams relations and keeps grouped
-//! state in the charged RAM→scratch tiers — beyond-budget judgment is real
-//! (F-RESOURCE / Q-BUDGET / Q-DISK unit half; the public-to-native call
-//! path is exercised in `crates/bumbledb/tests/gate-bounded-admission.rs`).
-//!
-//! The `StoreErrorState` here is a state whose error channel is the
-//! store's own — exactly what the production candidate view presents — so
-//! these tests prove the automatic spill channel without any bridge code.
-
-use std::time::Duration;
+//! Grouped-judgment correctness under ordinary allocation and cancellation.
+//! Error-channel choice changes error conversion, never allocation policy.
 
 use super::{
     CandidateFacts, JudgeBudget, JudgeError, JudgeScratch, Judgment, MapState, judge_final_state,
@@ -19,8 +11,8 @@ use crate::schema::{
     StatementId, ValidateDescriptor as _, ValueType, Weight,
 };
 use crate::storage::store::StoreError;
-use crate::work::{ExecutionPolicy, Resource, WorkError};
-use crate::{Interval, Value, WorkContext};
+use crate::work::{WorkContext, WorkError};
+use crate::{Interval, Value};
 
 /// A candidate state with the production error channel — spill is granted
 /// only through an explicit [`JudgeScratch::channel`], not error reflection.
@@ -49,20 +41,6 @@ impl CandidateFacts for StoreErrorState {
             None => Ok(()),
         }
     }
-}
-
-fn policy(working: u64, scratch: u64) -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: working,
-        scratch_bytes: scratch,
-        result_bytes: 0,
-        rows: 1 << 30,
-        work_units: 1 << 40,
-        timeout: Duration::from_secs(120),
-    }
-    .start()
-    .expect("policy starts")
 }
 
 /// `Note { id: u64, text: str }`, keyed on the text.
@@ -122,82 +100,50 @@ fn judge_production(
     )
 }
 
-/// The production-channel state admits a lawful wide state under a working
-/// budget FAR smaller than the grouped determinant set — the disk tier
-/// carries it (Q-DISK), and the working allowance is never exceeded (the
-/// charge would have refused).
 #[test]
-fn beyond_working_budget_admission_spills_and_admits() {
+fn wide_lawful_judgment_releases_its_temporary_state() {
     let schema = text_keyed_schema();
     let state = StoreErrorState(wide_state(4000, false));
-    let work = policy(256 << 10, 64 << 20);
-    let verdict = judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged");
-    assert_eq!(verdict, Judgment::Admitted);
-    assert!(
-        work.used(Resource::WorkingBytes) <= 256 << 10,
-        "working stayed within the small budget"
+    let work = WorkContext::new();
+    let before = crate::alloc_counter::snapshot().absolute.live_bytes;
+    assert_eq!(
+        judge_production(&schema, &state, &work, JudgeBudget::default()).unwrap(),
+        Judgment::Admitted
     );
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+    let _ = before;
 }
 
-/// The SAME judgment with a zero scratch allowance refuses with the typed
-/// scratch exhaustion: the success above went through the charged disk
-/// tier, not through unaccounted memory.
 #[test]
-fn the_spill_is_charged_scratch_a_zero_allowance_refuses() {
+fn cancelled_grouped_judgment_does_not_publish_a_verdict() {
     let schema = text_keyed_schema();
     let state = StoreErrorState(wide_state(4000, false));
-    let work = policy(256 << 10, 0);
-    let error = judge_production(&schema, &state, &work, JudgeBudget::default())
-        .expect_err("no scratch allowance");
-    assert!(
-        matches!(
-            error,
-            JudgeError::Work(WorkError::Exhausted {
-                resource: Resource::ScratchBytes,
-                ..
-            })
-        ),
-        "typed scratch refusal, got {error:?}"
-    );
+    let work = WorkContext::new();
+    work.cancel();
+    assert!(matches!(
+        judge_production(&schema, &state, &work, JudgeBudget::default()),
+        Err(JudgeError::Work(WorkError::Cancelled))
+    ));
 }
 
-/// A state WITHOUT a spill channel keeps grouped state in charged RAM: the
-/// same wide judgment refuses with the typed WORKING exhaustion instead of
-/// growing unaccounted (finding C's accounting rule) — and never touches
-/// disk the caller did not permit.
 #[test]
-fn without_a_channel_grouped_state_stays_charged_ram_and_refuses() {
+fn wide_grouped_judgment_needs_no_storage_error_channel() {
     let schema = text_keyed_schema();
     let state = wide_state(4000, false);
-    let work = policy(256 << 10, 64 << 20);
-    let error = judge_final_state(&schema, &state, &work, JudgeBudget::default())
-        .expect_err("RAM-only grouped state exceeds the working budget");
-    assert!(
-        matches!(
-            error,
-            JudgeError::Work(WorkError::Exhausted {
-                resource: Resource::WorkingBytes,
-                ..
-            })
-        ),
-        "typed working refusal, got {error:?}"
-    );
+    let work = WorkContext::new();
     assert_eq!(
-        work.used(Resource::ScratchBytes),
-        0,
-        "no disk tier without a channel"
+        judge_final_state(&schema, &state, &work, JudgeBudget::default()).unwrap(),
+        Judgment::Admitted
     );
 }
 
-/// Complete rejection diagnostics under pressure: the conflict inside a
-/// beyond-budget relation is judged on disk, and the verdict still names
-/// the statement with BOTH competing rows cited and truncation labeled
-/// exactly.
+/// Wide grouped state reports both competitors and exact truncation labels.
 #[test]
-fn rejection_diagnostics_are_complete_through_the_disk_tier() {
+fn wide_rejection_diagnostics_are_complete() {
     let schema = text_keyed_schema();
     let state = StoreErrorState(wide_state(4000, true));
-    let work = policy(256 << 10, 64 << 20);
+    let work = WorkContext::new();
     let verdict = judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged");
     let Judgment::Rejected(violations) = verdict else {
         panic!("the duplicate text must reject");
@@ -211,11 +157,9 @@ fn rejection_diagnostics_are_complete_through_the_disk_tier() {
     }
 }
 
-/// The disk tier and the charged RAM tier are the SAME judgment: a fixture
-/// exercising every statement family judges byte-identically under an
-/// ample budget (RAM) and under a tiny working budget (spilled).
+/// A storage error adapter cannot alter any statement family's verdict.
 #[test]
-fn spilled_and_resident_judgments_are_identical() {
+fn storage_error_channel_and_plain_judgments_are_identical() {
     let schema = SchemaDescriptor {
         relations: vec![
             RelationDescriptor {
@@ -296,16 +240,16 @@ fn spilled_and_resident_judgments_are_identical() {
     );
 
     let resident = {
-        let work = policy(64 << 20, 0);
+        let work = WorkContext::new();
         let state = StoreErrorState(clone_map(&map));
         judge_final_state(&schema, &state, &work, JudgeBudget::default()).expect("resident")
     };
     let spilled = {
-        let work = policy(48 << 10, 64 << 20);
+        let work = WorkContext::new();
         let state = StoreErrorState(clone_map(&map));
         judge_production(&schema, &state, &work, JudgeBudget::default()).expect("spilled")
     };
-    assert_eq!(resident, spilled, "one judgment, two tiers");
+    assert_eq!(resident, spilled, "one judgment, two error channels");
     let Judgment::Rejected(violations) = resident else {
         panic!("fixture violates by construction");
     };
@@ -371,7 +315,7 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
     let mut latent = MapState::new();
     latent.insert(RelationId(0), vec![Value::U64(7)]);
     latent.insert(RelationId(1), ray_booking(1, 99));
-    let work = policy(64 << 20, 0);
+    let work = WorkContext::new();
     assert_eq!(
         judge_final_state(
             &schema,
@@ -387,7 +331,7 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
     let mut referenced = MapState::new();
     referenced.insert(RelationId(0), vec![Value::U64(7)]);
     referenced.insert(RelationId(1), ray_booking(1, 7));
-    let work = policy(64 << 20, 0);
+    let work = WorkContext::new();
     assert!(matches!(
         judge_final_state(
             &schema,
@@ -403,7 +347,7 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
 
 /// Pointwise containment coverage merges ADJACENT target spans — [1,2) and
 /// [2,3) together cover [1,3) — exactly the reference frontier walk,
-/// through the run-table probe in both tiers.
+/// through the exact run-table probe.
 #[test]
 fn adjacent_target_spans_cover_through_the_run_table() {
     let schema = SchemaDescriptor {
@@ -447,12 +391,12 @@ fn adjacent_target_spans_cover_through_the_run_table() {
     .expect("valid");
 
     let span = |a: u64, b: u64| Value::IntervalU64(Interval::new(a, b).expect("span"));
-    for (working, scratch) in [(64 << 20, 0u64), (16 << 10, 64 << 20)] {
+    for _ in 0..2 {
         let mut covered = MapState::new();
         covered.insert(RelationId(1), vec![Value::U64(1), span(1, 2)]);
         covered.insert(RelationId(1), vec![Value::U64(1), span(2, 3)]);
         covered.insert(RelationId(0), vec![Value::U64(1), span(1, 3)]);
-        let work = policy(working, scratch);
+        let work = WorkContext::new();
         assert_eq!(
             judge_final_state(
                 &schema,
@@ -462,14 +406,14 @@ fn adjacent_target_spans_cover_through_the_run_table() {
             )
             .expect("judged"),
             Judgment::Admitted,
-            "adjacent spans connect (working budget {working})"
+            "adjacent spans connect"
         );
 
         let mut gapped = MapState::new();
         gapped.insert(RelationId(1), vec![Value::U64(1), span(1, 2)]);
         gapped.insert(RelationId(1), vec![Value::U64(1), span(3, 4)]);
         gapped.insert(RelationId(0), vec![Value::U64(1), span(1, 4)]);
-        let work = policy(working, scratch);
+        let work = WorkContext::new();
         let Judgment::Rejected(violations) = judge_final_state(
             &schema,
             &StoreErrorState(gapped),
@@ -490,7 +434,7 @@ fn judgments_are_deterministic() {
     let schema = text_keyed_schema();
     let judge_once = || {
         let state = StoreErrorState(wide_state(600, true));
-        let work = policy(64 << 10, 64 << 20);
+        let work = WorkContext::new();
         judge_production(&schema, &state, &work, JudgeBudget::default()).expect("judged")
     };
     assert_eq!(judge_once(), judge_once());

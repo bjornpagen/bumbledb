@@ -24,9 +24,7 @@ fn pinned_plan_reads_fresh_data_at_newer_generations() {
 }
 
 #[test]
-fn trim_releases_cached_images_and_answers_stay_identical() {
-    // Q-LIFETIME: the prepared query's retained images/views release on
-    // trim; the next execution rebuilds and answers identically.
+fn query_release_and_database_cache_clear_preserve_answers() {
     let fix = posting_store(
         "prepared-snapshot-trim",
         &[(1, 7, "a", 10), (2, 7, "b", 20)],
@@ -35,22 +33,28 @@ fn trim_releases_cached_images_and_answers_stay_identical() {
     let params = [BindValue::U64(7), BindValue::I64(-100)];
     let before = answers_of(&fix.execute(&mut prepared, &params).expect("execute"));
     assert!(
-        prepared.retained_cache_bytes() > 0,
+        prepared.cache.image_count() > 0,
         "executions retain built images"
     );
-    let warmed = prepared.retained_cache_bytes();
+    let warmed = prepared.cache.image_count();
 
-    prepared.trim();
+    prepared.release_memory();
+    assert_eq!(
+        prepared.cache.image_count(),
+        warmed,
+        "query release does not clear shared cache"
+    );
+    fix.db.clear_cache();
     assert!(
-        prepared.retained_cache_bytes() < warmed,
-        "trim released the generation-keyed images"
+        prepared.cache.image_count() < warmed,
+        "database clear released the unpinned generation-keyed images"
     );
     let after = answers_of(&fix.execute(&mut prepared, &params).expect("re-execute"));
     assert_eq!(before, after, "a trim changes cost, never answers");
 }
 
 #[test]
-fn sibling_trim_invalidates_warm_text_views_before_finalization() {
+fn database_clear_invalidates_warm_text_views_before_finalization() {
     let fix = posting_store(
         "prepared-sibling-text-generation",
         &[(1, 7, "alpha", 10), (2, 7, "beta", 20)],
@@ -59,7 +63,7 @@ fn sibling_trim_invalidates_warm_text_views_before_finalization() {
     let mut sibling = fix.prepare(&by_memo_query()).expect("sibling");
     let params = [BindValue::U64(7), BindValue::I64(-100)];
     let before = answers_of(&fix.execute(&mut reader, &params).expect("warm reader"));
-    sibling.trim();
+    fix.db.clear_cache();
     fix.execute(&mut sibling, &memo_param("beta"))
         .expect("new token order");
     let after = answers_of(

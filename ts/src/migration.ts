@@ -14,8 +14,7 @@
  */
 import { Effect } from "effect"
 import { dbNative } from "#db-native.ts"
-import type { ExecutionPolicy } from "#runtime.ts"
-import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import { DbError, dbError } from "#runtime-errors.ts"
 import type { SchemaSpec } from "#spec.ts"
 
@@ -31,14 +30,11 @@ function owned(operation: string, value: Uint8Array | null): Uint8Array {
  * spec natively and yields bounded JSON bytes carrying the canonical
  * `schemaId` and the rendered schema snapshot.
  */
-const internalMigrationSchema = Effect.fn("internalMigrationSchema")(function* (
-	spec: SchemaSpec,
-	work: ExecutionPolicy
-) {
+const internalMigrationSchema = Effect.fn("internalMigrationSchema")(function* (spec: SchemaSpec) {
 	const runtime = yield* runtimeHandle()
 	return yield* nativeOperationWith(
 		"internalMigrationSchema",
-		(callback) => dbNative.runtimeMigrationSchema(runtime, policyWire(work, "internalMigrationSchema"), spec, callback),
+		(callback) => dbNative.runtimeMigrationSchema(runtime, spec, callback),
 		dbNative.runtimeBytesTake,
 		(bytes) => owned("internalMigrationSchema", bytes)
 	)
@@ -49,17 +45,14 @@ const internalMigrationSchema = Effect.fn("internalMigrationSchema")(function* (
  * render/digest, manifest verify/append preview, plan-set digests): owned
  * JSON request bytes in, owned JSON response bytes out.
  */
-const internalMigrationRead = Effect.fn("internalMigrationRead")(function* (
-	request: Uint8Array,
-	work: ExecutionPolicy
-) {
+const internalMigrationRead = Effect.fn("internalMigrationRead")(function* (request: Uint8Array) {
 	if (!(request instanceof Uint8Array) || !(request.buffer instanceof ArrayBuffer)) {
 		return yield* Effect.fail(new DbError({ operation: "internalMigrationRead", reason: { _tag: "InvalidArgument" } }))
 	}
 	const runtime = yield* runtimeHandle()
 	return yield* nativeOperationWith(
 		"internalMigrationRead",
-		(callback) => dbNative.runtimeMigrationRead(runtime, policyWire(work, "internalMigrationRead"), request, callback),
+		(callback) => dbNative.runtimeMigrationRead(runtime, request, callback),
 		dbNative.runtimeBytesTake,
 		(bytes) => owned("internalMigrationRead", bytes)
 	)

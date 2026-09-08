@@ -172,28 +172,23 @@ fn the_cold_ladder_prices_keys_bounds_and_floors() {
 }
 
 #[test]
-fn resident_statistics_are_exact_cached_and_charged_only_when_needed() {
-    use crate::api::prepared::source::{QuerySource, UNBOUNDED_POLICY};
-    use crate::work::Resource;
+fn resident_statistics_are_exact_and_cached_without_retained_counting_tables() {
+    use crate::api::prepared::source::QuerySource;
     let schema = schema();
     let fixture = fixture(&schema);
     let (_cache, image) = fixture.image_with_cache(POSTING);
-    let work = crate::work::ExecutionPolicy {
-        working_bytes: 0,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .unwrap();
+    let work = crate::work::WorkContext::new();
     let source = QuerySource::heap(&fixture, 0, work.clone());
     assert_eq!(
         super::distinct_of(&source, &schema, POSTING, FieldId(0), Some(&image), 40).unwrap(),
         40,
-        "schema uniqueness needs no counting table even with a resident image"
     );
-    assert!(
-        super::distinct_of(&source, &schema, POSTING, FieldId(3), Some(&image), 40).is_err(),
-        "resident statistics propagate scratch refusal instead of publishing a floor"
-    );
+    work.cancel();
+    assert!(matches!(
+        super::distinct_of(&source, &schema, POSTING, FieldId(3), Some(&image), 40),
+        Err(crate::Error::Store(error))
+            if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))
+    ));
     let source = fixture.source();
     for (field, expected) in [(1, 3), (2, 2), (3, 7)] {
         assert_eq!(
@@ -202,9 +197,7 @@ fn resident_statistics_are_exact_cached_and_charged_only_when_needed() {
             expected
         );
     }
-    assert_eq!(source.work().used(Resource::WorkingBytes), 0);
-    let counted = source.work().used(Resource::WorkUnits);
-    assert!(counted >= 3 * 40);
+    let before = crate::alloc_counter::snapshot().window;
     for (field, expected) in [(1, 3), (2, 2), (3, 7)] {
         assert_eq!(
             super::distinct_of(&source, &schema, POSTING, FieldId(field), Some(&image), 40)
@@ -212,7 +205,13 @@ fn resident_statistics_are_exact_cached_and_charged_only_when_needed() {
             expected
         );
     }
-    assert_eq!(source.work().used(Resource::WorkUnits), counted);
+    let after = crate::alloc_counter::snapshot().window;
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(
+        after.allocs, before.allocs,
+        "cached scalar statistics need no allocation"
+    );
+    let _ = (before, after);
 }
 
 #[test]

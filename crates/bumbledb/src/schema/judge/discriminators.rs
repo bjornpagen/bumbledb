@@ -5,6 +5,7 @@ use super::{
     CandidateFacts, JudgeBudget, JudgeScratch, Judgment, LawfulParent, MapState, judge_complete,
     judge_final_state, judge_final_state_with_scratch, judge_incremental, store_fault,
 };
+use crate::Value;
 use crate::schema::evidence::encode_judged;
 use crate::schema::tests::{
     capacity, capacity_weighted, closed, containment, fd, field, row, side, side_where,
@@ -14,22 +15,10 @@ use crate::schema::{
     ValidateDescriptor as _, ValueType, Weight,
 };
 use crate::storage::store::StoreError;
-use crate::work::ExecutionPolicy;
-use crate::{Value, WorkContext};
-use std::time::Duration;
+use crate::work::WorkContext;
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 64 << 20,
-        result_bytes: 0,
-        rows: 100_000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap()
+    WorkContext::new()
 }
 
 fn keyed_users() -> Schema {
@@ -730,27 +719,18 @@ fn d26_valid_nonempty_required_state_admits() {
     );
 }
 
-/// Resource refusal is not an invariant rejection.
+/// Cancellation is not an invariant rejection.
 #[test]
-fn resource_refusal_is_not_rejection() {
+fn cancellation_is_not_rejection() {
     let schema = keyed_users();
     let mut state = MapState::new();
     for id in 0..20u64 {
         state.insert(RelationId(0), user(id, "shared@ex"));
     }
-    let tiny = ExecutionPolicy {
-        input_bytes: 0,
-        working_bytes: 0,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 0,
-        work_units: 4,
-        timeout: Duration::from_secs(1),
-    }
-    .start()
-    .unwrap();
-    assert!(
-        judge_complete(&schema, &state, &tiny, JudgeBudget::default()).is_err(),
-        "exhausted work is an error, not a shorter rejection"
-    );
+    let context = WorkContext::new();
+    context.cancel();
+    assert!(matches!(
+        judge_complete(&schema, &state, &context, JudgeBudget::default()),
+        Err(super::JudgeError::Work(crate::WorkError::Cancelled))
+    ));
 }

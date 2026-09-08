@@ -58,10 +58,7 @@ impl<S> OwnedInstance<S> {
                 .all(|rows| rows.is_sorted_by(|a, b| a < b)),
             "admitted rows are strictly sorted canonical bytes"
         );
-        let cache = Arc::new(ImageCache::with_policy(
-            schema.as_ref(),
-            crate::work::CachePolicy::platform_default(),
-        ));
+        let cache = Arc::new(ImageCache::new(schema.as_ref()));
         Self {
             schema,
             closed,
@@ -111,13 +108,20 @@ impl<S> OwnedInstance<S> {
     /// One sealed `ChangeSet` inserting the whole admitted set — the
     /// publish substrate for [`super::Db::from_instance`].
     pub(super) fn change_set_of_rows(&self, work: &WorkContext) -> Result<crate::ChangeSet> {
-        let mut pending = std::collections::BTreeMap::new();
-        for (relation, rows) in &self.relations {
-            for row in rows {
-                pending.insert((*relation, row.clone()), crate::changes::ChangeKind::Add);
-            }
-        }
-        super::tx::change_set_of_pending(self.schema.as_ref(), &pending, work)
+        crate::ChangeSet::from_ordered_records(
+            self.schema.as_ref(),
+            self.relations.iter().flat_map(|(&relation, rows)| {
+                rows.iter().map(move |row| crate::changes::ChangeRef {
+                    relation,
+                    kind: crate::changes::ChangeKind::Add,
+                    row,
+                })
+            }),
+            work,
+        )
+        .map_err(|error| {
+            crate::Error::from_store(crate::storage::store::StoreError::Changes(error))
+        })
     }
 
     /// # Errors

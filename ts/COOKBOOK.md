@@ -8,7 +8,7 @@ reads, sealed complete results, and one-shot page streams.
 Every `ts` fence below is extracted and type-checked against the real
 package surface by `test/cookbook-doc.test.ts`; the imports fence here is
 prepended to every recipe. The examples are lazy Effect programs — nothing
-below runs a database at import time, and measured policies are inputs.
+below runs a database at import time.
 
 ```ts
 import { Effect, Option, Result, Stream } from "effect"
@@ -43,14 +43,10 @@ import {
 import type {
 	ApplyOutcome,
 	CompleteResult,
-	ExecutionPolicy,
 	Fact,
-	NativeRuntimeOptions,
 	QueryReader
 } from "@bjornpagen/bumbledb"
 
-declare const work: ExecutionPolicy
-declare const runtimePolicy: NativeRuntimeOptions
 declare const localPath: string
 ```
 
@@ -93,8 +89,18 @@ void [Learning, scoreIsNumber, unitsAreExact]
 
 ## 2. One runtime layer; explicit create and open
 
-`NativeRuntime.layer(options)` acquires the single bounded native runtime
+`NativeRuntime.layer()` acquires the single native runtime
 with scope; reuse ONE layer value so Effect's memoization shares it.
+Optional configuration controls workers, outstanding jobs/handles, and cleanup
+reporting. Defaults are up to four workers, 128 queued jobs, 128 cleanup reports,
+64 directory owners, 1,024 native handles, and a five-second cleanup report window.
+Operations use ordinary allocation without byte/row/work quotas or execution
+deadlines. Effect interruption requests cooperative cancellation. Runtime
+inspection reports outstanding work, not memory usage.
+Database `inspect().storage` reports virtual map extent, populated file length,
+non-free LMDB pages, and allocated disk blocks (null when unavailable).
+None of these measures process heap usage or resident RAM. Log history
+inspection uses the same `StorageInspection` fields.
 `Db.open` never creates a missing database; `Db.create` refuses existing
 authority. Both are scoped acquisitions.
 
@@ -104,20 +110,20 @@ const Docs = schema("Docs", { Doc }, [key(Doc, ["id"])])
 
 const openExisting = Effect.scoped(
 	Effect.gen(function* () {
-		const db = yield* Db.open(localPath, Docs, work)
+		const db = yield* Db.open(localPath, Docs)
 		return db.schemaId
 	})
 )
 
 const createOnce = Effect.scoped(
 	Effect.gen(function* () {
-		const db = yield* Db.create(localPath, Docs, work)
+		const db = yield* Db.create(localPath, Docs)
 		return db.schemaId
 	})
 )
 
 // One boundary; an Effect app provides the layer in its own graph instead.
-const layer = NativeRuntime.layer(runtimePolicy)
+const layer = NativeRuntime.layer()
 void [openExisting.pipe(Effect.provide(layer)), createOnce.pipe(Effect.provide(layer))]
 ```
 
@@ -125,7 +131,7 @@ void [openExisting.pipe(Effect.provide(layer)), createOnce.pipe(Effect.provide(l
 
 `ChangeSet.builder` acquires a scoped database-free draft. Ingestion effects
 are lazy and re-runnable while the draft is building — each execution reads
-the then-current iterable and charges work again. Within ONE change set the
+the then-current iterable. Within ONE change set the
 normalization is `(add, remove ∖ add)`: the identical fact's add wins
 independent of call order. `finish()` consumes the draft into an immutable,
 reusable `ChangeSet`.
@@ -136,12 +142,12 @@ const Tasks = schema("Tasks", { Task }, [key(Task, ["id"])])
 
 const applyOnce = Effect.scoped(
 	Effect.gen(function* () {
-		const db = yield* Db.open(localPath, Tasks, work)
+		const db = yield* Db.open(localPath, Tasks)
 		const taskId = yield* Effect.sync(() => crypto.randomUUID())
-		const draft = yield* ChangeSet.builder(Tasks, work)
+		const draft = yield* ChangeSet.builder(Tasks)
 		yield* draft.insert(Task, [{ id: taskId, title: "write the cookbook", done: 0n }])
 		const changes = yield* draft.finish()
-		const outcome: ApplyOutcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+		const outcome: ApplyOutcome = yield* db.apply(changes, { expected: { kind: "any" } })
 		switch (outcome.kind) {
 			case "accepted":
 			case "no-change":
@@ -168,7 +174,7 @@ const People = schema("People", { Person }, [key(Person, ["id"])])
 
 const lookup = (reader: QueryReader<typeof People>, personId: Uuid) =>
 	Effect.gen(function* () {
-		const found = yield* reader.get(Person, { id: personId }, work)
+		const found = yield* reader.get(Person, { id: personId })
 		return Option.isSome(found) ? found.value.name : "unknown"
 	})
 void lookup
@@ -203,11 +209,40 @@ const booksBy = query(Library).rule((r) => {
 const readBooks = (reader: QueryReader<typeof Library>, name: string) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const result = yield* reader.execute(booksBy, { name }, work)
-			return yield* result.collect({ maxBytes: work.resultBytes }, work)
+			const result = yield* reader.execute(booksBy, { name })
+			return yield* result.collect()
 		})
 	)
 void readBooks
+```
+
+For repeated calls on one snapshot, prepare once. The scoped handle keeps
+one compiled plan and reuses its execution buffers; only parameters cross
+the native boundary on subsequent calls. One-shot `execute` does not retain
+a plan. Preparations share the snapshot's pinned version but close
+independently; completed results also remain independent.
+
+Ordinary execution keeps buffers for reuse. If a prepared query will sit idle
+after a large operation, `yield* prepared.releaseMemory()` drops its
+execution buffers but keeps the compiled query and pinned snapshot. Shared
+query caches belong to the database: `yield* db.clearCache()` clears those
+separately. Neither operation invalidates live results. Both are optional;
+scope closure releases ownership as usual.
+
+```ts
+const readTwoAuthors = (reader: QueryReader<typeof Library>) =>
+	Effect.scoped(
+		Effect.gen(function* () {
+			const prepared = yield* reader.prepare(booksBy)
+			const first = yield* prepared.execute({ name: "Ursula Le Guin" })
+			const second = yield* prepared.execute({ name: "Octavia Butler" })
+			return [
+				yield* first.collect(),
+				yield* second.collect()
+			]
+		})
+	)
+void readTwoAuthors
 ```
 
 ## 6. Grouped exact aggregates
@@ -263,13 +298,15 @@ const labeled = query(Telemetry).rule((r) => {
 void labeled
 ```
 
-## 8. Bounded results: capped collect, one-shot page stream
+## 8. Completed results: collect or consume delivery batches
 
-`collect({ maxBytes }, work)` is database-enforced total materialization and
-leaves the result available. `pages({ pageBytes }, work)` is a ONE-SHOT consuming
+`collect()` explicitly materializes all rows into JavaScript and
+leaves the result available. `pages()` is a ONE-SHOT consuming
 stream over the completed result: the first run moves the backing into a
 private scoped cursor; a second run refuses. Every element is one owned page
-array — pages, not rows — delivered after complete evaluation.
+array of up to 256 rows — pages, not rows — delivered after complete evaluation.
+Paging bounds delivery, not query execution or total result storage. An empty
+result emits one empty page; interruption and early termination close the cursor.
 
 ```ts
 const Event = relation("Event", { id: uuid, at: i64 })
@@ -281,7 +318,7 @@ const everything = query(Feed).rule((r) => {
 })
 
 const drain = (result: CompleteResult<{ readonly id: Uuid; readonly at: bigint }>) =>
-	result.pages({ pageBytes: 65536n }, work).pipe(
+	result.pages().pipe(
 		Stream.runForEach((page) =>
 			Effect.sync(() => {
 				// One owned page array; caller mutation cannot reach native
@@ -326,22 +363,22 @@ const Bank = schema("Bank", { Account }, [key(Account, ["id"])])
 const correct = (accountId: Uuid) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const db = yield* Db.open(localPath, Bank, work)
+			const db = yield* Db.open(localPath, Bank)
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
-					const snapshot = yield* db.snapshot(work)
-					const previous = yield* snapshot.get(Account, { id: accountId }, work)
+					const snapshot = yield* db.snapshot()
+					const previous = yield* snapshot.get(Account, { id: accountId })
 					if (Option.isNone(previous)) {
 						return yield* Effect.fail({ missing: accountId })
 					}
 					return { previous: previous.value, at: snapshot.witness }
 				})
 			)
-			const draft = yield* ChangeSet.builder(Bank, work)
+			const draft = yield* ChangeSet.builder(Bank)
 			yield* draft.delete(Account, [observed.previous])
 			yield* draft.insert(Account, [{ ...observed.previous, balance: observed.previous.balance + 1n }])
 			const changes = yield* draft.finish()
-			return yield* db.apply(changes, { ...work, expected: { kind: "exact", at: observed.at } })
+			return yield* db.apply(changes, { expected: { kind: "exact", at: observed.at } })
 		})
 	)
 void correct
@@ -377,7 +414,7 @@ const Items = schema("Items", { Item }, [key(Item, ["id"])])
 
 const explicitClose = Effect.scoped(
 	Effect.gen(function* () {
-		const db = yield* Db.open(localPath, Items, work)
+		const db = yield* Db.open(localPath, Items)
 		const report = yield* db.close()
 		// `closed` releases this capability's obligations; `incomplete` and
 		// `failed` retain native Closing accounting — they are never

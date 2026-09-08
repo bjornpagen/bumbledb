@@ -6,7 +6,7 @@
  */
 import * as path from "node:path"
 import { pathToFileURL } from "node:url"
-import type { AnySchema, ExecutionPolicy } from "@bjornpagen/bumbledb"
+import type { AnySchema } from "@bjornpagen/bumbledb"
 import { Effect } from "effect"
 import type { MigrationIntent } from "#migrations/intent.ts"
 import type { CheckReport, GenerationReport } from "#migrations/types.ts"
@@ -17,19 +17,7 @@ export const CLI_USAGE = `bumbledb-log <generate|check> --schema <module.ts> --o
 	[--intent <name>]    intent export (default: "evolution" when present)
 	[--label <label>]    stable human label for a new plan ([a-z0-9-])
 	[--contract <path>]  runtime contract path (default: <out>/runtime-contract.json)
-	[--timeout-ms <n>]   generation work deadline (default: 600000)
 `
-
-/** Generous fixed authoring-tool budgets; native admission still re-judges. */
-export const CLI_WORK: ExecutionPolicy = {
-	inputBytes: 256n * 1024n * 1024n,
-	workingBytes: 256n * 1024n * 1024n,
-	scratchBytes: 256n * 1024n * 1024n,
-	resultBytes: 64n * 1024n * 1024n,
-	rows: 1_000_000n,
-	workUnits: 1_000_000_000n,
-	timeout: 600000
-}
 
 export interface CliArguments {
 	readonly command: "generate" | "check"
@@ -39,7 +27,6 @@ export interface CliArguments {
 	readonly intentName: string | null
 	readonly label: string | null
 	readonly contract: string | null
-	readonly timeoutMs: number | null
 }
 
 export function parseCliArguments(argv: readonly string[]): CliArguments | string {
@@ -53,7 +40,6 @@ export function parseCliArguments(argv: readonly string[]): CliArguments | strin
 	let intentName: string | null = null
 	let label: string | null = null
 	let contract: string | null = null
-	let timeoutMs: number | null = null
 	for (let index = 1; index < argv.length; index += 2) {
 		const flag = argv[index]
 		const value = argv[index + 1]
@@ -79,14 +65,6 @@ export function parseCliArguments(argv: readonly string[]): CliArguments | strin
 			case "--contract":
 				contract = value
 				break
-			case "--timeout-ms": {
-				const parsed = Number.parseInt(value, 10)
-				if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-					return CLI_USAGE
-				}
-				timeoutMs = parsed
-				break
-			}
 			default:
 				return CLI_USAGE
 		}
@@ -94,7 +72,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments | strin
 	if (schemaPath === null || directory === null) {
 		return CLI_USAGE
 	}
-	return { command, schemaPath, directory, exportName, intentName, label, contract, timeoutMs }
+	return { command, schemaPath, directory, exportName, intentName, label, contract }
 }
 
 function isSchemaValue(value: unknown): value is AnySchema {
@@ -146,7 +124,6 @@ export const cliProgram = Effect.fn("bumbledb-log.cli.program")(function* (
 	cli: CliArguments,
 	authored: AuthoredModule
 ) {
-	const work: ExecutionPolicy = cli.timeoutMs === null ? CLI_WORK : { ...CLI_WORK, timeout: cli.timeoutMs }
 	const repository = {
 		directory: cli.directory,
 		...(cli.contract === null ? {} : { contract: cli.contract })
@@ -156,16 +133,14 @@ export const cliProgram = Effect.fn("bumbledb-log.cli.program")(function* (
 			schema: authored.schema,
 			...(authored.intent === undefined ? {} : { intent: authored.intent }),
 			...(cli.label === null ? {} : { label: cli.label }),
-			repository,
-			work
+			repository
 		})
 		return { report, code: 0 as const }
 	}
 	const report: CheckReport = yield* checkMigrations({
 		schema: authored.schema,
 		...(authored.intent === undefined ? {} : { intent: authored.intent }),
-		repository,
-		work
+		repository
 	})
 	return { report, code: report.status === "clean" ? (0 as const) : (1 as const) }
 })

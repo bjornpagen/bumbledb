@@ -1,43 +1,21 @@
 import { Context, Duration, Effect, Exit, Layer } from "effect"
 import type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 import { CloseFailure, DbError, dbError } from "#runtime-errors.ts"
-import type {
-	CloseWire,
-	OperationHandle,
-	OptionsWire,
-	PolicyWire,
-	RepositoryLockHandle,
-	RuntimeHandle
-} from "#runtime-native.ts"
+import type { CloseWire, OperationHandle, OptionsWire, RepositoryLockHandle, RuntimeHandle } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
 
-export interface ExecutionPolicy {
-	readonly inputBytes: bigint
-	readonly workingBytes: bigint
-	readonly scratchBytes: bigint
-	readonly resultBytes: bigint
-	readonly rows: bigint
-	readonly workUnits: bigint
-	readonly timeout: Duration.Input
-}
-
 export interface NativeRuntimeOptions {
-	readonly workers: number
-	readonly queueCapacity: number
-	readonly cleanupCapacity: number
-	readonly ownerCapacity: number
-	readonly nativeHandleCapacity: number
-	readonly inputBytes: bigint
-	readonly workingBytes: bigint
-	readonly scratchBytes: bigint
-	readonly resultBytes: bigint
-	readonly chunkBytes: bigint
-	readonly cleanupTimeout: Duration.Input
+	readonly workers?: number
+	readonly queueCapacity?: number
+	readonly cleanupCapacity?: number
+	readonly ownerCapacity?: number
+	readonly nativeHandleCapacity?: number
+	readonly cleanupTimeout?: Duration.Input
 }
 
 interface RuntimeService {
 	readonly close: () => Effect.Effect<CloseReport>
-	readonly inspect: (work: ExecutionPolicy) => Effect.Effect<OutstandingWork, DbError>
+	readonly inspect: () => Effect.Effect<OutstandingWork, DbError>
 }
 
 const owners = new WeakMap<RuntimeService, RuntimeHandle>()
@@ -51,43 +29,23 @@ function count(value: number, operation: string): number {
 	return value
 }
 
-function bytes(value: bigint, operation: string): bigint {
-	if (typeof value !== "bigint" || value < 0n || value > 0xffffffffffffffffn) throw invalid(operation)
-	return value
-}
-
 function millis(value: Duration.Input, operation: string): number {
 	const duration = Duration.toMillis(value)
 	if (!Number.isFinite(duration) || duration < 0 || duration > 0xffffffff) throw invalid(operation)
 	return Math.ceil(duration)
 }
 
-export function policyWire(work: ExecutionPolicy, operation: string): PolicyWire {
-	return {
-		inputBytes: bytes(work.inputBytes, operation),
-		workingBytes: bytes(work.workingBytes, operation),
-		scratchBytes: bytes(work.scratchBytes, operation),
-		resultBytes: bytes(work.resultBytes, operation),
-		rows: bytes(work.rows, operation),
-		workUnits: bytes(work.workUnits, operation),
-		timeoutMs: millis(work.timeout, operation)
-	}
-}
-
 function options(value: NativeRuntimeOptions): OptionsWire {
 	const operation = "NativeRuntime.acquire"
 	return {
-		workers: count(value.workers, operation),
-		queueCapacity: count(value.queueCapacity, operation),
-		cleanupCapacity: count(value.cleanupCapacity, operation),
-		ownerCapacity: count(value.ownerCapacity, operation),
-		nativeHandleCapacity: count(value.nativeHandleCapacity, operation),
-		inputBytes: bytes(value.inputBytes, operation),
-		workingBytes: bytes(value.workingBytes, operation),
-		scratchBytes: bytes(value.scratchBytes, operation),
-		resultBytes: bytes(value.resultBytes, operation),
-		chunkBytes: bytes(value.chunkBytes, operation),
-		cleanupTimeoutMs: count(millis(value.cleanupTimeout, operation), operation)
+		workers: value.workers === undefined ? undefined : count(value.workers, operation),
+		queueCapacity: value.queueCapacity === undefined ? undefined : count(value.queueCapacity, operation),
+		cleanupCapacity: value.cleanupCapacity === undefined ? undefined : count(value.cleanupCapacity, operation),
+		ownerCapacity: value.ownerCapacity === undefined ? undefined : count(value.ownerCapacity, operation),
+		nativeHandleCapacity:
+			value.nativeHandleCapacity === undefined ? undefined : count(value.nativeHandleCapacity, operation),
+		cleanupTimeoutMs:
+			value.cleanupTimeout === undefined ? undefined : count(millis(value.cleanupTimeout, operation), operation)
 	}
 }
 
@@ -167,14 +125,6 @@ function afterClose<A, E, R>(
 		return effect
 	}
 	return effect.pipe(Effect.onExit(() => Effect.die(new CloseFailure({ operation, report }))))
-}
-
-/** Independent caps intersect: a delivery request cannot enlarge `work.resultBytes`. */
-export function deliveryResultBytes(requested: bigint, work: ExecutionPolicy): bigint {
-	if (typeof requested !== "bigint" || requested < 0n) {
-		throw invalid("deliveryResultBytes")
-	}
-	return requested < work.resultBytes ? requested : work.resultBytes
 }
 
 function close(handle: RuntimeHandle): Effect.Effect<CloseReport> {
@@ -257,54 +207,41 @@ const acquire = Effect.fn("NativeRuntime.acquire")(function* (configuration: Nat
 						const wire = options(configuration)
 						handle = runtimeNative.runtimeOpen(wire)
 						const owner = handle
-						const lease = runtimeNative.runtimeReady(
-							owner,
-							{
-								inputBytes: 0n,
-								workingBytes: 0n,
-								scratchBytes: 0n,
-								resultBytes: 0n,
-								rows: 0n,
-								workUnits: 1n,
-								timeoutMs: wire.cleanupTimeoutMs
-							},
-							() => {
-								if (signal.aborted) {
-									try {
-										runtimeNative.runtimeClose(owner, (report) => {
-											stash.report = closeReport("NativeRuntime.acquire.cancel", report)
-										})
-									} catch (cause) {
-										stash.report = { kind: "failed", error: failure("NativeRuntime.acquire.cancel", cause) }
-									}
-									return
-								}
+						const lease = runtimeNative.runtimeReady(owner, () => {
+							if (signal.aborted) {
 								try {
-									runtimeNative.runtimeTake(lease)
-									const service: RuntimeService = {
-										close: () => close(owner),
-										inspect: Effect.fn("NativeRuntime.inspect")(function* (work) {
-											yield* nativeOperation(
-												"NativeRuntime.inspect",
-												(callback) =>
-													runtimeNative.runtimeReady(owner, policyWire(work, "NativeRuntime.inspect"), callback),
-												() => undefined
-											)
-											return runtimeNative.runtimeInspect(owner)
-										})
-									}
-									owners.set(service, owner)
-									resume(Effect.succeed(service))
+									runtimeNative.runtimeClose(owner, (report) => {
+										stash.report = closeReport("NativeRuntime.acquire.cancel", report)
+									})
 								} catch (cause) {
-									const error = failure("NativeRuntime.acquire", cause)
-									resume(
-										close(owner).pipe(
-											Effect.flatMap((report) => afterClose("NativeRuntime.acquire", report, Effect.fail(error)))
-										)
-									)
+									stash.report = { kind: "failed", error: failure("NativeRuntime.acquire.cancel", cause) }
 								}
+								return
 							}
-						)
+							try {
+								runtimeNative.runtimeTake(lease)
+								const service: RuntimeService = {
+									close: () => close(owner),
+									inspect: Effect.fn("NativeRuntime.inspect")(function* () {
+										yield* nativeOperation(
+											"NativeRuntime.inspect",
+											(callback) => runtimeNative.runtimeReady(owner, callback),
+											() => undefined
+										)
+										return runtimeNative.runtimeInspect(owner)
+									})
+								}
+								owners.set(service, owner)
+								resume(Effect.succeed(service))
+							} catch (cause) {
+								const error = failure("NativeRuntime.acquire", cause)
+								resume(
+									close(owner).pipe(
+										Effect.flatMap((report) => afterClose("NativeRuntime.acquire", report, Effect.fail(error)))
+									)
+								)
+							}
+						})
 					} catch (cause) {
 						const error = failure("NativeRuntime.acquire", cause)
 						resume(
@@ -333,7 +270,7 @@ const acquire = Effect.fn("NativeRuntime.acquire")(function* (configuration: Nat
 export class NativeRuntime extends Context.Service<NativeRuntime, RuntimeService>()(
 	"@bjornpagen/bumbledb/NativeRuntime"
 ) {
-	static layer(options: NativeRuntimeOptions): Layer.Layer<NativeRuntime, DbError> {
+	static layer(options: NativeRuntimeOptions = {}): Layer.Layer<NativeRuntime, DbError> {
 		return Layer.effect(NativeRuntime, acquire(options))
 	}
 }
@@ -374,17 +311,12 @@ function joinLockRelease(operation: string, owner: RepositoryLockHandle): Effect
  */
 export const internalAcquireRepositoryLock = Effect.fn("internalAcquireRepositoryLock")(function* (
 	operation: string,
-	directory: string,
-	work: ExecutionPolicy
+	directory: string
 ) {
 	if (directory.length === 0) {
 		return yield* Effect.fail(invalid(operation))
 	}
 	const runtime = yield* runtimeHandle()
-	const wire = yield* Effect.try({
-		try: () => policyWire(work, operation),
-		catch: () => invalid(operation)
-	})
 	const closeOp = `${operation}.repositoryLock`
 	return yield* Effect.uninterruptibleMask((restore) =>
 		Effect.gen(function* () {
@@ -406,7 +338,7 @@ export const internalAcquireRepositoryLock = Effect.fn("internalAcquireRepositor
 			const owner = yield* restore(
 				nativeOperationWith(
 					operation,
-					(callback) => runtimeNative.logRepositoryLockAcquire(runtime, wire, directory, callback),
+					(callback) => runtimeNative.logRepositoryLockAcquire(runtime, directory, callback),
 					runtimeNative.logRepositoryLockTake,
 					(value) => value
 				)
@@ -421,7 +353,7 @@ export const internalAcquireRepositoryLock = Effect.fn("internalAcquireRepositor
 })
 
 /** Internal first executor consumer; not a replacement row codec or public hash API. */
-export const hashChunk = Effect.fn("bumbledb.hashChunk")(function* (input: Uint8Array, work: ExecutionPolicy) {
+export const hashChunk = Effect.fn("bumbledb.hashChunk")(function* (input: Uint8Array) {
 	const runtime = yield* NativeRuntime
 	const handle = owners.get(runtime)
 	if (handle === undefined) return yield* Effect.fail(invalid("hashChunk"))
@@ -429,7 +361,7 @@ export const hashChunk = Effect.fn("bumbledb.hashChunk")(function* (input: Uint8
 		"hashChunk",
 		(callback) => {
 			if (!(input instanceof Uint8Array) || !(input.buffer instanceof ArrayBuffer)) throw invalid("hashChunk")
-			return runtimeNative.runtimeHash(handle, policyWire(work, "hashChunk"), input, callback)
+			return runtimeNative.runtimeHash(handle, input, callback)
 		},
 		(value) => {
 			if (value === null) throw dbError("hashChunk", { _tag: "Internal" })

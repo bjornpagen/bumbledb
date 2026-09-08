@@ -149,7 +149,7 @@ fn span(off: u32, len: u32) -> std::ops::Range<usize> {
 /// judges each against the sealed roster, and [`CollectionBuilder::seal`]s
 /// into the proof-carrying [`AcceptedCollection`]. Generic value rows and
 /// typed bridge pushes use the same `value_matches` compatibility rules as
-/// direct Rust writes, which encode into charged canonical ownership.
+/// direct Rust writes, which encode into owned canonical rows.
 pub struct CollectionBuilder<'s> {
     relation: RelationId,
     fields: &'s [FieldDescriptor],

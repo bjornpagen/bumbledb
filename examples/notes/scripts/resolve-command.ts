@@ -13,7 +13,7 @@ import { Effect, Result } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
 import { resolveCommand } from "../src/db/commands.ts"
 import { App } from "../src/db/schema.ts"
-import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
+import { runtimePolicy } from "../src/db/runtime-policy.ts"
 import { storedRef } from "../src/requests.ts"
 import { LocalHistory, HostedHistory } from "@bjornpagen/bumbledb-log"
 
@@ -47,9 +47,9 @@ const outcome = await Effect.runPromise(
 			const binding = yield* bindingFor(tenantId)
 			const history =
 				binding.kind === "local"
-					? yield* LocalHistory.open(binding, App, adminWork)
-					: yield* HostedHistory.open(binding, App, adminWork)
-			return yield* resolveCommand(history, parsed.success, adminWork)
+					? yield* LocalHistory.open(binding, App)
+					: yield* HostedHistory.open(binding, App)
+			return yield* resolveCommand(history, parsed.success)
 		})
 	).pipe(Effect.provide(NativeRuntime.layer(runtimePolicy.native)))
 )

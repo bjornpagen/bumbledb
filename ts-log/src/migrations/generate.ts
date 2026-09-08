@@ -20,15 +20,8 @@
  * schema lowering and the core row-cell codec are imported literally.
  */
 import * as path from "node:path"
-import type {
-	AnyRelation,
-	ExecutionPolicy,
-	NativeRuntime,
-	RelationData,
-	SchemaRelations,
-	SchemaSpec
-} from "@bjornpagen/bumbledb"
-import { cellBytes, cellOf, Uuid } from "@bjornpagen/bumbledb"
+import type { AnyRelation, NativeRuntime, RelationData, SchemaRelations, SchemaSpec } from "@bjornpagen/bumbledb"
+import { cellOf, Uuid } from "@bjornpagen/bumbledb"
 import { lower } from "@bjornpagen/bumbledb/internal/log"
 import type { Scope } from "effect"
 import { Effect } from "effect"
@@ -38,7 +31,7 @@ import { bytesHex, f64Bits, planJson, renderContract, renderIndex, renderSnapsho
 import type { ChainPayload, MigrationCodec } from "#migrations/codec.ts"
 import type { DiffResult } from "#migrations/diff.ts"
 import { diffSchemas } from "#migrations/diff.ts"
-import { budget, drift, intentRequired, unsupported } from "#migrations/fail.ts"
+import { drift, intentRequired, unsupported } from "#migrations/fail.ts"
 import {
 	ensureDirectory,
 	joinPendingIo,
@@ -103,10 +96,10 @@ function deriveLabel(tokens: readonly string[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Bounded declarative seed ingestion. The caller-owned iterables are read
-// exactly once, in chunks that let the event loop turn, with row/byte budgets
-// charged against the supplied policy. Values lower through the core's one
-// row-cell codec (`cellOf`) — no duplicate field roster.
+// Read caller iterables once, yielding between bounded processing steps.
+// The generated document owns the lowered rows; no second chunk array is
+// necessary. This is incremental ingestion, not a streaming document codec.
+// Values lower through the core's one row-cell codec (`cellOf`).
 // ---------------------------------------------------------------------------
 
 function isOrdinaryRelation(member: unknown): member is AnyRelation {
@@ -167,20 +160,13 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 	}
 }
 
-interface SeedBudget {
-	rows: bigint
-	bytes: bigint
-}
-
 const lowerSeeds = Effect.fn("bumbledb-log.migrations.lowerSeeds")(function* (
 	relations: Readonly<Record<string, unknown>>,
 	intents: readonly MigrationIntentEntry[],
-	seedRelations: readonly string[],
-	work: ExecutionPolicy
+	seedRelations: readonly string[]
 ) {
 	const operation = "migrations.generate"
 	const seedOps: PlanOperation[] = []
-	const used: SeedBudget = { rows: 0n, bytes: 0n }
 	for (const relationName of seedRelations) {
 		const member = relations[relationName]
 		if (!isOrdinaryRelation(member)) {
@@ -192,48 +178,50 @@ const lowerSeeds = Effect.fn("bumbledb-log.migrations.lowerSeeds")(function* (
 			if (intent.kind !== "seed" || intent.relation !== relationName) {
 				continue
 			}
-			const iterator = intent.rows[Symbol.iterator]()
-			let done = false
-			while (!done) {
-				// One bounded chunk per Effect step so the event loop can turn.
-				const chunk = yield* Effect.try({
-					try: () => {
-						const lowered: Array<readonly PlanValue[]> = []
-						for (let index = 0; index < SEED_CHUNK; index += 1) {
-							const next = iterator.next()
-							if (next.done === true) {
-								done = true
-								break
-							}
-							const fact = next.value
-							const cells = data.fields.map((declared, ordinal) => {
-								const raw = fact[declared.name]
-								const cell = cellOf(`seed ${relationName}.${declared.name}`, declared.field, raw)
-								used.bytes += cellBytes(cell)
-								return planValueOfCell(data, ordinal, cell)
+			const refused = (cause: unknown) =>
+				unsupported(
+					operation,
+					`seed ${relationName}: ${cause instanceof Error ? cause.message : "row refused by the core cell codec"}`
+				)
+			yield* Effect.acquireUseRelease(
+				Effect.try({
+					try: () => ({ iterator: intent.rows[Symbol.iterator](), done: false }),
+					catch: refused
+				}),
+				(state) =>
+					Effect.gen(function* () {
+						while (!state.done) {
+							yield* Effect.try({
+								try: () => {
+									for (let index = 0; index < SEED_CHUNK; index += 1) {
+										const next = state.iterator.next()
+										if (next.done === true) {
+											state.done = true
+											break
+										}
+										const fact = next.value
+										rows.push(
+											data.fields.map((declared, ordinal) => {
+												const cell = cellOf(
+													`seed ${relationName}.${declared.name}`,
+													declared.field,
+													fact[declared.name]
+												)
+												return planValueOfCell(data, ordinal, cell)
+											})
+										)
+									}
+								},
+								catch: refused
 							})
-							used.rows += 1n
-							lowered.push(cells)
+							if (!state.done) yield* Effect.yieldNow
 						}
-						return lowered
-					},
-					catch: (cause) =>
-						unsupported(
-							operation,
-							`seed ${relationName}: ${cause instanceof Error ? cause.message : "row refused by the core cell codec"}`
-						)
-				})
-				if (used.rows > work.rows) {
-					return yield* Effect.fail(budget(operation, "seed.rows", used.rows, used.rows, work.rows))
-				}
-				if (used.bytes > work.inputBytes) {
-					return yield* Effect.fail(budget(operation, "seed.inputBytes", used.bytes, used.bytes, work.inputBytes))
-				}
-				rows.push(...chunk)
-				if (!done) {
-					yield* Effect.yieldNow
-				}
-			}
+					}),
+				(state) =>
+					Effect.sync(() => {
+						if (!state.done) state.iterator.return?.()
+					})
+			)
 		}
 		seedOps.push({ kind: "seed", target: relationName, rows })
 	}
@@ -302,23 +290,20 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 			planTrees.push(yield* parseTree(operation, `plan ${index}`, text))
 		}
 		const currentSpec = lower(options.schema)
-		const identity = yield* codec.schemaIdentity(currentSpec, options.work)
+		const identity = yield* codec.schemaIdentity(currentSpec)
 		// Empty-base snapshot is always compiled — empty source is not a shortcut.
-		const emptyIdentity = yield* codec.schemaIdentity(EMPTY_SPEC, options.work)
+		const emptyIdentity = yield* codec.schemaIdentity(EMPTY_SPEC)
 		const baseSchemaId = repoState.manifest === null ? emptyIdentity.schemaId : repoState.manifest.baseSchemaId
 		const emptySnapshotTree = yield* parseTree(operation, "empty-base snapshot", emptyIdentity.snapshot)
 		const snapshotChain = snapshotTrees.length > 0 ? snapshotTrees : [emptySnapshotTree]
-		const chain = yield* codec.verifyChain(
-			{
-				manifest: manifestTree,
-				baseSchemaId: manifestTree === null ? baseSchemaId : null,
-				snapshots: snapshotChain,
-				plans: planTrees,
-				append: null,
-				planSet: null
-			},
-			options.work
-		)
+		const chain = yield* codec.verifyChain({
+			manifest: manifestTree,
+			baseSchemaId: manifestTree === null ? baseSchemaId : null,
+			snapshots: snapshotChain,
+			plans: planTrees,
+			append: null,
+			planSet: null
+		})
 		const previousText = latestSnapshot(repoState)
 		const prevSource = previousText === null ? emptyIdentity.snapshot : previousText
 		const parsedPrev = parseTheory(prevSource)
@@ -390,7 +375,6 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 	function exclusive<A, E>(
 		operation: string,
 		directory: string,
-		work: ExecutionPolicy,
 		body: Effect.Effect<A, E, NativeRuntime | Scope.Scope>
 	): Effect.Effect<A, E | LogError, NativeRuntime> {
 		return Effect.uninterruptibleMask((restore) =>
@@ -405,7 +389,7 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 					// release (request: clear `slot.owner` after
 					// `joinLockRelease` so `joinPendingIo.andThen(lock.release)`
 					// is the one close).
-					yield* restore(exclusion.acquire(operation, directory, work))
+					yield* restore(exclusion.acquire(operation, directory))
 					return yield* restore(body).pipe(Effect.ensuring(joinPendingIo))
 				})
 			)
@@ -420,7 +404,6 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 		return yield* exclusive(
 			operation,
 			directory,
-			options.work,
 			Effect.gen(function* () {
 				yield* ensureDirectory(operation, directory)
 				if (options.label !== undefined && !validLabel(options.label)) {
@@ -471,12 +454,7 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 				const label = options.label ?? deriveLabel(analysis.diff.labelTokens)
 				const id = planId(sequence, label)
 				// Seeds are ingested exactly once, bounded, at generation time.
-				const seedOps = yield* lowerSeeds(
-					options.schema.relations,
-					analysis.seedIntents,
-					analysis.diff.seedRelations,
-					options.work
-				)
+				const seedOps = yield* lowerSeeds(options.schema.relations, analysis.seedIntents, analysis.diff.seedRelations)
 				const operations: PlanOperation[] = [
 					...analysis.diff.operations,
 					...seedOps,
@@ -493,17 +471,14 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 				}
 				// Native validation + canonical rendering + digest + manifest append.
 				const currentTree = yield* parseTree(operation, "current snapshot", analysis.currentSnapshot)
-				const chain = yield* codec.verifyChain(
-					{
-						manifest: analysis.manifestTree,
-						baseSchemaId: analysis.manifestTree === null ? analysis.baseSchemaId : null,
-						snapshots: [...analysis.snapshotChain, currentTree],
-						plans: analysis.planTrees,
-						append: planJson(plan),
-						planSet: null
-					},
-					options.work
-				)
+				const chain = yield* codec.verifyChain({
+					manifest: analysis.manifestTree,
+					baseSchemaId: analysis.manifestTree === null ? analysis.baseSchemaId : null,
+					snapshots: [...analysis.snapshotChain, currentTree],
+					plans: analysis.planTrees,
+					append: planJson(plan),
+					planSet: null
+				})
 				if (chain.appended === null) {
 					return yield* Effect.fail(drift(operation, "the native chain pass did not append the validated plan"))
 				}
@@ -571,7 +546,6 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 		return yield* exclusive(
 			operation,
 			directory,
-			options.work,
 			Effect.gen(function* () {
 				const analysis = yield* analyze(options)
 				if (analysis.diff.requirements.length > 0) {

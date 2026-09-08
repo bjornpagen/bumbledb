@@ -10,22 +10,11 @@ use crate::schema::{
     Bound, FieldId, IntervalElement, RelationDescriptor, RelationId, Schema, SchemaDescriptor,
     StatementId, StatementKind, ValidateDescriptor as _, ValueType, Weight,
 };
-use crate::work::ExecutionPolicy;
-use crate::{F64, Interval, Uuid, Value, WorkContext};
-use std::time::Duration;
+use crate::work::WorkContext;
+use crate::{F64, Interval, Uuid, Value};
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 100_000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap()
+    WorkContext::new()
 }
 
 fn judge(schema: &Schema, state: &MapState) -> Judgment {
@@ -177,28 +166,19 @@ fn example_truncation_is_labeled_never_silent() {
     assert!(violations[0].examples_truncated);
 }
 
-/// An expired allowance is a resource error, never a shorter rejection.
+/// Cancellation is an operation error, never a shorter rejection.
 #[test]
-fn exhausted_work_refuses_instead_of_returning_a_partial_verdict() {
+fn cancelled_work_refuses_instead_of_returning_a_partial_verdict() {
     let schema = user_schema();
     let mut state = MapState::new();
     for id in 0..50u8 {
         state.insert(RelationId(0), user(id, "shared@example"));
     }
-    let tiny = ExecutionPolicy {
-        input_bytes: 0,
-        working_bytes: 0,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 0,
-        work_units: 10,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap();
+    let context = WorkContext::new();
+    context.cancel();
     assert!(matches!(
-        judge_final_state(&schema, &state, &tiny, JudgeBudget::default()),
-        Err(JudgeError::Work(_))
+        judge_final_state(&schema, &state, &context, JudgeBudget::default()),
+        Err(JudgeError::Work(crate::WorkError::Cancelled))
     ));
 }
 

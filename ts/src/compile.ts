@@ -5,8 +5,7 @@ import { SdkInvariantError } from "#errors.ts"
 import type { SchemaClasses } from "#law.ts"
 import { lower } from "#lower.ts"
 import type { SealedDescriptor } from "#native.ts"
-import type { ExecutionPolicy } from "#runtime.ts"
-import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "#schema.ts"
 import type { Statement } from "#statements.ts"
 
@@ -98,19 +97,19 @@ function admitSchemaId(fingerprint: string): SchemaId {
 }
 
 /**
- * Charged, effectful native schema admission/compilation: a
+ * Effectful native schema admission/compilation: a
  * schema declaration is pure metadata and never a claim its theory has been
- * admitted. Runs on the one bounded executor under `work`, requires the
+ * admitted. Runs on the shared executor, requires the
  * acquired {@link NativeRuntime}, and yields detached immutable descriptor
  * data plus the canonical schema identity. No database is opened and no
  * native finalizer is created.
  */
-const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(schema: S, work: ExecutionPolicy) {
+const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(schema: S) {
 	const handle = yield* runtimeHandle()
 	const spec = lower(schema)
 	const descriptor = yield* nativeOperationWith(
 		"Schema.compile",
-		(callback) => dbNative.runtimeSchemaCompile(handle, policyWire(work, "Schema.compile"), spec, callback),
+		(callback) => dbNative.runtimeSchemaCompile(handle, spec, callback),
 		dbNative.runtimeSchemaTake,
 		(value) => value
 	)

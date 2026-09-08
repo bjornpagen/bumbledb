@@ -1184,7 +1184,7 @@ fn execute_case(
     );
     match engine {
         Answers::Ok(answers) => (Some(answers), naive_ms),
-        Answers::Overflow | Answers::Scalar | Answers::DerivedBudget => (None, naive_ms),
+        Answers::Overflow | Answers::Scalar => (None, naive_ms),
     }
 }
 

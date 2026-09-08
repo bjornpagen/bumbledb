@@ -37,7 +37,7 @@ pub fn load_bumbledb(db: &Db<Ledger>, cfg: GenConfig) -> Result<LoadStats, bumbl
     let mut facts = 0u64;
     for rel in 0..ids::RELATIONS {
         let rel = RelationId(rel);
-        let work = bumbledb::start_operation(crate::harness::bench_policy())?;
+        let work = crate::harness::bench_work();
         facts += db
             .write(work, |tx| {
                 tx.insert_dyn(rel, relation_rows(cfg, rel))

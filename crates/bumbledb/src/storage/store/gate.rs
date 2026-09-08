@@ -8,10 +8,10 @@
 //! resize and close discard it under the admission mutex before proceeding;
 //! it never pins pages across writer admission. Resize (and
 //! close) take the gate exclusively: stop admitting new passes, wait for
-//! live passes to drain within the caller's work budget, and either proceed
-//! or return a typed [`StoreError::ResizeBlockedByReaders`] naming the live
-//! count and oldest age so the caller can release its snapshots. A live Rust
-//! borrow is never invalidated to meet a deadline.
+//! live passes to drain, and observe caller cancellation. Resize cancellation
+//! restores admission; close remains terminal and reports incomplete drain.
+//! A competing exclusive holder returns [`StoreError::ResizeBlockedByReaders`].
+//! Live counts and ages remain available; a live Rust borrow is never revoked.
 
 use std::collections::BTreeMap;
 use std::ops::Deref;
@@ -298,8 +298,8 @@ impl TransactionGate {
     }
 
     /// Take the gate exclusively for resize. Blocks new admission and waits
-    /// for live passes within the work budget; on exhaustion restores
-    /// admission and reports the live diagnostics.
+    /// for live passes. Cancellation restores admission and returns the
+    /// cancellation error; a competing exclusive holder reports diagnostics.
     pub(crate) fn exclusive(&self, work: &WorkContext) -> StoreResult<ExclusiveGuard> {
         {
             let mut state = self
@@ -336,16 +336,9 @@ impl TransactionGate {
                     return Ok(guard);
                 }
                 if let Err(stopped) = work.checkpoint() {
-                    let snapshot = snapshot_of(&state);
                     drop(state);
                     drop(guard); // restores admission
-                    return Err(match stopped {
-                        crate::work::WorkError::Cancelled => StoreError::Work(stopped),
-                        _ => StoreError::ResizeBlockedByReaders {
-                            live_transactions: snapshot.live,
-                            oldest_age: snapshot.oldest_age,
-                        },
-                    });
+                    return Err(StoreError::Work(stopped));
                 }
                 let (_state, _timeout) = self
                     .core
@@ -357,7 +350,7 @@ impl TransactionGate {
     }
 
     /// Terminal close: refuse all future admission, then wait for live
-    /// passes within the work budget. Returns the live diagnostics either
+    /// passes until completion or cancellation. Returns the live diagnostics either
     /// way; the caller reports incomplete close honestly and may join later.
     pub(crate) fn begin_close(&self, work: &WorkContext) -> (bool, GateSnapshot) {
         {
@@ -422,8 +415,8 @@ mod tests {
     use crate::storage::store::host::{AttachmentChange, HostChanges};
     use crate::storage::store::store_env::{CloseReport, Store};
     use crate::storage::store::tests::{
-        AdmitAll, FirstFieldKey, NOTE, change_set, commit_changes, create_default, host_put, note,
-        open_default, schema, short_work, store_dir, tiny_map, work,
+        AdmitAll, FirstFieldKey, NOTE, cancel_after, change_set, commit_changes, create_default,
+        host_put, note, open_default, schema, store_dir, tiny_map, work,
     };
 
     fn cached_id(store: &Store) -> Option<usize> {
@@ -741,7 +734,7 @@ mod tests {
         let id = cached_id(&store).unwrap();
         let cancelled = work();
         cancelled.cancel();
-        let expired = short_work(Duration::ZERO);
+        let expired = cancel_after(Duration::ZERO);
         for stopped in [&cancelled, &expired] {
             assert!(matches!(store.snapshot(stopped), Err(StoreError::Work(_))));
             assert!(matches!(

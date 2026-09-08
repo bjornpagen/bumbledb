@@ -4,10 +4,9 @@
 //! filtered-view statistics → plan → classify. **Plans pin the statistics
 //! read at prepare time and are never invalidated by writes**; stale plans
 //! are accepted at this scale and re-preparation is explicit. Text
-//! literals and params latch to tokens of the prepared query's own
-//! append-only interner (`image/intern.rs`) — a latch is final, and a
-//! text absent from every image is an ordinary unequal word, never an
-//! error.
+//! literals and params resolve in the shared cache namespace and retain
+//! their canonical text owners. An unstored text is an ordinary unequal
+//! token, never a missing parameter.
 use std::sync::Arc;
 
 use crate::exec::colt::Colt;
@@ -36,14 +35,16 @@ pub(crate) mod result;
 mod run_join;
 pub(crate) mod source;
 mod text;
-pub(crate) use self::text::{decode_row, intern_admitted, owned_text};
+pub(crate) use self::text::{decode_row, owned_text};
 mod view_memo;
 
 #[cfg(test)]
 mod tests;
 
 pub(crate) use self::build::{prepare_on, prepare_owned};
-pub use self::result::{CompleteResult, DeliveryTicket, ResultCursor, ResultIdentity, ResultPage};
+pub use self::result::{
+    CompleteResult, DeliveryTicket, ResultCursor, ResultIdentity, ResultPage, ResultRow,
+};
 
 /// One bound scalar payload: the bind surface's value vocabulary. Variable-width
 /// payloads are **borrowed** — the engine only hashes and probes them
@@ -220,19 +221,13 @@ pub struct Answers {
     blob: Vec<u8>,
 }
 
-/// Per-finalize intern resolution. Text is copied only into the answer
-/// heap (result-charged). Scratch mappings are valid only while
-/// [`PreparedQuery::nonresident`] is the store that minted them
-/// (`scratch_epoch` is [`NonresidentTextStore::epoch`], the instance
-/// owner id — not the 31-bit field packed into tokens).
+/// Per-finalize intern resolution. Text is copied only into the answer heap.
 #[derive(Debug)]
 struct ResolveMemo {
     /// word → packed `(start, len)` into this finalize's answer heap.
     ranges: crate::exec::wordmap::WordMap<(u32, u32)>,
     /// The last resolution: run-coherent columns skip even the map probe.
     last: Option<(u64, (usize, usize))>,
-    /// Owner id of the live scratch store, if any mappings named its tokens.
-    scratch_epoch: Option<crate::image::TextStoreEpoch>,
 }
 
 /// One query answer, borrowed from [`Answers`].
@@ -268,13 +263,12 @@ pub struct PreparedQuery<S> {
     /// so no image or view memo can outlive the instance it was read from.
     heap_tick: u64,
     /// Route every Free Join rule through the cursor fallback: set by the
-    /// test/diagnostic affordance, or for one bounded restart after the
-    /// resident path's reservation refusal (chapter 12 §6 — never an
-    /// endless replan loop).
+    /// test/diagnostic affordance. Production selects it only when the
+    /// source or a derived stage cannot use resident position indices.
     forced_fallback: bool,
-    /// The main sink's RAM allowance before distinct state continues in
-    /// the scratch map (`exec::scratch::DEFAULT_RAM_BYTES` by default).
-    sink_ram: usize,
+    /// Text retained by cursor-fed sinks and the recursive accumulator.
+    /// Resident rules already retain their source images in the view memo.
+    execution_texts: crate::image::TextOwners,
     /// Interiors then rec then main, as one pipeline sum: interiors
     /// live inside each arm, never as a sidecar. Dead main is
     /// `Cq { rules: [] }` — Empty is not a variant. Main rules share
@@ -283,10 +277,6 @@ pub struct PreparedQuery<S> {
     /// and its seen-set spanning rules is the entire implementation of
     /// ∪ — no merge node, no concat-then-dedup pass exists.
     pub(crate) pipeline: PreparedPipeline,
-    /// Derived-tuples budget. Judged after each interior and between
-    /// rec rounds. Host-settable on every prepared query. The rounds
-    /// axis lives on [`PreparedPipeline::Reach`].
-    tuples_budget: u64,
     /// Finished derived images (interiors then rec) plus per-occurrence
     /// bind scratch for `run_join`'s Interior arm.
     derived: crate::api::prepared::reach::DerivedImages,
@@ -309,9 +299,8 @@ pub struct PreparedQuery<S> {
     /// A changed owner invalidates token-bearing views and resolutions.
     text_generation: Option<crate::work::cache::WeakGenerationHandle>,
     /// Per param slot: the last successful String resolution — the
-    /// bound text and its word (`bind.rs`). Resident hits are valid only
-    /// within `text_generation`. A scratch word is bound to
-    /// [`NonresidentTextStore::epoch`] and forgotten when the store is dropped.
+    /// canonical shared text and its word (`bind.rs`). Hits are valid only
+    /// within `text_generation`.
     param_word_memo: Vec<ParamWordMemo>,
     /// Per param: whether this execution's value missed the dictionary
     /// (String/Bytes only; for a set, whether NO element survived — the
@@ -338,16 +327,10 @@ pub struct PreparedQuery<S> {
     /// The per-finalize intern-resolution memo.
     resolve_memo: ResolveMemo,
     /// `KeyProbe` resolved-key word scratch.
-    key_scratch: Vec<u64>,
-    /// Scratch-backed text resolver. Opened only on
-    /// [`crate::image::ResidentAdmit::BeyondMemory`] via
-    /// [`crate::image::ResidentTextExhausted::open_nonresident`].
-    nonresident: Option<crate::image::NonresidentTextStore>,
+    key_scratch: crate::image::view::ResolvedWords,
     /// Source-visit census of the last execute (D10).
     #[cfg(test)]
     last_visits: usize,
-    #[cfg(test)]
-    used_nonresident_text: bool,
     /// `Some(first computed find)` when any rule carries a computed
     /// scalar output: execution enters ONE [`NumericalGuard`] for the
     /// whole engine operation (chapter 11 §3 — never per tuple). The
@@ -406,7 +389,6 @@ pub(crate) enum PreparedPipeline {
         interiors: Vec<PreparedInterior>,
         driver: Box<reach::ReachDriver>,
         main: Vec<PreparedRule>,
-        rounds_budget: u32,
         rec_id: crate::ir::InteriorId,
         derived_count: u32,
     },
@@ -500,7 +482,7 @@ pub(crate) struct FreeJoinRule {
     /// words —
     /// one word for a scalar constant, the encoded pair for an interval
     /// constant, k sorted deduplicated words for a set. Reused in place.
-    resolved_selections: Vec<Vec<Vec<u64>>>,
+    resolved_selections: Vec<Vec<crate::image::view::ResolvedWords>>,
     /// This rule's resolved tables were fully written by a completed
     /// `resolve_filters` pass (a short-circuited pass leaves later
     /// slots unwritten and does not set it). Within one text generation,
@@ -517,8 +499,6 @@ pub(crate) struct KeyProbeRule {
     /// paths. Every candidate decode replaces its words, including after
     /// a miss or failed execution; no row contents are memoized.
     row: crate::image::canon::RowWords,
-    /// Retained row capacity belongs to the prepare ledger until drop.
-    _row_charge: crate::work::ByteReservation,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
     finds: Vec<FindSpec>,
     /// As [`FreeJoinRule::dedup_spans`] — the R2 shared-slot key over
@@ -573,37 +553,44 @@ impl<S> PreparedQuery<S> {
         }
     }
 
-    /// Memory-pressure trim (Q-LIFETIME): drop every cached relation
-    /// image, parked view binding and active COLT this prepared query
-    /// retains. The next execution rebuilds what it touches — a trim can
-    /// make the next query allocate or use disk; it never changes answers.
-    /// Text resolution rotates with the shared cache; immutable literal
-    /// templates and parameter text rebind on the next execution.
-    pub fn trim(&mut self) {
-        self.cache.trim();
+    /// Release this query's execution buffers while keeping its compiled plan.
+    /// Ordinary executions retain reusable capacity; this explicit operation
+    /// drops it, so the next execution allocates scratch again. Shared database
+    /// caches and independently owned results or snapshots are unaffected.
+    pub fn release_memory(&mut self) {
+        self.execution_texts = crate::image::TextOwners::default();
         self.derived = reach::DerivedImages::default();
-        self.visit_rules_mut(|rule| {
-            if let PreparedRule::FreeJoin(fj) = rule {
-                fj.memo.trim();
-            }
+        self.visit_rules_mut(|rule| match rule {
+            PreparedRule::FreeJoin(rule) => rule.release_memory(),
+            PreparedRule::KeyProbe(rule) => rule.row.release_memory(),
         });
-        self.visit_rec_arms_mut(|rule| rule.memo.trim());
-    }
-
-    /// Retained bytes across this prepared query's caches (images plus
-    /// interner text) — a host budgeting figure, not an allocator
-    /// measurement.
-    #[must_use]
-    pub fn retained_cache_bytes(&self) -> usize {
-        self.cache.retained_bytes()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn open_from_exhausted(
-        exhausted: &crate::image::ResidentTextExhausted,
-        work: &crate::work::WorkContext,
-    ) -> crate::error::Result<crate::image::NonresidentTextStore> {
-        text::open_from_exhausted(exhausted, work)
+        self.visit_rec_arms_mut(FreeJoinRule::release_memory);
+        match &mut self.pipeline {
+            PreparedPipeline::PointProbe { rule, .. } => rule.row.release_memory(),
+            PreparedPipeline::Cq { interiors, .. } => {
+                for interior in interiors {
+                    interior.sink.release_memory();
+                }
+            }
+            PreparedPipeline::Reach {
+                interiors, driver, ..
+            } => {
+                for interior in interiors {
+                    interior.sink.release_memory();
+                }
+                driver.sink.release_memory();
+                driver.frontier = crate::image::TransientImage::default();
+            }
+        }
+        self.sink.release_memory();
+        self.bindings = Bindings::new(0);
+        self.answer_scratch = Vec::new();
+        self.resolve_memo = ResolveMemo::new();
+        self.key_scratch = crate::image::view::ResolvedWords::default();
+        self.resolved_params = Vec::new();
+        self.param_word_memo = Vec::new();
+        self.missed_params = Vec::new();
+        self.text_generation = None;
     }
 
     #[cfg(test)]
@@ -611,11 +598,20 @@ impl<S> PreparedQuery<S> {
     pub(crate) fn last_visits(&self) -> usize {
         self.last_visits
     }
+}
 
-    #[cfg(test)]
-    #[must_use]
-    pub(crate) fn used_nonresident_text(&self) -> bool {
-        self.used_nonresident_text
+impl FreeJoinRule {
+    fn release_memory(&mut self) {
+        self.memo.release_memory();
+        self.executor.release_memory();
+        for filters in &mut self.resolved_filters {
+            *filters = Vec::new();
+        }
+        for selections in &mut self.resolved_selections {
+            *selections = Vec::new();
+        }
+        self.resolution = ResolutionState::Pending;
+        self.fallback.release_memory();
     }
 }
 
@@ -668,15 +664,11 @@ enum ParamSpec {
 
 /// One scalar param slot's memoized String resolution
 /// ([`PreparedQuery::param_word_memo`]): the bound text and its word.
-/// Resident words are scoped by `PreparedQuery::text_generation`. Scratch words carry
-/// [`NonresidentTextStore::epoch`] (instance owner id) and must not
-/// outlive that store.
+/// Words are scoped by `PreparedQuery::text_generation`; the memo pins its text.
 #[derive(Debug, Default, Clone)]
 struct ParamWordMemo {
-    text: String,
+    text: Option<std::sync::Arc<str>>,
     word: Option<u64>,
-    /// `None` = resident intern. `Some` = the minting store's owner epoch.
-    epoch: Option<crate::image::TextStoreEpoch>,
 }
 
 /// Whether every symbolic filter/selection slot was written by a complete
@@ -703,7 +695,7 @@ struct Bound {
     filters: Vec<FilterPredicate>,
     /// None covers the whole relation; Some covers only this occurrence's
     /// resolved selections. Partial images never enter the shared cache.
-    selections: Option<Vec<Vec<u64>>>,
+    selections: Option<Vec<crate::image::view::ResolvedWords>>,
     last_used: u64,
 }
 

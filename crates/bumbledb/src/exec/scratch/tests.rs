@@ -1,20 +1,17 @@
-//! `ScratchRelation` behavior: exact set semantics across both tiers, the
-//! charged RAM→LMDB transition, forced spill, oversized-key buckets and
-//! disposal hygiene. Gate anchors: Q-DISK / Q-FALLBACK / Q-COLLISION /
-//! Q-BUDGET / F-RESOURCE (the scratch halves), QRY-002.
+//! Exact scratch semantics in RAM and explicitly selected temporary LMDB.
+//! Includes transition, cancellation and owned-directory cleanup.
 
 use super::*;
-use crate::api::prepared::source::UNBOUNDED_POLICY;
-use crate::work::ExecutionPolicy;
+use crate::work::WorkContext;
 
 fn work() -> WorkContext {
-    UNBOUNDED_POLICY.start().expect("unbounded ledger")
+    WorkContext::new()
 }
 
 #[test]
 fn insert_if_absent_is_exact_set_semantics_in_ram() {
     let work = work();
-    let mut scratch = ScratchRelation::with_default_budget(&work);
+    let mut scratch = ScratchRelation::new(&work);
     assert!(scratch.insert_if_absent(b"alpha", b"").expect("insert"));
     assert!(!scratch.insert_if_absent(b"alpha", b"").expect("insert"));
     assert!(scratch.insert_if_absent(b"beta", b"").expect("insert"));
@@ -25,8 +22,7 @@ fn insert_if_absent_is_exact_set_semantics_in_ram() {
 #[test]
 fn the_spill_transition_preserves_every_entry_and_order() {
     let work = work();
-    // A tiny RAM allowance forces the transition mid-stream.
-    let mut scratch = ScratchRelation::new(&work, 512);
+    let mut scratch = ScratchRelation::new(&work);
     for i in 0..64u64 {
         assert!(
             scratch
@@ -35,7 +31,9 @@ fn the_spill_transition_preserves_every_entry_and_order() {
             "fresh key {i}"
         );
     }
-    assert!(scratch.spilled(), "512 bytes cannot hold 64 entries");
+    assert!(!scratch.spilled(), "growth alone never chooses disk");
+    scratch.force_spill().expect("explicit transition");
+    assert!(scratch.spilled());
     assert_eq!(scratch.len(), 64);
     // Exactness survives the tier change: re-inserts are duplicates,
     // lookups return the stored values, iteration is key-ordered/complete.
@@ -66,8 +64,8 @@ fn forced_spill_before_first_group_matches_ram_answers() {
     // Q-FALLBACK shape: force the disk tier from entry zero; behavior is
     // identical to the RAM tier.
     let work = work();
-    let mut ram = ScratchRelation::with_default_budget(&work);
-    let mut disk = ScratchRelation::with_default_budget(&work);
+    let mut ram = ScratchRelation::new(&work);
+    let mut disk = ScratchRelation::new(&work);
     disk.force_spill().expect("forced spill");
     assert!(disk.spilled() && !ram.spilled());
     for key in [&b"one"[..], b"two", b"one", b"three", b"two"] {
@@ -83,7 +81,8 @@ fn oversized_keys_use_exact_buckets_not_hash_verdicts() {
     // Keys beyond the physical LMDB bound: two long keys sharing a long
     // prefix stay distinct; equality is decided by full bytes.
     let work = work();
-    let mut scratch = ScratchRelation::new(&work, 0); // spill immediately
+    let mut scratch = ScratchRelation::new(&work);
+    scratch.force_spill().expect("explicit disk staging");
     let long_a = vec![0xAB; 600];
     let mut long_b = long_a.clone();
     long_b.push(0x01);
@@ -99,14 +98,15 @@ fn oversized_keys_use_exact_buckets_not_hash_verdicts() {
 #[test]
 fn updates_replace_values_across_both_tiers() {
     let work = work();
-    let mut scratch = ScratchRelation::new(&work, 256);
+    let mut scratch = ScratchRelation::new(&work);
     scratch.put(b"group", b"1").expect("put");
     scratch.put(b"group", b"2").expect("put");
     assert_eq!(scratch.len(), 1, "an upsert is not a second member");
-    // Push over the RAM allowance, then update on the disk tier.
+    // Migrate populated RAM state, then update on the disk tier.
     for i in 0..64u64 {
         scratch.put(&i.to_be_bytes(), &[0]).expect("put");
     }
+    scratch.force_spill().expect("explicit transition");
     assert!(scratch.spilled());
     scratch.put(b"group", b"3").expect("put");
     let mut out = Vec::new();
@@ -115,68 +115,40 @@ fn updates_replace_values_across_both_tiers() {
 }
 
 #[test]
-fn scratch_growth_is_charged_before_it_happens() {
-    // Q-BUDGET: a tiny scratch-byte allowance stops the spilled tier with
-    // a typed exhaustion, never unreserved growth.
-    let context = ExecutionPolicy {
-        scratch_bytes: 4096,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("start");
-    let mut scratch = ScratchRelation::new(&context, 0);
-    let mut refused = false;
-    for i in 0..4096u64 {
-        match scratch.insert_if_absent(&i.to_be_bytes(), &[0u8; 64]) {
-            Ok(_) => {}
-            Err(error) => {
-                refused = true;
-                let rendered = format!("{error:?}");
-                assert!(
-                    rendered.contains("ScratchBytes"),
-                    "typed scratch exhaustion, got {rendered}"
-                );
-                break;
-            }
+fn growth_keeps_the_chosen_representation_without_a_hidden_threshold() {
+    for disk in [false, true] {
+        let context = work();
+        let mut scratch = ScratchRelation::new(&context);
+        if disk {
+            scratch.force_spill().unwrap();
         }
-    }
-    assert!(refused, "4 KiB of scratch cannot absorb 256 KiB of entries");
-}
-
-#[test]
-fn ram_growth_is_charged_before_it_happens() {
-    let context = ExecutionPolicy {
-        working_bytes: 4096,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("start");
-    // RAM allowance far above the working budget: the working-byte ledger
-    // must refuse before the tier ever spills.
-    let mut scratch = ScratchRelation::new(&context, usize::MAX);
-    let mut refused = false;
-    for i in 0..4096u64 {
-        match scratch.insert_if_absent(&i.to_be_bytes(), &[0u8; 64]) {
-            Ok(_) => {}
-            Err(error) => {
-                refused = true;
-                let rendered = format!("{error:?}");
-                assert!(
-                    rendered.contains("WorkingBytes"),
-                    "typed working exhaustion, got {rendered}"
-                );
-                break;
-            }
+        for i in 0..4096u64 {
+            assert!(
+                scratch
+                    .insert_if_absent(&i.to_be_bytes(), &[7; 256])
+                    .unwrap()
+            );
         }
+        assert_eq!(scratch.spilled(), disk);
+        assert_eq!(scratch.len(), 4096);
+        let mut seen = 0;
+        scratch
+            .for_each(&mut |key, value| {
+                assert_eq!(key, u64::try_from(seen).unwrap().to_be_bytes());
+                assert_eq!(value, &[7; 256]);
+                seen += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(seen, 4096);
     }
-    assert!(refused);
-    assert!(!scratch.spilled(), "refusal, not an unbudgeted spill");
 }
 
 #[test]
 fn disposal_removes_the_scratch_directory() {
     let work = work();
-    let mut scratch = ScratchRelation::new(&work, 0);
+    let mut scratch = ScratchRelation::new(&work);
+    scratch.force_spill().expect("explicit disk staging");
     scratch.insert_if_absent(b"k", b"v").expect("insert");
     assert!(scratch.spilled());
     let path = scratch.scratch_path().expect("spilled above");
@@ -191,7 +163,7 @@ fn disposal_removes_the_scratch_directory() {
 #[test]
 fn cancellation_stops_scratch_work_at_a_bounded_quantum() {
     let work = work();
-    let mut scratch = ScratchRelation::with_default_budget(&work);
+    let mut scratch = ScratchRelation::new(&work);
     for i in 0..32u64 {
         scratch
             .insert_if_absent(&i.to_be_bytes(), b"")
@@ -203,5 +175,5 @@ fn cancellation_stops_scratch_work_at_a_bounded_quantum() {
         .expect_err("cancelled work refuses");
     assert!(format!("{error:?}").contains("Cancelled"));
     let walk = scratch.for_each(&mut |_, _| Ok(true));
-    assert!(walk.is_err(), "iteration polls the same ledger");
+    assert!(walk.is_err(), "iteration observes the same cancellation");
 }

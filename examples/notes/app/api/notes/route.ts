@@ -12,7 +12,6 @@ import { bindingFor } from "../../../src/db/bindings.ts"
 import { createNote } from "../../../src/db/commands.ts"
 import { listNotes as collectNotes } from "../../../src/db/reads.ts"
 import { Note } from "../../../src/db/schema.ts"
-import { requestPolicy } from "../../../src/db/runtime-policy.ts"
 import { appRuntime, Databases } from "../../../src/db/server.ts"
 import { exitResponse, respond, submitResponse } from "../../../src/http.ts"
 
@@ -23,11 +22,10 @@ const listNotes = Effect.fn("routes.listNotes")(
 	function* (request: Request) {
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
-		const work = requestPolicy(request)
 		const databases = yield* Databases
-		const db = yield* databases.acquire(binding, work)
-		const snapshot = yield* db.snapshot({ ...work, consistency: { kind: "cached" } })
-		const rows = yield* collectNotes(snapshot, work)
+		const db = yield* databases.acquire(binding)
+		const snapshot = yield* db.snapshot({ consistency: { kind: "cached" } })
+		const rows = yield* collectNotes(snapshot)
 		const body = yield* Effect.fromResult(encodeBoundaryRows(Note, rows))
 		return Response.json(body, { headers: { "Cache-Control": "private, no-store" } })
 	},
@@ -46,11 +44,10 @@ const postNote = Effect.fn("routes.postNote")(
 	function* (request: Request, body: { readonly id: string; readonly text: string }) {
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
-		const work = requestPolicy(request)
 		const noteId = yield* Effect.fromResult(Uuid.parse(body.id))
 		const databases = yield* Databases
-		const db = yield* databases.acquire(binding, work)
-		const outcome = yield* createNote(db, principal.tenantId, noteId, body.text, work)
+		const db = yield* databases.acquire(binding)
+		const outcome = yield* createNote(db, principal.tenantId, noteId, body.text)
 		return submitResponse(outcome)
 	},
 	Effect.scoped

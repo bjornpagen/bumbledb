@@ -8,8 +8,7 @@
 //!
 //! Gate families: G04 (query denotation on the probe path), G05
 //! (bucket-shaped access work — no relation-sized mandatory pass), G15
-//! (the performance-first access contract, asserted STRUCTURALLY on the
-//! deterministic work ledger, never on timing); audits PERF-001,
+//! (allocation growth checks, never timing or physical-read counters); audits PERF-001,
 //! Q-COLLISION, E-ADMIT, HASH-02; chapters 10 §3–4, 12, 41.
 //!
 //! Every assertion here runs the ACTUAL public-to-native call path:
@@ -18,7 +17,6 @@
 //! the same `bumbledb::store` candidate protocol the log bridge drives.
 //! The scan oracle is the public `scan_facts` walk; results must agree.
 
-use bumbledb::work::Resource;
 use bumbledb::{BindValue, Db};
 
 mod common;
@@ -66,34 +64,32 @@ fn seeded_db(dir: &common::TempDir, accounts: u64) -> Db<GateIdx> {
     db
 }
 
-/// Work-unit cost of one closure over a fresh read lease (each `Db::read`
-/// lease starts a fresh embedded ledger, so the delta is the closure's own
-/// deterministic charge — a structural count, never timing).
-fn lease_work<R>(
+/// Actual allocation requests inside one read closure. Use `alloc-counter`
+/// with nextest's process isolation. Core no-scan doubles independently
+/// check access locality; allocation counts do not measure physical reads.
+fn lease_allocations<R>(
     db: &Db<GateIdx>,
     f: impl FnOnce(&bumbledb::ReadFrame<'_, GateIdx>) -> bumbledb::Result<R>,
 ) -> (R, u64) {
     db.read(common::work(), |snap| {
-        let before = snap.work().used(Resource::WorkUnits);
+        let before = bumbledb::alloc_counter::count();
         let out = f(snap)?;
-        Ok((out, snap.work().used(Resource::WorkUnits) - before))
+        Ok((out, bumbledb::alloc_counter::count() - before))
     })
     .expect("read lease")
 }
 
-/// A generous flat ceiling for one indexed point access (bucket walk, one
-/// fetch, one decode). A relation scan charges at least one work unit per
-/// row, so the seeded sizes below sit far above this ceiling.
+/// A regression ceiling for allocation requests, not an execution allowance.
 const POINT_ACCESS_CEILING: u64 = 256;
 
 #[test]
-fn indexed_point_reads_are_bucket_shaped_across_growing_relations() {
+fn indexed_point_read_allocations_are_flat_across_growing_relations() {
     let mut per_size = Vec::new();
     for (tag, size) in [("small", 64u64), ("large", 4096u64)] {
         let dir = common::TempDir::new(&format!("gate-idx-point-{tag}"));
         let db = seeded_db(&dir, size);
 
-        let (hit, hit_work) = lease_work(&db, |snap| {
+        let (hit, hit_work) = lease_allocations(&db, |snap| {
             Ok(snap
                 .get(AcctById {
                     id: AcctId(size / 2),
@@ -101,7 +97,7 @@ fn indexed_point_reads_are_bucket_shaped_across_growing_relations() {
                 .map(|fact| fact.id))
         });
         assert_eq!(hit, Some(AcctId(size / 2)), "indexed hit at size {size}");
-        let (miss, miss_work) = lease_work(&db, |snap| {
+        let (miss, miss_work) = lease_allocations(&db, |snap| {
             Ok(snap
                 .get(AcctById {
                     id: AcctId(size + 9),
@@ -125,18 +121,16 @@ fn indexed_point_reads_are_bucket_shaped_across_growing_relations() {
 
         assert!(
             hit_work < POINT_ACCESS_CEILING && miss_work < POINT_ACCESS_CEILING,
-            "point access at {size} rows must not scan: hit {hit_work}, miss {miss_work} work units"
+            "point access at {size} rows must allocate independently of relation size: hit {hit_work}, miss {miss_work} allocation requests"
         );
         per_size.push((hit_work, miss_work));
     }
-    // STRUCTURAL: 64x more rows must not grow the access work (identical
-    // bucket shapes; the ledger is deterministic, so equality-up-to-slack
-    // is assertable). A scan would grow ~64x.
+    // 64x more rows must not make point-access allocations scale with size.
     let (small_hit, small_miss) = per_size[0];
     let (large_hit, large_miss) = per_size[1];
     assert!(
         large_hit <= small_hit.saturating_mul(2) && large_miss <= small_miss.saturating_mul(2),
-        "keyed access work grew with relation size: {small_hit}/{small_miss} -> {large_hit}/{large_miss}"
+        "keyed access allocation requests grew with relation size: {small_hit}/{small_miss} -> {large_hit}/{large_miss}"
     );
 }
 
@@ -146,7 +140,7 @@ fn composite_keys_and_mutation_maintenance() {
     let db = seeded_db(&dir, 128);
 
     // Composite (kind, subject) hit and miss.
-    let (found, work) = lease_work(&db, |snap| {
+    let (found, work) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(TaskByKindSubject {
                 kind: 5,
@@ -155,8 +149,11 @@ fn composite_keys_and_mutation_maintenance() {
             .map(|task| task.subject))
     });
     assert_eq!(found, Some(5));
-    assert!(work < POINT_ACCESS_CEILING, "composite hit scanned: {work}");
-    let (absent, _) = lease_work(&db, |snap| {
+    assert!(
+        work < POINT_ACCESS_CEILING,
+        "composite hit allocated: {work}"
+    );
+    let (absent, _) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(TaskByKindSubject {
                 kind: 6,
@@ -181,7 +178,7 @@ fn composite_keys_and_mutation_maintenance() {
         }])?;
         Ok(())
     }));
-    let (replaced, _) = lease_work(&db, |snap| {
+    let (replaced, _) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(TaskByKindSubject {
                 kind: 5,
@@ -200,7 +197,7 @@ fn composite_keys_and_mutation_maintenance() {
         }])?;
         Ok(())
     }));
-    let (gone, _) = lease_work(&db, |snap| {
+    let (gone, _) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(TaskByKindSubject {
                 kind: 5,
@@ -242,7 +239,7 @@ fn long_text_determinants_resolve_exactly() {
         }])?;
         Ok(())
     }));
-    let (hit, work) = lease_work(&db, |snap| {
+    let (hit, work) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(DocByTitle { title: &title_a })?
             .map(|doc| doc.body.to_string()))
@@ -250,23 +247,23 @@ fn long_text_determinants_resolve_exactly() {
     assert_eq!(hit, Some("body a".into()));
     // The two long titles differ only near the tail; exact confirmation
     // (never a truncated key, never a fingerprint verdict) separates them.
-    let (other, _) = lease_work(&db, |snap| {
+    let (other, _) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(DocByTitle { title: &title_b })?
             .map(|doc| doc.body.to_string()))
     });
     assert_eq!(other, Some("body b".into()));
     let near_miss = title_a.clone() + "x";
-    let (miss, _) = lease_work(&db, |snap| {
+    let (miss, _) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(DocByTitle { title: &near_miss })?
             .map(|doc| doc.body.to_string()))
     });
     assert!(miss.is_none(), "a near-variant long title must miss");
-    // Long text charges input/decode bytes, not relation-sized row visits.
+    // Long inputs must not cause excessive allocation requests.
     assert!(
         work < POINT_ACCESS_CEILING * 64,
-        "long-text keyed access ran away: {work} work units"
+        "long-text keyed access ran away: {work} allocation requests"
     );
 }
 
@@ -306,7 +303,7 @@ fn snapshot_point_reads_are_isolated_from_concurrent_writes() {
     })
     .expect("pinned lease");
     // A fresh lease sees the committed replacement through the index.
-    let (after, _) = lease_work(&db, |snap| {
+    let (after, _) = lease_allocations(&db, |snap| {
         Ok(snap
             .get(AcctById { id: AcctId(7) })?
             .map(|fact| fact.note.to_string()))
@@ -315,7 +312,7 @@ fn snapshot_point_reads_are_isolated_from_concurrent_writes() {
 }
 
 #[test]
-fn key_probe_queries_are_bucket_shaped_and_agree_with_the_scan_oracle() {
+fn key_probe_query_allocations_are_flat_and_answers_match_the_scan_oracle() {
     let template = bumbledb::query!(GateIdx {
         (note) | Task(kind, subject, note), kind == ?k, subject == ?s;
     });
@@ -327,14 +324,14 @@ fn key_probe_queries_are_bucket_shaped_and_agree_with_the_scan_oracle() {
             .prepare(&template, crate::common::work())
             .expect("prepare");
         let target = size / 2;
-        let (rows, probe_work) = lease_work(&db, |snap| {
+        let (rows, probe_work) = lease_allocations(&db, |snap| {
             snap.execute_collect(
                 &mut prepared,
                 &[BindValue::U64(target % 7), BindValue::U64(target)],
             )
         });
         assert_eq!(rows.len(), 1, "the uniqueness probe finds its one row");
-        let (missing, miss_work) = lease_work(&db, |snap| {
+        let (missing, miss_work) = lease_allocations(&db, |snap| {
             snap.execute_collect(
                 &mut prepared,
                 &[BindValue::U64((target % 7) + 1), BindValue::U64(target)],
@@ -343,7 +340,7 @@ fn key_probe_queries_are_bucket_shaped_and_agree_with_the_scan_oracle() {
         assert_eq!(missing.len(), 0, "a wrong determinant probe answers empty");
         assert!(
             probe_work < POINT_ACCESS_CEILING && miss_work < POINT_ACCESS_CEILING,
-            "key probe at {size} rows must not scan: hit {probe_work}, miss {miss_work}"
+            "key probe at {size} rows must allocate independently of relation size: hit {probe_work}, miss {miss_work}"
         );
         per_size.push((probe_work, miss_work));
     }
@@ -351,7 +348,7 @@ fn key_probe_queries_are_bucket_shaped_and_agree_with_the_scan_oracle() {
     let (large_hit, large_miss) = per_size[1];
     assert!(
         large_hit <= small_hit.saturating_mul(2) && large_miss <= small_miss.saturating_mul(2),
-        "key-probe work grew with relation size: {small_hit}/{small_miss} -> {large_hit}/{large_miss}"
+        "key-probe allocation requests grew with relation size: {small_hit}/{small_miss} -> {large_hit}/{large_miss}"
     );
 }
 
@@ -371,7 +368,6 @@ mod forced_collisions {
         CandidateJudge, CandidateState, FP_LEN, HostChanges, Judgment, MapPolicy, Prepared,
         SchemaJudge, Store, StoreResult, UnindexedRows,
     };
-    use bumbledb::work::Resource;
     use bumbledb::{ChangeSet, Value, WorkContext};
 
     const USER: RelationId = RelationId(0);
@@ -403,17 +399,7 @@ mod forced_collisions {
     }
 
     fn work() -> WorkContext {
-        bumbledb::ExecutionPolicy {
-            input_bytes: 1 << 30,
-            working_bytes: 1 << 30,
-            scratch_bytes: 1 << 30,
-            result_bytes: 1 << 30,
-            rows: 1 << 24,
-            work_units: 1 << 40,
-            timeout: std::time::Duration::from_secs(120),
-        }
-        .start()
-        .expect("work context")
+        bumbledb::WorkContext::new()
     }
 
     fn changes(schema: &bumbledb::Schema, adds: &[(u64, &str)]) -> ChangeSet {
@@ -445,7 +431,7 @@ mod forced_collisions {
             candidate: &CandidateState<'_, '_>,
             work: &WorkContext,
         ) -> StoreResult<Judgment<Self::Rejection>> {
-            let before = work.used(Resource::WorkUnits);
+            let before = bumbledb::alloc_counter::count();
             let mut seen = Vec::new();
             candidate
                 .visit_determinant_competitors(
@@ -462,7 +448,7 @@ mod forced_collisions {
                 )?
                 .expect("the email key is sealed in this schema");
             self.enumeration_work
-                .set(work.used(Resource::WorkUnits) - before);
+                .set(bumbledb::alloc_counter::count() - before);
             *self.seen.borrow_mut() = seen;
             Ok(Judgment::Admitted)
         }

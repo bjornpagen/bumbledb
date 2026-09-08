@@ -45,7 +45,7 @@ fn zero_selection_tries_are_the_old_tries() {
     let mut selected = Colt::new(all(&view), &scalars(&[]), vec![vec![0], vec![1]]);
     assert_eq!(selected.start(), Colt::root());
     let cursor = selected
-        .select(&[])
+        .select(&[] as &[Vec<u64>])
         .expect("select")
         .expect("no selections always hit");
     assert_eq!(cursor, Colt::root());

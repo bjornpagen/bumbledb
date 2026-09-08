@@ -50,8 +50,6 @@ pub struct CheckpointPolicy {
     pub head_cap: usize,
     pub tail: TailPolicy,
     pub rebase_attempts: u32,
-    /// Bounded probe window / walk budget while validating the suffix.
-    pub suffix_budget: u64,
 }
 
 impl CheckpointPolicy {
@@ -61,7 +59,6 @@ impl CheckpointPolicy {
         head_cap: 1024 * 1024,
         tail: TailPolicy::UNBOUNDED,
         rebase_attempts: 16,
-        suffix_budget: 65_536,
     };
 }
 
@@ -333,7 +330,6 @@ fn map_suffix_walk(error: ObjectError) -> CheckpointError {
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "one bounded suffix walk")]
 fn validate_suffix<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
@@ -341,7 +337,6 @@ fn validate_suffix<B: ReceivingStore>(
     tip: DecisionStamp,
     tip_object: Option<ObjectRef>,
     limits: Limits,
-    budget: u64,
     work: &WorkContext,
 ) -> Result<Suffix, CheckpointError>
 where
@@ -358,7 +353,12 @@ where
         .map_err(|_| CheckpointError::Corruption("tip locator missing or invalid"))?;
     let starting = tip_object.expect("tip locator validated");
     work.checkpoint()?;
-    let mut walk_budget = budget;
+    let mut remaining = tip
+        .seq
+        .checked_sub(base.seq)
+        .ok_or(CheckpointError::Corruption(
+            "checkpoint suffix precedes its captured base",
+        ))?;
     let mut visitor = SuffixVisitor {
         tail_bytes: 0,
         epoch_floor: starting.epoch,
@@ -371,7 +371,7 @@ where
         base,
         Some(starting),
         limits,
-        &mut walk_budget,
+        &mut remaining,
         work,
         &mut visitor,
     )
@@ -543,7 +543,6 @@ where
             live.decision,
             current_recovery.tip_object,
             command_limits,
-            policy.suffix_budget,
             work,
         )?;
         // New dependencies staged under a now-closed epoch must be restaged
@@ -552,7 +551,7 @@ where
             let new_epoch = current.object_epoch;
             let mut restaged = Vec::with_capacity(chunks.len());
             for old in &chunks {
-                let charged = get_verified(
+                let received = get_verified(
                     backend,
                     prefix,
                     old,
@@ -563,9 +562,9 @@ where
                     prefix,
                     new_epoch,
                     ObjectKind::Chunk,
-                    charged.as_bytes(),
+                    received.as_slice(),
                 )?);
-                drop(charged.into_owner());
+                drop(received);
             }
             chunks = restaged;
             manifest.chunks.clone_from(&chunks);
@@ -649,8 +648,8 @@ where
 }
 
 /// Read and decode the current composed head. `NotInitialized` for a missing
-/// head — reading never initializes. The receive is charged under `work`
-/// and decoded from the owner; the reservation is dropped after decode.
+/// head — reading never initializes. Decoding borrows the received buffer,
+/// which is dropped before this function returns.
 ///
 /// # Errors
 /// Backend and frame refusals.
@@ -672,7 +671,7 @@ where
     .map_err(CheckpointError::Object)?
     {
         ReceivedHead::Present { version, body } => {
-            let record = decode_head(body.as_bytes(), cap)?;
+            let record = decode_head(body.as_slice(), cap)?;
             drop(body);
             Ok((record, version))
         }

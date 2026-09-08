@@ -4,12 +4,13 @@
 //! Each configured worker owns one table. Snapshot entries hold L07's
 //! [`OwnedRead`] from `Db::snapshot`, plus worker-affine prepared state.
 //! Jobs borrow the entry and take `frame(&work)`. Send payloads (results,
-//! cursors, drafts with [`super::DraftLedger`], changes, repository locks)
+//! cursors, drafts, changes, repository locks)
 //! live here so no consumer can run conversion/I/O under the shared route
 //! lock. `NativeKind::RepositoryLock` is stamped on minted lock handles.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use bumbledb::{OwnedRead, PreparedQuery, SchemaDescriptor};
 
@@ -42,13 +43,17 @@ pub(crate) enum TablePayload {
     Native(Box<Payload>),
 }
 
-/// Owned pinned read (`Db::snapshot`) plus worker-local prepared ids.
-/// Each job takes `frame(&work)`. Nothing here is a callback stack borrow.
+/// Each explicit preparation owns one plan, not a map of past operations.
+/// The snapshot pin is shared only on its owning worker. Closing either
+/// handle releases its own state without invalidating the other owner.
 pub(crate) struct SnapshotResource {
+    pub prepared: Option<Box<PreparedQuery<SchemaDescriptor>>>,
+    pub data: Rc<SnapshotData>,
+}
+
+pub(crate) struct SnapshotData {
     pub owned: OwnedRead<SchemaDescriptor>,
-    pub prepared: BTreeMap<u64, PreparedQuery<SchemaDescriptor>>,
-    pub sealed: std::sync::Arc<crate::Sealed>,
-    pub _lease: DbLease,
+    pub lease: DbLease,
     pub owner: u64,
     pub database: u64,
 }
@@ -120,6 +125,37 @@ impl WorkerTable {
         }
     }
 
+    /// Detach a busy payload while its job runs. The route remains busy;
+    /// the worker can install a newly prepared child without recursively
+    /// borrowing this table's thread-local `RefCell`.
+    pub(crate) fn checkout(&mut self, cap: Capability) -> Result<TablePayload, RuntimeError> {
+        self.borrow_mut(cap)?;
+        self.entries
+            .get_mut(&(cap.kind, cap.id))
+            .and_then(|entry| entry.payload.take())
+            .ok_or(RuntimeError::Internal)
+    }
+
+    pub(crate) fn checkin(
+        &mut self,
+        cap: Capability,
+        payload: TablePayload,
+    ) -> Result<(), RuntimeError> {
+        let entry = self
+            .entries
+            .get_mut(&(cap.kind, cap.id))
+            .ok_or(RuntimeError::Internal)?;
+        if entry.generation != cap.generation
+            || entry.state != ResourceState::Busy
+            || entry.payload.is_some()
+        {
+            return Err(RuntimeError::Internal);
+        }
+        entry.payload = Some(payload);
+        entry.state = ResourceState::Live;
+        Ok(())
+    }
+
     pub(crate) fn take(&mut self, cap: Capability) -> Option<(u64, TablePayload)> {
         let entry = self.entries.remove(&(cap.kind, cap.id))?;
         if entry.generation != cap.generation {
@@ -132,7 +168,13 @@ impl WorkerTable {
 
 fn payload_kind(payload: &TablePayload) -> NativeKind {
     match payload {
-        TablePayload::Snapshot(_) => NativeKind::Snapshot,
+        TablePayload::Snapshot(resource) => {
+            if resource.prepared.is_some() {
+                NativeKind::Prepared
+            } else {
+                NativeKind::Snapshot
+            }
+        }
         TablePayload::Native(native) => match native.as_ref() {
             Payload::Result { .. } => NativeKind::Result,
             Payload::Cursor { .. } => NativeKind::Cursor,

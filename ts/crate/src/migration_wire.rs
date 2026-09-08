@@ -384,13 +384,13 @@ pub(crate) fn schema_response(
             return Ok(refused("Misuse", &message));
         }
     };
-    context.step(1 + descriptor.relations.len() as u64)?;
+    context.checkpoint()?;
     let schema_id = match schema_file::schema_id(&descriptor) {
         Ok(fingerprint) => fingerprint,
         Err(error) => return Ok(refused("Misuse", &error.to_string())),
     };
     let snapshot = schema_file::render(&descriptor);
-    context.input(snapshot.len() as u64)?;
+    context.checkpoint()?;
     let mut out = String::from("{\"schemaId\":");
     push_json_string(&mut out, &hex32(&schema_id.0));
     out.push_str(",\"snapshot\":");
@@ -448,17 +448,17 @@ fn verify_and_compile_chain(
         .chain(manifest.entries.iter().map(|entry| entry.to_schema))
         .chain(append_plan.map(|plan| plan.to_schema));
     for (index, (item, expected_id)) in items.iter().zip(expected_ids).enumerate() {
-        context.step(1).map_err(|error| {
+        context.checkpoint().map_err(|error| {
             refused(
                 "Misuse",
-                &format!("migration chain verification exceeded its work budget: {error}"),
+                &format!("migration chain verification stopped: {error}"),
             )
         })?;
         let text = subtree_text(item);
-        context.input(text.len() as u64).map_err(|error| {
+        context.checkpoint().map_err(|error| {
             refused(
                 "Misuse",
-                &format!("migration chain verification exceeded its input budget: {error}"),
+                &format!("migration chain verification stopped: {error}"),
             )
         })?;
         let descriptor = match schema_file::parse(&text) {
@@ -494,10 +494,10 @@ fn verify_and_compile_chain(
         ));
     }
     for (index, plan) in plans.iter().enumerate() {
-        context.step(1).map_err(|error| {
+        context.checkpoint().map_err(|error| {
             refused(
                 "Misuse",
-                &format!("migration chain verification exceeded its work budget: {error}"),
+                &format!("migration chain verification stopped: {error}"),
             )
         })?;
         if let Err(error) = compile(plan, &descriptors[index], &descriptors[index + 1]) {
@@ -506,10 +506,10 @@ fn verify_and_compile_chain(
     }
     if let Some(plan) = append_plan {
         let from = manifest.entries.len();
-        context.step(1).map_err(|error| {
+        context.checkpoint().map_err(|error| {
             refused(
                 "Misuse",
-                &format!("migration chain verification exceeded its work budget: {error}"),
+                &format!("migration chain verification stopped: {error}"),
             )
         })?;
         if let Err(error) = compile(plan, &descriptors[from], &descriptors[from + 1]) {
@@ -540,7 +540,7 @@ pub(crate) fn chain_response(
     let mut manifest = match tree.get("manifest") {
         Some(value) if !value.is_null() => {
             let text = subtree_text(value);
-            context.input(text.len() as u64)?;
+            context.checkpoint()?;
             match parse_manifest(&text, cap) {
                 Ok(manifest) => manifest,
                 Err(error) => return Ok(manifest_refusal(&error)),
@@ -568,9 +568,9 @@ pub(crate) fn chain_response(
     let mut plans: Vec<Plan> = Vec::new();
     if let Some(Envelope::Array(items)) = tree.get("plans") {
         for item in items {
-            context.step(1)?;
+            context.checkpoint()?;
             let text = subtree_text(item);
-            context.input(text.len() as u64)?;
+            context.checkpoint()?;
             match parse_plan(&text) {
                 Ok(plan) => plans.push(plan),
                 Err(error) => return Ok(plan_refusal(&error)),
@@ -580,7 +580,7 @@ pub(crate) fn chain_response(
     let append_plan = match tree.get("append") {
         Some(value) if !value.is_null() => {
             let text = subtree_text(value);
-            context.input(text.len() as u64)?;
+            context.checkpoint()?;
             match parse_plan(&text) {
                 Ok(plan) => Some(plan),
                 Err(error) => return Ok(plan_refusal(&error)),
@@ -683,7 +683,7 @@ pub(crate) fn chain_response(
         }
     }
     out.push('}');
-    context.input(out.len() as u64)?;
+    context.checkpoint()?;
     Ok(out.into_bytes())
 }
 
@@ -700,17 +700,7 @@ mod tests {
     }
 
     fn work() -> WorkContext {
-        bumbledb::work::ExecutionPolicy {
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 1 << 20,
-            work_units: 1 << 20,
-            timeout: std::time::Duration::from_secs(5),
-        }
-        .start()
-        .expect("work context")
+        bumbledb::work::WorkContext::new()
     }
 
     fn mini_snapshot() -> (bumbledb::SchemaFingerprint, String) {

@@ -5,6 +5,10 @@ use crate::image::ColumnView;
 use std::mem::MaybeUninit;
 
 impl Sink for ProjectionSink {
+    fn retains_binding_slot(&self, slot: usize) -> bool {
+        self.sources.contains(&slot)
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         for (i, source) in self.sources.iter().enumerate() {
             self.scratch[i] = bindings.get(*source);
@@ -74,21 +78,40 @@ impl Sink for ProjectionSink {
                 return;
             }
             let rows = &mut self.scan_rows;
-            let words = run.len() * arity;
-            rows.clear();
-            rows.reserve(words);
-            gather_scan_rows(
-                scan,
-                run,
-                route,
-                arity,
-                0,
-                &mut rows.spare_capacity_mut()[..words],
-            );
-            // SAFETY: the prepared route covers every slot in every row.
-            // Publish only after all columns initialize successfully.
-            unsafe { rows.set_len(words) };
-            seen.insert_hashed_rows(rows);
+            // Executor scans already use this window. Enforce it here too
+            // so direct callers cannot grow scratch to the physical run.
+            let window = crate::exec::sink::STEP_QUANTUM as usize;
+            for offset in (0..run.len()).step_by(window) {
+                let words = (run.len() - offset)
+                    .min(window)
+                    .checked_mul(arity)
+                    .expect("scan gather width fits usize");
+                rows.clear();
+                if rows.capacity() < words {
+                    let maximum = window
+                        .checked_mul(arity)
+                        .expect("scan gather window fits usize");
+                    // Amortize progressively larger short runs, but never
+                    // retain more than one gather window.
+                    let capacity = rows.capacity().saturating_mul(2).max(words).min(maximum);
+                    rows.reserve_exact(capacity);
+                }
+                gather_scan_rows(
+                    scan,
+                    run,
+                    route,
+                    arity,
+                    offset,
+                    &mut rows.spare_capacity_mut()[..words],
+                );
+                // SAFETY: the prepared route covers every slot in every row.
+                // Publish only after all columns initialize successfully.
+                unsafe { rows.set_len(words) };
+                seen.insert_hashed_rows(rows);
+                if seen.error.is_some() {
+                    break;
+                }
+            }
         } else {
             run_positions(run, &mut |position: u32| {
                 for &(i, word) in &route.keys {

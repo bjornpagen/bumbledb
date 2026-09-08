@@ -218,7 +218,7 @@ fn fs02_a_kill_mid_replacement_leaves_the_old_complete_head() {
         .expect("read")
     {
         ReceivedHead::Present { version, body } => {
-            assert_eq!(body.as_bytes(), b"old-complete", "never a torn head");
+            assert_eq!(body.as_slice(), b"old-complete", "never a torn head");
             version
         }
         ReceivedHead::Absent => panic!("the old head survives the kill"),

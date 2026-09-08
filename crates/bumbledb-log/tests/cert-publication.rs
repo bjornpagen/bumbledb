@@ -19,10 +19,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
 
 use bumbledb::schema::{FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType};
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Uuid, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::command::{Command, CommandMetadata, Limits};
 use bumbledb_log::history::{
@@ -88,20 +87,12 @@ fn fresh_db(tag: &str) -> Arc<Db<SchemaDescriptor>> {
     )
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 1_000_000,
-        result_bytes: 1_000_000,
-        rows: 100_000,
-        work_units: 10_000_000,
-        timeout: Duration::from_secs(60),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn work() -> WorkContext {
-    policy().start().unwrap()
+    policy()
 }
 
 fn identity(db: &Db<SchemaDescriptor>) -> DatabaseIdentity {
@@ -281,7 +272,7 @@ fn a_proven_cas_loss_re_attempts_and_decides_within_bounds() {
         ReceivedHead::Present { body, .. } => body,
         ReceivedHead::Absent => panic!("head must exist"),
     };
-    let record = manifest::decode_head(body.as_bytes(), LIMITS.envelope_bytes).unwrap();
+    let record = manifest::decode_head(body.as_slice(), LIMITS.envelope_bytes).unwrap();
     drop(body);
     assert_eq!(
         record.recovery.expect("live head").tail_count(),
@@ -574,7 +565,7 @@ fn authenticated_parent_locators_fetch_in_one_get() {
         ),
     )
     .expect("direct fetch");
-    let envelope = bumbledb_log::history::decision::decode_decision(bytes.as_bytes(), LIMITS)
+    let envelope = bumbledb_log::history::decision::decode_decision(bytes.as_slice(), LIMITS)
         .expect("decodes");
     assert_eq!(envelope.stamp(), recovery.tip);
     drop(bytes);
@@ -854,7 +845,7 @@ fn assert_command_unpublished(
         ReceivedHead::Present { body, .. } => body,
         ReceivedHead::Absent => panic!("genesis head remains"),
     };
-    let record = manifest::decode_head(body.as_bytes(), LIMITS.envelope_bytes).unwrap();
+    let record = manifest::decode_head(body.as_slice(), LIMITS.envelope_bytes).unwrap();
     drop(body);
     assert_eq!(
         record.recovery.expect("genesis recovery").tail_count(),

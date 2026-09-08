@@ -15,7 +15,7 @@ import type { RuntimeExpectation } from "@bjornpagen/bumbledb-log"
 import { TenantCache } from "@bjornpagen/bumbledb-log"
 import { Context, Effect, Layer, ManagedRuntime, Result, Schema } from "effect"
 import { App } from "./schema.ts"
-import { maintenanceWork, runtimePolicy } from "./runtime-policy.ts"
+import { runtimePolicy } from "./runtime-policy.ts"
 
 const Contract = Schema.Struct({
 	contractVersion: Schema.Number,
@@ -53,7 +53,7 @@ const loadExpectation = Effect.fn("server.loadExpectation")(function* () {
 
 /**
  * One typed tenant cache for the whole process: independent scoped
- * borrows per request, byte/count pressure budgets, NO wall-clock TTL.
+ * borrows per request, an open-tenant admission limit, and no wall-clock TTL.
  * The concrete schema type is preserved — no generic service tag erases
  * `typeof App`.
  */
@@ -64,8 +64,6 @@ export class Databases extends Context.Service<Databases, TenantCache<typeof App
 			const expected = yield* loadExpectation()
 			return yield* TenantCache.make(App, {
 				maxOpen: runtimePolicy.cache.maxOpen,
-				budgetBytes: runtimePolicy.cache.budgetBytes,
-				maintenance: maintenanceWork,
 				expected
 			})
 		})

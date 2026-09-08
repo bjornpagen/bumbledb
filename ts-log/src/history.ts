@@ -15,8 +15,7 @@ import type {
 	HostedCreateOptions,
 	HostedOpenOptions,
 	LocalBinding,
-	LocalCreateOptions,
-	LocalOpenOptions
+	LocalCreateOptions
 } from "#options.ts"
 import { log } from "#production.ts"
 import type { History } from "#surface.ts"
@@ -24,8 +23,7 @@ import type { History } from "#surface.ts"
 export const LocalHistory: {
 	open<S extends AnySchema>(
 		binding: LocalBinding,
-		schema: S,
-		options: LocalOpenOptions
+		schema: S
 	): Effect.Effect<History<S>, LogError, NativeRuntime | Scope.Scope>
 	create<S extends AnySchema>(
 		binding: LocalBinding,
@@ -38,7 +36,7 @@ export const HostedHistory: {
 	open<S extends AnySchema>(
 		binding: HostedBinding,
 		schema: S,
-		options: HostedOpenOptions
+		options?: HostedOpenOptions
 	): Effect.Effect<History<S>, LogError, NativeRuntime | Scope.Scope>
 	create<S extends AnySchema>(
 		binding: HostedBinding,

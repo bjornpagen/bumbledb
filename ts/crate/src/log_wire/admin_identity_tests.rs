@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bumbledb::Theory as _;
-use bumbledb::work::ExecutionPolicy;
+use bumbledb::work::WorkContext;
 use bumbledb::{RelationId, Value};
 use bumbledb_log::certainty::SubmitCertainty;
 use bumbledb_log::history::command::{Command, CommandMetadata};
@@ -51,22 +51,12 @@ fn options() -> Options {
         cleanup_capacity: 8,
         owner_capacity: 8,
         native_handle_capacity: 16,
-        aggregate_bytes: [64 << 20; 4],
-        chunk_bytes: 1 << 20,
         cleanup_timeout: Duration::from_millis(500),
     }
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 16 << 20,
-        working_bytes: 16 << 20,
-        scratch_bytes: 16 << 20,
-        result_bytes: 16 << 20,
-        rows: 1 << 20,
-        work_units: 1 << 30,
-        timeout: Duration::from_secs(10),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn unique_dir(tag: &str) -> std::path::PathBuf {
@@ -192,7 +182,7 @@ fn snapshot_engine(db: &crate::Engine) -> LocalSnapshot {
     let mut records = Vec::new();
     let mut attachment = None;
     let mut facts = Vec::new();
-    db.read(policy().start().unwrap(), |read| {
+    db.read(policy(), |read| {
         read.integration_host_scan(b"", &mut |key: &[u8], value: &[u8]| {
             records.push((key.to_vec(), value.to_vec()));
             Ok(())
@@ -215,8 +205,7 @@ fn snapshot_engine(db: &crate::Engine) -> LocalSnapshot {
 /// directly (nothing else may hold it).
 fn snapshot_dir(directory: &Path) -> LocalSnapshot {
     let ready = bumbledb_log::recovery::materialization_path(directory);
-    let db = crate::Engine::open(&ready, Mini.descriptor(), policy().start().unwrap())
-        .expect("snapshot open");
+    let db = crate::Engine::open(&ready, Mini.descriptor(), policy()).expect("snapshot open");
     snapshot_engine(&db)
 }
 
@@ -251,7 +240,7 @@ fn admin_identity_cold_erase_refuses_a_foreign_database_and_mutates_nothing() {
     let base = unique_dir("cold-erase");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let created = open_history(&runtime, &open_spec(&dir, true, 3), &work).expect("creates");
     let identity = created.resource.identity;
@@ -306,7 +295,7 @@ fn admin_identity_warm_reuse_refuses_a_stale_incarnation_before_retirement() {
     let base = unique_dir("warm-retire");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     // The tenant STAYS open in this runtime's registry: the verb takes the
     // warm lease path (no `schema` field supplied — cold open is impossible).
@@ -377,7 +366,7 @@ fn admin_identity_valid_identity_at_another_tenants_directory_refuses_root_relea
     std::fs::create_dir_all(&base).unwrap();
     let dir_a = base.join("tenant-a");
     let dir_b = base.join("tenant-b");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     // Two SAME-SCHEMA tenants; identity A is fully valid — it is just not
     // the tenant living at dir_b.
@@ -461,7 +450,7 @@ fn admin_identity_stale_binding_after_reincarnation_refuses_epoch_rotation() {
     let base = unique_dir("stale-binding");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     // The post-restore/post-migration state: database D reborn under a NEW
     // incarnation in this directory.
@@ -516,7 +505,7 @@ fn admin_identity_copied_directory_refuses_on_the_recorded_origin_binding() {
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
     let copy = base.join("tenant-copy");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let created = open_history(&runtime, &open_spec(&dir, true, 3), &work).expect("creates");
     let identity = created.resource.identity;

@@ -1,9 +1,5 @@
-//! The bounded-quantum work poll inside the join recursion (chapter 12
-//! §7): explored cover entries charge work units, every poll checkpoints
-//! cancellation/deadline, and COLT pool growth is reserved against
-//! working bytes — so a selective join that emits nothing still stops,
-//! and a tiny working budget bounds the resident join's actual memory
-//! (the bounded-restart trigger fires from join growth).
+//! Cooperative cancellation inside join recursion. Poll explored entries,
+//! not just output rows, so selective joins that emit nothing still stop.
 use super::{Colt, ExecLedger, Executor, Poison};
 use crate::exec::sink::STEP_QUANTUM;
 use crate::work::{WorkContext, WorkError};
@@ -11,8 +7,8 @@ use crate::work::{WorkContext, WorkError};
 impl Executor {
     /// Bind the operation once, before any COLT force/select or execution.
     /// Both prepared queries and direct executor callers pass the same COLTs
-    /// they will execute. Pool reservations retain their original ownership;
-    /// rebinding changes only the context used for subsequent work.
+    /// they will execute. Pools remain owned by the COLTs; rebinding changes
+    /// only the context used for subsequent work.
     pub(crate) fn begin_work(&mut self, work: &WorkContext, colts: &mut [Colt]) {
         for colt in colts {
             colt.bind(Some(work));
@@ -24,7 +20,7 @@ impl Executor {
     }
 
     /// Flush sub-quantum explored work and release the execution ledger.
-    /// Reusable pool reservations stay with the COLTs that own the memory.
+    /// Reusable pools stay with the COLTs that own the memory.
     pub(super) fn end_work(&mut self) {
         if let Some(ledger) = &mut self.ledger
             && ledger.pending > 0
@@ -36,8 +32,7 @@ impl Executor {
     }
 
     /// Note `yielded` explored cover entries; at the published quantum,
-    /// poll the ledger (deadline/cancellation via the step charge) and
-    /// charge COLT pool growth. Returns `false` after poisoning the
+    /// poll cancellation. Returns `false` after poisoning the
     /// drive — callers unwind, and `execute` surfaces the typed error.
     #[inline]
     pub(super) fn note_explored(&mut self, yielded: usize) -> bool {
@@ -66,7 +61,7 @@ impl Executor {
 }
 
 impl ExecLedger {
-    /// Charge the same bounded exploration quantum from recursion or a
+    /// Poll at the same bounded exploration quantum from recursion or a
     /// borrowed fused scan; the caller retains ownership of error poison.
     #[inline]
     pub(super) fn note_explored(&mut self, yielded: usize) -> Result<(), WorkError> {
@@ -82,6 +77,6 @@ impl ExecLedger {
 
 #[cold]
 fn poll(ledger: &mut ExecLedger) -> Result<(), WorkError> {
-    let pending = u64::from(std::mem::replace(&mut ledger.pending, 0));
-    ledger.work.step(pending)
+    ledger.pending = 0;
+    ledger.work.checkpoint()
 }

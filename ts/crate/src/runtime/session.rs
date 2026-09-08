@@ -2,17 +2,17 @@
 //! per entry. Jobs borrow the entry for one operation and return to the
 //! scheduler. No session-long reactor, no `ready_rx`, no JS-driven writer.
 
-use std::collections::BTreeMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 use std::sync::Arc;
 
-use bumbledb::work::{ExecutionPolicy, WorkContext};
-use bumbledb::{OwnedRead, PreparedQuery, SchemaDescriptor, Witness};
+use bumbledb::work::WorkContext;
+use bumbledb::{OwnedRead, PreparedQuery, SchemaDescriptor};
 
 use super::lanes::{LaneId, WorkerCommand};
 use super::owners::{DbLease, ManagedDb};
 use super::registry::{Capability, CloseDrain, NativeKind};
-use super::table::{SnapshotResource, TablePayload, WorkerContext};
+use super::table::{SnapshotData, SnapshotResource, TablePayload, WorkerContext};
 use super::{Notify, Operation, Output, Runtime, RuntimeError, WaitTarget, lock};
 
 /// One typed engine refusal crossing the executor as owned data.
@@ -31,9 +31,8 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
 /// Borrowed snapshot entry for one job. Prepared state stays on the worker.
 pub struct SnapshotAccess<'a> {
     pub owned: &'a OwnedRead<SchemaDescriptor>,
-    pub sealed: &'a crate::Sealed,
-    pub job: u64,
-    pub prepared: &'a mut BTreeMap<u64, PreparedQuery<SchemaDescriptor>>,
+    pub prepared: Option<&'a mut PreparedQuery<SchemaDescriptor>>,
+    pub(crate) data: &'a Rc<SnapshotData>,
 }
 
 impl SnapshotAccess<'_> {
@@ -45,38 +44,38 @@ impl SnapshotAccess<'_> {
         self.owned.frame(work)
     }
 
-    pub fn install(&mut self, prepared: PreparedQuery<SchemaDescriptor>) -> u64 {
-        let id = self.job;
-        self.prepared.insert(id, prepared);
-        id
+    pub fn prepare(
+        &self,
+        runtime: &Arc<Runtime>,
+        query: &bumbledb::Query,
+        work: &WorkContext,
+    ) -> Result<SnapshotSession, RuntimeError> {
+        let prepared = self
+            .frame(work)
+            .prepare(query)
+            .map_err(|error| engine_error(&error))?;
+        runtime.install_prepared(Rc::clone(self.data), prepared)
     }
 
     pub fn execute(
         &mut self,
-        id: u64,
         context: &WorkContext,
         args: &[bumbledb::ParamArg<'_>],
-    ) -> Result<bumbledb::Answers, RuntimeError> {
+    ) -> Result<bumbledb::CompleteResult, RuntimeError> {
         let prepared = self
             .prepared
-            .get_mut(&id)
+            .as_deref_mut()
             .ok_or(RuntimeError::ClosedHandle)?;
         // L07 seam: execute against the owned frame, not a !Send ReadInstance.
         prepared
-            .execute_collect_owned(self.owned, context, args)
+            .execute_complete_with_work(&self.owned.frame(context), context, args)
             .map_err(|error| engine_error(&error))
     }
 
-    pub fn remove_prepared(&mut self, id: u64) -> Result<(), RuntimeError> {
-        self.prepared
-            .remove(&id)
-            .map(drop)
-            .ok_or(RuntimeError::ClosedHandle)
-    }
-
+    #[cfg(test)]
     #[must_use]
     pub fn prepared_count(&self) -> usize {
-        self.prepared.len()
+        usize::from(self.prepared.is_some())
     }
 }
 
@@ -157,7 +156,6 @@ pub(super) struct SessionSlot {
 pub struct SessionOpened {
     pub session: SnapshotSession,
     pub sealed: Arc<crate::Sealed>,
-    pub witness: Witness<SchemaDescriptor>,
     pub generation: u64,
     pub store: String,
     pub attachment: Option<Vec<u8>>,
@@ -203,7 +201,7 @@ impl SessionCore {
 
     fn submit(
         &self,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -250,7 +248,7 @@ impl SnapshotSession {
 
     pub fn submit(
         &self,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -262,7 +260,7 @@ impl Runtime {
     pub fn open_session(
         self: &Arc<Self>,
         db: &ManagedDb,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
     ) -> Result<Arc<Operation>, RuntimeError> {
         if !Arc::ptr_eq(self, db.runtime()) {
@@ -317,15 +315,15 @@ impl Runtime {
             .attachment()
             .map_err(|error| engine_error(&bumbledb::Error::Store(Box::new(error))))?
             .map(<[u8]>::to_vec);
-        let witness = pinned_read.witness();
-        let cap = self.reserve_snapshot_route(owner, database, worker)?;
+        let cap = self.reserve_snapshot_route(owner, database, worker, NativeKind::Snapshot)?;
         let resource = SnapshotResource {
-            owned: pinned_read,
-            prepared: BTreeMap::new(),
-            sealed: Arc::clone(&sealed),
-            _lease: lease,
-            owner,
-            database,
+            data: Rc::new(SnapshotData {
+                owned: pinned_read,
+                lease,
+                owner,
+                database,
+            }),
+            prepared: None,
         };
         let installed =
             WorkerContext::with(|ctx| ctx.table.insert(cap, TablePayload::Snapshot(resource), 0))?;
@@ -344,11 +342,43 @@ impl Runtime {
                 },
             },
             sealed,
-            witness,
             generation,
             store: store_identity,
             attachment,
         }))
+    }
+
+    fn install_prepared(
+        self: &Arc<Self>,
+        data: Rc<SnapshotData>,
+        prepared: PreparedQuery<SchemaDescriptor>,
+    ) -> Result<SnapshotSession, RuntimeError> {
+        if !Arc::ptr_eq(self, data.lease.runtime()) {
+            return Err(RuntimeError::ForeignRuntime);
+        }
+        let worker = WorkerContext::worker_id()?;
+        let (owner, database) = (data.owner, data.database);
+        let cap = self.reserve_snapshot_route(owner, database, worker, NativeKind::Prepared)?;
+        let resource = SnapshotResource {
+            data,
+            prepared: Some(Box::new(prepared)),
+        };
+        let installed =
+            WorkerContext::with(|ctx| ctx.table.insert(cap, TablePayload::Snapshot(resource), 0))
+                .and_then(std::convert::identity);
+        if let Err(error) = installed {
+            self.rollback_snapshot_route(owner, database, cap);
+            return Err(error);
+        }
+        Ok(SnapshotSession {
+            core: SessionCore {
+                runtime: Arc::clone(self),
+                owner,
+                database,
+                id: cap.id,
+                cap,
+            },
+        })
     }
 
     fn reserve_snapshot_route(
@@ -356,6 +386,7 @@ impl Runtime {
         owner: u64,
         database: u64,
         worker: u32,
+        kind: NativeKind,
     ) -> Result<Capability, RuntimeError> {
         let mut state = lock(&self.state);
         if state.phase != super::Phase::Open {
@@ -388,7 +419,7 @@ impl Runtime {
         }
         state.natives += 1;
         drop(state);
-        let cap = match self.registry.insert_route(worker, NativeKind::Snapshot, 0) {
+        let cap = match self.registry.insert_route(worker, kind) {
             Ok(cap) => cap,
             Err(error) => {
                 let mut state = lock(&self.state);
@@ -465,7 +496,7 @@ impl Runtime {
         owner: u64,
         database: u64,
         session: u64,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -519,17 +550,11 @@ impl Runtime {
         owner: u64,
         database: u64,
         session: u64,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        let context = policy.start()?;
+        let context = policy;
         context.checkpoint()?;
-        let bytes = [
-            policy.input_bytes,
-            policy.working_bytes,
-            policy.scratch_bytes,
-            policy.result_bytes,
-        ];
         let mut state = lock(&self.state);
         if state.phase != super::Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -554,11 +579,9 @@ impl Runtime {
         }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
-        state.charge(&self.options, bytes)?;
         let operation = Arc::new(Operation {
             id,
             context,
-            bytes,
             owner: Some(owner),
             database: Some(database),
             session: Some(session),
@@ -583,7 +606,6 @@ impl Runtime {
     pub(crate) fn reserve_native_route(
         self: &Arc<Self>,
         kind: NativeKind,
-        bytes: u64,
     ) -> Result<Capability, RuntimeError> {
         let worker = WorkerContext::worker_id().unwrap_or_else(|_| self.registry.pick_worker());
         {
@@ -599,24 +621,12 @@ impl Runtime {
                     limit: self.options.native_handle_capacity as u64,
                 });
             }
-            let used = state.reserved[3];
-            let limit = self.options.aggregate_bytes[3];
-            if used.checked_add(bytes).is_none_or(|next| next > limit) {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: "resultBytes",
-                    used,
-                    requested: bytes,
-                    limit,
-                });
-            }
-            state.reserved[3] += bytes;
             state.natives += 1;
         }
-        match self.registry.insert_route(worker, kind, bytes) {
+        match self.registry.insert_route(worker, kind) {
             Ok(cap) => Ok(cap),
             Err(error) => {
                 let mut state = lock(&self.state);
-                state.reserved[3] = state.reserved[3].saturating_sub(bytes);
                 state.natives = state.natives.saturating_sub(1);
                 Err(error)
             }
@@ -625,8 +635,7 @@ impl Runtime {
 
     pub(crate) fn rollback_native_route(&self, cap: Capability) {
         let mut state = lock(&self.state);
-        if let Some(bytes) = self.registry.rollback_route(cap) {
-            state.reserved[3] = state.reserved[3].saturating_sub(bytes);
+        if self.registry.rollback_route(cap).is_some() {
             state.natives = state.natives.saturating_sub(1);
             self.changed.notify_all();
         }
@@ -636,8 +645,7 @@ impl Runtime {
         // A close waiter must observe route removal and refunded ownership
         // together, never a drained route with a still-live resource count.
         let mut state = lock(&self.state);
-        if let Some(bytes) = self.registry.release(cap) {
-            state.reserved[3] = state.reserved[3].saturating_sub(bytes);
+        if self.registry.release(cap).is_some() {
             state.natives = state.natives.saturating_sub(1);
             self.changed.notify_all();
         }
@@ -652,7 +660,6 @@ impl Runtime {
         super::registry::RegistryAdmission::admit(
             Arc::clone(self),
             NativeKind::RepositoryLock,
-            0,
             super::registry::Payload::RepositoryLock { _lock: lock },
         )
     }
@@ -681,7 +688,7 @@ impl Runtime {
     pub(crate) fn submit_payload(
         &self,
         cap: Capability,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -692,14 +699,8 @@ impl Runtime {
                 return Err(RuntimeError::ClosedHandle);
             }
         }
-        let context = policy.start()?;
+        let context = policy;
         context.checkpoint()?;
-        let bytes = [
-            policy.input_bytes,
-            policy.working_bytes,
-            policy.scratch_bytes,
-            policy.result_bytes,
-        ];
         let mut state = lock(&self.state);
         if state.phase != super::Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -714,11 +715,9 @@ impl Runtime {
         }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
-        state.charge(&self.options, bytes)?;
         let operation = Arc::new(Operation {
             id,
             context,
-            bytes,
             owner: None,
             database: None,
             session: None,
@@ -783,7 +782,7 @@ impl Runtime {
         operation: &Arc<Operation>,
         work: SnapshotWork,
         access: &mut SnapshotAccess<'_>,
-    ) {
+    ) -> Result<Output, RuntimeError> {
         let outcome = catch_unwind(AssertUnwindSafe(|| {
             operation.context.checkpoint()?;
             let value = work(&operation.context, access)?;
@@ -795,7 +794,7 @@ impl Runtime {
         if panicked {
             self.begin_close();
         }
-        self.complete_operation(operation, outcome);
+        outcome
     }
 }
 
@@ -824,22 +823,12 @@ mod tests {
             cleanup_capacity: 8,
             owner_capacity: 4,
             native_handle_capacity: 8,
-            aggregate_bytes: [1 << 20; 4],
-            chunk_bytes: 1 << 16,
             cleanup_timeout: Duration::from_secs(5),
         }
     }
 
-    fn policy() -> ExecutionPolicy {
-        ExecutionPolicy {
-            input_bytes: 1 << 16,
-            working_bytes: 1 << 16,
-            scratch_bytes: 1 << 16,
-            result_bytes: 1 << 16,
-            rows: 1 << 16,
-            work_units: 1 << 16,
-            timeout: Duration::from_secs(5),
-        }
+    fn policy() -> WorkContext {
+        WorkContext::new()
     }
 
     fn unique_dir(tag: &str) -> std::path::PathBuf {
@@ -875,7 +864,7 @@ mod tests {
         let path = owner.child_path("db").expect("child path");
         #[rustfmt::skip]
         let Ok(bumbledb::Admission::Accepted(db)) =
-            crate::Engine::create(&path, descriptor.clone(), policy().start().unwrap())
+            crate::Engine::create(&path, descriptor.clone(), policy())
         else {
             panic!("engine create must accept a fresh store")
         };
@@ -942,6 +931,335 @@ mod tests {
             .expect("runtime drain")
     }
 
+    fn item_query() -> bumbledb::Query {
+        use bumbledb::{Atom, AtomSource, FieldId, FindTerm, RelationId, Rule, Term, VarId};
+        bumbledb::Query::single(Rule {
+            finds: vec![FindTerm::Var(VarId(0))],
+            atoms: vec![Atom {
+                source: AtomSource::Edb(RelationId(0)),
+                bindings: vec![(FieldId(0), Term::Var(VarId(0)))],
+            }],
+            negated: vec![],
+            conditions: vec![],
+        })
+    }
+
+    fn prepare_items(runtime: &Arc<Runtime>, snapshot: &SnapshotSession) -> SnapshotSession {
+        match run_read(runtime, snapshot, |_| {
+            Ok(crate::db_wire::prepare_work(
+                Arc::clone(runtime),
+                item_query(),
+            ))
+        })
+        .expect("prepare completes")
+        {
+            Output::Prepared(prepared) => prepared,
+            _ => panic!("expected prepared handle"),
+        }
+    }
+
+    fn prepared_address(runtime: &Arc<Runtime>, prepared: &SnapshotSession) -> u64 {
+        match run_read(runtime, prepared, |_| {
+            Ok(Box::new(|_, access| {
+                assert_eq!(access.prepared_count(), 1);
+                Ok(Output::Count(
+                    std::ptr::from_ref(access.prepared.as_deref().unwrap()).addr() as u64,
+                ))
+            }))
+        })
+        .unwrap()
+        {
+            Output::Count(address) => address,
+            _ => panic!("expected address"),
+        }
+    }
+
+    fn execute_items(
+        runtime: &Arc<Runtime>,
+        prepared: &SnapshotSession,
+    ) -> bumbledb::CompleteResult {
+        match run_read(runtime, prepared, |_| {
+            Ok(crate::db_wire::execute_prepared_work(vec![]))
+        })
+        .expect("prepared execution completes")
+        {
+            Output::CompleteResult(result) => result,
+            _ => panic!("expected completed result"),
+        }
+    }
+
+    #[cfg(feature = "alloc-counter")]
+    fn measure_prepared_reuse(runtime: &Arc<Runtime>, prepared: &SnapshotSession) {
+        use bumbledb::alloc_counter::{self, AllocWindow};
+
+        fn measured(jobs: Vec<SnapshotWork>, access: &mut SnapshotAccess<'_>) -> AllocWindow {
+            // Match native operation lifetimes without counting fixture/IR
+            // construction. All engine preparation and execution is counted.
+            let contexts: Vec<_> = jobs.iter().map(|_| policy()).collect();
+            alloc_counter::reset();
+            for (job, context) in jobs.into_iter().zip(&contexts) {
+                let Output::CompleteResult(result) = job(context, access).unwrap() else {
+                    panic!("expected completed result");
+                };
+                assert_eq!(result.len(), 512);
+                drop(result);
+            }
+            alloc_counter::snapshot().window
+        }
+
+        run_read(runtime, prepared, |_| {
+            Ok(Box::new(|context, access| {
+                // Warm the actual retained plan before the compared windows.
+                drop(crate::db_wire::execute_prepared_work(vec![])(
+                    context, access,
+                )?);
+                let one_shot = measured(
+                    (0..16)
+                        .map(|_| crate::db_wire::execute_complete_work(item_query(), vec![]))
+                        .collect(),
+                    access,
+                );
+                let reused = measured(
+                    (0..16)
+                        .map(|_| crate::db_wire::execute_prepared_work(vec![]))
+                        .collect(),
+                    access,
+                );
+                eprintln!("16 native 512-row queries: one-shot={one_shot:?}; prepared={reused:?}");
+                assert!(
+                    reused.allocs < one_shot.allocs,
+                    "explicit preparation must save actual engine allocations"
+                );
+                assert!(reused.alloc_bytes < one_shot.alloc_bytes);
+                Ok(Output::Ready)
+            }))
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn prepared_queries_reuse_one_plan_and_close_independently() {
+        let runtime = Runtime::start(options()).unwrap();
+        let base = unique_dir("prepared-ownership");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let db = attach(&owner, &Mini.descriptor());
+        {
+            let lease = db.access().unwrap();
+            let collection = bumbledb::AcceptedCollection::from_value_rows(
+                bumbledb::RelationId(0),
+                &Mini.descriptor().relations[0].fields,
+                (0..512).map(|a| [bumbledb::Value::U64(a), bumbledb::Value::U64(a * 10)]),
+            )
+            .unwrap();
+            assert!(matches!(
+                lease
+                    .db()
+                    .write(policy(), |tx| {
+                        tx.insert_accepted(&collection).map(|_| ())
+                    })
+                    .unwrap(),
+                bumbledb::Admission::Accepted(_)
+            ));
+        }
+        let snapshot = open_read(&runtime, &db);
+        let initial = runtime.inspect().natives;
+        let first = prepare_items(&runtime, &snapshot);
+        let second = prepare_items(&runtime, &snapshot);
+        let address = prepared_address(&runtime, &second);
+        assert_ne!(address, prepared_address(&runtime, &first));
+        #[cfg(feature = "alloc-counter")]
+        measure_prepared_reuse(&runtime, &second);
+        let retained_result = execute_items(&runtime, &first);
+        assert_eq!(retained_result.len(), 512);
+        assert_eq!(drain_session(&first), CloseReport::Closed);
+        assert_eq!(drain_session(&first), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, initial + 1);
+        assert!(matches!(
+            run_read(&runtime, &first, |_| Ok(
+                crate::db_wire::execute_prepared_work(vec![])
+            )),
+            Err(RuntimeError::ClosedHandle)
+        ));
+        // Closing a plan leaves the source pin available.
+        assert!(matches!(
+            run_read(&runtime, &snapshot, |_| Ok(
+                crate::db_wire::execute_complete_work(item_query(), vec![])
+            ))
+            .unwrap(),
+            Output::CompleteResult(_)
+        ));
+        assert_eq!(drain_session(&snapshot), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, initial);
+        for _ in 0..32 {
+            let result = execute_items(&runtime, &second);
+            assert_eq!(result.len(), 512);
+            assert_eq!(result.identity(), retained_result.identity());
+            assert_eq!(prepared_address(&runtime, &second), address);
+            assert_eq!(runtime.inspect().natives, initial);
+        }
+        for _ in 0..3 {
+            assert!(matches!(
+                run_read(&runtime, &second, |_| {
+                    Ok(crate::db_wire::release_prepared_memory_work())
+                })
+                .unwrap(),
+                Output::Ready
+            ));
+            db.access().unwrap().db().clear_cache();
+            assert_eq!(prepared_address(&runtime, &second), address);
+            let result = execute_items(&runtime, &second);
+            assert_eq!(result.len(), 512);
+            assert_eq!(result.identity(), retained_result.identity());
+            assert_eq!(runtime.inspect().natives, initial);
+        }
+        let wrong_args = run_read(&runtime, &second, |_| {
+            Ok(crate::db_wire::execute_prepared_work(vec![
+                crate::marshal::OwnedParam::Scalar(bumbledb::Value::U64(1)),
+            ]))
+        });
+        assert!(matches!(wrong_args, Err(RuntimeError::Engine { .. })));
+        assert_eq!(execute_items(&runtime, &second).len(), 512);
+        assert_eq!(drain_session(&second), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, initial - 1);
+        let rows = retained_result.into_answers();
+        assert_eq!(rows.len(), 512, "result survives every reader closing");
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn abandoned_preparation_and_database_close_reclaim_plans() {
+        let runtime = Runtime::start(options()).unwrap();
+        let base = unique_dir("prepared-drain");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let db = attach(&owner, &Mini.descriptor());
+        let snapshot = open_read(&runtime, &db);
+        let initial = runtime.inspect().natives;
+        let mut invalid = item_query();
+        invalid.rules[0].atoms[0].source = bumbledb::AtomSource::Edb(bumbledb::RelationId(99));
+        let rejected = run_read(&runtime, &snapshot, |_| {
+            Ok(crate::db_wire::prepare_work(Arc::clone(&runtime), invalid))
+        });
+        assert!(matches!(rejected, Err(RuntimeError::Engine { .. })));
+        assert_eq!(runtime.inspect().natives, initial);
+
+        // Cancellation after installation must drop the unpublished plan.
+        let (cap_tx, cap_rx) = channel();
+        let target = Arc::clone(&runtime);
+        let cancelled = run_read(&runtime, &snapshot, |_| {
+            Ok(Box::new(move |context, access| {
+                let prepared = access.prepare(&target, &item_query(), context)?;
+                cap_tx.send(prepared.capability()).unwrap();
+                context.cancel();
+                Ok(Output::Prepared(prepared))
+            }))
+        });
+        assert!(matches!(
+            cancelled,
+            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+        ));
+        let (tx, rx) = channel();
+        runtime
+            .close_resource(
+                cap_rx.recv().unwrap(),
+                Box::new(move |report| {
+                    tx.send(report).unwrap();
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            CloseReport::Closed
+        );
+        assert_eq!(runtime.inspect().natives, initial);
+        for _ in 0..16 {
+            let abandoned = prepare_items(&runtime, &snapshot);
+            let cap = abandoned.capability();
+            drop(abandoned);
+            let (tx, rx) = channel();
+            runtime
+                .close_resource(
+                    cap,
+                    Box::new(move |report| {
+                        tx.send(report).unwrap();
+                    }),
+                )
+                .unwrap();
+            assert_eq!(
+                rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                CloseReport::Closed
+            );
+            assert_eq!(runtime.inspect().natives, initial);
+        }
+        let first = prepare_items(&runtime, &snapshot);
+        let second = prepare_items(&runtime, &snapshot);
+        let cancelled = run_read(&runtime, &first, |_| {
+            Ok(Box::new(|context, access| {
+                let output = crate::db_wire::execute_prepared_work(vec![])(context, access)?;
+                context.cancel();
+                Ok(output)
+            }))
+        });
+        assert!(matches!(
+            cancelled,
+            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
+        ));
+        assert!(
+            execute_items(&runtime, &first).is_empty(),
+            "cancelled execution leaves the plan reusable"
+        );
+        let (tx, rx) = channel();
+        db.drain(Box::new(move |report| {
+            tx.send(report).unwrap();
+        }));
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            CloseReport::Closed
+        );
+        assert_eq!(runtime.inspect().natives, 0);
+        // Reachable wrappers no longer own payloads after database drain.
+        for reader in [&snapshot, &first, &second] {
+            assert_eq!(drain_session(reader), CloseReport::Closed);
+        }
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn one_shot_queries_do_not_retain_prepared_state() {
+        let runtime = Runtime::start(options()).unwrap();
+        let base = unique_dir("one-shot-preparation");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let db = attach(&owner, &Mini.descriptor());
+        let session = open_read(&runtime, &db);
+        for _ in 0..32 {
+            let output = run_read(&runtime, &session, |_| {
+                Ok(Box::new(|context, access| {
+                    let output = crate::db_wire::execute_complete_work(item_query(), vec![])(
+                        context, access,
+                    )?;
+                    assert_eq!(
+                        access.prepared_count(),
+                        0,
+                        "one-shot preparation escaped its operation"
+                    );
+                    Ok(output)
+                }))
+            })
+            .expect("one-shot completes");
+            assert!(matches!(output, Output::CompleteResult(_)));
+        }
+        assert_eq!(drain_session(&session), CloseReport::Closed);
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn d24_one_worker_open_read_close_and_idle_snapshots_share_the_pool() {
         // D24: workers=1, open/read/close; more idle snapshots than workers;
@@ -956,18 +1274,16 @@ mod tests {
         let db = attach(&owner, &descriptor);
 
         let first = open_read(&runtime, &db);
-        match run_read(&runtime, &first, |_| {
+        let Output::Count(generation) = run_read(&runtime, &first, |_| {
             Ok(Box::new(|context, access| {
                 context.checkpoint()?;
                 let _ = access.frame(context);
                 Ok(Output::Count(access.owned.snapshot().generation().value()))
             }))
         })
-        .expect("read job")
-        {
-            Output::Count(_) => {}
-            _ => panic!("expected a count output"),
-        }
+        .expect("read job") else {
+            panic!("expected a count output");
+        };
 
         let mut idle = Vec::new();
         for _ in 0..3 {
@@ -992,7 +1308,7 @@ mod tests {
         })
         .expect("parent still readable after extra idle snapshots")
         {
-            Output::Generation(_) => {}
+            Output::Generation(current) => assert_eq!(current, generation),
             _ => panic!("expected a generation output"),
         }
 
@@ -1095,7 +1411,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Spent,
@@ -1134,7 +1449,7 @@ mod tests {
     fn d18_close_of_uninstalled_route_does_not_leave_a_row() {
         // D18: reserve + async install, then close before the worker
         // inserts. The route must drain; QueueFull cannot apply; no leftover
-        // row or charge.
+        // row or handle slot.
         let runtime = Runtime::start(options()).unwrap();
         let baseline = runtime.inspect();
         let (release, wait_release) = channel();
@@ -1155,7 +1470,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            32,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Spent,
@@ -1164,10 +1478,6 @@ mod tests {
         .expect("capability first, table insert later");
         assert_eq!(runtime.registry.route_count(), 1);
         assert_eq!(runtime.inspect().natives, baseline.natives + 1);
-        assert_eq!(
-            runtime.inspect().reserved[3],
-            baseline.reserved[3] + policy().result_bytes + 32
-        );
         assert!(
             !runtime.registry.join(admission.cap()),
             "close has not drained yet"
@@ -1194,7 +1504,6 @@ mod tests {
             baseline.natives,
             "counters match actual release"
         );
-        assert_eq!(runtime.inspect().reserved[3], baseline.reserved[3]);
         assert_eq!(
             runtime.registry.route_count(),
             0,
@@ -1209,30 +1518,13 @@ mod tests {
         // capability. A directory-owner twin without this stamp fails.
         let runtime = Runtime::start(options()).unwrap();
         let cap = runtime
-            .reserve_native_route(NativeKind::RepositoryLock, 0)
+            .reserve_native_route(NativeKind::RepositoryLock)
             .expect("lock route");
         assert_eq!(cap.kind, NativeKind::RepositoryLock);
         runtime.rollback_native_route(cap);
         assert_eq!(runtime.registry.route_count(), 0);
         assert_eq!(runtime.inspect().natives, 0);
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-    }
-
-    #[test]
-    fn d29_draft_payload_persists_work_deadline_terminal() {
-        // D29: DraftLedger (used_work, allowance_work, deadline, terminal)
-        // lives on DraftPayload. Reconstructing the ledger at finish fails.
-        use super::super::registry::registry_draft::DraftLedger;
-        use std::time::Instant;
-        let ledger = DraftLedger {
-            used_work: 3,
-            allowance_work: 8,
-            deadline: Instant::now() + Duration::from_secs(1),
-            terminal: false,
-        };
-        assert_eq!(ledger.used_work, 3);
-        assert_eq!(ledger.allowance_work, 8);
-        assert!(!ledger.terminal);
     }
 
     #[test]
@@ -1302,7 +1594,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Live,
@@ -1320,7 +1611,10 @@ mod tests {
                 }),
                 |_| {
                     Ok(Box::new(move |context, _, _| {
-                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        context.checkpoint()?;
+                        let queued = QueuedOutput {
+                            rows: vec![Vec::new()],
+                        };
                         Ok(Output::Page(Some(queued)))
                     }))
                 },
@@ -1346,7 +1640,10 @@ mod tests {
                 }),
                 |_| {
                     Ok(Box::new(move |context, _, _| {
-                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        context.checkpoint()?;
+                        let queued = QueuedOutput {
+                            rows: vec![Vec::new()],
+                        };
                         Ok(Output::Page(Some(queued)))
                     }))
                 },
@@ -1373,7 +1670,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Live,
@@ -1410,7 +1706,10 @@ mod tests {
                 }),
                 |_| {
                     Ok(Box::new(move |context, _, _| {
-                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        context.checkpoint()?;
+                        let queued = QueuedOutput {
+                            rows: vec![Vec::new()],
+                        };
                         Ok(Output::Page(Some(queued)))
                     }))
                 },
@@ -1436,7 +1735,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Live,
@@ -1444,14 +1742,13 @@ mod tests {
         )
         .expect("capability first");
         let page = |context: &bumbledb::work::WorkContext| {
-            QueuedOutput::admit(
-                context,
-                vec![
+            context.checkpoint()?;
+            Ok::<_, RuntimeError>(QueuedOutput {
+                rows: vec![
                     vec![crate::marshal::ValueOut::U64(1)],
                     vec![crate::marshal::ValueOut::U64(2)],
                 ],
-                16,
-            )
+            })
         };
         runtime.arm_publication_cancel();
         let (fail_tx, fail_rx) = channel();
@@ -1524,7 +1821,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Live,
@@ -1537,7 +1833,10 @@ mod tests {
         let published = runtime
             .submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| {
                 Ok(Box::new(move |context, _, _| {
-                    let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                    context.checkpoint()?;
+                    let queued = QueuedOutput {
+                        rows: vec![Vec::new()],
+                    };
                     Ok(Output::Page(Some(queued)))
                 }))
             })
@@ -1583,7 +1882,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Live,
@@ -1601,7 +1899,10 @@ mod tests {
                 }),
                 |_| {
                     Ok(Box::new(move |context, _, _| {
-                        let queued = QueuedOutput::admit(context, vec![Vec::new()], 0)?;
+                        context.checkpoint()?;
+                        let queued = QueuedOutput {
+                            rows: vec![Vec::new()],
+                        };
                         Ok(Output::Page(Some(queued)))
                     }))
                 },
@@ -1639,7 +1940,6 @@ mod tests {
         let admission = super::super::registry::RegistryAdmission::admit(
             std::sync::Arc::clone(&runtime),
             NativeKind::Result,
-            0,
             super::super::registry::Payload::Result {
                 result: None,
                 state: super::super::registry::ResultState::Live,
@@ -1682,23 +1982,29 @@ mod tests {
 
     #[test]
     fn d29_failed_admission_rolls_back_and_history_does_not_accumulate() {
-        // D29: failed admission before insertion leaves no payload/row/charge.
+        // D29: failed admission before insertion leaves no payload/row/slot.
         // Long create/revoke returns to the admitted baseline. No tombstones.
         let runtime = Runtime::start(options()).unwrap();
         let baseline = runtime.inspect();
         assert_eq!(baseline.natives, 0);
         assert_eq!(runtime.registry.route_count(), 0);
 
+        let handles: Vec<_> = (0..runtime.options.native_handle_capacity)
+            .map(|_| runtime.retain_native().unwrap())
+            .collect();
         assert!(
             matches!(
-                runtime.reserve_native_route(NativeKind::Result, u64::MAX),
-                Err(RuntimeError::ResourceLimit { .. })
+                runtime.reserve_native_route(NativeKind::Result),
+                Err(RuntimeError::ResourceLimit {
+                    dimension: "nativeHandleCapacity",
+                    ..
+                })
             ),
-            "byte admission refuses before a route exists"
+            "handle admission refuses before a route exists"
         );
+        drop(handles);
         assert_eq!(runtime.inspect().natives, 0);
         assert_eq!(runtime.registry.route_count(), 0);
-        assert_eq!(runtime.inspect().reserved[3], 0);
 
         let base = unique_dir("d29-history");
         std::fs::create_dir_all(&base).unwrap();

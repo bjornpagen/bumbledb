@@ -22,12 +22,14 @@ mod positions;
 /// the byte-order-normalized word for 8-byte columns, the raw byte for
 /// 1-byte columns. `Param` resolves at bind time through the evaluator's
 /// param slice; `PendingIntern` is immutable UTF-8 literal bytes resolved to
-/// a generation-owned intern word in a separate resolved slot. The
+/// an owned `Text` in a separate resolved slot. `Text` and `WordSet` keep
+/// canonical text alive when a resolved filter or selection is copied. The
 /// template retains its bytes so rotation can resolve it again. Interning
 /// an unstored text still produces an exact word that matches no row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Const {
     Word(u64),
+    Text(super::intern::InternedText),
     Byte(u8),
 
     Words(Box<[u64]>),
@@ -38,9 +40,71 @@ pub enum Const {
 
     ParamSet(crate::ir::ParamId),
 
-    WordSet(Vec<u64>),
+    // Keep text ownership out of every scalar constant's inline footprint.
+    WordSet(Box<ResolvedWords>),
 
     PendingIntern { bytes: Box<[u8]> },
+}
+
+/// Column-form selection keys or set elements, with owners for any resident
+/// text tokens. The executor borrows only `words`; cloning retained query
+/// state also clones these shared owners, never the string payloads.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ResolvedWords {
+    pub(crate) words: Vec<u64>,
+    pub(crate) texts: Vec<super::intern::InternedText>,
+}
+
+impl Clone for ResolvedWords {
+    fn clone(&self) -> Self {
+        Self {
+            words: self.words.clone(),
+            texts: self.texts.clone(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.words.clone_from(&source.words);
+        self.texts.clone_from(&source.texts);
+    }
+}
+
+impl From<Vec<u64>> for ResolvedWords {
+    fn from(words: Vec<u64>) -> Self {
+        Self {
+            words,
+            texts: Vec::new(),
+        }
+    }
+}
+
+impl From<Vec<u64>> for Box<ResolvedWords> {
+    fn from(words: Vec<u64>) -> Self {
+        Box::new(ResolvedWords::from(words))
+    }
+}
+
+impl AsRef<[u64]> for ResolvedWords {
+    fn as_ref(&self) -> &[u64] {
+        &self.words
+    }
+}
+
+impl ResolvedWords {
+    pub(crate) fn clear(&mut self) {
+        self.words.clear();
+        self.texts.clear();
+    }
+
+    pub(crate) fn push_text(&mut self, text: super::intern::InternedText) {
+        self.words.push(text.word);
+        self.texts.push(text);
+    }
+
+    pub(crate) fn dedup_texts(&mut self) {
+        self.texts.sort_unstable_by_key(|text| text.word);
+        self.texts.dedup_by_key(|text| text.word);
+    }
 }
 
 /// View-evaluator point word: a resolved literal or a bind-time param.

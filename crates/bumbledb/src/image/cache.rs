@@ -1,13 +1,13 @@
 //! The database-owned relation-image cache: one [`RelationSlot`] per
 //! relation and one synchronized [`GenerationProtocol`]. Map entries are
-//! eviction references to [`RelationImage`] owners; slab charge and the
-//! resolver live inside the shared allocation / generation handle.
+//! eviction references to [`RelationImage`] owners; images own their slabs
+//! and share a resolver generation.
 //!
 //! Prepared query state (selection, trie, COLT pools) stays separate; only
 //! immutable relation images and text tokens are shared here. An execution
-//! that interprets tokens holds a [`GenerationHandle`]. Pressure detaches
-//! map membership and rotates the current generation; live owners keep
-//! exact old meanings and their charges.
+//! that interprets tokens holds a [`GenerationHandle`]. Explicit clearing
+//! detaches map membership and rotates the current generation; live owners
+//! keep their exact old meanings.
 //!
 //! Reuse requires both the requested resolver owner and
 //! (relation, relation change version): the store
@@ -26,7 +26,6 @@ use crate::image::RelationImage;
 use crate::image::epoch::CacheGeneration;
 use crate::schema::RelationBody;
 use crate::storage::store::RelationVersion;
-use crate::work::CacheLedger;
 #[cfg(test)]
 use crate::work::cache::WeakGenerationHandle;
 use crate::work::cache::{GenerationHandle, GenerationProtocol};
@@ -39,7 +38,7 @@ mod peek;
 #[cfg(test)]
 mod tests;
 
-/// Eviction reference only. Charge lives on [`RelationImage`].
+/// Cache membership shares the image's existing owner.
 struct Cached {
     image: Arc<RelationImage>,
 }
@@ -83,24 +82,17 @@ impl VersionCache {
     }
 }
 
-/// The database-owned bounded relation-image cache plus generation-owned
+/// The database-owned relation-image cache plus generation-owned
 /// text resolution. One instance per database; prepared programs hold
 /// `Arc<ImageCache>` handles to the same owner.
 pub struct ImageCache {
     slots: Box<[RelationSlot]>,
-    cache: CacheLedger,
     protocol: GenerationProtocol,
 }
 
 impl ImageCache {
     pub(crate) fn slot(&self, relation: RelationId) -> &RelationSlot {
         &self.slots[relation.0 as usize]
-    }
-
-    /// The shared retained-cache ledger every image and text token charges.
-    #[cfg(test)]
-    pub(crate) fn cache_ledger(&self) -> &CacheLedger {
-        &self.cache
     }
 
     /// Direct test evidence of cache membership, without event recording.
@@ -138,22 +130,15 @@ impl ImageCache {
         self.protocol.identity()
     }
 
-    /// Retained cache bytes: the ledger, not map membership. Images held
-    /// only by executions still count until their last strong owner drops.
-    #[must_use]
-    pub fn retained_bytes(&self) -> usize {
-        usize::try_from(self.cache.used()).unwrap_or(usize::MAX)
-    }
-
     /// Rotate the current generation and detach all cached image entries.
-    /// Live image / handle owners keep their resolver and slab charge.
+    /// Live image / handle owners keep their resolver and slabs.
     /// The cache's previous current handle is dropped here so idle
     /// generations are not preserved forever.
-    pub fn trim(&self) {
+    pub fn clear(&self) {
         // Rotate first: a builder holding an old resolver cannot publish
         // after detachment. Publication checks the current owner while
         // holding its slot lock, which detachment must then acquire.
-        let _ = self.protocol.rotate(&self.cache);
+        let _ = self.protocol.rotate();
         self.detach_map_entries();
     }
 

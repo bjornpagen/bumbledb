@@ -9,7 +9,7 @@ use crate::plan::fj::ValidatedPlan;
 /// The sink's reply to one emitted binding.
 ///
 /// `SkipSuffix` requests a witnessed subtree skip (legal only for the projection
-/// sink). `Stop` is work/deadline/scratch refusal; `Error` is cardinality
+/// sink). `Stop` is cancellation/allocation/scratch refusal; `Error` is cardinality
 /// or corruption. Every executor path propagates terminal replies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Flow {
@@ -97,6 +97,13 @@ pub struct LeafScan<'a> {
 /// Consumes complete bindings (D3: the executor emits to a sink, never an
 /// `output`).
 pub trait Sink {
+    /// Does the retained output or dedup state depend on this binding slot?
+    /// Cursor sources use this to extend text ownership beyond a borrowed row.
+    /// Unknown consumers conservatively retain all surviving text bindings.
+    fn retains_binding_slot(&self, _slot: usize) -> bool {
+        true
+    }
+
     /// Whether this sink can consume a witnessed physical set traversal.
     /// Static dispatch erases the extra traversal machinery for ordinary
     /// projection/computed sinks. The executor still requires the plan's
@@ -428,28 +435,21 @@ enum DriveState {
 
 enum Poison {
     OriginOverflow,
-    /// The per-execution ledger refused at a bounded-quantum poll:
-    /// cancellation, deadline, work-unit exhaustion, or a working-byte
-    /// reservation refusal on COLT growth. Surfaced as the typed work
-    /// error by [`Executor::execute`].
+    /// Cancellation at a cooperative poll, or allocation failure during
+    /// COLT growth. Surfaced as the typed work error by [`Executor::execute`].
     Work(crate::work::WorkError),
     /// Sink Stop/Error — later probes must not run (D10).
     SinkStop,
     SinkError,
 }
 
-/// The warm executor's per-execution ledger handle:
-/// binding exploration steps and COLT pool growth are charged in bounded
-/// quanta — one poll per [`crate::exec::sink::STEP_QUANTUM`] explored
-/// cover entries, the same published maximum unpolled quantum as the
-/// sinks' — so cancellation/deadlines fire inside the join recursion
-/// (emitting nothing included, and under the Elided-witness regime) and
-/// the bounded-restart trigger can fire from join growth. Installed per
-/// execution by `run_join`; absent (executor unit harnesses) nothing is
-/// polled or charged.
+/// Cooperative cancellation within join recursion: one poll per
+/// [`crate::exec::sink::STEP_QUANTUM`] explored cover entries, even if no
+/// binding reaches a sink. Installed per execution by `run_join`; direct
+/// executor unit harnesses may omit it. No resources are reserved or charged.
 pub(super) struct ExecLedger {
     work: crate::work::WorkContext,
-    /// Explored cover entries not yet charged (bounded by the quantum).
+    /// Explored cover entries since the last cancellation poll.
     pending: u32,
 }
 

@@ -2,17 +2,7 @@
 use std::path::{Path, PathBuf};
 
 pub fn work() -> bumbledb::WorkContext {
-    bumbledb::ExecutionPolicy {
-        input_bytes: 64 << 20,
-        working_bytes: 64 << 20,
-        scratch_bytes: 64 << 20,
-        result_bytes: 64 << 20,
-        rows: 1 << 24,
-        work_units: 1 << 28,
-        timeout: std::time::Duration::from_secs(60),
-    }
-    .start()
-    .expect("valid test allowance")
+    bumbledb::WorkContext::new()
 }
 
 pub struct TempDir(PathBuf);

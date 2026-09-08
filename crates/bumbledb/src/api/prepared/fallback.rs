@@ -12,8 +12,7 @@
 //! variables are bound; surviving bindings stream to the SAME sinks the
 //! resident path uses, so dedup, aggregation, computed outputs and stage
 //! error boundaries are shared, not re-implemented. Text resolution uses
-//! the generation interner or the charged scratch-backed text store;
-//! resident and nonresident tokens share exact text equality.
+//! the generation interner; retained tokens have explicit text owners.
 
 use std::sync::Arc;
 
@@ -49,8 +48,8 @@ pub(super) struct FallbackRule {
     anti_probes: Vec<AntiProbe>,
     /// `(var, slot, width, kind)` in the plan's layout.
     slots: Vec<(VarId, usize, usize, LoadKind)>,
-    /// True at a string variable's first slot. Numeric words can equal
-    /// `SCRATCH_TOKEN_TAG`; only text slots dispatch on the token tag.
+    /// True at a string variable's first slot. Only these slots carry
+    /// text tokens whose owners may need retaining beyond this row.
     text_slots: Vec<bool>,
     slot_count: usize,
     /// Per occurrence: this execution's resolved filters (params/literals
@@ -58,12 +57,21 @@ pub(super) struct FallbackRule {
     resolved: Vec<Vec<FilterPredicate>>,
     /// Per occurrence, per selection level: resolved key words for
     /// key-aware indexed probes and early stopping.
-    resolved_selections: Vec<Vec<Vec<u64>>>,
+    resolved_selections: Vec<Vec<crate::image::view::ResolvedWords>>,
     /// Plan-side selection templates (not carried on normalized occurrences).
     selection_templates: Vec<Vec<crate::plan::fj::Selection>>,
 }
 
 impl FallbackRule {
+    pub(super) fn release_memory(&mut self) {
+        for filters in &mut self.resolved {
+            *filters = Vec::new();
+        }
+        for selections in &mut self.resolved_selections {
+            *selections = Vec::new();
+        }
+    }
+
     pub(super) fn forget_resolved_text(&mut self) {
         for filters in &mut self.resolved {
             filters.clear();
@@ -136,14 +144,13 @@ impl FallbackRule {
 fn slot_words_equal(
     rule: &FallbackRule,
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     bindings: &Bindings,
     slot: usize,
     width: usize,
     span_words: &[u64],
 ) -> Result<bool> {
     if width == 1 && rule.text_slots.get(slot).copied().unwrap_or(false) {
-        return super::text::words_equal(interner, store, bindings.get(slot), span_words[0]);
+        return super::text::words_equal(interner, bindings.get(slot), span_words[0]);
     }
     Ok((0..width).all(|w| bindings.get(slot + w) == span_words[w]))
 }
@@ -155,8 +162,7 @@ pub(super) struct FallbackCtx<'a> {
     pub(super) interner: &'a InternerHandle<'a>,
     pub(super) params: &'a [Const],
     pub(super) missed: &'a [bool],
-    /// Production beyond-memory text: opened only on `BeyondMemory`.
-    pub(super) nonresident: &'a mut Option<crate::image::NonresidentTextStore>,
+    pub(super) retained_texts: &'a mut crate::image::TextOwners,
 }
 
 /// Run one rule through the cursor fallback into `sink`.
@@ -183,7 +189,6 @@ pub(super) fn run_fallback<S: Sink>(
     } = rule;
     let mut resolver = super::bind::LiteralResolution {
         interner: ctx.interner,
-        store: ctx.nonresident,
         work: ctx.source.work(),
         params: ctx.params,
         missed: ctx.missed,
@@ -207,7 +212,7 @@ pub(super) fn run_fallback<S: Sink>(
         let templates = &mut selection_templates[occ_idx];
         if selections.len() != templates.len() {
             selections.clear();
-            selections.resize_with(templates.len(), Vec::new);
+            selections.resize_with(templates.len(), crate::image::view::ResolvedWords::default);
         }
         for (selection, words) in templates.iter().zip(selections.iter_mut()) {
             if !resolver.selection(selection, words)? {
@@ -299,7 +304,6 @@ impl Search<'_, '_> {
                 fields,
                 bytes,
                 self.ctx.interner,
-                self.ctx.nonresident,
                 self.ctx.source.work(),
                 true,
             ) {
@@ -328,14 +332,14 @@ impl Search<'_, '_> {
         depth: usize,
         occ_idx: usize,
         relation: RelationId,
-        selections: &[Vec<u64>],
+        selections: &[crate::image::view::ResolvedWords],
         bindings: &mut Bindings,
         sink: &mut S,
     ) -> Result<bool> {
-        if selections.is_empty() || !selections.iter().all(|level| level.len() == 1) {
+        if selections.is_empty() || !selections.iter().all(|level| level.words.len() == 1) {
             return Ok(false);
         }
-        let key_words: Vec<u64> = selections.iter().map(|level| level[0]).collect();
+        let key_words: Vec<u64> = selections.iter().map(|level| level.words[0]).collect();
         // Resolved values retain their selection's field coordinate. A
         // join-trie variable is unrelated: a symbol filter must never be
         // interpreted as a lookup of the occurrence's ID variable.
@@ -378,7 +382,6 @@ impl Search<'_, '_> {
                     fields,
                     bytes,
                     self.ctx.interner,
-                    self.ctx.nonresident,
                     self.ctx.source.work(),
                     true,
                 ) {
@@ -412,6 +415,9 @@ impl Search<'_, '_> {
         bindings: &mut Bindings,
         sink: &mut S,
     ) -> Result<()> {
+        if let Some(stage) = self.published.get(stage_idx) {
+            stage.check_generation(self.ctx.interner.generation())?;
+        }
         match self.published.get(stage_idx) {
             Some(SealedStage::Resident(image)) => {
                 let image = Arc::clone(image);
@@ -419,24 +425,23 @@ impl Search<'_, '_> {
             }
             Some(SealedStage::Scratch(stage)) => {
                 let count = stage.count;
-                let row_words = stage.row_words;
                 let field_types = stage.field_types.clone();
-                let mut words = Vec::with_capacity(row_words);
+                let mut buffer = super::derived::ScratchRowBuffer::default();
                 for index in 0..count {
                     self.ctx
                         .source
                         .work()
-                        .step(1)
+                        .checkpoint()
                         .map_err(super::source::work_error)?;
-                    {
+                    let words = {
                         let SealedStage::Scratch(scratch) = &mut self.published[stage_idx] else {
                             unreachable!("scratch stage")
                         };
-                        super::derived::SealedStage::scratch_row_words(scratch, index, &mut words)?;
-                    }
+                        buffer.read(scratch, index)?
+                    };
                     let row = ScratchRow {
                         field_types: &field_types,
-                        words: &words,
+                        words,
                     };
                     self.try_row(depth, occ_idx, &row, bindings, sink)?;
                 }
@@ -458,7 +463,7 @@ impl Search<'_, '_> {
     ) -> Result<()> {
         let work = self.ctx.source.work();
         for position in 0..image.row_count() {
-            work.step(1).map_err(super::source::work_error)?;
+            work.checkpoint().map_err(super::source::work_error)?;
             let row = ImageRow { image, position };
             self.try_row(depth, occ_idx, &row, bindings, sink)?;
         }
@@ -481,14 +486,8 @@ impl Search<'_, '_> {
     {
         let occurrence = &self.rule.occurrences[occ_idx];
         for filter in &self.rule.resolved[occ_idx] {
-            if !super::text::holds_with_text(
-                filter,
-                row,
-                self.ctx.params,
-                self.ctx.interner,
-                self.ctx.nonresident,
-            )?
-            .unwrap_or(false)
+            if !super::text::holds_with_text(filter, row, self.ctx.params, self.ctx.interner)?
+                .unwrap_or(false)
             {
                 return Ok(());
             }
@@ -506,7 +505,6 @@ impl Search<'_, '_> {
                 if !slot_words_equal(
                     self.rule,
                     self.ctx.interner,
-                    self.ctx.nonresident,
                     bindings,
                     slot,
                     width,
@@ -586,14 +584,8 @@ impl Search<'_, '_> {
             .chain(&self.rule.word_residuals)
             .chain(&self.rule.allen_residuals)
         {
-            if !super::text::holds_with_text(
-                residual,
-                &ops,
-                self.ctx.params,
-                self.ctx.interner,
-                self.ctx.nonresident,
-            )?
-            .unwrap_or(false)
+            if !super::text::holds_with_text(residual, &ops, self.ctx.params, self.ctx.interner)?
+                .unwrap_or(false)
             {
                 return Ok(());
             }
@@ -605,7 +597,17 @@ impl Search<'_, '_> {
                 return Ok(());
             }
         }
-        self.canonicalize_text_bindings(bindings)?;
+        // RowWords is reused by the cursor as soon as this call returns.
+        // Keep only text that the sink's output or exact dedup keys retain,
+        // and only after every predicate has accepted the binding.
+        for (slot, &is_text) in self.rule.text_slots.iter().enumerate() {
+            if is_text && sink.retains_binding_slot(slot) {
+                let word = bindings.get(slot);
+                self.ctx.retained_texts.pin(word, || {
+                    self.ctx.interner.generation().resolver().owned_text(word)
+                })?;
+            }
+        }
         let emitted = sink.emit(bindings);
         let progress = Flow::from_sink_progress(sink.progress()).or_skip(emitted);
         if progress.is_terminal() {
@@ -614,22 +616,6 @@ impl Search<'_, '_> {
                     "fallback sink stop",
                 ))
             }));
-        }
-        Ok(())
-    }
-
-    fn canonicalize_text_bindings(&self, bindings: &mut Bindings) -> Result<()> {
-        for (slot, is_text) in self.rule.text_slots.iter().enumerate() {
-            if !*is_text {
-                continue;
-            }
-            if let Some(canon) = super::text::canonical_token(
-                self.ctx.interner,
-                self.ctx.nonresident.as_ref(),
-                bindings.get(slot),
-            )? {
-                bindings.set(slot, canon);
-            }
         }
         Ok(())
     }
@@ -651,12 +637,10 @@ impl Search<'_, '_> {
             "anti-probes name negated atoms"
         );
         let mut hit = false;
-        let check_row = |row: &dyn ErasedOperands,
-                         store: &mut Option<crate::image::NonresidentTextStore>|
-         -> Result<bool> {
+        let check_row = |row: &dyn ErasedOperands| -> Result<bool> {
             for filter in &self.rule.resolved[occ_idx] {
                 if !row
-                    .holds_filter(filter, self.ctx.params, self.ctx.interner, store)?
+                    .holds_filter(filter, self.ctx.params, self.ctx.interner)?
                     .unwrap_or(false)
                 {
                     return Ok(false);
@@ -670,7 +654,6 @@ impl Search<'_, '_> {
                 if !slot_words_equal(
                     self.rule,
                     self.ctx.interner,
-                    store,
                     bindings,
                     slot,
                     width,
@@ -708,14 +691,13 @@ impl Search<'_, '_> {
                             fields,
                             bytes,
                             self.ctx.interner,
-                            self.ctx.nonresident,
                             self.ctx.source.work(),
                             false,
                         ) {
                             failure = Some(error);
                             return Ok(false);
                         }
-                        match check_row(&row, self.ctx.nonresident) {
+                        match check_row(&row) {
                             Ok(matched) => hit |= matched,
                             Err(error) => {
                                 failure = Some(error);
@@ -731,50 +713,40 @@ impl Search<'_, '_> {
             }
             OccBind::Finished(id) | OccBind::RecDelta(id) => {
                 let stage_idx = id.index();
+                if let Some(stage) = self.published.get(stage_idx) {
+                    stage.check_generation(self.ctx.interner.generation())?;
+                }
                 match self.published.get(stage_idx) {
                     Some(SealedStage::Resident(image)) => {
                         for position in 0..image.row_count() {
                             self.ctx
                                 .source
                                 .work()
-                                .step(1)
+                                .checkpoint()
                                 .map_err(super::source::work_error)?;
                             let row = ImageRow { image, position };
-                            if check_row(&row, self.ctx.nonresident)? {
+                            if check_row(&row)? {
                                 hit = true;
                                 break;
                             }
                         }
                     }
                     Some(SealedStage::Scratch(stage)) => {
-                        let count = stage.count;
-                        let row_words = stage.row_words;
                         let field_types = stage.field_types.clone();
-                        for index in 0..count {
-                            self.ctx
-                                .source
-                                .work()
-                                .step(1)
-                                .map_err(super::source::work_error)?;
-                            let mut words = vec![0u64; row_words];
-                            {
-                                let SealedStage::Scratch(scratch) = &mut self.published[stage_idx]
-                                else {
-                                    unreachable!("scratch stage")
-                                };
-                                super::derived::SealedStage::scratch_row_words(
-                                    scratch, index, &mut words,
-                                )?;
-                            }
-                            let row = ScratchRow {
-                                field_types: &field_types,
-                                words: &words,
-                            };
-                            if check_row(&row, self.ctx.nonresident)? {
-                                hit = true;
-                                break;
-                            }
-                        }
+                        let SealedStage::Scratch(scratch) = &mut self.published[stage_idx] else {
+                            unreachable!("scratch stage")
+                        };
+                        SealedStage::for_each_scratch_row(
+                            scratch,
+                            self.ctx.source.work(),
+                            |words| {
+                                hit = check_row(&ScratchRow {
+                                    field_types: &field_types,
+                                    words,
+                                })?;
+                                Ok(!hit)
+                            },
+                        )?;
                     }
                     None => {
                         return Err(Error::Corruption(
@@ -798,7 +770,6 @@ trait ErasedOperands {
         filter: &FilterPredicate,
         params: &[Const],
         interner: &InternerHandle<'_>,
-        store: &mut Option<crate::image::NonresidentTextStore>,
     ) -> Result<Option<bool>>;
     fn span(&self, field: FieldId, out: &mut [u64; 8]) -> Result<usize>;
 }
@@ -809,9 +780,8 @@ impl ErasedOperands for RowWords {
         filter: &FilterPredicate,
         params: &[Const],
         interner: &InternerHandle<'_>,
-        store: &mut Option<crate::image::NonresidentTextStore>,
     ) -> Result<Option<bool>> {
-        super::text::holds_with_text(filter, self, params, interner, store)
+        super::text::holds_with_text(filter, self, params, interner)
     }
 
     fn span(&self, field: FieldId, out: &mut [u64; 8]) -> Result<usize> {
@@ -827,9 +797,8 @@ impl ErasedOperands for ImageRow<'_> {
         filter: &FilterPredicate,
         params: &[Const],
         interner: &InternerHandle<'_>,
-        store: &mut Option<crate::image::NonresidentTextStore>,
     ) -> Result<Option<bool>> {
-        match super::text::holds_with_text(filter, self, params, interner, store) {
+        match super::text::holds_with_text(filter, self, params, interner) {
             Ok(verdict) => Ok(verdict),
             Err(error) => Err(error),
         }
@@ -866,9 +835,8 @@ impl ErasedOperands for ScratchRow<'_> {
         filter: &FilterPredicate,
         params: &[Const],
         interner: &InternerHandle<'_>,
-        store: &mut Option<crate::image::NonresidentTextStore>,
     ) -> Result<Option<bool>> {
-        super::text::holds_with_text(filter, self, params, interner, store)
+        super::text::holds_with_text(filter, self, params, interner)
     }
 
     fn span(&self, field: FieldId, out: &mut [u64; 8]) -> Result<usize> {

@@ -1,6 +1,6 @@
 //! Partial-image coverage: real reverse index, source visit bounds, rotating
 //! selections, whole-image sharing, pinned versions, text generations and
-//! bounded refusal. The heap and forced cursor paths are independent oracles.
+//! cancellation. The heap and forced cursor paths are independent oracles.
 use super::*;
 use bumbledb_theory::schema::{Side, StatementDescriptor};
 
@@ -77,7 +77,7 @@ fn indexed_image_rotation_is_bucket_shaped_and_never_shared_as_full() {
         };
         assert_eq!(
             bound.selections.as_deref(),
-            Some([vec![account]].as_slice())
+            Some([vec![account].into()].as_slice())
         );
     }
     // A separate broad query must see ALL rows, and its full image then
@@ -155,7 +155,7 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
     let mut prepared = fix.prepare(&by_account_query()).unwrap();
     let params = [BindValue::U64(0), BindValue::I64(-1)];
     let pin = fix.db.owned_read().unwrap();
-    let old_work = crate::api::db::test_operation().unwrap();
+    let old_work = crate::api::db::test_operation();
     let old_source = super::super::source::QuerySource::store(pin.snapshot(), &old_work);
     let mut out = Answers::new();
     prepared
@@ -169,19 +169,15 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
         .unwrap();
     assert_eq!(out.len(), 32, "old version cannot reuse new subset");
 
-    // Discard generation-owned tokens through another prepared owner.
-    let mut sibling = fix.prepare(&by_memo_query()).unwrap();
-    sibling.trim();
+    // Clear the database cache while the old snapshot and query stay alive.
+    fix.db.clear_cache();
     let expected = answers_of(&fix.execute(&mut prepared, &params).unwrap());
     assert_eq!(expected.len(), 33);
     assert!(expected.contains(&("new-text".into(), 1000)));
-    prepared.trim();
-    let limited = crate::work::ExecutionPolicy {
-        work_units: 4,
-        ..super::super::source::UNBOUNDED_POLICY
-    }
-    .start()
-    .unwrap();
+    prepared.release_memory();
+    fix.db.clear_cache();
+    let limited = crate::work::WorkContext::new();
+    limited.cancel();
     let source = super::super::source::QuerySource::store(pin.snapshot(), &limited);
     assert!(prepared.execute_source(&source, &params, &mut out).is_err());
     assert!(
@@ -194,46 +190,28 @@ fn indexed_image_coverage_survives_old_snapshots_refusal_and_generation_rotation
         expected
     );
 
-    // The old snapshot stays correct under a small working allowance.
-    // Which path fits depends on slab retention, not a fixed byte threshold.
-    prepared.trim();
-    let tiny = crate::work::ExecutionPolicy {
-        working_bytes: 16 << 10,
-        ..super::super::source::UNBOUNDED_POLICY
-    }
-    .start()
-    .unwrap();
-    let source = super::super::source::QuerySource::store(pin.snapshot(), &tiny);
+    // A fresh operation still reads the old snapshot after cache rotation.
+    prepared.release_memory();
+    fix.db.clear_cache();
+    let fresh = crate::work::WorkContext::new();
+    let source = super::super::source::QuerySource::store(pin.snapshot(), &fresh);
     prepared.execute_source(&source, &params, &mut out).unwrap();
     assert_eq!(out.len(), 32);
 }
 
 #[test]
-fn selected_image_slab_refusal_releases_admission_without_publishing() {
+fn cancelled_selected_image_publishes_no_cache_entry() {
     use crate::image::ImageBind;
     use crate::storage::store::StoreError;
-    use crate::work::{Resource, WorkError};
+    use crate::work::WorkError;
 
     let fix = indexed_store();
     let prepared = fix.prepare(&by_account_query()).unwrap();
-    let fields: Vec<_> = prepared
-        .schema
-        .relation(POSTING)
-        .fields()
-        .iter()
-        .map(|field| field.value_type)
-        .collect();
-    let image_bytes = crate::image::estimated_slab_bytes(&fields, 32).unwrap();
-    let work = crate::work::ExecutionPolicy {
-        working_bytes: (image_bytes - 1) as u64,
-        ..super::super::source::UNBOUNDED_POLICY
-    }
-    .start()
-    .unwrap();
+    let work = crate::work::WorkContext::new();
+    work.cancel();
     let pin = fix.db.owned_read().unwrap();
     let source = super::super::source::QuerySource::store(pin.snapshot(), &work);
     let images = crate::image::SourceImages::bind(&source, &prepared.cache);
-    let before = prepared.cache.cache_ledger().used();
     let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
         panic!("Free Join")
     };
@@ -242,16 +220,14 @@ fn selected_image_slab_refusal_releases_admission_without_publishing() {
             &prepared.schema,
             POSTING,
             &rule.plan.occurrences()[0].selections,
-            &[vec![0]],
+            &[vec![0].into()],
         )
-        .expect_err("one byte below the actual slab bound refuses before allocation");
+        .expect_err("cancelled build refuses before publishing");
     assert!(matches!(
         error,
         crate::Error::Store(error) if matches!(*error,
-            StoreError::Work(WorkError::Exhausted { resource: Resource::WorkingBytes, .. }))
+            StoreError::Work(WorkError::Cancelled))
     ));
-    assert_eq!(work.used(Resource::WorkingBytes), 0);
-    assert_eq!(prepared.cache.cache_ledger().used(), before);
     assert_eq!(prepared.cache.image_count(), 0);
 }
 
@@ -298,7 +274,7 @@ fn self_join_does_not_clone_a_differently_selected_partial_image() {
 }
 
 #[test]
-fn index_cardinality_is_bounded_charged_and_exact_at_the_cutoff() {
+fn index_cardinality_is_exact_at_the_cutoff_and_observes_cancellation() {
     let fix = indexed_store();
     let pin = fix.db.owned_read().unwrap();
     let theory = fix.db.schema().compiled_theory().unwrap();
@@ -313,27 +289,23 @@ fn index_cardinality_is_bounded_charged_and_exact_at_the_cutoff() {
         let encoded = crate::storage::store::det_index::determinant_bytes(
             compiled,
             &[Value::U64(0)],
-            &crate::api::db::test_operation().unwrap(),
+            &crate::api::db::test_operation(),
         )
         .unwrap();
         for limit in [0, count - 1, count, count + 1] {
-            let work = crate::api::db::test_operation().unwrap();
+            let work = crate::api::db::test_operation();
             assert_eq!(
                 projection.count_bounded(&encoded, limit, &work).unwrap(),
                 (count <= limit).then_some(count)
-            );
-            assert_eq!(
-                work.used(crate::work::Resource::WorkUnits),
-                count.min(limit + 1)
             );
         }
         let empty = crate::storage::store::det_index::determinant_bytes(
             compiled,
             &[Value::U64(99)],
-            &crate::api::db::test_operation().unwrap(),
+            &crate::api::db::test_operation(),
         )
         .unwrap();
-        let work = crate::api::db::test_operation().unwrap();
+        let work = crate::api::db::test_operation();
         assert_eq!(projection.count_bounded(&empty, 0, &work).unwrap(), Some(0));
         work.cancel();
         assert!(

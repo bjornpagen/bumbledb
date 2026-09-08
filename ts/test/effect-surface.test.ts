@@ -18,7 +18,7 @@ import { relation } from "#relation.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { schema } from "#schema.ts"
 import { key } from "#statements.ts"
-import { type Attempt, Learning, type Student, work } from "#test/fixtures/learning.ts"
+import { type Attempt, Learning, type Student } from "#test/fixtures/learning.ts"
 
 function assertNoTwin(name: string, value: object): void {
 	assert.equal("then" in value, false, `${name} is not thenable`)
@@ -29,10 +29,10 @@ function assertNoTwin(name: string, value: object): void {
 }
 
 test("every core entry point constructs a lazy Effect (or Stream) — nothing runs at construction", function lazyConstruction() {
-	const create = Db.create("/tmp/never-used", Learning, work)
-	const open = Db.open("/tmp/never-used", Learning, work)
-	const compile = BumbleSchema.compile(Learning, work)
-	const builder = ChangeSet.builder(Learning, work)
+	const create = Db.create("/tmp/never-used", Learning)
+	const open = Db.open("/tmp/never-used", Learning)
+	const compile = BumbleSchema.compile(Learning)
+	const builder = ChangeSet.builder(Learning)
 	for (const [name, value] of [
 		["Db.create", create],
 		["Db.open", open],
@@ -54,11 +54,6 @@ test("the layer value is inert data until provided into a running scope", functi
 		cleanupCapacity: 1,
 		ownerCapacity: 1,
 		nativeHandleCapacity: 1,
-		inputBytes: 1n,
-		workingBytes: 1n,
-		scratchBytes: 0n,
-		resultBytes: 1n,
-		chunkBytes: 1n,
 		cleanupTimeout: "1 second"
 	})
 	assertNoTwin("NativeRuntime.layer", layer)
@@ -98,11 +93,16 @@ test("a CompleteResult's pages is a Stream value, and no cursor/AsyncIterable tw
 	assert.ok(pinned)
 })
 
-test("get/execute/session/close on typed handles are declared Effect-returning (compile-time pins)", function methodPins() {
+test("get/execute/prepare/close on typed handles are declared Effect-returning (compile-time pins)", function methodPins() {
 	type SnapshotValue = import("#db.ts").Snapshot<typeof Learning>
 	type GetResult = ReturnType<SnapshotValue["get"]>
 	const getIsEffect: GetResult extends Effect.Effect<unknown, unknown, unknown> ? true : false = true
 	assert.ok(getIsEffect)
+	type PrepareResult = ReturnType<SnapshotValue["prepare"]>
+	const prepareIsScoped: PrepareResult extends Effect.Effect<unknown, unknown, import("effect").Scope.Scope>
+		? true
+		: false = true
+	assert.ok(prepareIsScoped)
 	type CloseResult = ReturnType<SnapshotValue["close"]>
 	const closeIsEffect: CloseResult extends Effect.Effect<unknown, never, never> ? true : false = true
 	assert.ok(closeIsEffect)

@@ -2,9 +2,8 @@ use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpe
 
 impl AggregateSink {
     pub(super) fn fold_scratch_row(&mut self) {
-        // The group-state pressure check runs BEFORE the row folds: past
-        // the allowance the RAM partition flushes into the scratch tier
-        // (merging per group), and this row starts a fresh partition.
+        // A full dense-index representation flushes before another group
+        // could be inserted. This is not an estimated-byte threshold.
         self.maybe_spill_groups();
         if self.error.is_some()
             || self.cardinality_overflow
@@ -29,7 +28,6 @@ impl AggregateSink {
             GroupState::Pack { slot, claims } => {
                 claims[group_idx]
                     .push([self.binding_scratch[*slot], self.binding_scratch[*slot + 1]]);
-                self.pack_bytes += 16;
             }
             GroupState::Folds { accs, n_aggs } => {
                 let n_aggs = *n_aggs;

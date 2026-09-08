@@ -63,7 +63,7 @@ pub struct Command {
 impl Command {
     /// Retain already checked core ownership and bind every command field,
     /// including the bounded declared result metadata. Hashing checks the
-    /// shared work allowance at bounded byte intervals.
+    /// shared cancellation context at bounded byte intervals.
     /// # Errors
     /// Refuses mismatched schema/witness, frame limits or exhausted work.
     pub fn seal(
@@ -81,7 +81,7 @@ impl Command {
         let mut hasher = blake3::Hasher::new_derive_key(COMMAND_DIGEST_DOMAIN);
         command_parts(metadata, changes.as_bytes(), result.as_bytes(), |part| {
             for chunk in part.chunks(HASH_QUANTUM) {
-                work.step(1)?;
+                work.checkpoint()?;
                 hasher.update(chunk);
             }
             Ok::<_, WorkError>(())
@@ -114,7 +114,7 @@ impl Command {
         if metadata.identity.schema_id != bumbledb::schema::fingerprint::fingerprint(schema) {
             return Err(CommandError::SchemaMismatch);
         }
-        work.input((bytes.len() - core_changes.len()) as u64)?;
+        work.checkpoint()?;
         let changes = ChangeSet::parse(schema, core_changes, work)?;
         Self::seal(
             metadata,

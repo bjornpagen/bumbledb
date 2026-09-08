@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 use bumbledb::Theory as _;
-use bumbledb::work::ExecutionPolicy;
+use bumbledb::work::WorkContext;
 use bumbledb_log::certainty::{PublicationPhase, SubmitCertainty};
 
 use super::admin;
@@ -33,22 +33,12 @@ fn options() -> Options {
         cleanup_capacity: 8,
         owner_capacity: 8,
         native_handle_capacity: 16,
-        aggregate_bytes: [64 << 20; 4],
-        chunk_bytes: 1 << 20,
         cleanup_timeout: Duration::from_millis(500),
     }
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 16 << 20,
-        working_bytes: 16 << 20,
-        scratch_bytes: 16 << 20,
-        result_bytes: 16 << 20,
-        rows: 1 << 20,
-        work_units: 1 << 30,
-        timeout: Duration::from_secs(10),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 /// Snapshot jobs must run on the pool because their pinned LMDB owner is
@@ -182,7 +172,7 @@ fn the_protocol_roster_pins_ts_log_codes_exactly() {
 
 #[test]
 fn the_result_codec_is_the_core_authority_and_uuid_crosses_as_hex() {
-    let work = policy().start().unwrap();
+    let work = policy();
     let entries = vec![
         ("beta".to_string(), Value::U64(7)),
         ("alpha".to_string(), Value::String("hi".into())),
@@ -272,7 +262,7 @@ fn local_create_open_and_identity_refusals() {
     let base = unique_dir("create-open");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     // Open before create: DatabaseMissing, never an empty replacement.
     match open_history(&runtime, &open_spec(&dir, false, 3), &work) {
@@ -326,7 +316,7 @@ fn create_retry_completes_and_strangers_refuse() {
     let base = unique_dir("create-retry");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let created = open_history(&runtime, &open_spec(&dir, true, 4), &work).expect("creates");
     assert_eq!(drain_resource(&created.resource), CloseReport::Closed);
@@ -371,7 +361,7 @@ fn submit_decides_and_identity_mismatch_is_not_submitted() {
     let base = unique_dir("submit");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let opened = open_history(&runtime, &open_spec(&dir, true, 7), &work).expect("creates");
     let (kind, lease) = opened.resource.kind_and_lease().expect("live history");
@@ -459,7 +449,7 @@ fn published_snapshots_pin_provenance_and_consistency_refusals_are_typed() {
     let base = unique_dir("snapshot");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let opened = open_history(&runtime, &open_spec(&dir, true, 11), &work).expect("creates");
     let mut snapshot = snapshot_via_worker(&opened.resource, ConsistencySpec::Latest)
@@ -536,7 +526,7 @@ fn per_call_submit_options_cross_verbatim_and_local_accepts_and_ignores_them() {
     let base = unique_dir("submit-options");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let opened = open_history(&runtime, &open_spec(&dir, true, 17), &work).expect("creates");
     let (kind, lease) = opened.resource.kind_and_lease().expect("live history");
@@ -640,7 +630,7 @@ fn closed_history_refuses_and_close_joins_idempotently() {
     let base = unique_dir("close");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let opened = open_history(&runtime, &open_spec(&dir, true, 13), &work).expect("creates");
     assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);
@@ -720,7 +710,7 @@ fn d13_diagnostic_failure_preserves_decided_and_does_not_invent_corruption() {
     let base = unique_dir("d13-found");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
     let opened = open_history(&runtime, &open_spec(&dir, true, 71), &work).expect("creates");
     let inspection = inspect_via_verb(&opened.resource, &work);
     assert_eq!(
@@ -747,7 +737,7 @@ fn d18_abandoned_snapshot_output_drains_its_session() {
     let base = unique_dir("d18-abandon");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
     let opened = open_history(&runtime, &open_spec(&dir, true, 19), &work).expect("creates");
     let snapshot =
         snapshot_via_worker(&opened.resource, ConsistencySpec::Latest).expect("snapshot output");
@@ -761,7 +751,7 @@ fn d18_abandoned_snapshot_output_drains_its_session() {
 
 #[test]
 fn d20_admin_missing_and_foreign_snapshots_refuse_before_side_effects() {
-    let work = policy().start().unwrap();
+    let work = policy();
     let missing = admin::PlansSpec::test_chain(
         empty_manifest_for(&Mini.descriptor()),
         Vec::new(),

@@ -8,9 +8,8 @@ import { dbNative } from "#db-native.ts"
 import { lower } from "#lower.ts"
 import type { AnyRelation, Fact } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
-import { assertHostCellFits, cellOf, recordOf } from "#rows.ts"
-import type { ExecutionPolicy } from "#runtime.ts"
-import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import { cellOf, hostCellCharge, recordOf } from "#rows.ts"
+import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import type { CloseReport } from "#runtime-errors.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
@@ -33,7 +32,7 @@ interface ChangeSet<S extends AnySchema> {
 /**
  * `ChangeDraft` — the scoped, database-free construction capability.
  * Every method constructs a LAZY effect; execution reads the then-current
- * iterable and charges its work again on every sequential rerun (no hidden
+ * iterable again on every sequential rerun (no hidden
  * memoization, no automatic retry, no iterator replay). Input must stay
  * stable from an ingestion effect's execution start through its Exit;
  * after successful ingestion the accepted native bytes are independent.
@@ -53,16 +52,14 @@ interface ChangeDraft<S extends AnySchema> {
  * Host-copy granularity: one bounded host-to-native message per chunk, so
  * real event-loop turns happen between chunks (each chunk completes through
  * a native callback, not a microtask chain). These are converter
- * granularity bounds, not database-size policy — the draft's aggregate
- * input/working/spill budget is charged natively and is CUMULATIVE across
- * calls and chunks (chunks never reset it).
+ * granularity targets, not database-size limits. One larger row travels
+ * alone; otherwise native callbacks provide backpressure between batches.
  */
 const CHUNK_BYTES = 65536n
 const CHUNK_ROWS = 4096
 
 interface DraftState {
 	readonly handle: DraftHandle
-	readonly policy: ExecutionPolicy
 	readonly theory: AnySchema
 	spent: boolean
 	inFlight: boolean
@@ -107,7 +104,7 @@ function hostFactCharge(relation: AnyRelation, record: Readonly<Record<string, u
 		if (value === undefined) {
 			throw refusal("ChangeDraft.ingest", "InvalidArgument")
 		}
-		bytes += assertHostCellFits(`relation ${data.name} field ${declared.name}`, value, CHUNK_BYTES)
+		bytes += hostCellCharge(value)
 	}
 	return bytes
 }
@@ -150,7 +147,7 @@ function pullChunk(relation: AnyRelation, iterator: Iterator<object>, pending: o
 			leftover = current
 			break
 		}
-		cells.push(...projectFact(relation, record))
+		for (const cell of projectFact(relation, record)) cells.push(cell)
 		bytes += charge
 		rows += 1n
 		current = undefined
@@ -197,38 +194,45 @@ function ingest(
 			return yield* Effect.fail(refusal(operation, "InvalidArgument"))
 		}
 		state.inFlight = true
-		const wire = yield* Effect.try({
-			try: () => policyWire(state.policy, operation),
-			catch: () => refusal(operation, "InvalidArgument")
-		})
 		const body = Effect.gen(function* () {
-			const iterator = rows[Symbol.iterator]()
+			const iterator = yield* Effect.try({
+				try: () => rows[Symbol.iterator](),
+				catch: () => refusal(operation, "InvalidArgument")
+			})
 			let leftover: object | undefined
 			let done = false
-			while (!done) {
-				const chunk = yield* Effect.try({
-					try: () => pullChunk(relation, iterator, leftover),
-					catch: (cause) => (cause instanceof DbError ? cause : refusal(operation, "InvalidArgument"))
-				}).pipe(Effect.catch((error) => spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))))
-				leftover = chunk.leftover
-				done = chunk.done && leftover === undefined
-				if (chunk.rows === 0n) {
-					continue
-				}
-				yield* eventLoopTurn()
-				yield* nativeOperationWith(
-					operation,
-					(callback) => verb(state.handle, wire, relationId, chunk.rows, chunk.cells, callback),
-					dbNative.runtimeReportTake,
-					() => undefined
-				).pipe(
-					Effect.catch((error) =>
-						Effect.sync(() => {
-							state.spent = true
-						}).pipe(Effect.andThen(Effect.fail(error)))
+			return yield* Effect.gen(function* () {
+				while (!done) {
+					const chunk = yield* Effect.try({
+						try: () => pullChunk(relation, iterator, leftover),
+						catch: (cause) => (cause instanceof DbError ? cause : refusal(operation, "InvalidArgument"))
+					}).pipe(Effect.catch((error) => spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))))
+					leftover = chunk.leftover
+					done = chunk.done && leftover === undefined
+					if (chunk.rows === 0n) {
+						continue
+					}
+					yield* eventLoopTurn()
+					yield* nativeOperationWith(
+						operation,
+						(callback) => verb(state.handle, relationId, chunk.rows, chunk.cells, callback),
+						dbNative.runtimeReportTake,
+						() => undefined
+					).pipe(
+						Effect.catch((error) =>
+							Effect.sync(() => {
+								state.spent = true
+							}).pipe(Effect.andThen(Effect.fail(error)))
+						)
 					)
+				}
+			}).pipe(
+				Effect.ensuring(
+					Effect.sync(() => {
+						if (!done) iterator.return?.()
+					})
 				)
-			}
+			)
 		})
 		return yield* Effect.onExit(body, (exit) => {
 			state.inFlight = false
@@ -274,8 +278,7 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 					state.spent = true
 					const wire = yield* nativeOperationWith(
 						"ChangeDraft.finish",
-						(callback) =>
-							dbNative.runtimeDraftFinish(state.handle, policyWire(state.policy, "ChangeDraft.finish"), callback),
+						(callback) => dbNative.runtimeDraftFinish(state.handle, callback),
 						dbNative.runtimeChangesTake,
 						(value) => value
 					)
@@ -306,27 +309,26 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 }
 
 /**
- * `ChangeSet.builder(schema, work)` — lazy scoped acquisition of a
+ * `ChangeSet.builder(schema)` — lazy scoped acquisition of a
  * database-free draft. Requires the acquired
  * `NativeRuntime`; the draft's native resources release with its scope, and
  * the scope finalizer surfaces incomplete/failed teardown as a
  * `CloseFailure` defect.
  */
-const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(schema: S, work: ExecutionPolicy) {
+const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(schema: S) {
 	const handle = yield* runtimeHandle()
-	const compiled = yield* CoreSchema.compile(schema, work)
+	const compiled = yield* CoreSchema.compile(schema)
 	const spec = lower(schema)
 	return yield* Effect.acquireRelease(
 		Effect.gen(function* () {
 			const draftHandle = yield* nativeOperationWith(
 				"ChangeSet.builder",
-				(callback) => dbNative.runtimeDraftOpen(handle, policyWire(work, "ChangeSet.builder"), spec, callback),
+				(callback) => dbNative.runtimeDraftOpen(handle, spec, callback),
 				dbNative.runtimeDraftTake,
 				(value) => value
 			)
 			const state: DraftState = {
 				handle: draftHandle,
-				policy: work,
 				theory: schema,
 				spent: false,
 				inFlight: false

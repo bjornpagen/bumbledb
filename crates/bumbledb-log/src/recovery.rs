@@ -23,6 +23,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::store::ReceivedBody;
 use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange, HostSealError};
 use bumbledb::schema::RelationId;
 use bumbledb::schema::Schema;
@@ -31,7 +32,6 @@ use bumbledb::store::{
     HostWindow, InstallOutcome as StoreInstall, MapPolicy, StageReader, StageWriter, Store,
     UnreadyStore,
 };
-use bumbledb::work::{ChargedBytes, DEFAULT_RAM_BYTES};
 use bumbledb::{ChangeSet, Db, ScratchRelation, WorkContext, WorkError};
 
 use crate::apply::{self, ApplyError};
@@ -585,7 +585,7 @@ impl StagedPopulation {
         })
     }
 
-    /// One charged host-delete window under `prefix`, exclusive after
+    /// One owned host-delete window under `prefix`, exclusive after
     /// `after`. Peak is this window, not every matching key.
     pub(crate) fn delete_host_batch(
         &self,
@@ -738,9 +738,8 @@ impl StreamSink for BatchImportSink<'_> {
 /// in bounded batches. The caller finishes with
 /// [`StagedPopulation::complete_install`] — the one complete judgment.
 ///
-/// Chunks are [`AsRef<[u8]>`] views. Fetch sites hold [`ChargedBytes`] and
-/// pass `as_bytes()` (`B = &[u8]`) for the decode; `into_owner` runs after.
-/// There is no Vec-only twin.
+/// Chunks are owned [`AsRef<[u8]>`] items. The decoder drops each item
+/// before fetching the next; no caller-side payload collection is needed.
 ///
 /// # Errors
 /// Digest/counter disagreement is corruption-class; the target stays an
@@ -784,30 +783,27 @@ where
     Ok(())
 }
 
-/// Fetch every checkpoint chunk under charge. Owners stay live across
-/// [`import_stream`]; the caller releases them with [`ChargedBytes::into_owner`].
-pub(crate) fn fetch_charged_chunks<B>(
-    backend: &B,
-    prefix: &str,
-    chunks: &[ObjectRef],
-    work: &WorkContext,
-) -> Result<Vec<ChargedBytes>, RecoveryError>
+/// Fetch and verify on demand. Each yielded owner is released by the
+/// streaming decoder before this iterator requests another chunk.
+pub(crate) fn verified_chunks<'a, B>(
+    backend: &'a B,
+    prefix: &'a str,
+    chunks: &'a [ObjectRef],
+    work: &'a WorkContext,
+) -> impl Iterator<Item = Result<ReceivedBody, RecoveryError>> + 'a
 where
     B: ReceivingStore,
     B::Error: BackendError + ObservedError,
 {
-    chunks
-        .iter()
-        .map(|chunk| {
-            get_verified(
-                backend,
-                prefix,
-                chunk,
-                TransportContext::new(work, ReceiveLimits::exact(chunk.length)),
-            )
-            .map_err(RecoveryError::from)
-        })
-        .collect()
+    chunks.iter().map(move |chunk| {
+        get_verified(
+            backend,
+            prefix,
+            chunk,
+            TransportContext::new(work, ReceiveLimits::exact(chunk.length)),
+        )
+        .map_err(RecoveryError::from)
+    })
 }
 
 /// Spill-backed reverse walk of `(base, tip]`. Replay stays on the unready
@@ -819,7 +815,7 @@ struct ScratchTail {
 impl ScratchTail {
     fn new(work: &WorkContext) -> Self {
         Self {
-            scratch: ScratchRelation::new(work, DEFAULT_RAM_BYTES),
+            scratch: ScratchRelation::new(work),
         }
     }
 }
@@ -833,10 +829,49 @@ impl ChainVisitor for ScratchTail {
         bytes: &[u8],
         _reference: ObjectRef,
     ) -> Result<bool, RecoveryError> {
+        // A reverse history walk must stage on disk before forward replay.
+        // Keep the empty tail cheap, and never build a whole-tail heap map.
+        self.scratch.force_spill().map_err(RecoveryError::Storage)?;
         self.scratch
             .put(&stamp.seq.to_be_bytes(), bytes)
             .map_err(RecoveryError::Storage)?;
         Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tail_storage_tests {
+    use super::*;
+    use crate::history::DecisionDigest;
+
+    #[test]
+    fn reverse_history_is_staged_on_disk_and_visited_in_forward_order() {
+        let work = WorkContext::new();
+        let mut tail = ScratchTail::new(&work);
+        assert!(!tail.scratch.spilled());
+        for seq in (1..=3u64).rev() {
+            let bytes = seq.to_be_bytes();
+            let reference = ObjectRef::of(1, crate::store::ObjectKind::Decision, &bytes);
+            let stamp = DecisionStamp {
+                seq,
+                hash: DecisionDigest::from_bytes(reference.digest),
+            };
+            tail.visit(stamp, &bytes, reference).unwrap();
+            assert!(
+                tail.scratch.spilled(),
+                "even the first tail record belongs on disk"
+            );
+        }
+        let mut next = 1u64;
+        tail.scratch
+            .for_each(&mut |key, value| {
+                assert_eq!(key, &next.to_be_bytes());
+                assert_eq!(value, key);
+                next += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(next, 4);
     }
 }
 
@@ -955,11 +990,7 @@ fn replay_scratch_tail(
     Ok(authority)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    clippy::too_many_lines,
-    reason = "one bounded recovery pipeline"
-)]
+#[expect(clippy::too_many_arguments, reason = "one bounded recovery pipeline")]
 fn hydrate<S, B>(
     directory: &Path,
     schema: S,
@@ -993,14 +1024,14 @@ where
     let binding_bytes = encode_binding(binding)?;
     let staged = begin_staged(&dest, schema.clone(), work)?;
     let base_authority = if let Some(manifest_ref) = recovery.checkpoint {
-        let charged = get_verified(
+        let received = get_verified(
             backend,
             binding.prefix.as_ref(),
             &manifest_ref,
             TransportContext::new(work, ReceiveLimits::exact(manifest_ref.length)),
         )?;
-        let manifest = codec::decode_manifest(charged.as_bytes(), stream)?;
-        drop(charged.into_owner());
+        let manifest = codec::decode_manifest(received.as_slice(), stream)?;
+        drop(received);
         if manifest.identity != head.control.identity {
             return Err(RecoveryError::Corrupt(
                 "checkpoint names a foreign identity",
@@ -1011,8 +1042,6 @@ where
                 "checkpoint disagrees with recovery base",
             ));
         }
-        let owners =
-            fetch_charged_chunks(backend, binding.prefix.as_ref(), &manifest.chunks, work)?;
         // Filter receipt rows by the CAPTURED TARGET head's retirement
         // policy — the stream digests still cover the UNFILTERED records.
         let retired_through = live.receipts.retired_through();
@@ -1024,17 +1053,12 @@ where
         import_stream(
             &staged,
             &manifest,
-            owners
-                .iter()
-                .map(|charged| Ok::<_, RecoveryError>(charged.as_bytes())),
+            verified_chunks(backend, binding.prefix.as_ref(), &manifest.chunks, work),
             &mut keep,
             None,
             stream,
             work,
         )?;
-        for charged in owners {
-            drop(charged.into_owner());
-        }
         // Captured control AT S is a host attachment on the unready owner:
         // the tail verifies each decision against this predecessor.
         let control_at_base = manifest.control_at_capture;
@@ -1072,7 +1096,7 @@ where
 
     // The exact tail (S, T]: stream into spill-backed scratch, apply
     // forwards on the same unready owner. No whole-tail Vec.
-    let mut budget = 1_048_576u64;
+    let mut remaining = recovery.tail_count();
     let mut tail = ScratchTail::new(work);
     crate::history::locator::walk_decision_chain(
         backend,
@@ -1081,7 +1105,7 @@ where
         recovery.base,
         recovery.tip_object,
         command_limits,
-        &mut budget,
+        &mut remaining,
         work,
         &mut tail,
     )?;

@@ -1,10 +1,7 @@
-//! The warm executor's per-execution work ledger (audit-core #2): the
-//! join recursion polls cancellation/deadline at the bounded quantum on
-//! binding EXPLORATION — not per emitted row — and COLT pool growth is
-//! charged to working bytes, so the bounded-restart trigger can fire from
-//! join growth. Gate anchors: QRY-002/003, Q-BUDGET, chapter 12 §7.
+//! Cancellation is polled on explored bindings, including joins that emit
+//! nothing. Rebinding changes cancellation, not ownership of reusable pools.
 use super::*;
-use crate::work::{ExecutionPolicy, Resource, WorkContext, WorkError};
+use crate::work::{WorkContext, WorkError};
 
 #[test]
 fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
@@ -30,11 +27,9 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
     let images = views_of(&schema, &[vec![(7, 10), (8, 20)]]);
     let first_key = images[0].column_words(0)[0];
     for (fixed, children) in [(false, false), (false, true), (true, false), (true, true)] {
-        for cancelled in [false, true] {
-            let work = bounded(if cancelled { u64::MAX } else { 0 });
-            if cancelled {
-                work.cancel();
-            }
+        {
+            let work = WorkContext::new();
+            work.cancel();
             let mut colt = colts_for(&plan, &images).pop().unwrap();
             colt.bind(Some(&work));
             let mut executor = Executor::new(&plan);
@@ -96,34 +91,9 @@ fn sibling_width_batch_preserves_first_refusal_and_successful_prefix() {
             let DriveState::Poisoned(Poison::Work(error)) = executor.drive_state else {
                 panic!("force refusal must poison the executor");
             };
-            if cancelled {
-                assert_eq!(error, WorkError::Cancelled);
-            } else {
-                assert!(matches!(
-                    error,
-                    WorkError::Exhausted {
-                        resource: Resource::WorkingBytes,
-                        ..
-                    }
-                ));
-            }
-            assert_eq!(work.used(Resource::WorkingBytes), 0);
+            assert_eq!(error, WorkError::Cancelled);
         }
     }
-}
-
-fn bounded(working_bytes: u64) -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: u64::MAX,
-        working_bytes,
-        scratch_bytes: u64::MAX,
-        result_bytes: u64::MAX,
-        rows: u64::MAX,
-        work_units: u64::MAX,
-        timeout: std::time::Duration::from_secs(3600),
-    }
-    .start()
-    .expect("bounded ledger")
 }
 
 /// A counters seam that cancels the shared operation after a few explored
@@ -151,12 +121,12 @@ impl Counters for CancelAfterBatches {
     fn skip(&mut self, _: usize) {}
 }
 
-fn is_work_refusal(error: &crate::error::Error, expected: &WorkError) -> bool {
+fn is_work_refusal(error: &crate::error::Error, expected: WorkError) -> bool {
     matches!(
         error,
         crate::error::Error::Store(store) if matches!(
             &**store,
-            crate::storage::store::StoreError::Work(work) if work == expected
+            crate::storage::store::StoreError::Work(work) if *work == expected
         )
     )
 }
@@ -199,7 +169,7 @@ fn cancelled_leaf_and_pipeline_retain_scratch_and_resume_with_fresh_work() {
         let mut sink = CollectSink::default();
 
         for cancel in [false, true, false] {
-            let work = bounded(u64::MAX);
+            let work = WorkContext::new();
             executor.begin_work(&work, &mut colts);
             sink.rows.clear();
             let mut counters = CancelAfterBatches {
@@ -220,7 +190,7 @@ fn cancelled_leaf_and_pipeline_retain_scratch_and_resume_with_fresh_work() {
                 "always release the execution ledger"
             );
             if cancel {
-                assert!(is_work_refusal(&result.unwrap_err(), &WorkError::Cancelled));
+                assert!(is_work_refusal(&result.unwrap_err(), WorkError::Cancelled));
                 assert!(
                     counters.batches >= 3,
                     "cancellation happens during execution"
@@ -234,13 +204,13 @@ fn cancelled_leaf_and_pipeline_retain_scratch_and_resume_with_fresh_work() {
 }
 
 #[test]
-fn physical_terminal_force_charges_refuses_and_releases_its_work() {
+fn physical_terminal_force_observes_cancellation_and_releases_its_pools() {
     let schema = schema(1);
     let normalized = normalized(vec![occurrence(0, 0, &[(0, 0)])], vec![]);
     let plan = planned(&normalized, &schema, &[0]);
     let views = views_of(&schema, &[(0..64).map(|id| (id % 4, id)).collect()]);
-    for (bytes, cancelled) in [(0, false), (u64::MAX, true), (u64::MAX, false)] {
-        let work = bounded(bytes);
+    for cancelled in [true, false] {
+        let work = WorkContext::new();
         if cancelled {
             work.cancel();
         }
@@ -258,12 +228,7 @@ fn physical_terminal_force_charges_refuses_and_releases_its_work() {
             &mut NoopCounters,
         );
         if cancelled {
-            assert!(is_work_refusal(&result.unwrap_err(), &WorkError::Cancelled));
-            assert!(sink.rows.is_empty());
-        } else if bytes == 0 {
-            assert!(
-                matches!(result, Err(crate::error::Error::Store(store)) if matches!(&*store, crate::storage::store::StoreError::Work(WorkError::Exhausted { resource: Resource::WorkingBytes, .. })))
-            );
+            assert!(is_work_refusal(&result.unwrap_err(), WorkError::Cancelled));
             assert!(sink.rows.is_empty());
         } else {
             result.unwrap();
@@ -271,21 +236,15 @@ fn physical_terminal_force_charges_refuses_and_releases_its_work() {
                 sink.rows,
                 BTreeSet::from([vec![0], vec![1], vec![2], vec![3]])
             );
-            assert!(
-                work.used(Resource::WorkingBytes) > 0,
-                "new terminal map is charged"
-            );
-            assert!(
-                work.used(Resource::WorkUnits) >= 64,
-                "force polls and accounts for its input"
-            );
+            assert!(colts[0].forced_capacity(Colt::root()).is_some());
         }
+        let retained = colts.iter().map(Colt::retained_bytes).sum::<usize>();
+        let before = crate::alloc_counter::snapshot().window;
         drop(colts);
-        assert_eq!(
-            work.used(Resource::WorkingBytes),
-            0,
-            "no reservation outlives its pools"
-        );
+        let after = crate::alloc_counter::snapshot().window;
+        #[cfg(feature = "alloc-counter")]
+        assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
+        let _ = (retained, before, after);
     }
 }
 
@@ -315,7 +274,7 @@ fn cancellation_fires_inside_a_selective_join_that_emits_nothing() {
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
 
-    let work = bounded(u64::MAX);
+    let work = WorkContext::new();
     let mut counters = CancelAfterBatches {
         work: work.clone(),
         batches: 0,
@@ -329,7 +288,7 @@ fn cancellation_fires_inside_a_selective_join_that_emits_nothing() {
     let result = executor.execute(&plan, &mut colts, &mut bindings, &mut sink, &mut counters);
     let error = result.expect_err("a cancelled operation refuses");
     assert!(
-        is_work_refusal(&error, &WorkError::Cancelled),
+        is_work_refusal(&error, WorkError::Cancelled),
         "typed cancellation from inside the join, got {error:?}"
     );
     assert!(sink.rows.is_empty(), "nothing was emitted");
@@ -340,14 +299,10 @@ fn cancellation_fires_inside_a_selective_join_that_emits_nothing() {
     );
 }
 
-/// A tiny working budget stops COLT growth with the typed refusal — the
-/// exact condition that licenses the ONE bounded restart into the cursor
-/// fallback (`is_working_exhaustion`).
+/// Ordinary execution keeps reusable pools without changing answers.
 #[test]
-fn a_tiny_working_budget_stops_colt_growth_with_the_typed_refusal() {
+fn ordinary_allocation_preserves_large_join_answers_and_pool_lifetimes() {
     let schema = schema(2);
-    // 4096 join keys: forcing the sibling's level map alone owns hundreds
-    // of kilobytes of pool capacity — far past the 64 KiB allowance.
     let a: Vec<(u64, u64)> = (0..4096).map(|i| (i, 0)).collect();
     let b: Vec<(u64, u64)> = (0..4096).map(|i| (i, i)).collect();
     let views = views_of(&schema, &[a, b]);
@@ -359,79 +314,45 @@ fn a_tiny_working_budget_stops_colt_growth_with_the_typed_refusal() {
         vec![],
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
-
-    // Unbounded ledger: polling and charging must not change the answers.
-    let unpolled = run(&plan, &views);
-    let work = bounded(u64::MAX);
+    let expected = run(&plan, &views);
+    assert_eq!(expected.len(), 4096);
     let mut executor = Executor::new(&plan);
     let mut colts = colts_for(&plan, &views);
-    executor.begin_work(&work, &mut colts);
     let mut bindings = Bindings::new(plan.slot_count());
     let mut sink = CollectSink::default();
-    executor
-        .execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut NoopCounters,
-        )
-        .expect("unbounded execute");
-    assert_eq!(sink.rows, unpolled, "the ledger never changes answers");
-    assert!(
-        work.used(Resource::WorkingBytes) > 0,
-        "successful execute retains reusable COLT pool charges (D08)"
-    );
-    assert!(
-        work.used(Resource::WorkUnits) >= 4096,
-        "explored entries are charged as work"
-    );
-
-    // 64 KiB working bytes: the first bounded-quantum poll after the
-    // sibling force refuses the growth reservation, typed.
-    let tiny = bounded(64 << 10);
-    let mut executor = Executor::new(&plan);
-    let mut colts = colts_for(&plan, &views);
-    executor.begin_work(&tiny, &mut colts);
-    let mut bindings = Bindings::new(plan.slot_count());
-    let mut sink = CollectSink::default();
-    let error = executor
-        .execute(
-            &plan,
-            &mut colts,
-            &mut bindings,
-            &mut sink,
-            &mut NoopCounters,
-        )
-        .expect_err("COLT growth past the allowance refuses");
-    assert!(
-        matches!(
-            &error,
-            crate::error::Error::Store(store) if matches!(
-                &**store,
-                crate::storage::store::StoreError::Work(WorkError::Exhausted {
-                    resource: Resource::WorkingBytes,
-                    ..
-                })
+    let mut retained = 0;
+    for round in 0..3 {
+        sink.rows.clear();
+        let work = WorkContext::new();
+        executor.begin_work(&work, &mut colts);
+        executor
+            .execute(
+                &plan,
+                &mut colts,
+                &mut bindings,
+                &mut sink,
+                &mut NoopCounters,
             )
-        ),
-        "typed working-byte exhaustion from join growth, got {error:?}"
-    );
-    assert!(
-        crate::api::prepared::source::is_working_exhaustion(&error),
-        "the refusal is exactly the bounded-restart trigger"
-    );
+            .unwrap();
+        assert_eq!(sink.rows, expected);
+        let bytes = colts.iter().map(Colt::retained_bytes).sum::<usize>();
+        if round == 0 {
+            retained = bytes;
+            assert!(retained > 0);
+        } else {
+            assert_eq!(bytes, retained, "same-shape execution reuses pools");
+        }
+        work.cancel();
+    }
+    let before = crate::alloc_counter::snapshot().window;
     drop(colts);
-    drop(executor);
-    assert_eq!(
-        tiny.used(Resource::WorkingBytes),
-        0,
-        "dropping failed execution pools refunds their retained capacity"
-    );
+    let after = crate::alloc_counter::snapshot().window;
+    #[cfg(feature = "alloc-counter")]
+    assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
+    let _ = (before, after);
 }
 
-/// Bind the current ledger before `force_root`. A leftover Exhausted from
-/// a cancelled/tiny prior execution must not poison the next bind.
+/// Bind the current context before forcing; prior cancellation cannot poison it.
 #[test]
 fn bind_clears_prior_refusal_before_force() {
     let schema = schema(2);
@@ -449,21 +370,13 @@ fn bind_clears_prior_refusal_before_force() {
     let mut colts = colts_for(&plan, &views);
 
     let mut executor = Executor::new(&plan);
-    let prior = bounded(64);
+    let prior = WorkContext::new();
+    prior.cancel();
     executor.begin_work(&prior, &mut colts);
     let leftover = colts[1].force_root();
-    assert!(
-        matches!(
-            leftover,
-            Err(WorkError::Exhausted {
-                resource: Resource::WorkingBytes,
-                ..
-            })
-        ),
-        "first-map force under 64 working bytes must refuse, got {leftover:?}"
-    );
+    assert_eq!(leftover, Err(WorkError::Cancelled));
 
-    let current = bounded(u64::MAX);
+    let current = WorkContext::new();
     executor.begin_work(&current, &mut colts);
     colts[1]
         .force_root()
@@ -486,19 +399,11 @@ fn force_refusal_is_err_not_empty_success() {
     );
     let plan = planned(&normalized, &schema, &[0, 1]);
     let mut colts = colts_for(&plan, &views);
-    let tiny = bounded(64);
-    colts[1].bind(Some(&tiny));
+    let cancelled = WorkContext::new();
+    cancelled.cancel();
+    colts[1].bind(Some(&cancelled));
     let refused = colts[1].force_root();
-    assert!(
-        matches!(
-            refused,
-            Err(WorkError::Exhausted {
-                resource: Resource::WorkingBytes,
-                ..
-            })
-        ),
-        "typed refusal, not a fabricated miss, got {refused:?}"
-    );
+    assert_eq!(refused, Err(WorkError::Cancelled));
     let probed = colts[1].get_prehashed(
         crate::exec::colt::Colt::root(),
         0,
@@ -509,11 +414,7 @@ fn force_refusal_is_err_not_empty_success() {
         probed.is_err(),
         "get_prehashed must not rewrite force refusal as Ok(None), got {probed:?}"
     );
-    assert_eq!(
-        tiny.used(Resource::WorkingBytes),
-        0,
-        "failed admit refunds before any dependent clone/select"
-    );
+    assert!(colts[1].forced_capacity(Colt::root()).is_none());
 }
 
 /// One entry operation owns binding before force and execution. A cancelled
@@ -530,7 +431,7 @@ fn begin_work_rebinds_reused_colts_before_force_and_execute() {
     let mut colts = colts_for(&plan, &views);
     let mut bindings = Bindings::new(plan.slot_count());
 
-    let cancelled = bounded(u64::MAX);
+    let cancelled = WorkContext::new();
     cancelled.cancel();
     executor.begin_work(&cancelled, &mut colts);
     assert_eq!(
@@ -538,12 +439,12 @@ fn begin_work_rebinds_reused_colts_before_force_and_execute() {
         Err(WorkError::Cancelled),
         "entry binds before any force, not only at execute"
     );
-    assert_eq!(cancelled.used(Resource::WorkingBytes), 0);
+    assert!(colts[0].forced_capacity(Colt::root()).is_none());
 
-    let first = bounded(u64::MAX);
+    let first = WorkContext::new();
     executor.begin_work(&first, &mut colts);
     colts[0].force_root().expect("fresh operation can force");
-    let retained = first.used(Resource::WorkingBytes);
+    let retained = colts[0].retained_bytes();
     assert!(retained > 0);
     let mut sink = CollectSink::default();
     executor
@@ -558,10 +459,9 @@ fn begin_work_rebinds_reused_colts_before_force_and_execute() {
     let expected = BTreeSet::from([vec![0], vec![1], vec![2], vec![3]]);
     assert_eq!(sink.rows, expected);
     assert!(executor.ledger.is_none(), "execution releases its ledger");
-    let first_units = first.used(Resource::WorkUnits);
 
     first.cancel();
-    let next = bounded(u64::MAX);
+    let next = WorkContext::new();
     executor.begin_work(&next, &mut colts);
     sink.rows.clear();
     executor
@@ -574,18 +474,11 @@ fn begin_work_rebinds_reused_colts_before_force_and_execute() {
         )
         .expect("completed prior context cannot poison reuse");
     assert_eq!(sink.rows, expected);
-    assert!(next.used(Resource::WorkUnits) > 0);
-    assert_eq!(first.used(Resource::WorkUnits), first_units);
     assert_eq!(
-        first.used(Resource::WorkingBytes),
+        colts[0].retained_bytes(),
         retained,
-        "rebind does not transfer or refund retained pool reservations"
-    );
-    assert_eq!(
-        next.used(Resource::WorkingBytes),
-        0,
         "warm pools do not grow"
     );
-    drop(colts);
-    assert_eq!(first.used(Resource::WorkingBytes), 0);
+    assert_eq!(first.checkpoint(), Err(WorkError::Cancelled));
+    assert_eq!(next.checkpoint(), Ok(()));
 }

@@ -21,9 +21,6 @@ import { isFloatIntervalValue, isIntervalValue, literalShapeError, rosterOf } fr
 import type { AnyRelation, Fact, RelationData } from "#relation.ts"
 import { Uuid } from "#uuid.ts"
 
-/** Converter-granularity host cell wall (64 KiB). One oversize cell refuses. */
-const HOST_CELL_MAX = 65536n
-
 /**
  * One owned cell at the private bridge boundary. The declared sealed field
  * type disambiguates the union: `string` is text, an `uuid` in its
@@ -44,8 +41,6 @@ type CellValue =
 interface FlatRows {
 	readonly rows: bigint
 	readonly cells: readonly CellValue[]
-	/** Conservative charged byte size of the owned cells (input accounting). */
-	readonly bytes: bigint
 }
 
 function recordOf(fact: object): Readonly<Record<string, unknown>> {
@@ -64,9 +59,8 @@ function refuseShared(context: string, value: Uint8Array): void {
 }
 
 /**
- * Cheap host charge before any string scan or byte copy. Strings charge
- * two bytes per UTF-16 code unit, not their UTF-8 wire size. Native admission
- * measures and bounds UTF-8 separately; byte views charge their length.
+ * Approximate payload size for host batching, not a memory allowance.
+ * Strings use two bytes per UTF-16 code unit, not their UTF-8 wire size.
  */
 function hostCellCharge(value: unknown): bigint {
 	if (typeof value === "string") {
@@ -85,16 +79,6 @@ function hostCellCharge(value: unknown): bigint {
 		return 16n
 	}
 	return 0n
-}
-
-function assertHostCellFits(context: string, value: unknown, limit: bigint): bigint {
-	const charge = hostCellCharge(value)
-	if (charge > limit) {
-		throw new AuthoringError({
-			message: `${context}: host cell of ${charge} bytes exceeds the ${limit}-byte converter bound — refuse before copy or scan`
-		})
-	}
-	return charge
 }
 
 /**
@@ -125,25 +109,6 @@ function handleOf(context: string, closed: AnyClosedRoster, cell: unknown): stri
 	return handle
 }
 
-/** Conservative owned-byte charge of one cell (host accounting, not wire). */
-function cellBytes(cell: CellValue): bigint {
-	if (typeof cell === "boolean") {
-		return 1n
-	}
-	if (typeof cell === "bigint" || typeof cell === "number") {
-		return 8n
-	}
-	if (typeof cell === "string") {
-		// Account for the host string here; native admission separately
-		// checks and charges its exact UTF-8 encoding.
-		return BigInt(cell.length) * 2n
-	}
-	if (cell instanceof Uint8Array) {
-		return BigInt(cell.byteLength)
-	}
-	return 16n
-}
-
 function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 	const roster = rosterOf(field)
 	if (roster !== undefined) {
@@ -170,7 +135,6 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 			if (typeof value !== "string") {
 				throw literalShapeError(context, "string", value)
 			}
-			assertHostCellFits(context, value, HOST_CELL_MAX)
 			if (!value.isWellFormed()) {
 				throw literalShapeError(context, "well-formed string", value)
 			}
@@ -194,7 +158,6 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 				throw literalShapeError(context, "Uint8Array", value)
 			}
 			refuseShared(context, value)
-			assertHostCellFits(context, value, HOST_CELL_MAX)
 			if (value.byteLength !== field.width) {
 				throw new AuthoringError({
 					message: `${context}: bytes<${field.width}> takes exactly ${field.width} bytes (got ${value.byteLength})`
@@ -231,14 +194,13 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
 
 /**
  * The flat projector: every fact's cells land in ONE row-major cell array
- * (length rows × arity) with the row count and charged byte size counted
- * while projecting. Missing-field refusal and per-cell judgment are
+ * (length rows × arity), counting rows while projecting.
+ * Missing-field refusal and per-cell judgment are
  * {@link cellOf}'s, byte for byte.
  */
 function flatRowsOf(data: RelationData, facts: Iterable<object>): FlatRows {
 	const cells: CellValue[] = []
 	let rows = 0n
-	let bytes = 0n
 	for (const fact of facts) {
 		rows += 1n
 		const record = recordOf(fact)
@@ -248,11 +210,10 @@ function flatRowsOf(data: RelationData, facts: Iterable<object>): FlatRows {
 				throw new AuthoringError({ message: `relation ${data.name}: fact is missing field ${declared.name}` })
 			}
 			const cell = cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value)
-			bytes += cellBytes(cell)
 			cells.push(cell)
 		}
 	}
-	return { rows, cells, bytes }
+	return { rows, cells }
 }
 
 function keyCellsOf(
@@ -387,15 +348,4 @@ function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]
 }
 
 export type { CellValue, FlatRows }
-export {
-	assertHostCellFits,
-	cellBytes,
-	cellOf,
-	decodeCell,
-	factOfCells,
-	flatRowsOf,
-	handleOf,
-	hostCellCharge,
-	keyCellsOf,
-	recordOf
-}
+export { cellOf, decodeCell, factOfCells, flatRowsOf, handleOf, hostCellCharge, keyCellsOf, recordOf }

@@ -12,7 +12,6 @@ import {
 	ChangeSet,
 	contained,
 	Db,
-	type ExecutionPolicy,
 	f64,
 	i64,
 	Uuid,
@@ -36,6 +35,7 @@ import {
 	within
 } from "@bjornpagen/bumbledb"
 import { Effect, ManagedRuntime, Option, Stream } from "effect"
+import { randomUUID } from "node:crypto"
 
 export const Student = relation("Student", { id: uuid, name: str, budget: u64 })
 export const Attempt = relation("Attempt", {
@@ -87,10 +87,9 @@ export const studentSummary = query(Learning).rule((r) => {
 
 export const newAttempt = Effect.fn("newAttempt")(function* (
 	studentId: Uuid,
-	attemptId: Uuid,
-	work: ExecutionPolicy
+	attemptId: Uuid
 ) {
-	const draft = yield* ChangeSet.builder(Learning, work)
+	const draft = yield* ChangeSet.builder(Learning)
 	const active = yield* Effect.fromResult(span(0n, 60n))
 	yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
 	yield* draft.insert(Attempt, [
@@ -101,9 +100,9 @@ export const newAttempt = Effect.fn("newAttempt")(function* (
 
 /** Same helper on a core snapshot and a published log snapshot — no adapter. */
 export const readAttempts = Effect.fn("readAttempts")(
-	function* (reader: QueryReader<typeof Learning>, student: Uuid, work: ExecutionPolicy) {
-		const result = yield* reader.execute(attemptsFor, { student }, work)
-		return yield* result.collect({ maxBytes: work.resultBytes }, work)
+	function* (reader: QueryReader<typeof Learning>, student: Uuid) {
+		const result = yield* reader.execute(attemptsFor, { student })
+		return yield* result.collect()
 	},
 	Effect.scoped
 )
@@ -114,30 +113,10 @@ export const runtimePolicy: NativeRuntimeOptions = {
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 64,
-	inputBytes: 16_000_000n,
-	workingBytes: 64_000_000n,
-	scratchBytes: 64_000_000n,
-	resultBytes: 16_000_000n,
-	chunkBytes: 1_000_000n,
 	cleanupTimeout: "2 seconds"
 }
 
-export const work: ExecutionPolicy = {
-	inputBytes: 4_000_000n,
-	workingBytes: 16_000_000n,
-	scratchBytes: 16_000_000n,
-	resultBytes: 4_000_000n,
-	rows: 100_000n,
-	workUnits: 10_000_000n,
-	timeout: "10 seconds"
-}
 
-/** D07: a delivery budget that cannot pay for a completed attempt row. */
-export const tinyDelivery: ExecutionPolicy = {
-	...work,
-	resultBytes: 8n,
-	timeout: "2 seconds"
-}
 
 /** One process-lifetime runtime. Request code must not construct another. */
 export const makeConsumerRuntime = () => ManagedRuntime.make(NativeRuntime.layer(runtimePolicy))
@@ -145,17 +124,17 @@ export const makeConsumerRuntime = () => ManagedRuntime.make(NativeRuntime.layer
 export const coreProgram = (localPath: string) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const db = yield* Db.create(localPath, Learning, work)
-			const studentId = yield* Effect.sync(() => crypto.randomUUID())
-			const attemptId = yield* Effect.sync(() => crypto.randomUUID())
-			const changes = yield* newAttempt(studentId, attemptId, work)
-			const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+			const db = yield* Db.create(localPath, Learning)
+			const studentId = yield* Effect.sync(() => randomUUID())
+			const attemptId = yield* Effect.sync(() => randomUUID())
+			const changes = yield* newAttempt(studentId, attemptId)
+			const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 			if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
 				const closed = yield* db.close()
 				return { outcome, rows: [] as const, closed }
 			}
-			const snapshot = yield* db.snapshot(work)
-			const rows = yield* readAttempts(snapshot, studentId, work)
+			const snapshot = yield* db.snapshot()
+			const rows = yield* readAttempts(snapshot, studentId)
 			const closed = yield* db.close()
 			return { outcome, rows, closed }
 		})
@@ -164,45 +143,33 @@ export const coreProgram = (localPath: string) =>
 export const correctScore = (localPath: string, attemptId: Uuid) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const db = yield* Db.open(localPath, Learning, work)
+			const db = yield* Db.open(localPath, Learning)
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
-					const snapshot = yield* db.snapshot(work)
-					const previous = yield* snapshot.get(Attempt, { id: attemptId }, work)
+					const snapshot = yield* db.snapshot()
+					const previous = yield* snapshot.get(Attempt, { id: attemptId })
 					if (Option.isNone(previous)) {
 						return yield* Effect.fail({ missing: attemptId })
 					}
 					return { previous: previous.value, at: snapshot.witness }
 				})
 			)
-			const draft = yield* ChangeSet.builder(Learning, work)
+			const draft = yield* ChangeSet.builder(Learning)
 			yield* draft.delete(Attempt, [observed.previous])
 			yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.95 }])
 			const changes = yield* draft.finish()
-			const outcome = yield* db.apply(changes, { ...work, expected: { kind: "exact", at: observed.at } })
+			const outcome = yield* db.apply(changes, { expected: { kind: "exact", at: observed.at } })
 			const closed = yield* db.close()
 			return { outcome, closed }
 		})
 	)
 
-export const drainPages = (reader: QueryReader<typeof Learning>, student: Uuid, delivery: ExecutionPolicy) =>
+export const drainPages = (reader: QueryReader<typeof Learning>, student: Uuid) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const result = yield* reader.execute(attemptsFor, { student }, work)
-			return yield* result.pages({ pageBytes: 65_536n }, delivery).pipe(
+			const result = yield* reader.execute(attemptsFor, { student })
+			return yield* result.pages().pipe(
 				Stream.runFold(() => 0, (rows, page) => rows + page.length)
 			)
-		})
-	)
-
-/** D07: collect under a result-bytes cap that a real row cannot fit. */
-export const collectUnderTinyBudget = (
-	reader: QueryReader<typeof Learning>,
-	student: Uuid
-) =>
-	Effect.scoped(
-		Effect.gen(function* () {
-			const result = yield* reader.execute(attemptsFor, { student }, work)
-			return yield* result.collect({ maxBytes: tinyDelivery.resultBytes }, tinyDelivery)
 		})
 	)

@@ -1,128 +1,61 @@
-//! Closed-row String filters use L04 [`TextEq`], never raw word identity.
-//! Authored now; verification `NotRun`.
-
+//! Sealed-row String filters use a pinned resolver, never an absent namespace.
 use super::{SealedRow, sealed_row_survives};
-use crate::api::prepared::source::UNBOUNDED_POLICY;
 use crate::encoding::FactLayout;
-use crate::exec::scratch::ScratchCapability;
-use crate::exec::scratch::capability::ScratchPolicy;
-use crate::image::intern::InternerHandle;
+use crate::image::TextEq;
+use crate::image::intern::{InternerHandle, SENTINEL_WORD};
 use crate::image::view::{Const, FilterPredicate, OperandAddr, Operands};
-use crate::image::{CacheGeneration, ResidentAdmit, TextEq};
 use crate::ir::WordCmp;
-use crate::work::{CacheLedger, CachePolicy, GenerationHandle, GenerationState};
+use crate::work::WorkContext;
 use bumbledb_theory::schema::{FieldId, ValueType};
 
-fn word_bytes(word: u64) -> [u8; 8] {
-    word.to_be_bytes()
-}
-
-fn eq_word(field: u16, word: u64) -> FilterPredicate {
+fn eq_text(field: u16, value: Const) -> FilterPredicate {
     FilterPredicate::Compare {
         field: OperandAddr::from(FieldId(field)),
         op: WordCmp::Eq,
-        value: Const::Word(word),
+        value,
     }
 }
 
-fn generation(cache_bytes: u64) -> GenerationHandle {
-    GenerationHandle::new(GenerationState::new(
-        CacheGeneration::initial(),
-        CacheLedger::new(CachePolicy { cache_bytes }),
-    ))
-}
-
-/// A String-column filter on [`SealedRow`] uses [`TextEq`].
-/// Verification: `NotRun`.
 #[test]
-fn sealed_row_string_filter_uses_text_eq() {
-    let work = crate::api::prepared::source::unbounded_work().expect("work");
-    let tiny = generation(8);
-    let admitted = InternerHandle::new(&tiny, &work)
-        .intern_or_spill("a-text-that-cannot-fit-eight-cache-bytes")
-        .expect("spill");
-    let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
-        panic!("tiny cache must spill");
-    };
-    let cap =
-        ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("scratch");
-    let mut store = exhausted.open_nonresident(&cap);
-    let scratch = store.intern("shared", cap.work()).expect("scratch");
-
-    let resident_generation = generation(u64::MAX);
-    let intern = resident_generation
-        .lock_resolver()
-        .intern("shared", &work, resident_generation.ledger())
-        .expect("intern");
-    assert_ne!(scratch, intern, "raw words stay disjoint");
-
+fn sealed_row_string_filter_uses_the_exact_pinned_text_identity() {
+    let work = WorkContext::new();
+    let generation = crate::image::test_generation();
+    let interner = InternerHandle::new(&generation, &work);
+    let shared = interner.intern("shared").unwrap();
+    let same = interner.intern("shared").unwrap();
+    let other = interner.intern("other").unwrap();
     let layout = FactLayout::new(&[ValueType::U64, ValueType::String, ValueType::I64]);
-    let mut fact = Vec::from(word_bytes(7));
-    fact.extend_from_slice(&word_bytes(intern));
-    fact.extend_from_slice(&word_bytes(1u64 << 63));
+    let mut fact = Vec::from(7u64.to_be_bytes());
+    fact.extend_from_slice(&shared.word.to_be_bytes());
+    fact.extend_from_slice(&(1u64 << 63).to_be_bytes());
     let ops = SealedRow {
         fact: layout.encoded(&fact),
     };
     assert!(!ops.string_field(OperandAddr::from(FieldId(0))));
     assert!(ops.string_field(OperandAddr::from(FieldId(1))));
     assert!(!ops.string_field(OperandAddr::from(FieldId(2))));
-
-    let eq = TextEq::bind(&resident_generation, Some(&store));
-    let hit = crate::image::view::holds(&eq_word(1, scratch), &ops, &[], eq)
-        .expect("holds")
-        .expect("verdict");
-    assert!(
-        hit,
-        "String-column Eq on SealedRow unifies intern and scratch"
-    );
-    let miss = crate::image::view::holds(&eq_word(1, intern.wrapping_add(1)), &ops, &[], eq)
-        .expect("holds")
-        .expect("verdict");
-    assert!(!miss, "TextEq inequality stays a boolean miss");
+    let eq = TextEq::bind(&generation);
+    assert!(sealed_row_survives(&ops, &[eq_text(1, Const::Text(same))], eq).unwrap());
+    assert!(!sealed_row_survives(&ops, &[eq_text(1, Const::Text(other))], eq).unwrap());
+    assert!(!sealed_row_survives(&ops, &[eq_text(1, Const::Word(SENTINEL_WORD))], eq).unwrap());
 }
 
-/// A resolver refusal on a String-column `SealedRow` filter is `Err`, not a
-/// dropped id. Verification: `NotRun`.
 #[test]
-fn sealed_row_resolver_refusal_is_err_not_dropped_id() {
-    let work = crate::api::prepared::source::unbounded_work().expect("work");
-    let tiny = generation(8);
-    let admitted = InternerHandle::new(&tiny, &work)
-        .intern_or_spill("a-text-that-cannot-fit-eight-cache-bytes")
-        .expect("spill");
-    let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
-        panic!("tiny cache must spill");
-    };
-    let cap =
-        ScratchCapability::start(UNBOUNDED_POLICY, ScratchPolicy::unbounded()).expect("scratch");
-    let mut store = exhausted.open_nonresident(&cap);
-    let scratch = store.intern("shared", cap.work()).expect("scratch");
-
-    let resident_generation = generation(u64::MAX);
-    let intern = resident_generation
-        .lock_resolver()
-        .intern("shared", &work, resident_generation.ledger())
-        .expect("intern");
-    assert_ne!(scratch, intern, "raw words stay disjoint");
-
+fn sealed_row_missing_resolver_is_error_not_a_dropped_id() {
+    let work = WorkContext::new();
+    let generation = crate::image::test_generation();
+    let shared = InternerHandle::new(&generation, &work)
+        .intern("shared")
+        .unwrap();
     let layout = FactLayout::new(&[ValueType::String]);
-    let fact = word_bytes(intern);
+    let fact = shared.word.to_be_bytes();
     let ops = SealedRow {
         fact: layout.encoded(&fact),
     };
-    assert!(ops.string_field(OperandAddr::from(FieldId(0))));
-
-    cap.work().cancel();
-    let eq = TextEq::bind(&resident_generation, Some(&store));
-    let filters = [eq_word(0, scratch)];
-    let verdict = sealed_row_survives(&ops, &filters, eq);
+    let filters = [eq_text(0, Const::Text(shared))];
+    let verdict = sealed_row_survives(&ops, &filters, TextEq::from_optional_generation(None));
     assert!(
-        verdict.is_err(),
-        "resolver refusal is Err, not a dropped id"
-    );
-    assert_ne!(
-        verdict,
-        Ok(false),
-        "storage failure must not become text inequality"
+        matches!(verdict, Err(crate::Error::Corruption(_))),
+        "an absent namespace cannot become equality or inequality"
     );
 }

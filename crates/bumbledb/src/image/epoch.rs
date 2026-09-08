@@ -2,7 +2,7 @@
 //! one store relation's committed change version. Not a dummy generation and
 //! not a second process clock.
 //!
-//! [`CacheGeneration`] and [`TextGeneration`] scope the database-owned
+//! [`CacheGeneration`] scopes the database-owned
 //! resident cache: text tokens are valid only within their generation and
 //! are never persisted.
 use crate::storage::store::RelationVersion;
@@ -46,33 +46,15 @@ impl CacheGeneration {
 
     #[must_use]
     pub const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("cache generation space exhausted"),
+        )
     }
 
     #[must_use]
     pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-}
-
-/// Text token identity scoped to one [`CacheGeneration`]. Cross-source word
-/// comparison requires the same generation or an explicit exact remap.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TextGeneration(CacheGeneration);
-
-impl TextGeneration {
-    #[must_use]
-    pub const fn initial() -> Self {
-        Self(CacheGeneration::initial())
-    }
-
-    #[must_use]
-    pub const fn of(generation: CacheGeneration) -> Self {
-        Self(generation)
-    }
-
-    #[must_use]
-    pub const fn cache(self) -> CacheGeneration {
         self.0
     }
 }

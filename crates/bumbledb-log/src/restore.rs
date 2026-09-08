@@ -30,10 +30,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::store::ReceivedBody;
 use bumbledb::integration::HostRecordChange;
 use bumbledb::schema::Theory;
 use bumbledb::store::{HostResume, HostWindow};
-use bumbledb::work::ChargedBytes;
 use bumbledb::{Db, WorkContext};
 
 use crate::checkpointer::{CheckpointPolicy, HISTORY_KEY_PREFIX};
@@ -148,7 +148,7 @@ impl ApplicationProjection {
     }
 }
 
-/// One charged receipt-delete batch. Reused across flushes; peak working
+/// One receipt-delete batch. Reused across flushes; peak working
 /// storage does not grow with total receipt count.
 const RECEIPT_CLEANUP_BATCH_BYTES: usize = 16 * 1024;
 
@@ -269,7 +269,7 @@ where
 /// are dropped from the new incarnation's executable table in that genesis
 /// write, while migration-history evidence carries forward. The genesis
 /// digests are recomputed from the reached state's unready export, never
-/// copied from the base checkpoint. `tail` yields [`ChargedBytes`]; replay
+/// copied from the base checkpoint. `tail` yields [`ReceivedBody`]; replay
 /// decodes under that owner and does not copy the decision into a detached
 /// `Vec`.
 ///
@@ -297,7 +297,7 @@ pub fn restore_writable_with_tail<S, E, T, B>(
 where
     S: Theory + Clone,
     E: Into<RecoveryError>,
-    T: IntoIterator<Item = Result<ChargedBytes, E>>,
+    T: IntoIterator<Item = Result<ReceivedBody, E>>,
     B: AsRef<[u8]>,
 {
     if new_incarnation == manifest.identity.incarnation_id {
@@ -319,16 +319,16 @@ where
     .map_err(RestoreError::Recovery)?;
     let mut authority = manifest.control_at_capture;
     for decision in tail {
-        let charged = decision.map_err(Into::into)?;
+        let received = decision.map_err(Into::into)?;
         authority = apply_unready_decision(
             &staged,
             &authority,
-            charged.as_bytes(),
+            received.as_slice(),
             command_limits,
             work,
         )
         .map_err(RestoreError::Recovery)?;
-        drop(charged.into_owner());
+        drop(received);
     }
     seal_new_incarnation(
         staged,
@@ -383,7 +383,7 @@ pub fn restore_writable_genesis<S, E, T>(
 where
     S: Theory + Clone,
     E: Into<RecoveryError>,
-    T: IntoIterator<Item = Result<ChargedBytes, E>>,
+    T: IntoIterator<Item = Result<ReceivedBody, E>>,
 {
     if new_incarnation == source_identity.incarnation_id {
         return Err(RestoreError::RewindRefused);
@@ -401,16 +401,16 @@ where
     let staged = begin_staged(directory, schema.clone(), work).map_err(RestoreError::Recovery)?;
     let mut authority = base_authority;
     for decision in tail {
-        let charged = decision.map_err(Into::into)?;
+        let received = decision.map_err(Into::into)?;
         authority = apply_unready_decision(
             &staged,
             &authority,
-            charged.as_bytes(),
+            received.as_slice(),
             command_limits,
             work,
         )
         .map_err(RestoreError::Recovery)?;
-        drop(charged.into_owner());
+        drop(received);
     }
     seal_new_incarnation(
         staged,
@@ -552,7 +552,7 @@ fn project_unready(
 }
 
 /// Delete `r` host rows through L07 [`StagedPopulation::delete_host_batch`].
-/// Peak is one charged window; resume is the last key, not the remaining set.
+/// Peak is one owned window; resume is the last key, not the remaining set.
 fn delete_receipts_batched(
     staged: &StagedPopulation,
     work: &WorkContext,
@@ -652,23 +652,4 @@ where
         db,
         manifest: manifest.clone(),
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn restore_import_tail_is_charged_bytes_not_a_detached_vec() {
-        fn consume_tail<T, E>(tail: T)
-        where
-            T: IntoIterator<Item = Result<ChargedBytes, E>>,
-            E: Into<RecoveryError>,
-        {
-            drop(tail);
-        }
-        consume_tail::<core::iter::Empty<Result<ChargedBytes, RecoveryError>>, RecoveryError>(
-            core::iter::empty(),
-        );
-    }
 }

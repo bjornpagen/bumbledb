@@ -13,8 +13,8 @@ use super::{BoundView, Const, FilterPredicate, View};
 /// into `buf` (caller-owned, reused across executions — capacity is
 /// retained). An empty predicate list yields [`BoundView::All`].
 /// # Errors
-/// Scratch text lookup I/O, work refusal, or corrupt UTF-8 — never
-/// rewritten as an empty survivor set.
+/// Invalid text context or malformed operands are errors, never an empty
+/// survivor set.
 /// # Panics
 /// If an image exceeds the u32 position space. Image admission enforces
 /// that bound independently of the database's mapped size.
@@ -46,7 +46,7 @@ fn apply_resolved(
     // positions with the remaining predicates, regardless of written order.
     if let Some(pivot) = predicates
         .iter()
-        .position(|p| kernel_scan(image, p, params, &mut buf, text))
+        .position(|p| kernel_scan(image, p, params, &mut buf))
     {
         let mut cursor = 0usize;
         for read in 0..buf.len() {

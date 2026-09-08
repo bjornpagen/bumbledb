@@ -32,8 +32,8 @@ use crate::ir::Value;
 use crate::schema::ValidateDescriptor as _;
 use crate::storage::store::StoreError;
 use crate::testutil::{TempDir, expect_rejected};
-use crate::work::{ExecutionPolicy, Resource};
-use crate::{ChangeSet, Db, InstanceBuilder, WorkContext};
+use crate::work::WorkContext;
+use crate::{ChangeSet, Db, InstanceBuilder};
 
 use super::row_reader::RowReader;
 use super::{Fact, Key};
@@ -116,7 +116,7 @@ fn entry_row(name: &str, amount: i64) -> Vec<Value> {
 }
 
 fn operation() -> WorkContext {
-    super::test_operation().expect("work")
+    super::test_operation()
 }
 
 fn create(dir: &TempDir) -> Db<Ledger> {
@@ -126,32 +126,32 @@ fn create(dir: &TempDir) -> Db<Ledger> {
 }
 
 #[test]
-fn pending_canonical_owners_refund_duplicates_and_cancellation_and_transfer_into_seal() {
+#[cfg(feature = "alloc-counter")]
+fn pending_owners_release_duplicates_and_opposite_mutations_and_transfer_into_seal() {
     let dir = TempDir::new("pending-owner-seal");
     let db = create(&dir);
     let work = operation();
     let parent = db.store.snapshot(&work).unwrap();
     let mut tx: super::WriteTx<'_, Ledger> =
         super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
-    let baseline = work.used(Resource::WorkingBytes);
-    let fact = Entry {
+    let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
+    tx.insert([&Entry {
         name: "alpha",
         amount: 3,
-    };
-    tx.insert([&fact]).unwrap();
-    let retained = work.used(Resource::WorkingBytes);
+    }])
+    .unwrap();
+    let retained = crate::alloc_counter::snapshot().absolute.live_bytes;
     assert!(retained > baseline);
     tx.insert_dyn(ENTRY, [entry_row("alpha", 3)]).unwrap();
     assert_eq!(
-        work.used(Resource::WorkingBytes),
+        crate::alloc_counter::snapshot().absolute.live_bytes,
         retained,
-        "duplicate's temporary owner drops"
+        "duplicate temporary owners release"
     );
     assert!(tx.contains_dyn(ENTRY, &entry_row("alpha", 3)).unwrap());
     assert_eq!(
-        work.used(Resource::WorkingBytes),
-        retained,
-        "borrowed lookup retains no copied keys"
+        crate::alloc_counter::snapshot().absolute.live_bytes,
+        retained
     );
     let accepted = crate::AcceptedCollection::from_value_rows(
         ENTRY,
@@ -160,178 +160,143 @@ fn pending_canonical_owners_refund_duplicates_and_cancellation_and_transfer_into
     )
     .unwrap();
     tx.delete_accepted(&accepted).unwrap();
+    drop(accepted);
     assert_eq!(
-        work.used(Resource::WorkingBytes),
+        crate::alloc_counter::snapshot().absolute.live_bytes,
         baseline,
-        "opposite mutation drops both rows and empty trees"
+        "opposite mutation releases payload and empty trees"
     );
     tx.delete_dyn(ENTRY, [entry_row("missing", 0)]).unwrap();
     assert_eq!(
-        work.used(Resource::WorkingBytes),
-        baseline,
-        "parent no-op retains nothing"
+        crate::alloc_counter::snapshot().absolute.live_bytes,
+        baseline
     );
     tx.insert_dyn(ENTRY, [entry_row("alpha", 3), entry_row("beta", 4)])
         .unwrap();
-    let retained = work.used(Resource::WorkingBytes);
+    let retained = crate::alloc_counter::snapshot().absolute.live_bytes;
     tx.delete_dyn(ENTRY, [entry_row("absent", 0)]).unwrap();
     assert_eq!(
-        work.used(Resource::WorkingBytes),
-        retained,
-        "parent no-op refunds an incoming payload adopted by an existing relation"
+        crate::alloc_counter::snapshot().absolute.live_bytes,
+        retained
     );
     let pending = tx.into_pending();
     assert_eq!(
-        work.used(Resource::WorkingBytes),
-        retained,
-        "ownership survives the transaction"
+        crate::alloc_counter::snapshot().absolute.live_bytes,
+        retained
     );
     let changes = pending.seal(&db.schema, &work).unwrap();
     assert_eq!(changes.len(), 2);
-    assert!(work.used(Resource::WorkingBytes) > baseline);
+    let sealed = crate::alloc_counter::snapshot().absolute.live_bytes;
     assert!(
-        work.used(Resource::WorkingBytes) < retained,
-        "only sealed payload remains, not staging trees"
+        sealed > baseline && sealed < retained,
+        "no staging trees remain after sealing"
     );
     let clone = changes.clone();
+    assert_eq!(clone.as_bytes().as_ptr(), changes.as_bytes().as_ptr());
     drop(changes);
-    assert!(work.used(Resource::WorkingBytes) > baseline);
+    assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, sealed);
     drop(clone);
-    assert_eq!(work.used(Resource::WorkingBytes), baseline);
+    assert_eq!(
+        crate::alloc_counter::snapshot().absolute.live_bytes,
+        baseline
+    );
 }
 
 #[test]
-fn pending_tree_occupancy_charge_grows_and_shrinks_at_five_key_thresholds() {
+#[cfg(feature = "alloc-counter")]
+fn pending_tree_growth_and_removal_release_all_payloads_and_empty_nodes() {
     let dir = TempDir::new("pending-occupancy");
     let db = create(&dir);
     let work = operation();
     let parent = db.store.snapshot(&work).unwrap();
     let mut tx: super::WriteTx<'_, Ledger> =
         super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
-    let sample = crate::canonical::CanonicalRow::encode(
-        db.schema.relation(ENTRY).fields(),
-        &entry_row("000", 0),
-        &work,
-    )
-    .unwrap();
-    let payload = sample.len() as u64;
-    drop(sample);
-    let baseline = work.used(Resource::WorkingBytes);
-    let mut used = vec![baseline];
-    for id in 0..16 {
-        tx.insert_dyn(ENTRY, [entry_row(&format!("{id:03}"), id)])
-            .unwrap();
-        used.push(work.used(Resource::WorkingBytes));
-    }
-    let node_bytes = used[6] - used[5] - payload;
-    assert!(node_bytes > 0);
-    for n in 1usize..=16 {
+    let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
+    for size in [1, 5, 6, 16, 128] {
+        for id in 0..size {
+            tx.insert_dyn(ENTRY, [entry_row(&format!("{id:03}"), id)])
+                .unwrap();
+        }
+        assert!(crate::alloc_counter::snapshot().absolute.live_bytes > baseline);
+        for id in (0..size).rev() {
+            assert!(
+                tx.contains_dyn(ENTRY, &entry_row(&format!("{id:03}"), id))
+                    .unwrap()
+            );
+            tx.delete_dyn(ENTRY, [entry_row(&format!("{id:03}"), id)])
+                .unwrap();
+        }
         assert_eq!(
-            used[n],
-            used[1] + (n as u64 - 1) * payload + ((n as u64 - 1) / 5) * node_bytes
+            crate::alloc_counter::snapshot().absolute.live_bytes,
+            baseline,
+            "empty net delta releases tree roots too"
         );
     }
-    for id in (0..16).rev() {
-        tx.delete_dyn(ENTRY, [entry_row(&format!("{id:03}"), id)])
-            .unwrap();
-        assert_eq!(
-            work.used(Resource::WorkingBytes),
-            used[usize::try_from(id).unwrap()],
-            "delete/rebalance refunds the matching occupancy bound"
-        );
-    }
+    assert_eq!(tx.into_pending().seal(&db.schema, &work).unwrap().len(), 0);
 }
 
 #[test]
-fn pending_budget_refusal_keeps_prefix_charged_and_poisoned_until_drop() {
-    let dir = TempDir::new("pending-budget");
+fn cancelled_pending_write_keeps_its_prefix_but_cannot_publish() {
+    let dir = TempDir::new("pending-cancel");
     let db = create(&dir);
     let work = operation();
-    let parent = db.store.snapshot(&work).unwrap();
-    let mut tx: super::WriteTx<'_, Ledger> =
-        super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
-    tx.insert_dyn(ENTRY, (0..5).map(|id| entry_row(&format!("{id:03}"), id)))
-        .unwrap();
-    let prefix = work.used(Resource::WorkingBytes);
-    // Measure the sixth row's actual ownership delta, rather than assuming
-    // a particular key/guard layout or allocator-dependent node size.
-    tx.insert_dyn(ENTRY, [entry_row("005", 5)]).unwrap();
-    let sixth_delta = work.used(Resource::WorkingBytes) - prefix;
-    tx.delete_dyn(ENTRY, [entry_row("005", 5)]).unwrap();
-    assert_eq!(work.used(Resource::WorkingBytes), prefix);
-    let sample = crate::canonical::CanonicalRow::encode(
-        db.schema.relation(ENTRY).fields(),
-        &entry_row("005", 5),
-        &work,
-    )
+    let failure = db
+        .write(work.clone(), |tx| {
+            tx.insert_dyn(ENTRY, (0..5).map(|id| entry_row(&format!("{id:03}"), id)))?;
+            work.cancel();
+            let error = tx.insert_dyn(ENTRY, [entry_row("005", 5)]).unwrap_err();
+            assert!(tx.poisoned().is_some());
+            assert!(matches!(error, Error::Store(_)));
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(matches!(failure, Error::TransactionPoisoned { .. }));
+    assert_eq!(db.read(operation(), |snap| snap.count(ENTRY)).unwrap(), 0);
+    assert_eq!(db.generation(operation()).unwrap().value(), 0);
+    db.write(operation(), |tx| {
+        tx.insert_dyn(ENTRY, [entry_row("retry", 7)])
+    })
+    .unwrap()
     .unwrap();
-    let collection_scratch =
-        sample.len() as u64 + 2 * std::mem::size_of::<crate::canonical::CanonicalRow>() as u64;
-    drop(sample);
-    let remaining = sixth_delta - 1;
-    assert!(
-        collection_scratch <= remaining,
-        "encoding fits; the refusal must happen when the pending tree grows"
-    );
-    let held = work
-        .reserve(
-            crate::work::ByteKind::Working,
-            work.limit(Resource::WorkingBytes) - prefix - remaining,
-        )
-        .unwrap();
-    let before = work.used(Resource::WorkingBytes);
-    assert!(
-        tx.insert_dyn(ENTRY, [entry_row("005", 5)]).is_err(),
-        "the next tree occupancy envelope does not fit"
-    );
-    assert!(tx.poisoned().is_some());
-    assert_eq!(
-        work.used(Resource::WorkingBytes),
-        before,
-        "failed row and collection scratch are released; prior owner remains"
-    );
-    drop(tx);
-    assert_eq!(work.used(Resource::WorkingBytes), held.bytes());
-    drop(held);
-    assert_eq!(work.used(Resource::WorkingBytes), 0);
+    assert_eq!(db.read(operation(), |snap| snap.count(ENTRY)).unwrap(), 1);
 }
 
 #[test]
-fn pending_collection_and_seal_refusals_release_all_owned_memory() {
+#[cfg(feature = "alloc-counter")]
+fn cancelled_collection_and_seal_release_all_owned_memory() {
     let dir = TempDir::new("pending-refusals");
     let db = create(&dir);
     for seal in [false, true] {
         let work = operation();
         let parent = db.store.snapshot(&work).unwrap();
+        let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut tx: super::WriteTx<'_, Ledger> =
             super::WriteTx::new(&db.schema, &db.closed, &parent, &work);
         if seal {
             tx.insert_dyn(ENTRY, [entry_row("kept", 1)]).unwrap();
-        }
-        let held = work
-            .reserve(
-                crate::work::ByteKind::Working,
-                work.limit(Resource::WorkingBytes)
-                    - work.used(Resource::WorkingBytes)
-                    - if seal { 0 } else { 512 },
-            )
-            .unwrap();
-        if seal {
+            work.cancel();
             assert!(tx.into_pending().seal(&db.schema, &work).is_err());
         } else {
-            assert!(
-                tx.insert_dyn(ENTRY, (0..64).map(|id| entry_row(&format!("{id:03}"), id)))
-                    .is_err()
-            );
+            let mut pulled = 0;
+            let rows = (0..64).map(|id| {
+                pulled += 1;
+                if id == 2 {
+                    work.cancel();
+                }
+                entry_row(&format!("{id:03}"), id)
+            });
+            assert!(tx.insert_dyn(ENTRY, rows).is_err());
+            assert_eq!(pulled, 3);
             assert!(
                 tx.poisoned().is_none(),
-                "parse-all-first collection failure applies no prefix"
+                "collection failure applied no prefix"
             );
             drop(tx);
         }
-        assert_eq!(work.used(Resource::WorkingBytes), held.bytes());
-        drop(held);
-        assert_eq!(work.used(Resource::WorkingBytes), 0);
+        assert_eq!(
+            crate::alloc_counter::snapshot().absolute.live_bytes,
+            baseline
+        );
     }
 }
 
@@ -390,11 +355,6 @@ fn the_three_write_lanes_produce_identical_stores() {
         })
         .expect("write")
         .unwrap();
-
-    for resource in [Resource::Rows, Resource::InputBytes, Resource::WorkUnits] {
-        assert_eq!(typed_work.used(resource), dynamic_work.used(resource));
-        assert_eq!(typed_work.used(resource), accepted_work.used(resource));
-    }
 
     let digest = typed.catalog_digest(operation()).expect("digest");
     assert_eq!(digest, dynamic.catalog_digest(operation()).expect("digest"));
@@ -744,39 +704,39 @@ fn selected_free_join_images_confirm_composite_fingerprint_collisions() {
 }
 
 #[test]
-fn get_with_work_charges_the_supplied_operation_budget() {
+fn get_with_work_observes_the_supplied_cancellation_context() {
     let dir = TempDir::new("db-get-with-work");
     let db = create(&dir);
     db.write(operation(), |tx| {
-        tx.insert_dyn(ENTRY, [entry_row("budget", 1)]).map(|_| ())
+        tx.insert_dyn(ENTRY, [entry_row("found", 1)])
     })
-    .expect("write")
+    .unwrap()
     .unwrap();
-    let work = ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 10_000,
-        work_units: 10_000,
-        timeout: std::time::Duration::from_secs(60),
-    }
-    .start()
-    .expect("policy");
-    let hit = db
-        .read(work, |snap| {
-            let before = snap.work().used(Resource::WorkUnits);
-            let hit = snap.get_dyn_with_work(
+    db.read(operation(), |snap| {
+        let stopped = operation();
+        stopped.cancel();
+        let failure = snap
+            .get_dyn_with_work(
                 ENTRY,
                 ENTRY_NAME_KEY,
-                &[Value::String("budget".into())],
-                snap.work(),
-            )?;
-            assert!(snap.work().used(Resource::WorkUnits) > before);
-            Ok(hit)
-        })
-        .expect("read");
-    assert!(hit.is_some());
+                &[Value::String("found".into())],
+                &stopped,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(failure, Error::Store(_)),
+            "cancellation is not a miss"
+        );
+        let hit = snap.get_dyn_with_work(
+            ENTRY,
+            ENTRY_NAME_KEY,
+            &[Value::String("found".into())],
+            snap.work(),
+        )?;
+        assert_eq!(hit.unwrap().values(), entry_row("found", 1));
+        Ok(())
+    })
+    .unwrap();
 }
 
 #[test]
@@ -822,15 +782,9 @@ fn repeated_pending_removal_uses_known_parent_presence() {
         .unwrap();
     let ctx = operation();
     db.write(ctx.clone(), |tx| {
-        let before = ctx.used(Resource::WorkUnits);
         assert_eq!(tx.delete_dyn(ENTRY, [&row])?.changed(), 1);
-        let after_first = ctx.used(Resource::WorkUnits);
         assert_eq!(tx.delete_dyn(ENTRY, [&row])?.changed(), 0);
-        let after_second = ctx.used(Resource::WorkUnits);
-        assert!(
-            after_second - after_first < after_first - before,
-            "an occupied pending row must not re-probe its committed parent"
-        );
+
         assert_eq!(tx.insert_dyn(ENTRY, [&row])?.changed(), 1);
         assert!(tx.contains_dyn(ENTRY, &row)?);
         Ok(())
@@ -1155,14 +1109,12 @@ fn a_shape_failure_does_not_poison_a_clean_write() {
             for bad_row in [vec![Value::U64(1)], vec![Value::U64(1), Value::I64(2)]] {
                 let arity = bad_row.len();
                 let rows = [entry_row("not-staged", 2), bad_row];
-                let attempted = work.used(Resource::Rows);
                 let failure = if delete {
                     tx.delete_dyn(ENTRY, rows)
                 } else {
                     tx.insert_dyn(ENTRY, rows)
                 }
                 .unwrap_err();
-                assert_eq!(work.used(Resource::Rows), attempted + 2);
                 match failure {
                     Error::FactShape(crate::error::FactShapeError::ArityMismatch {
                         relation,
@@ -1198,10 +1150,10 @@ fn a_shape_failure_does_not_poison_a_clean_write() {
 }
 
 #[test]
-fn dynamic_ingestion_stops_at_work_refusal_before_later_bad_rows() {
+fn dynamic_ingestion_stops_at_cancellation_before_later_bad_rows() {
     let dir = TempDir::new("dynamic-input-refusal");
     let db = create(&dir);
-    for cancel in [false, true] {
+    for cancel_before in [false, true] {
         for prefix in [false, true] {
             let work = operation();
             let parent = db.store.snapshot(&work).unwrap();
@@ -1210,12 +1162,8 @@ fn dynamic_ingestion_stops_at_work_refusal_before_later_bad_rows() {
             if prefix {
                 tx.insert_dyn(ENTRY, [entry_row("prior", 0)]).unwrap();
             }
-            let retained = work.used(Resource::WorkingBytes);
-            if cancel {
+            if cancel_before {
                 work.cancel();
-            } else {
-                work.rows(work.limit(Resource::Rows) - work.used(Resource::Rows) - 1)
-                    .unwrap();
             }
             let mut seen = 0;
             let rows = [
@@ -1224,30 +1172,22 @@ fn dynamic_ingestion_stops_at_work_refusal_before_later_bad_rows() {
                 vec![Value::U64(9)],
             ]
             .into_iter()
-            .inspect(|_| seen += 1);
+            .inspect(|_| {
+                seen += 1;
+                if seen == 2 {
+                    work.cancel();
+                }
+            });
             let error = tx.insert_dyn(ENTRY, rows).unwrap_err();
-            let Error::Store(error) = error else {
-                panic!("ingestion must stop at its work refusal");
-            };
             assert!(
-                matches!(
-                    *error,
+                matches!(error, Error::Store(ref error) if matches!(error.as_ref(),
                     StoreError::Changes(crate::changes::ChangeError::Row(
                         crate::canonical::RowError::Work(crate::WorkError::Cancelled)
-                    )) if cancel
-                ) || matches!(
-                    *error,
-                    StoreError::Changes(crate::changes::ChangeError::Row(
-                        crate::canonical::RowError::Work(crate::WorkError::Exhausted {
-                            resource: Resource::Rows,
-                            ..
-                        })
-                    )) if !cancel
-                )
+                    ))
+                ))
             );
-            assert_eq!(seen, if cancel { 1 } else { 2 });
+            assert_eq!(seen, if cancel_before { 1 } else { 2 });
             assert_eq!(tx.poisoned().is_some(), prefix);
-            assert_eq!(work.used(Resource::WorkingBytes), retained);
             let pending = tx.into_pending().seal(&db.schema, &operation()).unwrap();
             assert_eq!(pending.len(), u64::from(prefix));
         }
@@ -1458,6 +1398,42 @@ fn closed_point_reads_resolve_against_the_extension() {
 
 // --- InstanceBuilder / OwnedInstance / publication. ---
 
+// Like the other alloc-counter gates, run in a nextest-isolated process.
+#[cfg(feature = "alloc-counter")]
+#[test]
+fn sealing_owned_rows_allocates_the_payload_not_another_row_collection() {
+    let mut observations = Vec::new();
+    for rows in [0usize, 128, 8192] {
+        let mut builder = InstanceBuilder::new(Ledger, operation()).unwrap();
+        builder
+            .load_dyn(ENTRY, (0..rows).map(|i| entry_row(&format!("row-{i}"), -7)))
+            .unwrap();
+        let instance = builder.admit().unwrap().expect("unique rows admit");
+        let work = operation();
+        let before = crate::alloc_counter::snapshot().window;
+        let changes = instance.change_set_of_rows(&work).unwrap();
+        let after = crate::alloc_counter::snapshot().window;
+        let allocs = after.allocs - before.allocs;
+        let bytes = after.alloc_bytes - before.alloc_bytes;
+        eprintln!(
+            "owned seal: rows={rows}, allocs={allocs}, bytes={bytes}, payload={}",
+            changes.as_bytes().len()
+        );
+        assert_eq!(changes.len(), rows as u64);
+        assert_eq!(
+            ChangeSet::parse(instance.schema(), changes.as_bytes(), &operation())
+                .unwrap()
+                .as_bytes(),
+            changes.as_bytes(),
+        );
+        observations.push((allocs, bytes - changes.as_bytes().len() as u64));
+    }
+    assert!(
+        observations.windows(2).all(|pair| pair[0] == pair[1]),
+        "only the final payload scales with row count: {observations:?}"
+    );
+}
+
 #[test]
 fn a_builder_admits_judged_content_and_publishes_it() {
     let mut builder = InstanceBuilder::new(Ledger, operation()).expect("builder");
@@ -1656,7 +1632,7 @@ fn compact_copies_content_host_records_and_generation_coherently() {
     .expect("write")
     .unwrap();
     // Attach one host record + attachment through the integration seam.
-    let work = super::test_operation().expect("work");
+    let work = super::test_operation();
     {
         let mut session = db.integration_writer(&work).expect("session");
         let empty = ChangeSet::builder(db.schema(), work.clone())
@@ -1709,7 +1685,7 @@ fn compact_copies_content_host_records_and_generation_coherently() {
 fn a_rejected_integration_candidate_retains_the_session() {
     let dir = TempDir::new("db-session-retained");
     let db = create(&dir);
-    let work: WorkContext = super::test_operation().expect("work");
+    let work: WorkContext = super::test_operation();
     let conflicting = {
         let mut builder = ChangeSet::builder(db.schema(), work.clone());
         builder
@@ -1901,7 +1877,7 @@ fn owned_read_keeps_rows_but_does_not_retain_retired_resolvers() {
     let retired = db.cache.weak_current();
     let snapshot = db.owned_read().expect("snapshot");
     let generation = snapshot.generation();
-    db.cache.trim();
+    db.clear_cache();
     assert!(
         retired.upgrade().is_none(),
         "a canonical-row snapshot must not retain an unused retired text resolver"
@@ -1983,7 +1959,7 @@ fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
         durable_generation
     );
     for _ in 0..2 {
-        db.cache.trim();
+        db.clear_cache();
         let current = db.cache.acquire();
         assert_eq!(current.resolver().lookup("alpha"), None);
         let answers = prepared
@@ -2021,7 +1997,7 @@ fn owned_read_text_queries_refresh_resolvers_without_refreshing_rows_or_work() {
         .expect("fresh work after cancellation");
     assert_row(&recovered, "alpha", 7);
     drop(snapshot);
-    prepared.trim();
+    prepared.release_memory();
     assert_row(&original, "alpha", 7);
     assert_row(&recovered, "alpha", 7);
 }

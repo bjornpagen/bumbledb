@@ -50,18 +50,8 @@ impl Colt {
         let nbuckets = force_nbuckets(count_usize);
         let ctrl_needed = self.ctrl.len() + nbuckets * 8;
         let bucket_needed = self.buckets.len() + nbuckets * (8 * arity + 8);
-        reserve_pool(
-            ctrl_needed,
-            &mut self.ctrl,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            bucket_needed,
-            &mut self.buckets,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
+        reserve_pool(ctrl_needed, &mut self.ctrl, self.work.as_ref())?;
+        reserve_pool(bucket_needed, &mut self.buckets, self.work.as_ref())?;
         let ctrl_start = self.ctrl.len();
         let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
@@ -83,12 +73,7 @@ impl Colt {
         self.stage_positions = positions;
         filled?;
 
-        reserve_pool(
-            self.maps.len() + 1,
-            &mut self.maps,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
+        reserve_pool(self.maps.len() + 1, &mut self.maps, self.work.as_ref())?;
         let map_idx = u32::try_from(self.maps.len()).expect("map count fits u32");
         self.maps.push(m);
         self.nodes[node.0 as usize] = NodeState::Forced { map: map_idx };
@@ -105,7 +90,7 @@ impl Colt {
     ) -> Result<(), WorkError> {
         let arity = m.arity;
         let stage_needed = FORCE_BATCH * arity;
-        reserve_pool(stage_needed, keys, self.work.as_ref(), &mut self.charges)?;
+        reserve_pool(stage_needed, keys, self.work.as_ref())?;
         keys.resize(stage_needed, 0);
 
         match self.nodes[node.0 as usize] {
@@ -119,7 +104,7 @@ impl Colt {
                     let take = FORCE_BATCH.min(n - base);
                     self.poll_force_batch(take)?;
                     positions.clear();
-                    reserve_pool(take, positions, self.work.as_ref(), &mut self.charges)?;
+                    reserve_pool(take, positions, self.work.as_ref())?;
                     positions
                         .extend((base..base + take).map(|idx| self.bound_view().position_at(idx)));
                     self.force_run(m, level, positions, keys)?;
@@ -136,7 +121,7 @@ impl Colt {
                     let take = usize::from(c.len);
                     self.poll_force_batch(take)?;
                     positions.clear();
-                    reserve_pool(take, positions, self.work.as_ref(), &mut self.charges)?;
+                    reserve_pool(take, positions, self.work.as_ref())?;
                     positions.extend_from_slice(&self.chunk_positions[c.start as usize..][..take]);
                     self.force_run(m, level, positions, keys)?;
                     chunk = c.next;
@@ -147,7 +132,7 @@ impl Colt {
         Ok(())
     }
 
-    /// occurrence pays its root build once, BEFORE its same-shaped
+    /// Build this occurrence's root once; subsequent probes reuse it.
     ///
     /// # Errors
     /// Returns the work refusal that stopped force or growth. Callers must
@@ -167,7 +152,7 @@ impl Colt {
     /// tokens minted against the previous binding stay refused.
     ///
     /// # Errors
-    /// Refuses when destination pool capacity would grow past the bound ledger.
+    /// Returns cancellation or a fallible pool-allocation error.
     pub fn clone_bound_from(
         &mut self,
         other: &Colt,
@@ -183,54 +168,18 @@ impl Colt {
             }
             View::Unbound | View::Bound(crate::image::view::BoundView::All(_)) => 0,
         };
-        reserve_pool(
-            other.nodes.len(),
-            &mut self.nodes,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            other.chunks.len(),
-            &mut self.chunks,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
+        reserve_pool(other.nodes.len(), &mut self.nodes, self.work.as_ref())?;
+        reserve_pool(other.chunks.len(), &mut self.chunks, self.work.as_ref())?;
         reserve_pool(
             other.chunk_positions.len(),
             &mut self.chunk_positions,
             self.work.as_ref(),
-            &mut self.charges,
         )?;
-        reserve_pool(
-            other.maps.len(),
-            &mut self.maps,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            other.ctrl.len(),
-            &mut self.ctrl,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            other.buckets.len(),
-            &mut self.buckets,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            other.dense.len(),
-            &mut self.dense,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            survivor_needed,
-            &mut buffer,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
+        reserve_pool(other.maps.len(), &mut self.maps, self.work.as_ref())?;
+        reserve_pool(other.ctrl.len(), &mut self.ctrl, self.work.as_ref())?;
+        reserve_pool(other.buckets.len(), &mut self.buckets, self.work.as_ref())?;
+        reserve_pool(other.dense.len(), &mut self.dense, self.work.as_ref())?;
+        reserve_pool(survivor_needed, &mut buffer, self.work.as_ref())?;
         let old = std::mem::replace(&mut self.view, other.view.clone_in(buffer));
         self.nodes.clone_from(&other.nodes);
         self.chunks.clone_from(&other.chunks);
@@ -305,12 +254,7 @@ impl Colt {
         if found {
             self.append_child(m.child_at(idx), position)?;
         } else {
-            reserve_pool(
-                self.dense.len() + 1,
-                &mut self.dense,
-                self.work.as_ref(),
-                &mut self.charges,
-            )?;
+            reserve_pool(self.dense.len() + 1, &mut self.dense, self.work.as_ref())?;
             self.ctrl[m.ctrl_start + idx] = ctrl_tag(hash);
             for (i, w) in key.iter().enumerate() {
                 self.buckets[m.key_word_at(idx, i)] = *w;

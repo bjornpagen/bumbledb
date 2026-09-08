@@ -80,7 +80,6 @@ const ROSTERS = {
 		"foreignWitness",
 		"param",
 		"capacityRayMeasure",
-		"derivedBudgetExceeded",
 		"overflow",
 		"scalar",
 		"resultBytesOverflow",

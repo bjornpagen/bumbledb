@@ -3,7 +3,5 @@ node_modules/
 .bumbledb/
 next-env.d.ts
 *.tsbuildinfo
-# Written by the F3 runner to point the example at the STAGED tarballs
-# (the SDK versions are unpublished until promotion); never committed.
-pnpm-workspace.yaml
+# The isolated package runner resolves its own staged-tarball lockfile.
 pnpm-lock.yaml

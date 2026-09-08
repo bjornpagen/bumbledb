@@ -122,12 +122,7 @@ pub(crate) fn inspect_db(
     let retained = lease.runtime().database_operations(owner_id, database_id);
     Ok(Output::DbReport(DbInspectionOwned {
         generation: generation.value(),
-        map_bytes: report.virtual_map_bytes,
-        populated_bytes: report.populated_file_bytes,
-        disk_bytes: report
-            .allocated_disk_bytes
-            .unwrap_or(report.populated_file_bytes),
-        resident_estimate_bytes: report.non_free_page_bytes,
+        storage: report,
         retained_operations: retained,
     }))
 }

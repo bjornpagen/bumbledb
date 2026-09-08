@@ -450,8 +450,7 @@ fn snapshot_generation_is_the_tx_id_witnessed_inside_the_snapshot() {
 }
 
 #[test]
-fn dynamic_read_owners_keep_their_charge_after_the_read_frame_closes() {
-    use bumbledb::work::Resource;
+fn dynamic_read_owners_outlive_the_read_frame_and_deallocate_independently() {
     use bumbledb::{RelationId, StatementId, Value};
 
     let dir = common::TempDir::new("points-retained-row-charge");
@@ -485,9 +484,6 @@ fn dynamic_read_owners_keep_their_charge_after_the_read_frame_closes() {
             Value::I64(7)
         ]
     );
-    assert!(row.charged_bytes() >= holder.len() as u64);
-    assert_eq!(work.used(Resource::WorkingBytes), row.charged_bytes());
-
     let scanned = db
         .read(work.clone(), |frame| {
             frame
@@ -497,17 +493,22 @@ fn dynamic_read_owners_keep_their_charge_after_the_read_frame_closes() {
         .unwrap();
     assert_eq!(scanned.len(), 1);
     assert_eq!(scanned[0], row);
-    assert_eq!(
-        work.used(Resource::WorkingBytes),
-        row.charged_bytes() + scanned[0].charged_bytes()
-    );
+    drop(work);
+    #[cfg(feature = "alloc-counter")]
+    let before = bumbledb::alloc_counter::snapshot().window.dealloc_bytes;
     drop(row);
-    assert_eq!(
-        work.used(Resource::WorkingBytes),
-        scanned[0].charged_bytes()
+    #[cfg(feature = "alloc-counter")]
+    assert!(
+        bumbledb::alloc_counter::snapshot().window.dealloc_bytes - before >= holder.len() as u64
     );
+    assert_eq!(scanned[0].values()[1], Value::String(holder.clone().into()));
+    #[cfg(feature = "alloc-counter")]
+    let before = bumbledb::alloc_counter::snapshot().window.dealloc_bytes;
     drop(scanned);
-    assert_eq!(work.used(Resource::WorkingBytes), 0);
+    #[cfg(feature = "alloc-counter")]
+    assert!(
+        bumbledb::alloc_counter::snapshot().window.dealloc_bytes - before >= holder.len() as u64
+    );
 }
 
 #[test]

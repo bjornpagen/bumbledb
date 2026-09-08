@@ -7,7 +7,7 @@ import { Db } from "#db.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
 import { NativeRuntime } from "#runtime.ts"
-import { Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
+import { Learning, runtimeOptions, Student, storeDir } from "#test/fixtures/learning.ts"
 import { Uuid } from "#uuid.ts"
 
 const CANONICAL = "00112233-4455-6677-8899-aabbccddeeff"
@@ -32,25 +32,25 @@ test("UUID native persistence and ordered predicates preserve both halves", asyn
 		await runtime.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const db = yield* Db.create(path, Learning, work)
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const db = yield* Db.create(path, Learning)
+					const draft = yield* ChangeSet.builder(Learning)
 					yield* draft.insert(
 						Student,
 						ids.map((id) => ({ id, name: "UUID", budget: 10n }))
 					)
 					const changes = yield* draft.finish()
-					assert.equal((yield* db.apply(changes, { ...work, expected: { kind: "any" } })).kind, "accepted")
+					assert.equal((yield* db.apply(changes, { expected: { kind: "any" } })).kind, "accepted")
 				})
 			)
 		)
 		await runtime.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const db = yield* Db.open(path, Learning, work)
-					const snapshot = yield* db.snapshot(work)
+					const db = yield* Db.open(path, Learning)
+					const snapshot = yield* db.snapshot()
 					for (const floor of ids) {
-						const result = yield* snapshot.execute(after, { floor }, work)
-						const rows = yield* result.collect({ maxBytes: work.resultBytes }, work)
+						const result = yield* snapshot.execute(after, { floor })
+						const rows = yield* result.collect()
 						assert.deepEqual(
 							rows.map((row) => row.id).sort(),
 							ids.filter((id) => id > floor)

@@ -13,7 +13,7 @@
  * This module is types only — importing it performs no native work and does
  * not load the addon.
  */
-import type { ExecutionPolicy, NativeRuntime, SchemaSpec } from "@bjornpagen/bumbledb"
+import type { NativeRuntime, SchemaSpec } from "@bjornpagen/bumbledb"
 import type { Effect } from "effect"
 import type { LogError } from "#errors.ts"
 import type { JsonValue } from "#migrations/canonical.ts"
@@ -63,7 +63,7 @@ export interface ChainPayload {
 
 export interface MigrationCodec {
 	/** Validate + fingerprint + render the current schema natively. */
-	schemaIdentity(spec: SchemaSpec, work: ExecutionPolicy): Effect.Effect<SchemaIdentity, LogError, NativeRuntime>
+	schemaIdentity(spec: SchemaSpec): Effect.Effect<SchemaIdentity, LogError, NativeRuntime>
 	/**
 	 * One native chain pass: parse + verify the manifest, bind every recorded
 	 * plan's canonical digest, optionally validate/append a new plan (returning
@@ -71,5 +71,5 @@ export interface MigrationCodec {
 	 * and optionally compute a pending plan-set digest. Nothing is trusted
 	 * from text.
 	 */
-	verifyChain(request: ChainRequest, work: ExecutionPolicy): Effect.Effect<ChainPayload, LogError, NativeRuntime>
+	verifyChain(request: ChainRequest): Effect.Effect<ChainPayload, LogError, NativeRuntime>
 }

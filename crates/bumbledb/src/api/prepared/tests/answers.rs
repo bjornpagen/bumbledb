@@ -5,7 +5,6 @@ use crate::ir::FoldOp;
 fn finalize_mixed_test_rows(
     rows: &[[u64; 4]],
     out: &mut Answers,
-    charged: bool,
     dense: bool,
 ) -> crate::error::Result<()> {
     use crate::exec::run::{Bindings, Sink};
@@ -22,7 +21,7 @@ fn finalize_mixed_test_rows(
         }
         assert!(!projection.emit(&bindings).is_terminal());
     }
-    let work = crate::api::db::test_operation().unwrap();
+    let work = crate::api::db::test_operation();
     let interner = crate::image::intern::InternerHandle::without_text(&work);
     let columns = [
         ValueType::U64,
@@ -30,16 +29,14 @@ fn finalize_mixed_test_rows(
         ValueType::F64,
     ]
     .map(|ty| SignatureColumn::Project { ty });
-    let mut charge = charged.then(|| super::super::result::ResultCharge::new(&work, usize::MAX));
     super::super::finalize::finalize(
         &mut EitherSink::Projection(projection),
         &mut Vec::new(),
         &mut ResolveMemo::new(),
         &interner,
-        None,
         &columns,
         out,
-        charge.as_mut(),
+        &work,
     )
 }
 
@@ -113,7 +110,7 @@ fn assert_bulk_finalize_prefix_and_retry(dense: bool) {
     out.push_value(&AnswerValue::U64(99));
     out.push_value(&AnswerValue::FixedBytes(&bytes));
     out.push_value(&AnswerValue::F64(crate::F64::from(3.0)));
-    let failed = finalize_mixed_test_rows(&bad, &mut out, false, dense);
+    let failed = finalize_mixed_test_rows(&bad, &mut out, dense);
     assert!(matches!(failed, Err(Error::Corruption(_))));
     assert_eq!(
         out.len(),
@@ -126,9 +123,9 @@ fn assert_bulk_finalize_prefix_and_retry(dense: bool) {
 
     // Both layouts must agree with literals, including the two-word byte
     // find between single-word finds and reuse after a failed bulk fill.
-    for charged in [false, true, false] {
+    for _ in 0..3 {
         out.begin(3);
-        finalize_mixed_test_rows(&rows, &mut out, charged, dense).unwrap();
+        finalize_mixed_test_rows(&rows, &mut out, dense).unwrap();
         assert_eq!(out.len(), 2);
         for (row, id, value) in [(0, 7, 1.0), (1, 8, 2.0)] {
             assert_eq!(out.get(row, 0), AnswerValue::U64(id));
@@ -137,7 +134,7 @@ fn assert_bulk_finalize_prefix_and_retry(dense: bool) {
         }
     }
     out.begin(3);
-    finalize_mixed_test_rows(&[], &mut out, false, dense).unwrap();
+    finalize_mixed_test_rows(&[], &mut out, dense).unwrap();
     assert!(out.is_empty());
 }
 
@@ -227,8 +224,8 @@ fn answer_reuse_retains_capacity_and_answers_stay_identical() {
 }
 
 #[test]
-fn batched_result_spill_resolves_shared_text_across_carrier_resets() {
-    use super::super::result::{ResultCharge, ResultIdentity};
+fn completed_results_own_shared_text_across_prepared_reuse() {
+    use super::super::result::{CompleteResult, ResultIdentity};
     use super::super::source::{PinnedSource, QuerySource};
 
     let texts = ["shared", "a-much-longer-shared-text", ""];
@@ -252,38 +249,28 @@ fn batched_result_spill_resolves_shared_text_across_carrier_resets() {
     let params = [BindValue::U64(7), BindValue::I64(-1)];
     for fallback in [false, true] {
         prepared.force_cursor_fallback(fallback);
-        for ram_allowance in [0, 128, usize::MAX] {
-            let mut complete = fix
+        for _ in 0..3 {
+            let complete = fix
                 .db
-                .read(crate::api::db::test_operation().unwrap(), |instance| {
+                .read(crate::api::db::test_operation(), |instance| {
                     let context = instance.work();
                     let source = QuerySource::store(instance.snapshot(), context);
                     let mut carrier = Answers::new();
-                    let mut charge = ResultCharge::new(context, ram_allowance);
-                    prepared.execute_source_charged(
-                        &source,
-                        &params,
-                        &mut carrier,
-                        Some(&mut charge),
-                    )?;
-                    charge.seal(
+                    prepared.execute_source(&source, &params, &mut carrier)?;
+                    CompleteResult::seal(
                         carrier,
                         ResultIdentity {
                             source: PinnedSource::Store(instance.snapshot().identity()),
                             generation: Some(instance.snapshot().generation()),
                         },
+                        context,
                     )
                 })
                 .unwrap();
             assert_eq!(complete.len(), 514);
-            let rows = complete
-                .collect_with_work(514, &crate::api::db::test_operation().unwrap(), u64::MAX)
-                .unwrap();
-            assert_eq!(
-                answers_of(&rows),
-                expected,
-                "fallback={fallback}, allowance={ram_allowance}"
-            );
+            prepared.release_memory();
+            let rows = complete.into_answers();
+            assert_eq!(answers_of(&rows), expected, "fallback={fallback}");
         }
     }
 }
@@ -326,10 +313,7 @@ fn finalize_materializes_each_distinct_intern_once() {
     assert_eq!(count, 16);
 
     let (out, count) = resolves(&mut prepared, 2);
-    assert_eq!(
-        count, 16,
-        "each finalize re-resolves into the charged answer heap"
-    );
+    assert_eq!(count, 16, "each finalize re-resolves into the answer heap");
     assert_eq!(out.len(), 16);
     let mut memos: Vec<String> = (0..out.len())
         .map(|answer| {
@@ -345,10 +329,7 @@ fn finalize_materializes_each_distinct_intern_once() {
         memos.sort();
         memos
     };
-    assert_eq!(
-        memos, expected,
-        "charged answer heap materializes the same text"
-    );
+    assert_eq!(memos, expected, "answer heap materializes the same text");
 }
 
 /// Forced work refusal during text compare fails the query. It does
@@ -358,9 +339,7 @@ fn text_compare_refusal_fails_the_query() {
     let fix = postings(&[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
     prepared.force_cursor_fallback(true);
-    let work = crate::api::prepared::source::UNBOUNDED_POLICY
-        .start()
-        .expect("work");
+    let work = crate::work::WorkContext::new();
     work.cancel();
     let source = crate::api::prepared::source::QuerySource::heap(&fix.instance, 1, work);
     let mut out = Answers::new();

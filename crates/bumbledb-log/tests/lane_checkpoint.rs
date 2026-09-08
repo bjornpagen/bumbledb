@@ -30,7 +30,7 @@ fn policy() -> CheckpointPolicy {
 fn fetch_verified(
     store: &MemStore,
     reference: &bumbledb_log::store::ObjectRef,
-) -> bumbledb::work::ChargedBytes {
+) -> bumbledb_log::store::ReceivedBody {
     get_verified(
         store,
         "t",
@@ -83,7 +83,7 @@ fn checkpoint_captures_one_coherent_snapshot_and_publishes_exact_suffix() {
     // The manifest decodes and its chunks verify from the store.
     let bytes = fetch_verified(&store, &manifest);
     let decoded =
-        codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("manifest decodes");
+        codec::decode_manifest(bytes.as_slice(), policy().stream).expect("manifest decodes");
     assert_eq!(decoded.rows, 3);
     assert_eq!(decoded.identity, identity);
     for chunk in &decoded.chunks {
@@ -178,7 +178,7 @@ fn moved_head_causes_bounded_rebase_with_validated_suffix_not_reexport() {
         fetch_verified(&store, &reference)
     };
     let decoded =
-        codec::decode_manifest(manifest_bytes.as_bytes(), policy().stream).expect("decodes");
+        codec::decode_manifest(manifest_bytes.as_slice(), policy().stream).expect("decodes");
     assert_eq!(
         puts,
         decoded.chunks.len(),
@@ -294,7 +294,7 @@ fn epoch_moved_during_export_restages_chunks_under_the_current_epoch() {
         "the manifest lives in the newly opened epoch, not the closed one"
     );
     let bytes = fetch_verified(&store, &manifest);
-    let decoded = codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("decodes");
+    let decoded = codec::decode_manifest(bytes.as_slice(), policy().stream).expect("decodes");
     for chunk in &decoded.chunks {
         assert!(
             chunk.epoch > barrier.cutoff_epoch,
@@ -440,7 +440,7 @@ fn receipt_retirement_advances_atomically_with_its_checkpoint() {
         .checkpoint
         .expect("checkpoint");
     let bytes = fetch_verified(&store, &reference);
-    let decoded = codec::decode_manifest(bytes.as_bytes(), policy().stream).expect("decodes");
+    let decoded = codec::decode_manifest(bytes.as_slice(), policy().stream).expect("decodes");
     assert_eq!(
         decoded.system_records, 0,
         "epoch-1 receipt rows are not promised by the retiring checkpoint"

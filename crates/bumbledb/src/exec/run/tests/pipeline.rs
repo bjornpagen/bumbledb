@@ -41,14 +41,7 @@ fn cached_cursor_routes_read_late_occurrences_from_each_new_selection() {
         .iter()
         .map(|image| {
             Colt::new(
-                apply(
-                    image,
-                    &[],
-                    &[],
-                    Vec::new(),
-                    image.generation().text_eq(None),
-                )
-                .unwrap(),
+                apply(image, &[], &[], Vec::new(), image.generation().text_eq()).unwrap(),
                 &[crate::exec::colt::SelectionLevel::Point { columns: vec![1] }],
                 vec![vec![0]],
             )

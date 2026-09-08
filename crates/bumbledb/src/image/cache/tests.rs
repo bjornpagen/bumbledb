@@ -1,7 +1,7 @@
 //! The version-keyed image cache: hits at the same relation change version,
 //! one rebuild per newer version, query-local images for old pinned
 //! versions, per-execution rebuilds for heap ticks, owner-scoped closed
-//! synthesis, and the memory-pressure trim. (The end-to-end per-relation
+//! synthesis, and explicit cache clearing. (The end-to-end per-relation
 //! invalidation contract over a real store lives in
 //! `image/tests/relation_reuse.rs`.)
 use std::sync::Arc;
@@ -77,12 +77,10 @@ fn same_generation_reads_hit_the_memo() {
     let source = fixture.source();
     let first = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(3))
-        .expect("build")
-        .expect_ready("resident");
+        .expect("build");
     let second = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(3))
-        .expect("hit")
-        .expect_ready("resident");
+        .expect("hit");
     assert!(
         Arc::ptr_eq(&first, &second),
         "the same generation returns the same image"
@@ -100,12 +98,10 @@ fn a_newer_generation_rebuilds_and_retires_the_old_entry() {
     let source = fixture.source();
     let old = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(3))
-        .expect("build old")
-        .expect_ready("resident");
+        .expect("build old");
     let new = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(4))
-        .expect("build new")
-        .expect_ready("resident");
+        .expect("build new");
     assert!(!Arc::ptr_eq(&old, &new), "a newer generation rebuilds");
     assert!(
         cache.peek_at(R, generation(3), &cache.acquire()).is_none(),
@@ -123,12 +119,10 @@ fn an_old_pinned_generation_builds_query_local_after_a_newer_landed() {
     let source = fixture.source();
     let _new = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(9))
-        .expect("build new")
-        .expect_ready("resident");
+        .expect("build new");
     let old = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(2))
-        .expect("query-local build")
-        .expect_ready("resident");
+        .expect("query-local build");
     assert_eq!(old.row_count(), 8, "the old snapshot still gets its image");
     assert!(
         cache.peek_at(R, generation(2), &cache.acquire()).is_none(),
@@ -149,12 +143,10 @@ fn heap_ticks_never_memoize() {
     assert!(matches!(epoch, ViewEpoch::Heap(_)), "heap fixture");
     let first = cache
         .get_or_build_at(&source, fixture.schema(), R, epoch)
-        .expect("build")
-        .expect_ready("resident");
+        .expect("build");
     let second = cache
         .get_or_build_at(&source, fixture.schema(), R, epoch)
-        .expect("rebuild")
-        .expect_ready("resident");
+        .expect("rebuild");
     assert!(
         !Arc::ptr_eq(&first, &second),
         "a heap execution rebuilds every time — no durable identity to key by"
@@ -172,20 +164,17 @@ fn closed_relations_synthesize_once_per_owner_and_trim_detaches_them() {
     let source = fixture.source();
     let first = cache
         .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
-        .expect("synthesize")
-        .expect_ready("resident");
+        .expect("synthesize");
     let second = cache
         .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
-        .expect("hit")
-        .expect_ready("resident");
+        .expect("hit");
     assert!(Arc::ptr_eq(&first, &second), "closed images build once");
     assert_eq!(first.row_count(), 2);
 
-    cache.trim();
+    cache.clear();
     let after = cache
         .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
-        .expect("still resident")
-        .expect_ready("resident");
+        .expect("still resident");
     assert!(
         !Arc::ptr_eq(&first, &after),
         "closed images rebuild with the new resolver owner"
@@ -205,12 +194,11 @@ fn late_old_owner_builds_never_repopulate_or_displace_current_images() {
     for (relation, epoch) in [(R, generation(1)), (STATUS, ViewEpoch::Closed)] {
         let cache = ImageCache::new(fixture.schema());
         let old_owner = cache.acquire();
-        cache.trim();
+        cache.clear();
         let current_owner = cache.acquire();
         let late = cache
             .get_or_build_with(&source, fixture.schema(), relation, epoch, &old_owner)
-            .unwrap()
-            .expect_ready("old query-local image");
+            .unwrap();
         assert!(late.generation().ptr_eq(&old_owner));
         assert!(
             cache.peek_at(relation, epoch, &old_owner).is_none(),
@@ -218,12 +206,10 @@ fn late_old_owner_builds_never_repopulate_or_displace_current_images() {
         );
         let current = cache
             .get_or_build_with(&source, fixture.schema(), relation, epoch, &current_owner)
-            .unwrap()
-            .expect_ready("current image");
+            .unwrap();
         let late_again = cache
             .get_or_build_with(&source, fixture.schema(), relation, epoch, &old_owner)
-            .unwrap()
-            .expect_ready("old query-local image");
+            .unwrap();
         assert!(late_again.generation().ptr_eq(&old_owner));
         assert!(!Arc::ptr_eq(&late_again, &current));
         assert!(
@@ -258,11 +244,10 @@ fn closed_images_release_the_retired_owner_when_the_last_reader_drops() {
     let cache = ImageCache::new(fixture.schema());
     let old = cache
         .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
-        .unwrap()
-        .expect_ready("first closed image");
+        .unwrap();
     let old_owner = old.generation().downgrade();
     let pinned = Arc::clone(&old);
-    cache.trim();
+    cache.clear();
     let current_owner = cache.acquire();
     let current = cache
         .get_or_build_with(
@@ -272,25 +257,27 @@ fn closed_images_release_the_retired_owner_when_the_last_reader_drops() {
             ViewEpoch::Closed,
             &current_owner,
         )
-        .unwrap()
-        .expect_ready("rebuilt closed image");
+        .unwrap();
     assert!(current.generation().ptr_eq(&current_owner));
     assert!(!current_owner.ptr_eq(old.generation()));
     assert_eq!(old.column_words(0), &[0, 1]);
     assert_eq!(old.column_words(0), current.column_words(0));
-    let charged = cache.cache_ledger().used();
+    #[cfg(feature = "alloc-counter")]
+    let before = crate::alloc_counter::snapshot().window;
     drop(old);
     assert!(
         old_owner.upgrade().is_some(),
         "the pinned reader keeps its owner"
     );
-    assert_eq!(cache.cache_ledger().used(), charged);
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(crate::alloc_counter::snapshot().window, before);
     drop(pinned);
     assert!(
         old_owner.upgrade().is_none(),
         "trim detached the old closed cache entry"
     );
-    assert!(cache.cache_ledger().used() < charged);
+    #[cfg(feature = "alloc-counter")]
+    assert!(crate::alloc_counter::snapshot().window.dealloc_bytes > before.dealloc_bytes);
     assert!(Arc::ptr_eq(
         &current,
         &cache
@@ -300,27 +287,19 @@ fn closed_images_release_the_retired_owner_when_the_last_reader_drops() {
 }
 
 #[test]
-fn trim_detaches_map_entries_without_refunding_a_held_image() {
+fn clear_detaches_cache_entries_without_invalidating_a_held_image() {
     let fixture = fixture();
     let cache = ImageCache::new(fixture.schema());
     let source = fixture.source();
     let image = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("build")
-        .expect_ready("resident");
-    let charged = cache.cache_ledger().used();
-    assert!(charged > 0, "admission reserved the slab");
-
-    cache.trim();
-    assert!(
-        cache.peek_at(R, generation(1), &cache.acquire()).is_none(),
-        "trim evicts generation-keyed map entries"
-    );
-    assert_eq!(
-        cache.cache_ledger().used(),
-        charged,
-        "D29: dropping cache membership does not refund a retained image"
-    );
+        .unwrap();
+    let weak_image = Arc::downgrade(&image);
+    let weak_generation = image.generation().downgrade();
+    cache.clear();
+    assert!(cache.peek_at(R, generation(1), &cache.acquire()).is_none());
+    assert_eq!(cache.image_count(), 0);
+    assert!(weak_image.upgrade().is_some());
     assert!(
         image
             .generation()
@@ -329,12 +308,16 @@ fn trim_detaches_map_entries_without_refunding_a_held_image() {
             .unwrap_or(false),
         "old tokens still resolve after rotation"
     );
-
+    #[cfg(feature = "alloc-counter")]
+    let before = crate::alloc_counter::snapshot().window;
     drop(image);
+    #[cfg(feature = "alloc-counter")]
     assert!(
-        cache.cache_ledger().used() < charged,
-        "the last strong owner refunds the slab"
+        crate::alloc_counter::snapshot().window.dealloc_bytes > before.dealloc_bytes,
+        "the last image releases real storage"
     );
+    assert!(weak_image.upgrade().is_none());
+    assert!(weak_generation.upgrade().is_none());
 }
 
 #[test]
@@ -344,17 +327,15 @@ fn rotation_does_not_alias_old_and_new_tokens() {
     let source = fixture.source();
     let old = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("build")
-        .expect_ready("resident");
+        .expect("build");
     let token_before = old.column_words(1)[0];
     let old_generation = old.generation().clone();
     assert_eq!(cache.cache_generation().as_u64(), 0);
-    cache.trim();
+    cache.clear();
     assert_eq!(cache.cache_generation().as_u64(), 1);
     let rebuilt = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("rebuild")
-        .expect_ready("resident");
+        .expect("rebuild");
     let token_after = rebuilt.column_words(1)[0];
     assert!(
         !old_generation.ptr_eq(rebuilt.generation()),
@@ -373,13 +354,12 @@ fn acquire_is_the_production_pin_and_idle_memos_are_weak() {
     let source = fixture.source();
     let image = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("build")
-        .expect_ready("resident");
+        .expect("build");
     let handle = cache.acquire();
     assert!(handle.ptr_eq(image.generation()));
     let weak = cache.weak_current();
     assert!(weak.upgrade().is_some());
-    cache.trim();
+    cache.clear();
     assert!(
         weak.upgrade().is_some(),
         "a retained image keeps the old generation alive"
@@ -391,71 +371,17 @@ fn acquire_is_the_production_pin_and_idle_memos_are_weak() {
     );
 }
 
-#[test]
-fn resident_images_charge_the_shared_cache_ledger() {
-    use crate::work::CachePolicy;
-    let fixture = fixture();
-    let policy = CachePolicy {
-        cache_bytes: 1 << 20,
-    };
-    let cache = ImageCache::with_policy(fixture.schema(), policy);
-    let source = fixture.source();
-    assert_eq!(cache.cache_ledger().used(), 0);
-    let image = cache
-        .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("build")
-        .expect_ready("resident");
-    assert!(
-        cache.cache_ledger().used() >= image.charged_bytes().unwrap_or(0),
-        "admitted images reserve retained bytes against the shared ledger"
-    );
-    assert!(
-        image.charged_bytes().is_some(),
-        "charge lives inside the shared image, not the map entry"
-    );
-}
-
-/// D01: cache admission refuses before slab allocate when the allowance
-/// cannot cover the estimated image.
-#[test]
-fn d01_zero_cache_refuses_before_image_allocate() {
-    use crate::work::CachePolicy;
-    let fixture = fixture();
-    let cache = ImageCache::with_policy(fixture.schema(), CachePolicy { cache_bytes: 0 });
-    let source = fixture.source();
-    let crate::image::ResidentAdmit::BeyondMemory(exhausted) = cache
-        .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("typed refusal, not Allocation")
-    else {
-        panic!("zero cache refuses before growth");
-    };
-    let cap = crate::exec::scratch::ScratchCapability::start(
-        crate::api::prepared::source::UNBOUNDED_POLICY,
-        crate::exec::scratch::capability::ScratchPolicy::unbounded(),
-    )
-    .expect("scratch");
-    let _store = exhausted.open_nonresident(&cap);
-    assert_eq!(cache.cache_ledger().used(), 0);
-}
-
 /// D02: two retained text-bearing images; trim A; ingest different texts;
 /// B still resolves the pinned generation. Concurrent trim/admit must not
-/// alias tokens. Numeric images and text beyond RAM stay on the same ledger.
+/// alias tokens; live image owners retain their text.
 #[test]
 fn d02_shared_meanings_survive_trim_and_do_not_alias() {
-    use crate::work::CachePolicy;
     let first = fixture();
-    let cache = ImageCache::with_policy(
-        first.schema(),
-        CachePolicy {
-            cache_bytes: 1 << 20,
-        },
-    );
+    let cache = ImageCache::new(first.schema());
     let source_a = first.source();
     let image_a = cache
         .get_or_build_at(&source_a, first.schema(), R, generation(1))
-        .expect("A")
-        .expect_ready("resident");
+        .expect("A");
     let rows_b: Vec<Vec<Value>> = (0..8u64)
         .map(|i| vec![Value::U64(i), Value::String(format!("other-{i}").into())])
         .collect();
@@ -463,20 +389,18 @@ fn d02_shared_meanings_survive_trim_and_do_not_alias() {
     let source_b = second.source();
     let image_b = cache
         .get_or_build_at(&source_b, first.schema(), R, generation(1))
-        .expect("B hits A's memo")
-        .expect_ready("resident");
+        .expect("B hits A's memo");
     assert!(
         Arc::ptr_eq(&image_a, &image_b),
-        "same version shares one charged image"
+        "same version shares one image"
     );
 
     let pinned = image_a.generation().clone();
     let token = image_a.column_words(1)[0];
-    cache.trim();
+    cache.clear();
     let rebuilt = cache
         .get_or_build_at(&source_b, first.schema(), R, generation(2))
-        .expect("new generation after ingest")
-        .expect_ready("resident");
+        .expect("new generation after ingest");
     assert!(
         pinned
             .resolver()
@@ -505,8 +429,7 @@ fn d02_concurrent_trim_and_admit_keep_pinned_meanings() {
     let source = fixture.source();
     let pinned = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("pin")
-        .expect_ready("resident");
+        .expect("pin");
     let handle = pinned.generation().clone();
     let token = pinned.column_words(1)[0];
 
@@ -514,7 +437,7 @@ fn d02_concurrent_trim_and_admit_keep_pinned_meanings() {
         let cache_trim = std::sync::Arc::clone(&cache);
         scope.spawn(move || {
             for _ in 0..8 {
-                cache_trim.trim();
+                cache_trim.clear();
             }
         });
         let cache_build = std::sync::Arc::clone(&cache);
@@ -536,36 +459,23 @@ fn d02_concurrent_trim_and_admit_keep_pinned_meanings() {
     );
 }
 
-/// D29: retain an image across eviction; bytes stay charged until the
-/// final strong owner releases. Closed and numeric images use the same
-/// ledger. Legal old pins can refuse new resident admission.
 #[test]
-fn d29_retained_owner_keeps_charge_and_old_text() {
-    use crate::work::CachePolicy;
+fn ordinary_and_closed_images_release_independently_of_cache_membership() {
     let fixture = fixture();
-    let cache = ImageCache::with_policy(
-        fixture.schema(),
-        CachePolicy {
-            cache_bytes: 1 << 20,
-        },
-    );
+    let cache = ImageCache::new(fixture.schema());
     let source = fixture.source();
     let image = cache
         .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("build")
-        .expect_ready("resident");
+        .unwrap();
     let closed = cache
         .get_or_build_at(&source, fixture.schema(), STATUS, ViewEpoch::Closed)
-        .expect("closed")
-        .expect_ready("resident");
-    assert!(
-        closed.charged_bytes().is_some(),
-        "closed images are charged"
-    );
-    let used = cache.cache_ledger().used();
+        .unwrap();
+    let weak_image = Arc::downgrade(&image);
+    let weak_closed = Arc::downgrade(&closed);
+    let weak_generation = image.generation().downgrade();
     let clone = Arc::clone(&image);
-    cache.trim();
-    assert_eq!(cache.cache_ledger().used(), used);
+    cache.clear();
+    assert_eq!(cache.image_count(), 0);
     assert!(
         image
             .generation()
@@ -574,88 +484,18 @@ fn d29_retained_owner_keeps_charge_and_old_text() {
             .unwrap_or(false)
     );
     drop(clone);
-    assert_eq!(cache.cache_ledger().used(), used);
+    assert!(weak_image.upgrade().is_some());
     drop(image);
+    assert!(weak_image.upgrade().is_none());
+    assert!(weak_closed.upgrade().is_some());
     assert!(
-        cache.cache_ledger().used() < used,
-        "refund happens at the last strong owner, not at trim"
+        weak_generation.upgrade().is_some(),
+        "closed reader still owns this generation"
     );
-}
-
-#[test]
-fn d29_pinned_old_generation_can_refuse_new_resident_admission() {
-    use crate::work::CachePolicy;
-    let fixture = fixture();
-    let cache = ImageCache::with_policy(fixture.schema(), CachePolicy { cache_bytes: 8 });
-    let source = fixture.source();
-    let crate::image::ResidentAdmit::BeyondMemory(exhausted) = cache
-        .get_or_build_at(&source, fixture.schema(), R, generation(1))
-        .expect("typed refusal, not Allocation")
-    else {
-        panic!("a cache smaller than one image refuses resident admission");
-    };
-    let cap = crate::exec::scratch::ScratchCapability::start(
-        crate::api::prepared::source::UNBOUNDED_POLICY,
-        crate::exec::scratch::capability::ScratchPolicy::unbounded(),
-    )
-    .expect("scratch");
-    let _store = exhausted.open_nonresident(&cap);
-}
-
-#[test]
-fn d02_nonresident_resolution_is_the_real_fallback() {
-    use crate::api::prepared::source::UNBOUNDED_POLICY;
-    use crate::exec::scratch::capability::ScratchPolicy;
-    use crate::image::{ResidentAdmit, SourceImages};
-    use crate::work::CachePolicy;
-    let fixture = fixture();
-    let tiny = ImageCache::with_policy(fixture.schema(), CachePolicy { cache_bytes: 8 });
-    let source = fixture.source();
-    let images = SourceImages::bind(&source, &tiny);
-    let ResidentAdmit::BeyondMemory(exhausted) = images
-        .interner()
-        .intern_or_spill("row-0")
-        .expect("unbounded work")
-    else {
-        panic!("tiny cache intern_or_spill must spill");
-    };
-    match crate::image::bind::ImageBind::image(&images, fixture.schema(), R).expect("image seam") {
-        ResidentAdmit::BeyondMemory(_) => {}
-        ResidentAdmit::Ready(_) => panic!("tiny cache image() must spill"),
-    }
-    let cap = crate::exec::scratch::ScratchCapability::start(
-        UNBOUNDED_POLICY,
-        ScratchPolicy::unbounded(),
-    )
-    .expect("scratch");
-    let mut store = exhausted.open_nonresident(&cap);
-    let token = store
-        .intern("row-0", cap.work())
-        .expect("nonresident intern");
-
-    let fat = ImageCache::new(fixture.schema());
-    let fat_source = fixture.source();
-    let fat_images = SourceImages::bind(&fat_source, &fat);
-    let resident_tok = fat_images
-        .interner()
-        .intern_or_spill("row-0")
-        .expect("fat intern")
-        .expect_ready("unbounded cache intern");
-    assert!(crate::image::is_scratch_token(token));
-    assert!(crate::image::is_resident_token(resident_tok));
-    assert_ne!(token, resident_tok, "intern and scratch ids cannot alias");
-    assert!(
-        crate::image::TextEq::bind(fat_images.generation(), Some(&store))
-            .tokens_equal(token, resident_tok)
-            .expect("equal"),
-        "TextEq unifies intern and scratch without raw word =="
-    );
-    assert!(
-        fat_images
-            .generation()
-            .tokens_equal(resident_tok, fat_images.generation(), resident_tok),
-        "same-generation compare is token identity"
-    );
+    assert_eq!(closed.column_words(0), &[0, 1]);
+    drop(closed);
+    assert!(weak_closed.upgrade().is_none());
+    assert!(weak_generation.upgrade().is_none());
 }
 
 fn numeric_schema() -> Schema {
@@ -675,19 +515,22 @@ fn numeric_schema() -> Schema {
 }
 
 #[test]
-fn d02_numeric_images_are_charged_and_survive_trim() {
+fn numeric_images_survive_clear_and_release_after_the_last_reader() {
     let schema = numeric_schema();
-    let rows: Vec<Vec<Value>> = (0..4u64).map(|i| vec![Value::U64(i)]).collect();
+    let rows: Vec<_> = (0..4u64).map(|i| vec![Value::U64(i)]).collect();
     let fixture = TestSource::new(&schema, &[(RelationId(0), rows)]);
     let cache = ImageCache::new(fixture.schema());
     let source = fixture.source();
     let image = cache
         .get_or_build_at(&source, fixture.schema(), RelationId(0), generation(1))
-        .expect("numeric")
-        .expect_ready("resident");
-    assert!(image.charged_bytes().is_some());
-    let used = cache.cache_ledger().used();
-    cache.trim();
-    assert_eq!(cache.cache_ledger().used(), used);
+        .unwrap();
+    let weak_image = Arc::downgrade(&image);
+    let weak_generation = image.generation().downgrade();
+    cache.clear();
+    assert_eq!(cache.image_count(), 0);
     assert_eq!(image.row_count(), 4);
+    assert_eq!(image.column_words(0), &[0, 1, 2, 3]);
+    drop(image);
+    assert!(weak_image.upgrade().is_none());
+    assert!(weak_generation.upgrade().is_none());
 }

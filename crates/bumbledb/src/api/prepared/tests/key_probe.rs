@@ -1,14 +1,13 @@
 use super::*;
 
 use crate::exec::dispatch::{KeyProbeKind, key_probe_row};
-use crate::exec::scratch::{ScratchCapability, ScratchPolicy};
 use crate::image::canon::RowWords;
-use crate::image::intern::{InternerHandle, ResidentAdmit};
+use crate::image::intern::InternerHandle;
 use crate::ir::ParamId;
-use crate::work::{CacheLedger, CachePolicy, GenerationHandle, GenerationState, Resource};
+use crate::work::{GenerationHandle, GenerationState, WorkError};
 use bumbledb_theory::schema::{IntervalElement, StatementDescriptor};
 
-fn scratch_text_membership_query() -> Query {
+fn text_membership_query() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Count],
         atoms: vec![Atom {
@@ -26,7 +25,7 @@ fn scratch_text_membership_query() -> Query {
 }
 
 #[test]
-fn scratch_reconstruction_refusal_is_not_a_membership_or_indexed_key_miss() {
+fn cancelled_text_resolution_is_not_a_membership_or_indexed_key_miss() {
     for indexed in [false, true] {
         let mut schema = descriptor();
         schema.statements.clear();
@@ -38,7 +37,7 @@ fn scratch_reconstruction_refusal_is_not_a_membership_or_indexed_key_miss() {
         }
         let fix = StoreFix::store("prepared-scratch-key-refusal", schema);
         fix.insert_dyn(POSTING, &posting_rows(&[(1, 7, "alpha", 41)]));
-        let query = scratch_text_membership_query();
+        let query = text_membership_query();
         let prepared = fix.prepare(&query).expect("prepare real probe");
         let [PreparedRule::KeyProbe(rule)] = prepared.pipeline.main_rules() else {
             panic!("fully bound query must use key dispatch");
@@ -48,8 +47,8 @@ fn scratch_reconstruction_refusal_is_not_a_membership_or_indexed_key_miss() {
             indexed
         );
         let pin = fix.db.owned_read().unwrap();
-        for cancel in [false, true] {
-            let work = crate::api::db::test_operation().unwrap();
+        {
+            let work = crate::api::db::test_operation();
             let frame = pin.frame(&work);
             if let KeyProbeKind::Uniqueness { projection, .. } = &rule.plan.kind {
                 assert!(matches!(
@@ -65,57 +64,33 @@ fn scratch_reconstruction_refusal_is_not_a_membership_or_indexed_key_miss() {
             let source = super::super::source::QuerySource::store(frame.snapshot(), &work);
             let generation = GenerationHandle::new(GenerationState::new(
                 crate::image::CacheGeneration::initial(),
-                CacheLedger::new(CachePolicy { cache_bytes: 0 }),
             ));
             let interner = InternerHandle::new(&generation, &work);
-            let ResidentAdmit::BeyondMemory(exhausted) =
-                interner.intern_or_spill("alpha").expect("resident refusal")
-            else {
-                panic!("zero cache forces real scratch text");
-            };
-            let capability = ScratchCapability::on_work(&work, ScratchPolicy::from_work(&work))
-                .expect("same operation ledger");
-            let mut scratch_text = exhausted.open_nonresident(&capability);
-            let token = scratch_text
-                .intern("alpha", &work)
-                .expect("mint scratch token");
-            let mut store = Some(scratch_text);
+            let params = [Const::Text(interner.intern("alpha").unwrap())];
             let mut row = RowWords::new(&[
                 ValueType::U64,
                 ValueType::U64,
                 ValueType::String,
                 ValueType::I64,
             ]);
-            let mut key = Vec::new();
+            let mut key = crate::image::view::ResolvedWords::default();
             let mut probe = || {
                 key_probe_row(
                     &rule.plan,
                     &source,
                     fix.db.schema(),
                     &interner,
-                    &mut store,
-                    &[Const::Word(token)],
+                    &params,
                     &mut row,
                     &mut key,
                 )
             };
-            assert!(probe().expect("live scratch membership/key hit"));
-            assert!(probe().expect("warm scratch membership/key hit"));
+            assert!(probe().expect("live membership/key hit"));
+            assert!(probe().expect("warm membership/key hit"));
             let visited = source.visit_count();
-            let expected = if cancel {
-                work.cancel();
-                crate::work::WorkError::Cancelled
-            } else {
-                let limit = work.limit(Resource::WorkUnits);
-                work.step(limit - work.used(Resource::WorkUnits)).unwrap();
-                crate::work::WorkError::Exhausted {
-                    resource: Resource::WorkUnits,
-                    used: limit,
-                    requested: 1,
-                    limit,
-                }
-            };
-            let error = probe().expect_err("scratch read failure must not become a nonmatch");
+            work.cancel();
+            let expected = WorkError::Cancelled;
+            let error = probe().expect_err("cancelled probe must not become a nonmatch");
             assert!(matches!(error, Error::Store(store) if matches!(
                 *store, crate::storage::store::StoreError::Work(ref error) if *error == expected
             )));
@@ -164,9 +139,7 @@ fn key_probe_fast_lane_hits_misses_and_type_errors() {
         3,
         "PointProbe stores KeyProbeRule, not a tagged PreparedRule"
     );
-    // Direct answers never enter the distinct sink or its scratch tier,
-    // even when that tier would otherwise start at the very first row.
-    prepared.set_sink_ram(0);
+    // The PointProbe shape delivers directly, without a distinct-result sink.
     let mut out = Answers::new();
 
     fix.execute_into(&mut prepared, &[BindValue::U64(2)], &mut out)
@@ -218,7 +191,7 @@ fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
         conditions: vec![],
     });
     let pin = fix.db.owned_read().unwrap();
-    let active = crate::api::db::test_operation().unwrap();
+    let active = crate::api::db::test_operation();
     let mut prepared = pin.prepare(&query, &active).unwrap();
     assert!(
         !prepared.no_text_probe,
@@ -236,27 +209,11 @@ fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
     assert_eq!(out.get(0, 0), AnswerValue::I64(41));
     // Admit the snapshot before cancelling the operation, so a snapshot
     // gate poll cannot mask a missing poll in the empty determinant seek.
-    let cancelled = crate::api::db::test_operation().unwrap();
+    let cancelled = crate::api::db::test_operation();
     cancelled.cancel();
-    let policy = crate::work::ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: 0,
-        result_bytes: 1 << 20,
-        rows: 16,
-        work_units: 16,
-        timeout: std::time::Duration::from_secs(60),
-    };
-    let expired = crate::work::ExecutionPolicy {
-        timeout: std::time::Duration::ZERO,
-        ..policy
-    }
-    .start()
-    .unwrap();
-    for (context, expected) in [
-        (cancelled, crate::work::WorkError::Cancelled),
-        (expired, crate::work::WorkError::DeadlineExceeded),
-    ] {
+    for _ in 0..2 {
+        let context = cancelled.clone();
+        let expected = WorkError::Cancelled;
         let error = pin
             .frame(&context)
             .execute(&mut prepared, &[BindValue::U64(999)], &mut out)
@@ -275,17 +232,12 @@ fn cancelled_missing_scalar_probe_refuses_and_clears_reused_answers() {
         assert_eq!(out.len(), 1);
         assert_eq!(out.get(0, 0), AnswerValue::I64(41));
     }
-    let no_units = crate::work::ExecutionPolicy {
-        work_units: 0,
-        ..policy
-    }
-    .start()
-    .unwrap();
-    pin.frame(&no_units)
+    let fresh_work = crate::work::WorkContext::new();
+    pin.frame(&fresh_work)
         .execute(&mut prepared, &[BindValue::U64(999)], &mut out)
         .unwrap();
     assert_eq!(out.len(), 0);
-    assert_eq!(no_units.used(crate::work::Resource::WorkUnits), 0);
+    assert_eq!(fresh_work.checkpoint(), Ok(()));
 }
 
 #[test]
@@ -431,10 +383,10 @@ fn text_free_probe_uses_shared_execution_without_acquiring_a_resolver() {
             assert_eq!(actual.get(0, 0), expected.get(0, 0));
         }
         assert!(prepared.text_generation.is_none() && oracle.text_generation.is_none());
-        prepared.trim();
+        prepared.release_memory();
     }
     let pin = store.db.owned_read().unwrap();
-    let cancelled = crate::api::db::test_operation().unwrap();
+    let cancelled = crate::api::db::test_operation();
     cancelled.cancel();
     let mut out = Answers::new();
     for owner in [2, 3] {
@@ -735,7 +687,7 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
 
     let generation_before = docs
         .db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
+        .read(crate::api::db::test_operation(), |instance| {
             Ok(instance.generation())
         })
         .expect("generation");
@@ -743,7 +695,7 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
         .execute(&mut prepared, &[BindValue::Str("ghost")])
         .expect("an unstored text is empty, not an error");
     assert_eq!(out.len(), 0);
-    prepared.trim();
+    prepared.release_memory();
     let rebound = docs
         .execute(&mut prepared, &[BindValue::Str("alice")])
         .unwrap();
@@ -751,7 +703,7 @@ fn an_unstored_text_param_on_the_fast_path_is_empty_not_an_error() {
     assert!(prepared.text_generation.is_some());
     let generation_after = docs
         .db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
+        .read(crate::api::db::test_operation(), |instance| {
             Ok(instance.generation())
         })
         .expect("generation");

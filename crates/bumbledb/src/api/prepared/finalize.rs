@@ -1,37 +1,27 @@
 use std::mem::MaybeUninit;
 
-use super::result::ResultCharge;
 use super::{Answers, Cell, EitherSink, ResolveMemo, ValueType};
 
+use super::source::work_error;
 use crate::error::Result;
 use crate::exec::sink::{ProjectionSink, ResidentRows};
-use crate::image::NonresidentTextStore;
 use crate::image::intern::InternerHandle;
 use crate::ir::validate::SignatureColumn;
+use crate::work::WorkContext;
 
-/// Reverses if: a profiled finalize shows the String/FixedBytes match arms'
-/// mere presence taxing an all-words fill ≥ the house bar — re-twin before
-/// believing it.
-///
-/// With a [`ResultCharge`] installed (the sealed-result path) every
-/// appended row is noted: result bytes charge in bounded quanta as the set
-/// grows and past-allowance rows continue in the scratch backing — the
-/// column-major bulk fill is bypassed there, since it materializes the
-/// whole set before any charge could refuse.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-)]
+/// Finalize through the existing representation-specific kernels. Fixed
+/// columns fill in bounded polling batches; no per-row quota accounting
+/// forces an otherwise columnar result onto a row-major path.
 pub(super) fn finalize(
     sink: &mut EitherSink,
     answer_scratch: &mut Vec<u64>,
     memo: &mut ResolveMemo,
     interner: &InternerHandle<'_>,
-    mut store: Option<&mut NonresidentTextStore>,
     columns: &[SignatureColumn],
     out: &mut Answers,
-    mut charge: Option<&mut ResultCharge<'_>>,
+    work: &WorkContext,
 ) -> Result<()> {
+    work.checkpoint().map_err(work_error)?;
     memo.clear();
     match sink {
         EitherSink::Computed(sink) => {
@@ -43,10 +33,9 @@ pub(super) fn finalize(
                 answer_scratch,
                 memo,
                 interner,
-                store,
                 columns,
                 out,
-                charge,
+                work,
             )
         }
         EitherSink::Projection(sink) => {
@@ -57,37 +46,9 @@ pub(super) fn finalize(
                 Err(error)
             } else if sink.spilled() {
                 // The spilled drain is row-major across both tiers.
-                drain_spilled_answers(
-                    out,
-                    interner,
-                    store.as_deref_mut(),
-                    memo,
-                    columns,
-                    sink,
-                    charge,
-                )
-            } else if let Some(charge) = charge {
-                // Charged construction is row-major: note every row so the
-                // budget can refuse (and the backing can spill) before the
-                // whole set materializes.
-                let mut result = Ok(());
-                for answer in sink.answers() {
-                    result = push_resolved_answer(
-                        out,
-                        interner,
-                        store.as_deref_mut(),
-                        memo,
-                        columns,
-                        answer,
-                    )
-                    .and_then(|()| charge.note_row(out, memo));
-                    if result.is_err() {
-                        break;
-                    }
-                }
-                result
+                drain_spilled_answers(out, interner, memo, columns, sink, work)
             } else {
-                fill_resolved_answers(out, interner, store.as_deref_mut(), memo, columns, sink)
+                fill_resolved_answers(out, interner, memo, columns, sink, work)
             };
             if result.is_err() {
                 // The fills pre-size/append rows: drop the partial carrier
@@ -97,15 +58,15 @@ pub(super) fn finalize(
             result
         }
         EitherSink::Aggregate(sink) => {
-            if charge.is_none() {
-                out.cells.reserve(sink.group_count() * columns.len());
-            }
+            out.cells.reserve(
+                sink.group_count()
+                    .checked_mul(columns.len())
+                    .ok_or(crate::error::Error::ResultBytesOverflow)?,
+            );
             sink.finalize_into(answer_scratch, |answer| {
-                push_resolved_answer(out, interner, store.as_deref_mut(), memo, columns, answer)?;
-                match charge.as_deref_mut() {
-                    Some(charge) => charge.note_row(out, memo),
-                    None => Ok(()),
-                }
+                work.checkpoint().map_err(work_error)?;
+                push_resolved_answer(out, interner, memo, columns, answer)?;
+                Ok(())
             })
         }
     }
@@ -114,38 +75,34 @@ pub(super) fn finalize(
 fn drain_spilled_answers(
     out: &mut Answers,
     interner: &InternerHandle<'_>,
-    mut store: Option<&mut NonresidentTextStore>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     sink: &mut ProjectionSink,
-    mut charge: Option<&mut ResultCharge<'_>>,
+    work: &WorkContext,
 ) -> Result<()> {
     sink.for_each_answer(&mut |answer| {
-        push_resolved_answer(out, interner, store.as_deref_mut(), memo, columns, answer)?;
-        match charge.as_deref_mut() {
-            Some(charge) => charge.note_row(out, memo),
-            None => Ok(()),
-        }
+        work.checkpoint().map_err(work_error)?;
+        push_resolved_answer(out, interner, memo, columns, answer)
     })
 }
 
 fn fill_resolved_answers(
     out: &mut Answers,
     interner: &InternerHandle<'_>,
-    store: Option<&mut NonresidentTextStore>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     sink: &ProjectionSink,
+    work: &WorkContext,
 ) -> Result<()> {
     // Dense results must remain a linear walk. Select the representation
     // once, not on every `next()` of every output column. Hash-backed rows
     // keep their insertion order and exact-key deduplication unchanged.
     match sink.answers() {
         ResidentRows::Dense(answers) => {
-            fill_resident_rows(out, interner, store, memo, columns, sink.len(), &answers)
+            fill_resident_rows(out, interner, memo, columns, sink.len(), &answers, work)
         }
         ResidentRows::Hashed(answers) => {
-            fill_resident_rows(out, interner, store, memo, columns, sink.len(), &answers)
+            fill_resident_rows(out, interner, memo, columns, sink.len(), &answers, work)
         }
     }
 }
@@ -157,25 +114,30 @@ fn fill_resolved_answers(
 fn fill_resident_rows<'a>(
     out: &mut Answers,
     interner: &InternerHandle<'_>,
-    mut store: Option<&mut NonresidentTextStore>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     rows: usize,
     answers: &(impl Iterator<Item = &'a [u64]> + Clone),
+    work: &WorkContext,
 ) -> Result<()> {
     let arity = columns.len();
     let base = out.cells.len();
-    let additional = rows.checked_mul(arity).expect("answer cell count");
+    let additional = rows
+        .checked_mul(arity)
+        .ok_or(crate::error::Error::ResultBytesOverflow)?;
     out.cells.reserve(additional);
-    let mut word = 0;
+    let mut offset = 0;
     for (col, column) in columns.iter().enumerate() {
-        word += match column.ty() {
+        work.checkpoint().map_err(work_error)?;
+        offset += match column.ty() {
             ValueType::String => {
                 let mut answers = answers.clone();
                 for row in 0..rows {
+                    if row % crate::exec::sink::STEP_QUANTUM as usize == 0 {
+                        work.checkpoint().map_err(work_error)?;
+                    }
                     let answer = answers.next().expect("resident sink length");
-                    let (start, len) =
-                        memo.resolve(interner, store.as_deref_mut(), answer[word], out)?;
+                    let (start, len) = memo.resolve(interner, answer[offset], out)?;
                     out.cells.spare_capacity_mut()[row * arity + col]
                         .write(Cell::String { start, len });
                 }
@@ -185,8 +147,11 @@ fn fill_resident_rows<'a>(
                 let width = crate::encoding::fixed_bytes_words(*len);
                 let mut answers = answers.clone();
                 for row in 0..rows {
+                    if row % crate::exec::sink::STEP_QUANTUM as usize == 0 {
+                        work.checkpoint().map_err(work_error)?;
+                    }
                     let answer = answers.next().expect("resident sink length");
-                    let cell = out.fixed_bytes_cell(*len, &answer[word..word + width]);
+                    let cell = out.fixed_bytes_cell(*len, &answer[offset..offset + width]);
                     out.cells.spare_capacity_mut()[row * arity + col].write(cell);
                 }
                 width
@@ -196,8 +161,9 @@ fn fill_resident_rows<'a>(
                 arity,
                 col,
                 ty,
-                word,
+                offset,
                 answers.clone(),
+                work,
             )?,
         };
     }
@@ -206,11 +172,36 @@ fn fill_resident_rows<'a>(
     // answer rather than silently truncating a zip. Text/blob resolution
     // only grows those separate heaps, never the cells vector. On error
     // or panic the old length remains valid; Cell has no drop resources.
+    work.checkpoint().map_err(work_error)?;
     unsafe { out.cells.set_len(base + additional) };
     Ok(())
 }
 
 fn fill_fixed_column<'a>(
+    cells: &mut [MaybeUninit<Cell>],
+    arity: usize,
+    col: usize,
+    ty: &ValueType,
+    offset: usize,
+    mut answers: impl Iterator<Item = &'a [u64]>,
+    work: &WorkContext,
+) -> Result<usize> {
+    let width = match ty {
+        ValueType::Uuid | ValueType::Interval { .. } | ValueType::FixedInterval { .. } => 2,
+        _ => 1,
+    };
+    let batch_cells = arity
+        .checked_mul(crate::exec::sink::STEP_QUANTUM as usize)
+        .ok_or(crate::error::Error::ResultBytesOverflow)?;
+    for batch in cells.chunks_mut(batch_cells) {
+        work.checkpoint().map_err(work_error)?;
+        let filled_width = fill_fixed_chunk(batch, arity, col, ty, offset, &mut answers)?;
+        debug_assert_eq!(filled_width, width);
+    }
+    Ok(width)
+}
+
+fn fill_fixed_chunk<'a>(
     cells: &mut [MaybeUninit<Cell>],
     arity: usize,
     col: usize,
@@ -283,7 +274,6 @@ fn fill_fixed_column<'a>(
 fn push_resolved_answer(
     out: &mut Answers,
     interner: &InternerHandle<'_>,
-    mut store: Option<&mut NonresidentTextStore>,
     memo: &mut ResolveMemo,
     columns: &[SignatureColumn],
     answer: &[u64],
@@ -308,8 +298,7 @@ fn push_resolved_answer(
                 2,
             ),
             ValueType::String => {
-                let (start, len) =
-                    memo.resolve(interner, store.as_deref_mut(), answer[word], out)?;
+                let (start, len) = memo.resolve(interner, answer[word], out)?;
                 (Cell::String { start, len }, 1)
             }
             ValueType::FixedBytes { len } => {

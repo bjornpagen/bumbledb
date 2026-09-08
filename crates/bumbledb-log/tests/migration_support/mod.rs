@@ -5,13 +5,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
     ValueType,
 };
-use bumbledb::{Db, ExecutionPolicy, Uuid, WorkContext};
+use bumbledb::{Db, Uuid, WorkContext};
 
 use bumbledb_log::history::command::Limits;
 use bumbledb_log::history::{DatabaseId, IncarnationId, OperationId};
@@ -46,35 +45,15 @@ pub fn temp_dir(tag: &str) -> PathBuf {
     path
 }
 
-pub fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 10_000_000,
-        working_bytes: 10_000_000,
-        scratch_bytes: 10_000_000,
-        result_bytes: 10_000_000,
-        rows: 1_000_000,
-        work_units: 100_000_000,
-        timeout: Duration::from_secs(120),
-    }
-}
-
 pub fn work() -> WorkContext {
-    policy().start().unwrap()
+    WorkContext::new()
 }
 
-/// A deliberately tiny allowance for exhaustion-mid-execution tests.
-pub fn tiny_work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 4096,
-        working_bytes: 4096,
-        scratch_bytes: 4096,
-        result_bytes: 4096,
-        rows: 4,
-        work_units: 64,
-        timeout: Duration::from_secs(120),
-    }
-    .start()
-    .unwrap()
+/// An explicitly cancelled operation, not a simulated allocation quota.
+pub fn cancelled_work() -> WorkContext {
+    let work = WorkContext::new();
+    work.cancel();
+    work
 }
 
 pub fn op(byte: u8) -> OperationId {

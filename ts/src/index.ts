@@ -43,9 +43,10 @@ export type {
 	ApplyOutcome,
 	CoreWitness,
 	DbInspection,
-	ExecutionSession,
+	PreparedQuery,
 	QueryReader,
-	Snapshot
+	Snapshot,
+	StorageInspection
 } from "#db.ts"
 export { Db } from "#db.ts"
 export {
@@ -149,8 +150,8 @@ export type {
 export { relation } from "#relation.ts"
 export type { CompleteResult } from "#result.ts"
 export type { CellValue } from "#rows.ts"
-export { cellBytes, cellOf, factOfCells, flatRowsOf, keyCellsOf } from "#rows.ts"
-export type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
+export { cellOf, factOfCells, flatRowsOf, keyCellsOf } from "#rows.ts"
+export type { NativeRuntimeOptions } from "#runtime.ts"
 export { NativeRuntime } from "#runtime.ts"
 export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"

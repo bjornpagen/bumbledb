@@ -349,7 +349,6 @@ wire_tags! {
         FOREIGN_WITNESS: ErrorFamily::ForeignWitness => "foreignWitness",
         PARAM: ErrorFamily::Param => "param",
         CAPACITY_RAY_MEASURE: ErrorFamily::CapacityRayMeasure => "capacityRayMeasure",
-        DERIVED_BUDGET_EXCEEDED: ErrorFamily::DerivedBudgetExceeded => "derivedBudgetExceeded",
         OVERFLOW: ErrorFamily::Overflow => "overflow",
         SCALAR: ErrorFamily::Scalar => "scalar",
         RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",

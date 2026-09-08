@@ -136,17 +136,7 @@ fn the_macro_twin_hashes_to_the_pinned_fingerprint() {
 #[test]
 fn the_bridge_typestate_and_the_macro_twin_open_each_other_s_stores() {
     let dir = TempDir::new("fingerprint-lock");
-    let work = bumbledb::work::ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: 1 << 20,
-        result_bytes: 1 << 20,
-        rows: 1024,
-        work_units: 1 << 20,
-        timeout: std::time::Duration::from_secs(10),
-    }
-    .start()
-    .expect("valid test policy");
+    let work = bumbledb::work::WorkContext::new();
 
     // Created through the bridge's exact typestate (`Db<SchemaDescriptor>`
     // — what every JS `dbCreate` produces), opened under the macro twin.

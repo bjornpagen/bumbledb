@@ -403,7 +403,7 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
     let mut empty_set = vec![occurrence(vec![FilterPredicate::Compare {
         field: FieldId(2).into(),
         op: WordCmp::Eq,
-        value: Const::WordSet(vec![SENTINEL_ID]),
+        value: Const::WordSet(vec![SENTINEL_ID].into()),
     }])];
     assert_eq!(fold(&schema, &mut empty_set).as_deref(), Some("R: k ∈ {}"));
 
@@ -411,7 +411,7 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
         FilterPredicate::Compare {
             field: FieldId(2).into(),
             op: WordCmp::Eq,
-            value: Const::WordSet(vec![1, 2]),
+            value: Const::WordSet(vec![1, 2].into()),
         },
         FilterPredicate::Compare {
             field: FieldId(2).into(),
@@ -428,7 +428,7 @@ fn an_empty_word_set_kills_and_a_word_set_eq_intersection_kills() {
         FilterPredicate::Compare {
             field: FieldId(2).into(),
             op: WordCmp::Eq,
-            value: Const::WordSet(vec![1, 7]),
+            value: Const::WordSet(vec![1, 7].into()),
         },
         FilterPredicate::Compare {
             field: FieldId(2).into(),

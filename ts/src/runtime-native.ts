@@ -34,7 +34,7 @@ export interface RepositoryLockHandle {
 }
 
 /** Resource kinds installed in native worker tables. */
-export type NativeKind = "snapshot" | "result" | "cursor" | "draft" | "changes" | "repository-lock"
+export type NativeKind = "snapshot" | "prepared" | "result" | "cursor" | "draft" | "changes" | "repository-lock"
 
 /**
  * Checked capability into the native registry. JS tokens validate
@@ -96,28 +96,13 @@ export type LogTakeWire =
 			readonly digest: Uint8Array
 	  }
 
-export interface PolicyWire {
-	readonly inputBytes: bigint
-	readonly workingBytes: bigint
-	readonly scratchBytes: bigint
-	readonly resultBytes: bigint
-	readonly rows: bigint
-	readonly workUnits: bigint
-	readonly timeoutMs: number
-}
-
 export interface OptionsWire {
-	readonly workers: number
-	readonly queueCapacity: number
-	readonly cleanupCapacity: number
-	readonly ownerCapacity: number
-	readonly nativeHandleCapacity: number
-	readonly inputBytes: bigint
-	readonly workingBytes: bigint
-	readonly scratchBytes: bigint
-	readonly resultBytes: bigint
-	readonly chunkBytes: bigint
-	readonly cleanupTimeoutMs: number
+	readonly workers?: number | undefined
+	readonly queueCapacity?: number | undefined
+	readonly cleanupCapacity?: number | undefined
+	readonly ownerCapacity?: number | undefined
+	readonly nativeHandleCapacity?: number | undefined
+	readonly cleanupTimeoutMs?: number | undefined
 }
 
 export interface InspectionWire {
@@ -128,10 +113,6 @@ export interface InspectionWire {
 	readonly owners: bigint
 	readonly databases: bigint
 	readonly natives: bigint
-	readonly inputBytes: bigint
-	readonly workingBytes: bigint
-	readonly scratchBytes: bigint
-	readonly resultBytes: bigint
 }
 
 export type CloseWire =
@@ -142,8 +123,8 @@ export type CloseWire =
 interface RuntimeNative {
 	runtimeErrorCodes(): readonly string[]
 	runtimeOpen(options: OptionsWire): RuntimeHandle
-	runtimeReady(runtime: RuntimeHandle, policy: PolicyWire, callback: () => void): OperationHandle
-	runtimeHash(runtime: RuntimeHandle, policy: PolicyWire, bytes: Uint8Array, callback: () => void): OperationHandle
+	runtimeReady(runtime: RuntimeHandle, callback: () => void): OperationHandle
+	runtimeHash(runtime: RuntimeHandle, bytes: Uint8Array, callback: () => void): OperationHandle
 	runtimeTake(operation: OperationHandle): Uint8Array | null
 	runtimeCancel(operation: OperationHandle, callback: (report: CloseWire) => void): void
 	runtimeClose(runtime: RuntimeHandle, callback: (report: CloseWire) => void): void
@@ -156,20 +137,14 @@ interface RuntimeNative {
 	 * Predelivery: no JS take; cursor stays on row1 so retry does not skip.
 	 */
 	runtimeArmPublicationCancel(runtime: RuntimeHandle): void
-	runtimeDirectoryAcquire(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		path: string,
-		callback: () => void
-	): OperationHandle
+	runtimeDirectoryAcquire(runtime: RuntimeHandle, path: string, callback: () => void): OperationHandle
 	runtimeDirectoryTake(operation: OperationHandle): DirectoryHandle
-	runtimeDirectoryBegin(owner: DirectoryHandle, policy: PolicyWire): OperationHandle
+	runtimeDirectoryBegin(owner: DirectoryHandle): OperationHandle
 	runtimeDirectoryCheck(operation: OperationHandle): void
 	runtimeDirectoryEnd(operation: OperationHandle): void
 	runtimeDirectoryClose(owner: DirectoryHandle, remove: boolean, callback: (report: CloseWire) => void): void
 	runtimeDirectoryDbOpen(
 		owner: DirectoryHandle,
-		policy: PolicyWire,
 		childName: string,
 		spec: SchemaSpec,
 		create: boolean,
@@ -178,12 +153,11 @@ interface RuntimeNative {
 	runtimeDbTake(operation: OperationHandle): ManagedDbOutcome
 	runtimeManagedDbClose(db: DbHandle, callback: (report: CloseWire) => void): void
 
-	// --- successor log grammar on the executor (charged hashing over
+	// --- successor log grammar on the executor (hashing over
 	// whole canonical change payloads; C06 through C09) ---
 	runtimeLogCommandSeal(
 		runtime: RuntimeHandle,
 		schema: LogSchemaHandle,
-		policy: PolicyWire,
 		metadata: LogCommandMetadata,
 		changes: Uint8Array,
 		result: Uint8Array | null,
@@ -193,14 +167,12 @@ interface RuntimeNative {
 	runtimeLogCommandParse(
 		runtime: RuntimeHandle,
 		schema: LogSchemaHandle,
-		policy: PolicyWire,
 		bytes: Uint8Array,
 		limits: LogLimits,
 		callback: () => void
 	): OperationHandle
 	runtimeLogDecisionDecode(
 		runtime: RuntimeHandle,
-		policy: PolicyWire,
 		bytes: Uint8Array,
 		parent: LogDecisionStamp | null,
 		limits: LogLimits,
@@ -208,12 +180,7 @@ interface RuntimeNative {
 	): OperationHandle
 	runtimeLogTake(operation: OperationHandle): LogTakeWire
 	/** L14 mint: `Runtime::mint_repository_lock` stamps `NativeKind::RepositoryLock` at take. */
-	logRepositoryLockAcquire(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		directory: string,
-		callback: () => void
-	): OperationHandle
+	logRepositoryLockAcquire(runtime: RuntimeHandle, directory: string, callback: () => void): OperationHandle
 	logRepositoryLockTake(operation: OperationHandle): RepositoryLockHandle
 	logRepositoryLockRelease(owner: RepositoryLockHandle, callback: (report: CloseWire) => void): void
 }

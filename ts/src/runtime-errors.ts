@@ -49,11 +49,7 @@ const Outstanding = Schema.Struct({
 	retained: Schema.BigInt,
 	owners: Schema.BigInt,
 	databases: Schema.BigInt,
-	natives: Schema.BigInt,
-	inputBytes: Schema.BigInt,
-	workingBytes: Schema.BigInt,
-	scratchBytes: Schema.BigInt,
-	resultBytes: Schema.BigInt
+	natives: Schema.BigInt
 })
 export type OutstandingWork = typeof Outstanding.Type
 const Close = Schema.Union([

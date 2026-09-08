@@ -8,18 +8,8 @@ impl Colt {
     pub(super) fn alloc_chunk(&mut self, cap: usize) -> Result<u32, WorkError> {
         let chunks_needed = self.chunks.len() + 1;
         let pos_needed = self.chunk_positions.len() + cap;
-        reserve_pool(
-            chunks_needed,
-            &mut self.chunks,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            pos_needed,
-            &mut self.chunk_positions,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
+        reserve_pool(chunks_needed, &mut self.chunks, self.work.as_ref())?;
+        reserve_pool(pos_needed, &mut self.chunk_positions, self.work.as_ref())?;
         let idx = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
         let start = u32::try_from(self.chunk_positions.len()).expect("position slab fits u32");
         self.chunk_positions.resize(pos_needed, 0);
@@ -36,12 +26,7 @@ impl Colt {
         match unpack_child(self.buckets[child_at]) {
             Cursor::Row(first_position) => {
                 let chunk_idx = self.alloc_chunk(usize::from(self.first_chunk_cap))?;
-                reserve_pool(
-                    self.nodes.len() + 1,
-                    &mut self.nodes,
-                    self.work.as_ref(),
-                    &mut self.charges,
-                )?;
+                reserve_pool(self.nodes.len() + 1, &mut self.nodes, self.work.as_ref())?;
                 let c = self.chunks[chunk_idx as usize];
                 self.chunk_positions[c.start as usize] = first_position;
                 self.chunk_positions[c.start as usize + 1] = position;

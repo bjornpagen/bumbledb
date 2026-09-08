@@ -7,21 +7,18 @@
 //! lawful EOF.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use bumbledb::work::{ExecutionPolicy, WorkContext, WorkError};
-use bumbledb::{Answers, DeliveryTicket, RelationId, Value};
+use bumbledb::work::{WorkContext, WorkError};
+use bumbledb::{DeliveryTicket, RelationId, Value};
 
-use super::delivery::{
-    PullOutcome, is_terminal_backing, page_row_cap, publish_from_payload, pull_from_payload,
-    register_page,
-};
+use super::delivery::{PullOutcome, is_terminal_backing, publish_from_payload, pull_from_payload};
 use super::*;
 use crate::marshal::ValueOut;
 use crate::runtime::owners::{DirectoryOwner, ManagedDb};
 use crate::runtime::registry::registry_draft::DraftPayload;
 use crate::runtime::registry::{Capability, NativeKind, Payload, RegistryAdmission, ResultState};
-use crate::runtime::{CloseReport, DraftLedger, Options, Output, Runtime, RuntimeError};
+use crate::runtime::{CloseReport, Options, Output, Runtime, RuntimeError};
 
 bumbledb::schema! {
     pub Mini;
@@ -36,22 +33,12 @@ fn options() -> Options {
         cleanup_capacity: 8,
         owner_capacity: 4,
         native_handle_capacity: 16,
-        aggregate_bytes: [64 << 20; 4],
-        chunk_bytes: 1 << 20,
         cleanup_timeout: Duration::from_millis(500),
     }
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 16 << 20,
-        working_bytes: 16 << 20,
-        scratch_bytes: 16 << 20,
-        result_bytes: 16 << 20,
-        rows: 1 << 20,
-        work_units: 1 << 30,
-        timeout: Duration::from_secs(10),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn unique_dir(tag: &str) -> std::path::PathBuf {
@@ -128,7 +115,7 @@ fn drain_runtime(runtime: &Arc<Runtime>) -> CloseReport {
 }
 
 fn work() -> WorkContext {
-    policy().start().unwrap()
+    policy()
 }
 
 // ---- D25 / D12 consumer counterexamples on the native pull -----------------
@@ -164,7 +151,7 @@ fn submit_publish(runtime: &Arc<Runtime>, cap: Capability) -> Result<Output, Run
             }),
             |_| {
                 Ok(Box::new(move |context, payload, publication| {
-                    publish_from_payload(payload, context, 1 << 20, publication)
+                    publish_from_payload(payload, context, publication)
                 }))
             },
         )
@@ -174,7 +161,7 @@ fn submit_publish(runtime: &Arc<Runtime>, cap: Capability) -> Result<Output, Run
 }
 
 #[test]
-fn d12_oversized_first_row_refuses_and_retry_delivers_same_row() {
+fn d12_cancelled_pull_refuses_and_retry_delivers_same_row() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("oversized-retry");
     std::fs::create_dir_all(&base).unwrap();
@@ -184,19 +171,16 @@ fn d12_oversized_first_row_refuses_and_retry_delivers_same_row() {
     let mut payload = cursor_payload(&runtime, &db);
     let ctx = work();
 
-    match pull_from_payload(&mut payload, &ctx, 0) {
-        Err(RuntimeError::ResourceLimit { dimension, .. }) => {
-            assert_eq!(dimension, "resultBytes");
-        }
-        Ok(PullOutcome::Eof) => panic!("oversized first row must not be EOF"),
-        Ok(PullOutcome::Page { .. }) => panic!("oversized first row must not deliver"),
-        Ok(PullOutcome::Terminal(_)) => panic!("oversized first row is not backing failure"),
-        Err(other) => panic!("expected resultBytes refusal, got {other:?}"),
-    }
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        pull_from_payload(&mut payload, &cancelled),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
 
-    // Abort left next_row unmoved: retry under allowance delivers a
+    // Cancellation left next_row unmoved: a fresh delivery yields a
     // multirow page starting at the same first row.
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry") {
+    match pull_from_payload(&mut payload, &ctx).expect("retry") {
         outcome @ PullOutcome::Page { .. } => {
             let PullOutcome::Page { queued, terminal } = &outcome else {
                 unreachable!()
@@ -207,7 +191,7 @@ fn d12_oversized_first_row_refuses_and_retry_delivers_same_row() {
             let Output::Page(Some(handoff)) = outcome.committed_output().expect("handoff") else {
                 panic!("L12 must receive the committed QueuedOutput")
             };
-            let _owner = handoff.charge;
+            assert_eq!(handoff.rows.len(), 3);
         }
         PullOutcome::Eof => panic!("retry after abort must not skip to EOF"),
         PullOutcome::Terminal(_) => panic!("retry after abort is not backing failure"),
@@ -231,20 +215,17 @@ fn d25_abort_retry_same_row_then_commit_keeps_queued_owner() {
     let mut payload = cursor_payload(&runtime, &db);
     let ctx = work();
 
-    assert!(matches!(
-        pull_from_payload(&mut payload, &ctx, 0),
-        Err(RuntimeError::ResourceLimit {
-            dimension: "resultBytes",
-            ..
-        })
-    ));
+    let PullOutcome::Page { queued, .. } = pull_from_payload(&mut payload, &ctx).unwrap() else {
+        panic!("healthy preview")
+    };
+    assert_eq!(first_key(&queued), 7);
+    drop(queued);
 
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("same rows") {
+    match pull_from_payload(&mut payload, &ctx).expect("same rows") {
         PullOutcome::Page { queued, terminal } => {
             assert_eq!(queued.rows.len(), 2);
             assert_eq!(first_key(&queued), 7);
             assert!(terminal);
-            let _owner = queued.charge;
         }
         PullOutcome::Eof => panic!("aborted pull must retry row 7, not EOF"),
         PullOutcome::Terminal(_) => panic!("resource abort is not a closed cursor"),
@@ -258,7 +239,7 @@ fn d25_abort_retry_same_row_then_commit_keeps_queued_owner() {
 }
 
 #[test]
-fn d25_multirow_page_under_allowance() {
+fn d25_delivery_batches_include_multiple_rows() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("multirow");
     std::fs::create_dir_all(&base).unwrap();
@@ -266,15 +247,14 @@ fn d25_multirow_page_under_allowance() {
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
     let ctx = work();
-    assert_eq!(page_row_cap(&ctx, 3), 3);
     let mut payload = cursor_payload(&runtime, &db);
 
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("batch") {
+    match pull_from_payload(&mut payload, &ctx).expect("batch") {
         PullOutcome::Page { queued, terminal } => {
             assert_eq!(
                 queued.rows.len(),
                 3,
-                "into_cursor must use the work/remaining row cap, not 1"
+                "delivery should include multiple rows, not force one-row batches"
             );
             assert_eq!(first_key(&queued), 1);
             assert!(terminal);
@@ -299,7 +279,7 @@ fn d12_arm_cancel_after_page_retries_same_first_row() {
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20], [3, 30]]);
     let payload = cursor_payload(&runtime, &db);
-    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, 64, payload)
+    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, payload)
         .expect("admit cursor");
 
     runtime.arm_publication_cancel();
@@ -341,18 +321,18 @@ fn d12_reject_keeps_row_accept_advances() {
     let mut payload = cursor_payload(&runtime, &db);
     let ctx = work();
 
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("first") {
+    match pull_from_payload(&mut payload, &ctx).expect("first") {
         PullOutcome::Page { queued, .. } => assert_eq!(first_key(&queued), 1),
         PullOutcome::Eof | PullOutcome::Terminal(_) => panic!("expected a page"),
     }
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("after abort") {
+    match pull_from_payload(&mut payload, &ctx).expect("after abort") {
         PullOutcome::Page { queued, .. } => assert_eq!(first_key(&queued), 1),
         PullOutcome::Eof => panic!("abort must not skip to EOF"),
         PullOutcome::Terminal(_) => panic!("abort is not backing failure"),
     }
 
-    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, 64, payload)
-        .expect("admit");
+    let admission =
+        RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, payload).expect("admit");
     match submit_publish(&runtime, admission.cap()) {
         Ok(Output::Page(Some(queued))) => {
             assert_eq!(first_key(&queued), 1);
@@ -390,14 +370,14 @@ fn d12_publication_boundary_cannot_skip_or_duplicate() {
     let mut payload = cursor_payload(&runtime, &db);
     let ctx = work();
 
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("page") {
+    match pull_from_payload(&mut payload, &ctx).expect("page") {
         PullOutcome::Page { queued, .. } => {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 3);
         }
         PullOutcome::Eof | PullOutcome::Terminal(_) => panic!("expected a page"),
     }
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry abort") {
+    match pull_from_payload(&mut payload, &ctx).expect("retry abort") {
         PullOutcome::Page { queued, .. } => {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 3);
@@ -407,8 +387,8 @@ fn d12_publication_boundary_cannot_skip_or_duplicate() {
     }
 
     let payload = cursor_payload(&runtime, &db);
-    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, 64, payload)
-        .expect("admit");
+    let admission =
+        RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Cursor, payload).expect("admit");
     match submit_publish(&runtime, admission.cap()) {
         Ok(Output::Page(Some(queued))) => {
             assert_eq!(first_key(&queued), 1);
@@ -436,7 +416,7 @@ fn d12_publication_boundary_cannot_skip_or_duplicate() {
 }
 
 #[test]
-fn d12_overlap_reserve_refusal_retries_same_first_row() {
+fn d12_native_conversion_refusal_retries_same_first_row() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("overlap-reserve");
     std::fs::create_dir_all(&base).unwrap();
@@ -451,49 +431,26 @@ fn d12_overlap_reserve_refusal_retries_same_first_row() {
             panic!("expected a cursor")
         };
         assert!(!*drained);
-        cursor.rebind_work(&ctx);
         let mut ticket = DeliveryTicket::open(cursor);
-        assert!(
-            ticket
-                .preview_page(&ctx, 1 << 20)
-                .expect("preview")
-                .is_some()
-        );
-        let answers = ticket.adopt().expect("adopt");
-        let starved = ExecutionPolicy {
-            input_bytes: 16 << 20,
-            working_bytes: 16 << 20,
-            scratch_bytes: 16 << 20,
-            result_bytes: 0,
-            rows: 1 << 20,
-            work_units: 1 << 30,
-            timeout: Duration::from_secs(10),
-        }
-        .start()
-        .unwrap();
-        match register_page(&starved, &answers) {
-            Err(
-                RuntimeError::Work(WorkError::Exhausted {
-                    resource: bumbledb::work::Resource::ResultBytes,
-                    ..
-                })
-                | RuntimeError::ResourceLimit {
-                    dimension: "resultBytes",
-                    ..
-                },
-            ) => {}
-            other => panic!("overlap reserve must refuse, got {other:?}"),
-        }
+        let cancelled = work();
+        let mut queued = crate::marshal::result_rows(&cancelled, 0).unwrap();
+        cancelled.cancel();
+        let refused = ticket.visit_page(&ctx, |row| {
+            crate::marshal::push_result_row(&cancelled, &mut queued, &row)
+        });
+        assert!(matches!(refused, Err(bumbledb::Error::Store(_))));
+        assert!(queued.rows.is_empty());
+        assert_eq!(ticket.previewed_rows(), 0);
         ticket.abort();
     }
 
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("retry same cursor") {
+    match pull_from_payload(&mut payload, &ctx).expect("retry same cursor") {
         PullOutcome::Page { queued, .. } => {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 2);
         }
-        PullOutcome::Eof => panic!("budget refusal must not commit or skip to EOF"),
-        PullOutcome::Terminal(_) => panic!("budget refusal must not poison the cursor"),
+        PullOutcome::Eof => panic!("conversion cancellation must not commit or skip to EOF"),
+        PullOutcome::Terminal(_) => panic!("conversion cancellation must not poison the cursor"),
     }
 
     drop(db);
@@ -518,14 +475,8 @@ fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
         let Payload::Cursor { cursor, .. } = &mut payload else {
             panic!("expected a cursor")
         };
-        cursor.rebind_work(&ctx);
         let mut ticket = DeliveryTicket::open(cursor);
-        assert!(
-            ticket
-                .preview_page(&ctx, 1 << 20)
-                .expect("preview")
-                .is_some()
-        );
+        assert!(ticket.preview_page(&ctx).expect("preview").is_some());
         assert!(ticket.adopt().is_some());
         ticket.abort();
     }
@@ -536,7 +487,7 @@ fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
         DeliveryTicket::open(cursor).commit();
     }
 
-    match pull_from_payload(&mut payload, &ctx, 1 << 20).expect("unpreviewed commit is a no-op") {
+    match pull_from_payload(&mut payload, &ctx).expect("unpreviewed commit is a no-op") {
         PullOutcome::Page { queued, .. } => {
             assert_eq!(first_key(&queued), 1);
             assert_eq!(queued.rows.len(), 3);
@@ -572,60 +523,52 @@ fn d12_backing_failure_stays_terminal() {
 
     let cancel = RuntimeError::Work(WorkError::Cancelled);
     assert!(!is_terminal_backing(&cancel));
-    let budget = RuntimeError::ResourceLimit {
-        dimension: "resultBytes",
-        used: 0,
-        requested: 32,
-        limit: 0,
-    };
-    assert!(!is_terminal_backing(&budget));
+    let allocation = RuntimeError::Work(WorkError::Allocation);
+    assert!(!is_terminal_backing(&allocation));
 }
 
-fn draft_payload(allowance_input: u64, allowance_rows: u64) -> DraftPayload {
+fn draft_payload() -> DraftPayload {
     use bumbledb::schema::ValidateDescriptor as _;
     let schema = Mini.descriptor().validate().expect("valid schema");
     DraftPayload {
         schema: Arc::new(schema),
         pending: Vec::new(),
-        used_input: 0,
-        used_rows: 0,
-        allowance_input,
-        allowance_rows,
-        ledger: DraftLedger {
-            used_work: 0,
-            allowance_work: 1 << 30,
-            deadline: Instant::now() + Duration::from_secs(10),
-            terminal: false,
-        },
+        terminal: false,
     }
 }
 
 #[test]
-fn d07_draft_chunks_share_one_cumulative_budget_and_failure_is_terminal() {
+fn draft_chunks_accumulate_without_quotas_and_cancellation_releases_the_prefix() {
     let ctx = work();
-    let mut payload = Payload::Draft(draft_payload(100, 16));
+    let mut payload = Payload::Draft(draft_payload());
     let rows = vec![vec![Value::U64(1), Value::U64(10)]];
-    match ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone(), 60) {
-        Ok(Output::Mutation { submitted, .. }) => assert_eq!(submitted, 1),
-        other => panic!(
-            "first chunk admits, got {:?}",
-            other.map(|_| "unexpected successful output")
-        ),
+    for _ in 0..2 {
+        assert!(matches!(
+            ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone()),
+            Ok(Output::Mutation { submitted: 1, .. })
+        ));
     }
-    match ingest_from_payload(&mut payload, &ctx, 0, true, rows.clone(), 60) {
-        Err(RuntimeError::ResourceLimit {
-            dimension, used, ..
-        }) => {
-            assert_eq!(dimension, "inputBytes");
-            assert_eq!(used, 60);
-        }
-        other => panic!(
-            "cumulative budget must refuse, got {:?}",
-            other.map(|_| "unexpected successful output")
-        ),
-    }
+    let Payload::Draft(entry) = &payload else {
+        panic!("draft")
+    };
+    assert_eq!(entry.pending.len(), 2);
+    let cancelled = work();
+    cancelled.cancel();
     assert!(matches!(
-        ingest_from_payload(&mut payload, &ctx, 0, true, rows, 1),
+        ingest_from_payload(&mut payload, &cancelled, 0, true, rows.clone()),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    let Payload::Draft(entry) = &payload else {
+        panic!("draft")
+    };
+    assert!(entry.terminal);
+    assert_eq!(
+        entry.pending.capacity(),
+        0,
+        "failure releases previously staged rows"
+    );
+    assert!(matches!(
+        ingest_from_payload(&mut payload, &ctx, 0, true, rows),
         Err(RuntimeError::SpentHandle)
     ));
     assert!(matches!(
@@ -637,10 +580,10 @@ fn d07_draft_chunks_share_one_cumulative_budget_and_failure_is_terminal() {
 #[test]
 fn d07_draft_finish_normalizes_add_wins_and_spends() {
     let ctx = work();
-    let mut payload = Payload::Draft(draft_payload(1 << 20, 16));
+    let mut payload = Payload::Draft(draft_payload());
     let row = vec![vec![Value::U64(7), Value::U64(70)]];
-    ingest_from_payload(&mut payload, &ctx, 0, false, row.clone(), 16).expect("delete");
-    ingest_from_payload(&mut payload, &ctx, 0, true, row, 16).expect("insert");
+    ingest_from_payload(&mut payload, &ctx, 0, false, row.clone()).expect("delete");
+    ingest_from_payload(&mut payload, &ctx, 0, true, row).expect("insert");
     let Output::Changes(changes) = finish_from_payload(&mut payload, &ctx).expect("finish") else {
         panic!("expected a sealed change set")
     };
@@ -732,7 +675,7 @@ fn sealed_result(runtime: &Arc<Runtime>, db: &ManagedDb) -> (Payload, u64) {
 }
 
 #[test]
-fn d18_sealed_results_outlive_their_session_and_collect_is_bounded() {
+fn d18_sealed_results_outlive_their_session_and_cancelled_collection() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("collect");
     std::fs::create_dir_all(&base).unwrap();
@@ -743,20 +686,17 @@ fn d18_sealed_results_outlive_their_session_and_collect_is_bounded() {
     let (mut payload, rows) = sealed_result(&runtime, &db);
     assert_eq!(rows, 3);
     let ctx = work();
-    match collect_from_payload(&mut payload, &ctx, 0, 1 << 20) {
-        Err(RuntimeError::ResourceLimit { dimension, .. }) => {
-            assert_eq!(dimension, "resultBytes");
-        }
-        other => panic!(
-            "zero-byte collect must refuse, got {:?}",
-            other.map(|_| "unexpected successful output")
-        ),
-    }
-    match collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20).expect("bounded collect") {
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        collect_from_payload(&mut payload, &cancelled),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    match collect_from_payload(&mut payload, &ctx).expect("bounded collect") {
         Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
         _ => panic!("expected rows"),
     }
-    match collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20).expect("second collect") {
+    match collect_from_payload(&mut payload, &ctx).expect("second collect") {
         Output::Rows(queued) => assert_eq!(queued.rows.len(), 3),
         _ => panic!("expected rows"),
     }
@@ -766,6 +706,144 @@ fn d18_sealed_results_outlive_their_session_and_collect_is_bounded() {
     drop(payload);
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(feature = "alloc-counter")]
+#[test]
+fn native_collection_allocates_only_the_final_scalar_rows() {
+    use bumbledb::alloc_counter;
+
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("collect-allocations");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let db = attach(&owner, &Mini.descriptor());
+    let input: Vec<_> = (0..512).map(|i| [i, i * 10]).collect();
+    insert_rows(&db, &input);
+    let (mut payload, count) = sealed_result(&runtime, &db);
+    drop(db);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    // The completed result is independent. Stop background workers before
+    // the process-global counter window; nextest isolates this test process.
+    let ctx = work();
+    for _ in 0..2 {
+        alloc_counter::reset();
+        let output = collect_from_payload(&mut payload, &ctx).expect("collect completed rows");
+        let allocated = alloc_counter::snapshot().window;
+        let Output::Rows(queued) = output else {
+            panic!("expected rows");
+        };
+        eprintln!("native scalar collect: {allocated:?}");
+        assert_eq!(queued.rows.len() as u64, count);
+        assert!(matches!(
+            queued.rows[511].as_slice(),
+            [ValueOut::U64(511), ValueOut::U64(5110)]
+        ));
+        assert_eq!(
+            allocated.allocs,
+            count + 1,
+            "one outer vector and one final vector per row; no intermediate Answers"
+        );
+        assert_eq!(
+            allocated.alloc_bytes,
+            count * (size_of::<Vec<ValueOut>>() + 2 * size_of::<ValueOut>()) as u64
+        );
+        let before_drop = alloc_counter::snapshot().window;
+        drop(queued);
+        let after_drop = alloc_counter::snapshot().window;
+        assert_eq!(
+            after_drop.dealloc_bytes - before_drop.dealloc_bytes,
+            allocated.alloc_bytes
+        );
+        assert_eq!(after_drop.deallocs - before_drop.deallocs, allocated.allocs);
+    }
+    drop(payload);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn native_text_collection_owns_one_copy_for_small_and_large_results() {
+    bumbledb::schema! {
+        pub TextRows;
+        relation Item { a: u64, b: str }
+    }
+    // The larger fixture exceeds 8 MiB without changing result representation.
+    // These are delivery allocations, not execution or RSS measurements.
+    for (count, text_bytes) in [(128u64, 1024usize), (129, 65536)] {
+        let runtime = Runtime::start(options()).unwrap();
+        let base = unique_dir("collect-text");
+        std::fs::create_dir_all(&base).unwrap();
+        let owner = acquire(&runtime, &base.join("tenant"));
+        let descriptor = TextRows.descriptor();
+        let db = attach(&owner, &descriptor);
+        let text = "\u{1f41d}".repeat(text_bytes / 4);
+        {
+            let lease = db.access().unwrap();
+            for id in 0..count {
+                let admitted = lease
+                    .db()
+                    .write(work(), |tx| {
+                        let rows = bumbledb::AcceptedCollection::from_value_rows(
+                            RelationId(0),
+                            &descriptor.relations[0].fields,
+                            [[Value::U64(id), Value::String(text.clone().into())]],
+                        )
+                        .unwrap();
+                        tx.insert_accepted(&rows).map(|_| ())
+                    })
+                    .unwrap();
+                assert!(matches!(admitted, bumbledb::Admission::Accepted(_)));
+            }
+        }
+        let (mut payload, actual_count) = sealed_result(&runtime, &db);
+        assert_eq!(actual_count, count);
+        drop(db);
+        drop(owner);
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+
+        #[cfg(feature = "alloc-counter")]
+        let expected_bytes =
+            count * (size_of::<Vec<ValueOut>>() + 2 * size_of::<ValueOut>() + text_bytes) as u64;
+        let refused = work();
+        refused.cancel();
+        assert!(matches!(
+            collect_from_payload(&mut payload, &refused),
+            Err(RuntimeError::Work(WorkError::Cancelled))
+        ));
+        let mut last = None;
+        for _ in 0..2 {
+            let delivery = work();
+            #[cfg(feature = "alloc-counter")]
+            bumbledb::alloc_counter::reset();
+            let output = collect_from_payload(&mut payload, &delivery).unwrap();
+            #[cfg(feature = "alloc-counter")]
+            let allocated = bumbledb::alloc_counter::snapshot().window;
+            let Output::Rows(queued) = output else {
+                panic!("expected rows");
+            };
+
+            assert_eq!(queued.rows.len() as u64, count);
+            #[cfg(feature = "alloc-counter")]
+            {
+                eprintln!("native text collect ({count} x {text_bytes}): {allocated:?}");
+                assert_eq!(allocated.allocs, count * 2 + 1);
+                assert_eq!(allocated.alloc_bytes, expected_bytes);
+            }
+            last = Some(queued);
+        }
+        drop(payload);
+        // All engine/session/result owners are gone. The queued output owns
+        // complete UTF-8 and exact integers, ready for JavaScript transfer.
+        let queued = last.unwrap();
+        for (index, row) in queued.rows.iter().enumerate() {
+            assert!(
+                matches!(row.as_slice(), [ValueOut::U64(id), ValueOut::Text(value)] if *id == index as u64 && value == &text)
+            );
+        }
+        drop(queued);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 #[test]
@@ -788,7 +866,7 @@ fn d12_one_shot_transfer_spends_and_second_use_refuses() {
         Err(RuntimeError::SpentHandle)
     ));
     assert!(matches!(
-        collect_from_payload(&mut payload, &ctx, 1 << 20, 1 << 20),
+        collect_from_payload(&mut payload, &ctx),
         Err(RuntimeError::SpentHandle)
     ));
 
@@ -808,7 +886,7 @@ fn d18_queued_output_close_drains_without_wrapper_authority() {
     let db = attach(&owner, &Mini.descriptor());
     insert_rows(&db, &[[1, 10], [2, 20]]);
     let (payload, _) = sealed_result(&runtime, &db);
-    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Result, 64, payload)
+    let admission = RegistryAdmission::admit(Arc::clone(&runtime), NativeKind::Result, payload)
         .expect("admit result");
     let cap = admission.cap();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -945,93 +1023,51 @@ fn the_row_codec_borrows_decoded_values_and_refuses_foreign_records() {
 }
 
 #[test]
-fn row_codec_payloads_retain_exact_result_capacity_and_refund_on_refusal() {
+fn row_codec_outputs_own_payloads_and_release_their_storage() {
     use bumbledb::schema::ValidateDescriptor as _;
-    use bumbledb::work::Resource;
-
     bumbledb::schema! {
         pub PayloadRows;
         relation Entry { id: uuid, text: str, bytes: bytes<16> }
     }
     let schema = PayloadRows.descriptor().validate().unwrap();
     let text = "\u{1f41d}".repeat(4097);
-    let rows = vec![
-        vec![
-            Value::Uuid(bumbledb::Uuid::from_u128(1)),
-            Value::String(text.clone().into()),
-            Value::FixedBytes(Box::new([7; 16])),
-        ],
-        vec![
-            Value::Uuid(bumbledb::Uuid::from_u128(2)),
-            Value::String(text.clone().into()),
-            Value::FixedBytes(Box::new([8; 16])),
-        ],
-    ];
-    let encode = work();
-    let encoded = encode_rows_bytes(&schema, RelationId(0), &rows, &encode).unwrap();
-    assert_eq!(encode.used(Resource::WorkingBytes), 0);
-    assert_eq!(
-        encode.used(Resource::ResultBytes),
-        encoded.bytes.capacity() as u64
-    );
-    assert_eq!(encoded.charge.bytes(), encoded.bytes.capacity() as u64);
-
-    let result_bytes =
-        2 * (size_of::<Vec<ValueOut>>() + 3 * size_of::<ValueOut>() + 36 + text.len() + 16) as u64;
-    let decode = ExecutionPolicy {
-        result_bytes,
-        ..policy()
-    }
-    .start()
-    .unwrap();
-    let decoded = decode_rows_values(&schema, RelationId(0), &encoded.bytes, &decode).unwrap();
-    assert_eq!(decode.used(Resource::WorkingBytes), 0);
-    assert_eq!(decode.used(Resource::ResultBytes), result_bytes);
-    assert_eq!(decoded.charge.bytes(), result_bytes);
+    let rows: Vec<_> = (1..=2)
+        .map(|id| {
+            vec![
+                Value::Uuid(bumbledb::Uuid::from_u128(id)),
+                Value::String(text.clone().into()),
+                Value::FixedBytes(Box::new([8; 16])),
+            ]
+        })
+        .collect();
+    let context = work();
+    let encoded = encode_rows_bytes(&schema, RelationId(0), &rows, &context).unwrap();
+    let decoded = decode_rows_values(&schema, RelationId(0), &encoded.bytes, &context).unwrap();
+    drop(encoded);
+    drop(rows);
     assert!(
         matches!(&decoded.rows[0][0], ValueOut::Uuid(id) if id == "00000000-0000-0000-0000-000000000001")
     );
     assert!(matches!(&decoded.rows[1][1], ValueOut::Text(value) if value == &text));
     assert!(matches!(&decoded.rows[1][2], ValueOut::Bytes(value) if value.as_slice() == [8; 16]));
+    #[cfg(feature = "alloc-counter")]
+    let before_drop = bumbledb::alloc_counter::snapshot().window;
     drop(decoded);
-    assert_eq!(decode.used(Resource::ResultBytes), 0);
-
-    let refused = ExecutionPolicy {
-        result_bytes: result_bytes - 1,
-        ..policy()
+    #[cfg(feature = "alloc-counter")]
+    {
+        let after_drop = bumbledb::alloc_counter::snapshot().window;
+        let owned_bytes =
+            2 * (size_of::<Vec<ValueOut>>() + 3 * size_of::<ValueOut>() + 36 + text.len() + 16);
+        assert_eq!(
+            after_drop.dealloc_bytes - before_drop.dealloc_bytes,
+            owned_bytes as u64
+        );
+        assert_eq!(after_drop.deallocs - before_drop.deallocs, 9);
     }
-    .start()
-    .unwrap();
-    assert!(matches!(
-        decode_rows_values(&schema, RelationId(0), &encoded.bytes, &refused),
-        Err(RuntimeError::Work(WorkError::Exhausted {
-            resource: Resource::ResultBytes,
-            ..
-        }))
-    ));
-    assert_eq!(refused.used(Resource::WorkingBytes), 0);
-    assert_eq!(refused.used(Resource::ResultBytes), 0);
-    let refused = ExecutionPolicy {
-        result_bytes: 0,
-        ..policy()
-    }
-    .start()
-    .unwrap();
-    assert!(matches!(
-        encode_rows_bytes(&schema, RelationId(0), &rows, &refused),
-        Err(RuntimeError::Work(WorkError::Exhausted {
-            resource: Resource::ResultBytes,
-            ..
-        }))
-    ));
-    assert_eq!(refused.used(Resource::WorkingBytes), 0);
-    assert_eq!(refused.used(Resource::ResultBytes), 0);
-    drop(encoded);
-    assert_eq!(encode.used(Resource::ResultBytes), 0);
 }
 
 #[test]
-fn changes_preserve_cancellation_and_resource_errors_through_the_bridge() {
+fn changes_preserve_cancellation_and_allocation_errors_through_the_bridge() {
     use bumbledb::schema::ValidateDescriptor as _;
     let schema = Mini.descriptor().validate().unwrap();
     let cancelled = work();
@@ -1040,95 +1076,62 @@ fn changes_preserve_cancellation_and_resource_errors_through_the_bridge() {
         decode_rows_values(&schema, RelationId(0), &[], &cancelled),
         Err(RuntimeError::Work(WorkError::Cancelled))
     ));
-    let refused = ExecutionPolicy {
-        working_bytes: 0,
-        ..policy()
-    }
-    .start()
-    .unwrap();
     assert!(matches!(
         encode_rows_bytes(
             &schema,
             RelationId(0),
             &[vec![Value::U64(1), Value::U64(2)]],
-            &refused
+            &cancelled
         ),
-        Err(RuntimeError::Work(WorkError::Exhausted {
-            resource: bumbledb::work::Resource::WorkingBytes,
-            ..
-        }))
+        Err(RuntimeError::Work(WorkError::Cancelled))
     ));
-    assert_eq!(refused.used(bumbledb::work::Resource::WorkingBytes), 0);
-    for error in [
-        ChangeError::Work(WorkError::Cancelled),
-        ChangeError::Row(bumbledb::canonical::RowError::Work(WorkError::Cancelled)),
-    ] {
-        assert_eq!(
-            change_error(&error),
-            RuntimeError::Work(WorkError::Cancelled)
-        );
+    for reason in [WorkError::Cancelled, WorkError::Allocation] {
+        for error in [
+            ChangeError::Work(reason),
+            ChangeError::Row(bumbledb::canonical::RowError::Work(reason)),
+        ] {
+            assert_eq!(change_error(&error), RuntimeError::Work(reason));
+        }
     }
 }
 
 #[test]
-fn input_row_allocation_requires_admission_without_double_charging_cells() {
-    use bumbledb::work::Resource;
-
-    let context = ExecutionPolicy {
-        input_bytes: 32,
-        ..policy()
-    }
-    .start()
-    .unwrap();
+fn input_rows_use_checked_capacity_and_preserve_cancellation() {
+    let context = work();
+    // Deterministic Vec layout overflow, not an enormous OS allocation attempt.
     assert!(matches!(
-        super::codec::reserve_input_rows(1 << 40, 1, &context),
-        Err(RuntimeError::Work(WorkError::Exhausted {
-            resource: Resource::InputBytes,
-            used: 0,
-            requested,
-            limit: 32,
-        })) if requested == 8 << 40
+        super::codec::reserve_input_rows(u64::MAX, &context),
+        Err(RuntimeError::Work(WorkError::Allocation) | RuntimeError::InvalidArgument)
     ));
-    assert_eq!(context.used(Resource::InputBytes), 0);
-    let mut rows = super::codec::reserve_input_rows(2, 1, &context).unwrap();
+    let mut rows = super::codec::reserve_input_rows(2, &context).unwrap();
     assert!(rows.capacity() >= 2);
     for value in [Value::U64(7), Value::U64(9)] {
-        context
-            .input(value_bytes(&value) - INPUT_VALUE_BASE)
-            .unwrap();
         rows.push(vec![value]);
     }
-    assert_eq!(context.used(Resource::InputBytes), 32);
     assert_eq!(rows, vec![vec![Value::U64(7)], vec![Value::U64(9)]]);
     context.cancel();
     assert!(matches!(
-        super::codec::reserve_input_rows(0, 1, &context),
+        super::codec::reserve_input_rows(0, &context),
         Err(RuntimeError::Work(WorkError::Cancelled))
     ));
 }
 
 #[test]
-fn d01_answers_out_charges_empty_page_without_escaping() {
-    let ctx = ExecutionPolicy {
-        input_bytes: 16,
-        working_bytes: 16,
-        scratch_bytes: 16,
-        result_bytes: 8,
-        rows: 16,
-        work_units: 16,
-        timeout: Duration::from_secs(5),
-    }
-    .start()
-    .unwrap();
-    let answers = Answers::new();
-    let (rows, charge) = crate::marshal::answers_out_charged(&ctx, &answers)
-        .expect("empty conversion is a zero-charge owner");
-    assert!(rows.is_empty());
-    assert_eq!(charge.bytes(), 0);
+fn empty_native_output_needs_no_allocation() {
+    let ctx = work();
+    #[cfg(feature = "alloc-counter")]
+    let before = bumbledb::alloc_counter::snapshot().window;
+    let output = crate::marshal::result_rows(&ctx, 0).unwrap();
+    #[cfg(feature = "alloc-counter")]
+    let after = bumbledb::alloc_counter::snapshot().window;
+    assert!(output.rows.is_empty());
+    assert_eq!(output.rows.capacity(), 0);
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(after.allocs, before.allocs);
 }
 
 #[test]
-fn point_read_output_retains_its_own_capacity_charge_after_decode_drops() {
+fn point_read_output_outlives_its_decoded_row_and_releases_owned_storage() {
     bumbledb::schema! {
         pub OutputRow;
         relation Entry { id: u64, text: str, bytes: bytes<16> }
@@ -1143,44 +1146,34 @@ fn point_read_output_retains_its_own_capacity_charge_after_decode_drops() {
     let ctx = work();
     let encoded = bumbledb::canonical::CanonicalRow::encode(fields, &values, &ctx).unwrap();
     let row = bumbledb::canonical::decode(fields, encoded.as_bytes(), &ctx).unwrap();
-    let output = crate::marshal::row_out_charged(&ctx, &row).expect("admitted output");
-    let capacity = (3 * size_of::<ValueOut>() + 7 + 16) as u64;
-    assert_eq!(output.charge.bytes(), capacity);
+    let output = crate::marshal::queued_row(&ctx, &row).unwrap();
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        crate::marshal::queued_row(&cancelled, &row),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
     drop(row);
     drop(encoded);
-    assert_eq!(ctx.used(bumbledb::work::Resource::WorkingBytes), 0);
-    assert_eq!(ctx.used(bumbledb::work::Resource::ResultBytes), capacity);
     assert!(matches!(&output.values[1], ValueOut::Text(text) if text == "payload"));
     assert!(matches!(&output.values[2], ValueOut::Bytes(bytes) if bytes.as_slice() == [9; 16]));
+    #[cfg(feature = "alloc-counter")]
+    let before_drop = bumbledb::alloc_counter::snapshot().window;
     drop(output);
-    assert_eq!(ctx.used(bumbledb::work::Resource::ResultBytes), 0);
-
-    let refused = ExecutionPolicy {
-        result_bytes: capacity - 1,
-        ..policy()
+    #[cfg(feature = "alloc-counter")]
+    {
+        let after_drop = bumbledb::alloc_counter::snapshot().window;
+        assert_eq!(
+            after_drop.dealloc_bytes - before_drop.dealloc_bytes,
+            (3 * size_of::<ValueOut>() + 7 + 16) as u64
+        );
+        assert_eq!(after_drop.deallocs - before_drop.deallocs, 3);
     }
-    .start()
-    .unwrap();
-    let encoded = bumbledb::canonical::CanonicalRow::encode(fields, &values, &refused).unwrap();
-    let row = bumbledb::canonical::decode(fields, encoded.as_bytes(), &refused).unwrap();
-    let retained_source = refused.used(bumbledb::work::Resource::WorkingBytes);
-    assert!(matches!(
-        crate::marshal::row_out_charged(&refused, &row),
-        Err(RuntimeError::Work(WorkError::Exhausted {
-            resource: bumbledb::work::Resource::ResultBytes,
-            ..
-        }))
-    ));
-    assert_eq!(refused.used(bumbledb::work::Resource::ResultBytes), 0);
-    assert_eq!(
-        refused.used(bumbledb::work::Resource::WorkingBytes),
-        retained_source
-    );
 }
 
 #[test]
 fn a_cancelled_draft_chunk_spends_the_draft_without_fabricating_usage() {
-    let mut payload = Payload::Draft(draft_payload(1024, 16));
+    let mut payload = Payload::Draft(draft_payload());
     let cancelled = work();
     cancelled.cancel();
     assert!(matches!(
@@ -1189,17 +1182,15 @@ fn a_cancelled_draft_chunk_spends_the_draft_without_fabricating_usage() {
             &cancelled,
             0,
             true,
-            vec![vec![Value::U64(1), Value::U64(2)]],
-            16
+            vec![vec![Value::U64(1), Value::U64(2)]]
         ),
         Err(RuntimeError::Work(WorkError::Cancelled))
     ));
     let Payload::Draft(entry) = &payload else {
         panic!("draft")
     };
-    assert!(entry.ledger.terminal);
-    assert_eq!(entry.used_input, 0);
-    assert_eq!(entry.used_rows, 0);
+    assert!(entry.terminal);
+    assert_eq!(entry.pending.capacity(), 0);
     assert!(matches!(
         finish_from_payload(&mut payload, &work()),
         Err(RuntimeError::SpentHandle)

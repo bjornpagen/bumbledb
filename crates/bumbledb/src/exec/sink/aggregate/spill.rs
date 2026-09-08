@@ -1,11 +1,10 @@
 //! Group-state spill: the aggregate sink's group tables and accumulator
-//! banks continue in the one charged scratch map when the
-//! execution's RAM allowance is crossed — exactly like the dedup seen-set
-//! and completed results, never through a private partition framework.
+//! banks continue in one scratch map when dense group indices are exhausted,
+//! never because of an estimated byte allowance.
 //!
 //! Mechanism: the RAM group machinery (hashed/dense table, integer `Acc`
 //! bank, exact float bank, per-group counts, Pack claims) accumulates
-//! unchanged; when its estimated bytes cross the installed allowance, the
+//! unchanged; when its index representation fills, the
 //! whole RAM partition FLUSHES into a `ScratchRelation` keyed by the
 //! group-key words' exact big-endian bytes, merging with any previously
 //! flushed state per group. Partition merges are licensed by the exact
@@ -54,15 +53,14 @@ pub(crate) const fn pack_requires_wide(group_words: usize) -> bool {
 }
 
 /// The spilled group-state partition store plus its reusable codec
-/// buffers. Owned by the sink once the allowance is crossed; disposed by
+/// buffers. Owned by the sink after the representation transition; disposed by
 /// `reset` (drop closes the scratch env before unlinking its directory).
 pub(in crate::exec::sink) struct GroupSpill {
     pub(in crate::exec::sink) table: ScratchRelation,
     /// Distinct spilled groups. Exact for fold groups (the table's keys
     /// ARE the groups); an upper bound for Pack (counted once per flushed
     /// RAM group, and a group flushed twice counts twice). Only a
-    /// capacity hint downstream — stage-budget judgments never see a
-    /// spilled sink (stage sinks carry no allowance).
+    /// capacity hint downstream, never an exact Pack output cardinality.
     pub(in crate::exec::sink) groups: u64,
     key_bytes: Vec<u8>,
     value_bytes: Vec<u8>,
@@ -322,60 +320,31 @@ impl DecodedGroup {
 }
 
 impl AggregateSink {
-    /// Estimated bytes of the RAM group partition — the allowance's
-    /// measure, not a ledger figure (the scratch tier's growth IS
-    /// ledger-charged, by the scratch map itself).
-    fn ram_group_bytes(&self) -> usize {
-        let table = match &self.groups {
-            GroupTable::Hashed(map) => map.len() * (self.key_scratch.len() * 8 + 24),
-            // The dense radix table is fixed at construction (never
-            // growth); only the live ordinals count against the allowance.
-            GroupTable::Dense { ordinals, .. } => ordinals.len() * 8,
-        };
-        let state = match &self.group_state {
-            GroupState::Folds { accs, .. } => {
-                accs.len() * 24
-                    + self.group_counts.len() * 8
-                    + self.float_accs.len() * (34 * 8 + 40)
-            }
-            GroupState::Pack { .. } => self.pack_bytes,
-        };
-        table + state
-    }
-
-    /// The fold paths' pressure check: flush the RAM partition into the
-    /// scratch tier when the allowance is crossed. Infallible interface —
-    /// a failure records the sticky error and later rows drop.
+    /// Preserve the scratch algorithm only at the map's dense-index limit.
+    /// Ordinary allocation never chooses this path because of a byte threshold.
     pub(in crate::exec::sink) fn maybe_spill_groups(&mut self) {
-        let Some(budget) = &self.budget else {
-            return;
-        };
         if self.error.is_some() || self.cardinality_overflow {
             return;
         }
-        // Pack claims use inline group heads when they fit the scratch
-        // key bound; otherwise a dense token keeps `(token,start,end)`
-        // ordered and short so the streaming finalize stays exact.
-        let over = self.ram_group_bytes() > budget.ram_bytes;
-        let eager = budget.ram_bytes == 0 && self.spill.is_none();
-        if !(over || eager) {
-            return;
-        }
-        if let Err(error) = self.spill_groups() {
+        let at_limit = matches!(&self.groups, GroupTable::Hashed(map) if map.remaining_rows() == 0);
+        if at_limit && let Err(error) = self.spill_groups() {
             self.error = Some(error);
         }
+    }
+
+    /// Exercise exact partition merging without inventing a resource policy.
+    #[cfg(test)]
+    pub(crate) fn force_spill(&mut self) -> Result<()> {
+        self.spill_groups()
     }
 
     /// Flush every RAM group into the scratch tier (creating it on first
     /// crossing), merging per group with previously flushed state, then
     /// clear the RAM partition. Also finalize's residual-flush entry.
     pub(in crate::exec::sink) fn spill_groups(&mut self) -> Result<()> {
-        let budget = self
-            .budget
-            .as_ref()
-            .expect("group spill is reached only under a budget");
+        let work = self.work.clone().unwrap_or_default();
         if self.spill.is_none() {
-            let mut table = ScratchRelation::new(&budget.work, 0);
+            let mut table = ScratchRelation::new(&work);
             let pack_wide_mode = matches!(&self.group_state, GroupState::Pack { .. })
                 && pack_requires_wide(self.key_scratch.len());
             table.force_spill()?;
@@ -403,7 +372,6 @@ impl AggregateSink {
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
             accs.clear();
         }
-        self.pack_bytes = 0;
         Ok(())
     }
 

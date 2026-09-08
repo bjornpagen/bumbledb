@@ -42,7 +42,7 @@ use super::keys::{self, HOST_KEY_MAX};
 use super::rows;
 use super::store_env::StoreInner;
 use crate::storage::GenerationId;
-use crate::work::{ByteKind, ByteReservation, WorkContext};
+use crate::work::WorkContext;
 
 /// Everything a coherent logical export names, from the one transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -264,9 +264,9 @@ impl OwnedSnapshot {
     /// in ascending key order, from this exact transaction.
     /// Already streams: logical host keys — the storage tag never escapes —
     /// and values borrow the snapshot's mapped pages for the duration of
-    /// one visit only; charged one work step per record. No resume and no
+    /// one visit only; cancellation is checked per record. No resume and no
     /// byte cap — do not accumulate every key. Use [`Self::host_scan_batch`]
-    /// for charged windows.
+    /// for bounded windows.
     /// # Errors
     /// Host-key grammar or storage failure, stopped work, or the
     /// visitor's own refusal.
@@ -294,7 +294,7 @@ impl OwnedSnapshot {
             .prefix_iter(&self.txn, &buffer[..=prefix.len()])
             .map_err(|error| E::from(StoreError::from_heed(error)))?;
         for entry in range {
-            work.step(1)
+            work.checkpoint()
                 .map_err(|error| E::from(StoreError::Work(error)))?;
             let (key, value) = entry.map_err(|error| E::from(StoreError::from_heed(error)))?;
             visit(&key[1..], value)?;
@@ -302,7 +302,7 @@ impl OwnedSnapshot {
         Ok(())
     }
 
-    /// One charged host window under `prefix`, exclusive after `after`.
+    /// One bounded host window under `prefix`, exclusive after `after`.
     /// Streams visits — peak is the visitor plus one resume key, never
     /// every matching record. Stops when `key+value` bytes would exceed
     /// `byte_cap` after at least one record, or the prefix is exhausted.
@@ -377,7 +377,7 @@ impl OwnedSnapshot {
                     None => HostWindow::Done { records, bytes },
                 });
             }
-            work.step(1)
+            work.checkpoint()
                 .map_err(|error| E::from(StoreError::Work(error)))?;
             visit(logical, value)?;
             last = Some(HostResume::from_key(logical).map_err(E::from)?);
@@ -524,7 +524,7 @@ impl OwnedSnapshot {
         ] {
             let range = range.map_err(StoreError::from_heed)?;
             for entry in range {
-                work.step(1)?;
+                work.checkpoint()?;
                 let (key, value) = entry.map_err(StoreError::from_heed)?;
                 sink(
                     is_meta,
@@ -645,7 +645,7 @@ impl OwnedSnapshot {
         lower[..lower_len].copy_from_slice(prefix);
         let mut included_lower = true;
         loop {
-            work.step(1)?;
+            work.checkpoint()?;
             let head = {
                 let bounds: (Bound<&[u8]>, Bound<&[u8]>) = (
                     if included_lower {
@@ -702,7 +702,7 @@ impl OwnedSnapshot {
                 .prefix_iter(&self.txn, bucket)
                 .map_err(StoreError::from_heed)?;
             for entry in range {
-                work.step(1)?;
+                work.checkpoint()?;
                 let (key, value) = entry.map_err(StoreError::from_heed)?;
                 keys::row_id_from_suffix(key, bucket.len() + 8)?;
                 if first.is_none() {
@@ -719,8 +719,10 @@ impl OwnedSnapshot {
             return Ok(1);
         }
         // Collision bucket: repeated bounded-memory minimum scan. Holds one
-        // owned copy of the last emitted row, never the whole bucket.
-        let mut last: Option<(Vec<u8>, ByteReservation)> = None;
+        // borrowed row from this immutable snapshot, never the whole bucket.
+        // LMDB row slices outlive each cursor because the read transaction
+        // remains pinned throughout export.
+        let mut last: Option<&[u8]> = None;
         for _ in 0..count {
             let mut best: Option<&[u8]> = None;
             {
@@ -730,11 +732,11 @@ impl OwnedSnapshot {
                     .prefix_iter(&self.txn, bucket)
                     .map_err(StoreError::from_heed)?;
                 for entry in range {
-                    work.step(1)?;
+                    work.checkpoint()?;
                     let (key, value) = entry.map_err(StoreError::from_heed)?;
                     keys::row_id_from_suffix(key, bucket.len() + 8)?;
                     let row = self.export_row(relation, key, value)?;
-                    if let Some((emitted_bytes, _)) = &last
+                    if let Some(emitted_bytes) = last
                         && rows::chunked_cmp(row, emitted_bytes, work)?
                             != std::cmp::Ordering::Greater
                     {
@@ -752,17 +754,7 @@ impl OwnedSnapshot {
                 return Err(StoreError::Corruption(StoreCorruption::DanglingIndexEntry));
             };
             sink(relation, row)?;
-            let mut reservation = work.reserve(ByteKind::Working, row.len() as u64)?;
-            let mut owned = Vec::new();
-            owned
-                .try_reserve_exact(row.len())
-                .map_err(|_| StoreError::Allocation)?;
-            reservation.resize(owned.capacity() as u64)?;
-            for chunk in row.chunks(rows::BYTE_QUANTUM) {
-                work.step(chunk.len() as u64)?;
-                owned.extend_from_slice(chunk);
-            }
-            last = Some((owned, reservation));
+            last = Some(row);
         }
         Ok(count)
     }

@@ -33,7 +33,6 @@ impl Colt {
             stage_positions: Vec::new(),
             epoch: 0,
             work: None,
-            charges: Vec::new(),
         }
     }
 
@@ -60,12 +59,11 @@ impl Colt {
             stage_positions: Vec::new(),
             epoch: 0,
             work: self.work.clone(),
-            charges: Vec::new(),
         }
     }
 
     /// Move cached view/trie contents without moving either slot's current
-    /// operation binding. Pool reservations move with their owning pools.
+    /// operation binding. Pool storage moves with its owning trie.
     pub(crate) fn swap_contents_preserving_work(&mut self, other: &mut Self) {
         std::mem::swap(self, other);
         std::mem::swap(&mut self.work, &mut other.work);
@@ -86,5 +84,27 @@ impl Colt {
 
         self.epoch = (self.epoch + 1) % 128;
         old
+    }
+
+    /// Drop execution storage without rebuilding the compiled trie shape.
+    /// The next bind calls `reset`, restoring the root and a fresh epoch.
+    pub(crate) fn release_memory(&mut self) {
+        self.view = View::Unbound;
+        self.union_mark = None;
+        self.select_hits = Vec::new();
+        self.select_positions = Vec::new();
+        self.nodes = Vec::new();
+        self.chunks = Vec::new();
+        self.chunk_positions = Vec::new();
+        self.maps = Vec::new();
+        self.ctrl = Vec::new();
+        self.buckets = Vec::new();
+        self.dense = Vec::new();
+        self.scratch = Vec::new();
+        self.stage_keys = Vec::new();
+        self.stage_positions = Vec::new();
+        self.work = None;
+        self.start = Self::initial_start(self.selection_depth());
+        self.epoch = (self.epoch + 1) % 128;
     }
 }

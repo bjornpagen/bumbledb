@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use bumbledb::{ExecutionPolicy, WorkContext};
+use bumbledb::WorkContext;
 use bumbledb_log::store::s3::{S3Config, S3Credentials, S3Store, StaticKeys};
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore as _, ObjectKind, ReceiveLimits, ReceivedHead,
@@ -65,17 +65,7 @@ fn store() -> S3Store {
 }
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 0,
-        working_bytes: 1 << 20,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 0,
-        work_units: 1_024,
-        timeout: std::time::Duration::from_secs(30),
-    }
-    .start()
-    .expect("work")
+    WorkContext::new()
 }
 
 fn transport(work: &WorkContext) -> TransportContext<'_> {
@@ -153,9 +143,9 @@ fn s3_conditional_create_replace_and_lost_ack_are_typed_outcomes() {
     ) {
         Ok(ReceivedHead::Present { body, .. }) => {
             assert!(
-                body.as_bytes() == b"rev-2-from-a"
-                    || body.as_bytes() == b"rev-2-from-b"
-                    || body.as_bytes() == b"rev-1",
+                body.as_slice() == b"rev-2-from-a"
+                    || body.as_slice() == b"rev-2-from-b"
+                    || body.as_slice() == b"rev-1",
                 "resolution is by reading, never a manufactured winner"
             );
         }
@@ -182,7 +172,7 @@ fn s3_receive_caps_missing_and_immutable_identity() {
     assert_eq!(
         get_verified(&store, &prefix, &reference, transport(&ctx))
             .expect("verified")
-            .as_bytes(),
+            .as_slice(),
         b"real-s3 chunk bytes"
     );
     put_verified(

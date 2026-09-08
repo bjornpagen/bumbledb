@@ -96,7 +96,7 @@ pub struct HostChanges<'a> {
     pub attachment: AttachmentChange<'a>,
 }
 
-/// Exclusive resume after one charged host window. Holds only the last
+/// Exclusive resume after one bounded host window. Holds only the last
 /// visited key — never the remaining set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HostResume {
@@ -130,7 +130,7 @@ impl HostResume {
     }
 }
 
-/// One charged host window. Peak RAM is this window, not every matching key.
+/// One bounded host window. Peak RAM is this window, not every matching key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[expect(
     clippy::large_enum_variant,

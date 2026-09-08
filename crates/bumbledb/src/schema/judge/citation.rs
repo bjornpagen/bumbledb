@@ -7,10 +7,8 @@
 
 use crate::canonical::{self, CanonicalRow, RowError};
 use crate::schema::{RelationId, Schema};
-use crate::work::ByteReservation;
 use crate::{Value, WorkContext};
 
-use super::grouped::values_charge;
 use super::{CandidateFact, JudgeError};
 
 /// Bounded top-k over canonical fact bytes. Capacity is the labeled
@@ -19,7 +17,6 @@ pub(super) struct CitationTopK {
     budget: usize,
     /// Strictly increasing sort keys; length ≤ budget.
     chosen: Vec<(CanonicalRow, CandidateFact)>,
-    charges: Vec<ByteReservation>,
     extra: bool,
     considered: u64,
 }
@@ -29,7 +26,6 @@ impl CitationTopK {
         Self {
             budget,
             chosen: Vec::new(),
-            charges: Vec::new(),
             extra: false,
             considered: 0,
         }
@@ -63,13 +59,14 @@ impl CitationTopK {
         match at {
             Ok(_) => Ok(()),
             Err(index) if self.chosen.len() < self.budget => {
-                self.push_at(schema, work, index, key, relation, values)
+                self.push_at(index, key, relation, values);
+                Ok(())
             }
             Err(index) if index < self.budget => {
                 self.extra = true;
                 let _ = self.chosen.pop();
-                let _ = self.charges.pop();
-                self.push_at(schema, work, index, key, relation, values)
+                self.push_at(index, key, relation, values);
+                Ok(())
             }
             Err(_) => {
                 self.extra = true;
@@ -78,19 +75,7 @@ impl CitationTopK {
         }
     }
 
-    fn push_at<E>(
-        &mut self,
-        _schema: &Schema,
-        work: &WorkContext,
-        index: usize,
-        key: CanonicalRow,
-        relation: RelationId,
-        values: &[Value],
-    ) -> Result<(), JudgeError<E>> {
-        let charge = work
-            .reserve(crate::work::ByteKind::Working, values_charge(values))
-            .map_err(JudgeError::Work)?;
-        self.charges.insert(index, charge);
+    fn push_at(&mut self, index: usize, key: CanonicalRow, relation: RelationId, values: &[Value]) {
         self.chosen.insert(
             index,
             (
@@ -101,7 +86,6 @@ impl CitationTopK {
                 },
             ),
         );
-        Ok(())
     }
 
     #[must_use]
@@ -109,7 +93,7 @@ impl CitationTopK {
         self.extra || self.considered > u64::try_from(self.budget).unwrap_or(u64::MAX)
     }
 
-    pub(super) fn into_examples(self) -> (Box<[CandidateFact]>, bool, Vec<ByteReservation>) {
+    pub(super) fn into_examples(self) -> (Box<[CandidateFact]>, bool) {
         let truncated = self.truncated();
         let examples = self
             .chosen
@@ -117,6 +101,6 @@ impl CitationTopK {
             .map(|(_, fact)| fact)
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        (examples, truncated, self.charges)
+        (examples, truncated)
     }
 }

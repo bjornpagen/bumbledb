@@ -1,145 +1,111 @@
 //! The cache-scoped text interner: successor of the deleted persisted
 //! dictionary. Stored rows own their text inline; the query
 //! engine joins on fixed 64-bit words, so every distinct text observed
-//! during one [`GenerationHandle`] receives one dense token. Token equality
+//! during one [`GenerationHandle`] receives a monotonically minted token. Token equality
 //! is text equality by construction — the map is keyed by full text bytes,
 //! never a hash verdict (Q-COLLISION).
 //!
-//! Tokens are **generation-scoped and never persisted**: whole-generation
-//! eviction invalidates every token together. Retention charges the
-//! database-owned [`CacheLedger`], not the minting operation's working
-//! allowance — cache pays once; operations pay decode work only.
+//! Tokens are generation-scoped and never persisted. Consumers pin canonical
+//! shared text; token numbers are monotone and never reused after reclamation.
 
-use std::collections::HashMap;
+use crate::work::{GenerationHandle, WorkContext, WorkError};
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use crate::exec::scratch::ScratchCapability;
-use crate::image::NonresidentTextStore;
-use crate::work::{
-    CacheError, CacheLedger, CacheReservation, GenerationHandle, WorkContext, WorkError,
-};
-
-/// Resident intern or image admission refused: the cache ledger cannot
-/// retain more text or slabs. L05 execute/spill must open scratch text
-/// on this generation — do not treat this as a generic allocation Error.
-#[derive(Debug, Clone)]
-pub struct ResidentTextExhausted {
-    generation: GenerationHandle,
-}
-
-impl ResidentTextExhausted {
-    #[must_use]
-    pub fn new(generation: GenerationHandle) -> Self {
-        Self { generation }
-    }
-
-    #[must_use]
-    #[cfg(test)]
-    pub fn generation(&self) -> &GenerationHandle {
-        &self.generation
-    }
-
-    /// Production constructor. L05 execute/spill calls this on
-    /// [`ResidentAdmit::BeyondMemory`]; tests must not bind the store
-    /// without going through this refusal.
-    #[must_use]
-    pub fn open_nonresident(&self, capability: &ScratchCapability) -> NonresidentTextStore {
-        NonresidentTextStore::new(capability, &self.generation)
-    }
-}
-
-/// Outcome of a production resident intern or image admit.
-#[derive(Debug)]
-pub enum ResidentAdmit<T> {
-    Ready(T),
-    BeyondMemory(ResidentTextExhausted),
-}
-
-impl<T> ResidentAdmit<T> {
-    #[cfg(test)]
-    pub fn expect_ready(self, msg: &str) -> T {
-        match self {
-            Self::Ready(value) => value,
-            Self::BeyondMemory(_) => panic!("{msg}: resident path exhausted"),
-        }
-    }
-}
-
-/// The never-minted miss token (the old dictionary's sentinel, retained):
-/// a text absent from every image matches nothing under `Eq` and
-/// everything under `Ne`, exactly like any other unequal word.
+/// Reserved miss value, never minted as a text token.
 pub(crate) const SENTINEL_WORD: u64 = u64::MAX;
 
-/// High bit set on every scratch-minted token. Resident intern ids stay
-/// in `0..TAG`. Dense ids occupy the low bits; `u64::MAX` is never
-/// minted. Store identity is [`crate::image::TextStoreEpoch`] on the
-/// store, not packed into the word. Equality is [`crate::image::TextEq`].
-pub const SCRATCH_TOKEN_TAG: u64 = 1 << 63;
-
-/// True for a token minted by [`NonresidentTextStore`], never intern.
-#[must_use]
-pub const fn is_scratch_token(token: u64) -> bool {
-    token != SENTINEL_WORD && token & SCRATCH_TOKEN_TAG != 0
-}
-
-/// True for a token minted by the resident interner, never scratch.
-#[must_use]
-pub const fn is_resident_token(token: u64) -> bool {
-    token != SENTINEL_WORD && token & SCRATCH_TOKEN_TAG == 0
-}
-
-/// One append-only exact text→token map owned by a single [`GenerationHandle`].
+/// Exact text→token and token→text indexes for one resolver namespace.
+/// Token numbers never repeat, even after an entry is reclaimed.
 #[derive(Debug, Default)]
 pub(crate) struct TextInterner {
     map: HashMap<Arc<str>, u64>,
-    texts: Vec<Arc<str>>,
+    texts: HashMap<u64, Arc<str>>,
+    next_token: u64,
     bytes: usize,
-    charges: Vec<CacheReservation>,
+    /// Round-robin token IDs, not extra text owners. Maintenance advances
+    /// only on misses; a warm hit does no sweeping or allocation.
+    reclaim_queue: VecDeque<u64>,
+    misses_since_reclaim: u8,
+    #[cfg(test)]
+    reclaim_visits: usize,
+}
+
+/// A resident token together with its canonical text owner. The generation
+/// stamp belongs to the surrounding image or resolved query state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InternedText {
+    pub(crate) word: u64,
+    pub(crate) text: Arc<str>,
 }
 
 impl TextInterner {
-    /// The token of `text`, minting one if absent. Never returns
-    /// [`SENTINEL_WORD`]. A mint reserves retained bytes against the cache
-    /// ledger; a repeated intern of a known text charges no retention.
-    /// # Errors
-    /// Stopped work, exhausted cache allowance, or allocation refusal.
-    pub(crate) fn intern(
-        &mut self,
-        text: &str,
-        work: &WorkContext,
-        cache: &CacheLedger,
-    ) -> Result<u64, InternError> {
-        work.step(1 + text.len() as u64)?;
+    /// Intern exact bytes under the caller's resolver lock.
+    pub(crate) fn intern(&mut self, text: &str, work: &WorkContext) -> Result<u64, InternError> {
+        work.checkpoint()?;
         if let Some(token) = self.map.get(text) {
             return Ok(*token);
         }
-        let token = u64::try_from(self.texts.len()).expect("token count fits u64");
-        debug_assert!(
-            is_resident_token(token),
-            "resident mint stays below the scratch tag"
-        );
-        let retained = text.len()
-            + std::mem::size_of::<Arc<str>>()
-            + std::mem::size_of::<HashMap<Arc<str>, u64>>().min(64);
-        let charge = cache.reserve(retained as u64).map_err(InternError::Cache)?;
-        let owned: Arc<str> = Arc::from(text);
+        let token = self.next_token;
+        let next = token.checked_add(1).ok_or(InternError::Allocation)?;
+        self.bytes
+            .checked_add(text.len())
+            .ok_or(InternError::Allocation)?;
+        self.misses_since_reclaim += 1;
+        if self.misses_since_reclaim == 16 {
+            self.reclaim(64);
+            self.misses_since_reclaim = 0;
+        }
         self.map
             .try_reserve(1)
             .map_err(|_| InternError::Allocation)?;
         self.texts
             .try_reserve(1)
             .map_err(|_| InternError::Allocation)?;
-        self.charges
+        self.reclaim_queue
             .try_reserve(1)
             .map_err(|_| InternError::Allocation)?;
-        self.bytes += retained;
-        self.charges.push(charge);
+        let owned: Arc<str> = Arc::from(text);
         self.map.insert(Arc::clone(&owned), token);
-        self.texts.push(owned);
+        self.texts.insert(token, owned);
+        self.reclaim_queue.push_back(token);
+        self.bytes += text.len(); // checked before maintenance, which only subtracts
+        self.next_token = next;
         Ok(token)
     }
 
-    /// The token of `text` if it was ever interned in this generation.
+    /// Test-only complete sweep; production incrementally visits at most
+    /// 64 entries per 16 new texts. Work does not scale with the whole
+    /// dictionary on any ordinary warm query, and IDs are never recycled.
+    #[cfg(test)]
+    pub(crate) fn reclaim_unowned(&mut self) {
+        self.reclaim(self.reclaim_queue.len());
+    }
+
+    fn reclaim(&mut self, visits: usize) {
+        for _ in 0..visits.min(self.reclaim_queue.len()) {
+            let token = self
+                .reclaim_queue
+                .pop_front()
+                .expect("bounded by queue length");
+            let entry = self.texts.get(&token).expect("one queue entry per token");
+            #[cfg(test)]
+            {
+                self.reclaim_visits += 1;
+            }
+            // The dictionary has exactly two strong references: its text
+            // key and its token entry. A live consumer holds another Arc.
+            if Arc::strong_count(entry) != 2 {
+                self.reclaim_queue.push_back(token);
+                continue;
+            }
+            self.map.remove(entry.as_ref());
+            self.bytes -= entry.len();
+            self.texts.remove(&token);
+        }
+    }
+
+    /// The token of `text` if it is retained in this generation.
     #[must_use]
     pub(crate) fn lookup(&self, text: &str) -> Option<u64> {
         self.map.get(text).copied()
@@ -151,29 +117,22 @@ impl TextInterner {
         self.lookup(text).unwrap_or(SENTINEL_WORD)
     }
 
-    /// The text of a minted token. Scratch-tagged ids miss — they are
-    /// not this resolver's words.
+    /// The text of a minted token. Reclaimed or unknown IDs miss.
     #[must_use]
     pub(crate) fn text_of(&self, token: u64) -> Option<&str> {
-        if !is_resident_token(token) {
+        if token == SENTINEL_WORD {
             return None;
         }
-        usize::try_from(token)
-            .ok()
-            .and_then(|idx| self.texts.get(idx))
-            .map(AsRef::as_ref)
+        self.texts.get(&token).map(AsRef::as_ref)
     }
 
     /// Shared text handle: one allocation, no duplicate full-string copy.
     #[must_use]
     pub(crate) fn owned_text(&self, token: u64) -> Option<Arc<str>> {
-        if !is_resident_token(token) {
+        if token == SENTINEL_WORD {
             return None;
         }
-        usize::try_from(token)
-            .ok()
-            .and_then(|idx| self.texts.get(idx))
-            .cloned()
+        self.texts.get(&token).map(Arc::clone)
     }
 
     #[must_use]
@@ -189,8 +148,9 @@ impl TextInterner {
     }
 }
 
-/// A borrow-bundled generation resolver + work ledger for resolve/bind.
-/// The handle's generation is the token owner: a token cannot outlive it.
+/// A borrowed generation resolver and cancellation context for resolve/bind.
+/// The generation establishes token identity. Retained values and images
+/// separately own the canonical text behind the tokens they use.
 pub(crate) struct InternerHandle<'a> {
     generation: Option<&'a GenerationHandle>,
     work: &'a WorkContext,
@@ -213,11 +173,8 @@ impl<'a> InternerHandle<'a> {
         }
     }
 
-    pub(crate) fn text_eq<'s>(
-        &'s self,
-        scratch: Option<&'s NonresidentTextStore>,
-    ) -> crate::image::TextEq<'s> {
-        crate::image::TextEq::from_optional_generation(self.generation, scratch)
+    pub(crate) fn text_eq(&self) -> crate::image::TextEq<'_> {
+        crate::image::TextEq::from_optional_generation(self.generation)
     }
 
     #[must_use]
@@ -226,33 +183,25 @@ impl<'a> InternerHandle<'a> {
             .expect("sealed text-free probe cannot resolve text")
     }
 
-    /// Production intern: cache refusal is [`ResidentAdmit::BeyondMemory`],
-    /// not a swallowed allocation Error. L05 execute/bind/spill must match
-    /// and call [`ResidentTextExhausted::open_nonresident`].
-    /// # Errors
-    /// Stopped work only. Cache/allocation refusal is `BeyondMemory`.
-    pub fn intern_or_spill(&self, text: &str) -> crate::error::Result<ResidentAdmit<u64>> {
+    /// Mint a token and pin its text atomically under the resolver lock.
+    pub fn intern(&self, text: &str) -> crate::error::Result<InternedText> {
         let generation = self.generation.ok_or(crate::error::Error::Corruption(
             crate::error::CorruptionError::MalformedValue("text outside a sealed text-free probe"),
         ))?;
-        match generation
-            .lock_resolver()
-            .intern(text, self.work, generation.ledger())
-        {
-            Ok(token) => Ok(ResidentAdmit::Ready(token)),
-            Err(InternError::Cache(_) | InternError::Allocation) => Ok(
-                ResidentAdmit::BeyondMemory(ResidentTextExhausted::new(generation.clone())),
-            ),
-            Err(InternError::Work(work)) => Err(crate::error::Error::from(InternError::Work(work))),
-        }
+        let mut resolver = generation.lock_resolver();
+        let word = resolver.intern(text, self.work)?;
+        Ok(InternedText {
+            word,
+            text: resolver
+                .owned_text(word)
+                .expect("just interned under the same lock"),
+        })
     }
 
-    /// # Errors
-    /// As [`Self::intern_or_spill`].
-    pub fn latch(&self, bytes: &[u8]) -> crate::error::Result<ResidentAdmit<u64>> {
+    pub fn latch(&self, bytes: &[u8]) -> crate::error::Result<InternedText> {
         let text = std::str::from_utf8(bytes)
             .expect("IR string literals are UTF-8 by construction (Value::String)");
-        self.intern_or_spill(text)
+        self.intern(text)
     }
 
     pub(crate) fn with_text<R>(&self, token: u64, read: impl FnOnce(&str) -> R) -> Option<R> {
@@ -267,7 +216,6 @@ impl<'a> InternerHandle<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InternError {
     Work(WorkError),
-    Cache(CacheError),
     Allocation,
 }
 
@@ -283,7 +231,7 @@ impl From<InternError> for crate::error::Error {
             InternError::Work(work) => {
                 crate::error::Error::from_store(crate::storage::store::StoreError::Work(work))
             }
-            InternError::Cache(_) | InternError::Allocation => {
+            InternError::Allocation => {
                 crate::error::Error::from_store(crate::storage::store::StoreError::Allocation)
             }
         }
@@ -293,292 +241,234 @@ impl From<InternError> for crate::error::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::work::CachePolicy;
+    use crate::work::GenerationState;
 
-    fn work() -> WorkContext {
-        crate::api::prepared::source::unbounded_work().expect("unbounded ledger")
-    }
-
-    fn cache() -> CacheLedger {
-        CacheLedger::new(CachePolicy {
-            cache_bytes: 1 << 20,
-        })
+    fn generation() -> GenerationHandle {
+        GenerationHandle::new(GenerationState::new(
+            crate::image::CacheGeneration::initial(),
+        ))
     }
 
     #[test]
-    fn tokens_are_dense_stable_and_exact() {
+    fn reclamation_preserves_live_owners_and_never_reuses_tokens() {
+        let work = WorkContext::new();
+        let mut interner = TextInterner::default();
+        let old = interner.intern("obsolete", &work).unwrap();
+        let live = interner.intern("live", &work).unwrap();
+        let owner = interner.owned_text(live).unwrap();
+        let before = interner.retained_bytes();
+        interner.reclaim_unowned();
+        assert_eq!(interner.lookup("obsolete"), None);
+        assert_eq!(interner.text_of(old), None);
+        assert_eq!(interner.lookup("live"), Some(live));
+        assert_eq!(&*owner, "live");
+        assert!(interner.retained_bytes() < before);
+        let reminted = interner.intern("obsolete", &work).unwrap();
+        assert!(reminted > live);
+        assert_ne!(reminted, old);
+        assert_eq!(interner.text_of(old), None, "reclaimed IDs never alias");
+        drop(owner);
+        interner.reclaim_unowned();
+        assert_eq!(interner.len(), 0);
+        assert_eq!(interner.retained_bytes(), 0);
+    }
+
+    #[test]
+    fn token_exhaustion_never_mints_the_sentinel_or_wraps_after_reclamation() {
+        let work = WorkContext::new();
+        let mut interner = TextInterner {
+            next_token: SENTINEL_WORD - 1,
+            ..TextInterner::default()
+        };
+        let last = interner.intern("last", &work).unwrap();
+        assert_eq!(last, SENTINEL_WORD - 1);
+        let before = interner.retained_bytes();
+        assert_eq!(
+            interner.intern("overflow", &work),
+            Err(InternError::Allocation)
+        );
+        assert_eq!(interner.lookup("overflow"), None);
+        assert_eq!(interner.retained_bytes(), before);
+        assert_eq!(interner.intern("last", &work).unwrap(), last);
+        interner.reclaim_unowned();
+        assert_eq!(
+            interner.intern("after reclaim", &work),
+            Err(InternError::Allocation)
+        );
+    }
+
+    #[test]
+    fn exact_bytes_define_identity_including_empty_unicode_and_long_prefixes() {
+        let work = WorkContext::new();
+        let mut interner = TextInterner::default();
+        let texts = [
+            String::new(),
+            "alpha".into(),
+            "β🐝".into(),
+            "x".repeat(600),
+            format!("{}y", "x".repeat(599)),
+        ];
+        for (index, text) in texts.iter().enumerate() {
+            let token = interner.intern(text, &work).unwrap();
+            assert_eq!(token, index as u64);
+            assert_eq!(interner.intern(text, &work).unwrap(), token);
+            assert_eq!(interner.lookup(text), Some(token));
+            assert_eq!(interner.text_of(token), Some(text.as_str()));
+        }
+        assert_eq!(interner.lookup_word("absent"), SENTINEL_WORD);
+        assert_eq!(interner.text_of(SENTINEL_WORD), None);
+        assert_eq!(interner.len(), texts.len());
+    }
+
+    #[test]
+    fn cancellation_is_checked_on_both_hits_and_misses_before_mutation() {
+        let work = WorkContext::new();
+        let mut interner = TextInterner::default();
+        let token = interner.intern("live", &work).unwrap();
+        let before = interner.retained_bytes();
+        work.cancel();
+        for text in ["live", "new"] {
+            assert_eq!(
+                interner.intern(text, &work),
+                Err(InternError::Work(WorkError::Cancelled))
+            );
+        }
+        assert_eq!(interner.retained_bytes(), before);
+        assert_eq!(interner.lookup("new"), None);
+        assert_eq!(interner.text_of(token), Some("live"));
+    }
+
+    #[test]
+    fn handles_pin_the_same_allocation_and_warm_interning_allocates_nothing() {
         fn send_sync<T: Send + Sync>() {}
         send_sync::<InternerHandle<'static>>();
+        send_sync::<crate::image::TextEq<'static>>();
         assert_eq!(
             std::mem::size_of::<InternerHandle<'_>>(),
-            std::mem::size_of::<(&GenerationHandle, &WorkContext)>(),
-            "the absent resolver uses the pointer niche, not a larger handle",
+            std::mem::size_of::<(&GenerationHandle, &WorkContext)>()
         );
         assert_eq!(
             std::mem::size_of::<crate::image::TextEq<'_>>(),
-            std::mem::size_of::<(
-                &GenerationHandle,
-                Option<&NonresidentTextStore>,
-                Option<crate::image::TextStoreEpoch>,
-            )>(),
+            std::mem::size_of::<&GenerationHandle>()
         );
-        let work = work();
-        let cache = cache();
-        let mut interner = TextInterner::default();
-        let a = interner.intern("alpha", &work, &cache).expect("intern");
-        let b = interner.intern("beta", &work, &cache).expect("intern");
-        assert_ne!(a, b, "distinct texts, distinct tokens");
-        assert_eq!(interner.intern("alpha", &work, &cache).expect("intern"), a);
-        assert_eq!(interner.lookup("alpha"), Some(a));
-        assert_eq!(interner.lookup("gamma"), None);
-        assert_eq!(interner.lookup_word("gamma"), SENTINEL_WORD);
-        assert_eq!(interner.text_of(a), Some("alpha"));
-        assert_eq!(interner.text_of(b), Some("beta"));
-        assert_eq!(interner.text_of(SENTINEL_WORD), None);
-        assert_eq!(interner.len(), 2);
-        assert!(interner.retained_bytes() >= "alpha".len() + "beta".len());
+        let generation = generation();
+        let work = WorkContext::new();
+        let handle = InternerHandle::new(&generation, &work);
+        let live = handle.intern("stable shared payload").unwrap();
+        #[cfg(feature = "alloc-counter")]
+        let before = crate::alloc_counter::snapshot().window;
+        for _ in 0..128 {
+            let next = handle.intern("stable shared payload").unwrap();
+            assert_eq!(live.word, next.word);
+            assert!(Arc::ptr_eq(&live.text, &next.text));
+            assert!(handle.text_eq().tokens_equal(live.word, next.word).unwrap());
+        }
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().window, before);
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(handle.with_text(live.word, str::len), Some(live.text.len()));
+        drop(live);
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(generation.lock_resolver().len(), 0);
     }
 
     #[test]
-    fn equal_bytes_decide_identity_never_a_hash() {
-        let context = work();
-        let absent = InternerHandle::without_text(&context);
+    fn resident_text_has_no_fixed_cache_allowance() {
+        let generation = generation();
+        let work = WorkContext::new();
+        let handle = InternerHandle::new(&generation, &work);
+        let owners: Vec<_> = (0..8192)
+            .map(|i| handle.intern(&format!("text-{i:08}")).unwrap())
+            .collect();
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(generation.lock_resolver().len(), owners.len());
+        for owner in &owners {
+            assert_eq!(
+                handle.with_text(owner.word, str::to_owned).as_deref(),
+                Some(owner.text.as_ref())
+            );
+        }
+        drop(owners);
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(generation.lock_resolver().len(), 0);
+    }
+
+    #[test]
+    fn automatic_reclamation_is_incremental_and_warm_hits_do_no_maintenance() {
+        let generation = generation();
+        let work = WorkContext::new();
+        let handle = InternerHandle::new(&generation, &work);
+        let owners: Vec<_> = (0..1024)
+            .map(|i| handle.intern(&format!("live-{i}")).unwrap())
+            .collect();
+        for turn in 0..16_384 {
+            let before = generation.lock_resolver().reclaim_visits;
+            drop(handle.intern(&format!("discard-{turn}")).unwrap());
+            let resolver = generation.lock_resolver();
+            assert!(resolver.reclaim_visits - before <= 64);
+            assert!(
+                resolver.len() < 2048,
+                "history must not accumulate behind live owners"
+            );
+            assert_eq!(resolver.lookup("live-0"), Some(owners[0].word));
+        }
+        let visits = generation.lock_resolver().reclaim_visits;
+        #[cfg(feature = "alloc-counter")]
+        let before = crate::alloc_counter::snapshot().window;
+        for _ in 0..128 {
+            let same = handle.intern("live-0").unwrap();
+            assert!(Arc::ptr_eq(&same.text, &owners[0].text));
+        }
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().window, before);
+        assert_eq!(generation.lock_resolver().reclaim_visits, visits);
+        drop(owners);
+        for turn in 0..4096 {
+            drop(handle.intern(&format!("after-drop-{turn}")).unwrap());
+        }
+        let resolver = generation.lock_resolver();
+        assert_eq!(resolver.lookup("live-0"), None);
+        assert!(resolver.len() <= 32);
+        assert_eq!(resolver.len(), resolver.reclaim_queue.len());
+    }
+
+    #[test]
+    fn generation_aware_compare_never_aliases_rotated_tokens() {
+        let work = WorkContext::new();
+        let old = generation();
+        let new = generation();
+        let alpha = InternerHandle::new(&old, &work).intern("alpha").unwrap();
+        let beta = InternerHandle::new(&new, &work).intern("beta").unwrap();
+        let new_alpha = InternerHandle::new(&new, &work).intern("alpha").unwrap();
+        assert_eq!(
+            alpha.word, beta.word,
+            "separate namespaces may mint the same number"
+        );
+        assert!(!old.tokens_equal(alpha.word, &new, beta.word));
+        assert!(old.tokens_equal(alpha.word, &new, new_alpha.word));
+        assert!(
+            !old.text_eq()
+                .tokens_equal(alpha.word, SENTINEL_WORD)
+                .unwrap()
+        );
+        assert!(
+            !old.text_eq()
+                .tokens_equal(SENTINEL_WORD, SENTINEL_WORD)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn text_free_probe_cannot_silently_resolve_or_compare_text() {
+        let work = WorkContext::new();
+        let handle = InternerHandle::without_text(&work);
         assert!(matches!(
-            absent.intern_or_spill("no namespace"),
+            handle.intern("no namespace"),
             Err(crate::error::Error::Corruption(_))
         ));
-        assert!(
-            matches!(
-                absent.text_eq(None).tokens_equal(0, 0),
-                Err(crate::error::Error::Corruption(_))
-            ),
-            "absent text capability cannot silently compare equal or unequal"
-        );
-        let work = work();
-        let cache = cache();
-        let mut interner = TextInterner::default();
-        let long_a = "x".repeat(600);
-        let long_b = format!("{}y", "x".repeat(599));
-        let a = interner.intern(&long_a, &work, &cache).expect("intern");
-        let b = interner.intern(&long_b, &work, &cache).expect("intern");
-        assert_ne!(a, b);
-        assert_eq!(interner.text_of(a).map(str::len), Some(600));
-    }
-
-    #[test]
-    fn interning_charges_the_work_ledger() {
-        let context = crate::work::ExecutionPolicy {
-            work_units: 8,
-            ..crate::api::prepared::source::UNBOUNDED_POLICY
-        }
-        .start()
-        .expect("start");
-        let cache = cache();
-        let mut interner = TextInterner::default();
-        let result = interner.intern("far-too-long-for-eight-units", &context, &cache);
-        assert!(
-            matches!(result, Err(InternError::Work(_))),
-            "byte-proportional charge stops before growth"
-        );
-    }
-
-    #[test]
-    fn retained_tokens_are_charged_to_the_cache_ledger() {
-        let work = work();
-        let cache = CacheLedger::new(CachePolicy { cache_bytes: 4096 });
-        let mut interner = TextInterner::default();
-        interner.intern("stable", &work, &cache).expect("mint");
-        let charged = cache.used();
-        assert!(charged > 0, "the mint reserved its retained bytes");
-        interner.intern("stable", &work, &cache).expect("re-intern");
-        assert_eq!(cache.used(), charged, "re-intern charges no retention");
-        let mut refused = false;
-        for index in 0..4096u32 {
-            match interner.intern(&format!("text-{index:04}"), &work, &cache) {
-                Ok(_) => {}
-                Err(InternError::Cache(_)) => {
-                    refused = true;
-                    break;
-                }
-                Err(other) => panic!("typed cache refusal, got {other:?}"),
-            }
-        }
-        assert!(refused, "4 KiB cannot retain thousands of distinct texts");
-        assert!(
-            interner.retained_bytes() as u64 <= cache.limit(),
-            "retained bytes stay within the reserved allowance"
-        );
-        assert_eq!(interner.lookup("stable"), Some(0));
-        assert_eq!(work.used(crate::work::Resource::WorkingBytes), 0);
-    }
-
-    #[test]
-    fn generation_aware_compare_does_not_alias_rotated_tokens() {
-        use crate::work::{GenerationHandle, GenerationState};
-        let work = work();
-        let old = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial(),
-            cache(),
+        assert!(matches!(
+            handle.text_eq().tokens_equal(0, 0),
+            Err(crate::error::Error::Corruption(_))
         ));
-        let new = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial().next(),
-            cache(),
-        ));
-        let old_alpha = old
-            .lock_resolver()
-            .intern("alpha", &work, old.ledger())
-            .expect("old");
-        let new_beta = new
-            .lock_resolver()
-            .intern("beta", &work, new.ledger())
-            .expect("new beta");
-        let new_alpha = new
-            .lock_resolver()
-            .intern("alpha", &work, new.ledger())
-            .expect("new alpha");
-        assert_eq!(old_alpha, new_beta, "dense remint reuses the same id");
-        assert!(
-            !old.tokens_equal(old_alpha, &new, new_beta),
-            "raw token identity is not meaning across generations"
-        );
-        assert!(
-            old.tokens_equal(old_alpha, &new, new_alpha),
-            "exact remapping compares canonical bytes"
-        );
-    }
-
-    /// Production-path discriminator: `intern_or_spill` refusal — not a
-    /// test-only `NonresidentTextStore::new` — opens scratch and compares
-    /// via `tokens_equal_resident` / `GenerationHandle::tokens_equal`.
-    #[test]
-    fn d02_production_intern_or_spill_reaches_scratch_resolver() {
-        use crate::api::prepared::source::UNBOUNDED_POLICY;
-        use crate::exec::scratch::capability::ScratchPolicy;
-        use crate::work::{GenerationHandle, GenerationState};
-
-        let work = work();
-        let generation = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial(),
-            CacheLedger::new(CachePolicy { cache_bytes: 8 }),
-        ));
-        let handle = InternerHandle::new(&generation, &work);
-        let admitted = handle
-            .intern_or_spill("a-text-that-cannot-fit-eight-cache-bytes")
-            .expect("unbounded work");
-        let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
-            panic!("tiny cache must refuse resident intern through intern_or_spill");
-        };
-        assert!(
-            exhausted.generation().ptr_eq(&generation),
-            "refusal carries the same generation owner"
-        );
-
-        let cap = crate::exec::scratch::ScratchCapability::start(
-            UNBOUNDED_POLICY,
-            ScratchPolicy::unbounded(),
-        )
-        .expect("scratch");
-        let mut store = exhausted.open_nonresident(&cap);
-        let scratch = store
-            .intern("shared-meaning", cap.work())
-            .expect("scratch intern");
-
-        let resident = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial(),
-            cache(),
-        ));
-        let resident_tok = resident
-            .lock_resolver()
-            .intern("shared-meaning", &work, resident.ledger())
-            .expect("resident intern");
-        assert!(is_scratch_token(scratch));
-        assert!(is_resident_token(resident_tok));
-        assert_ne!(
-            scratch, resident_tok,
-            "intern and scratch tokens cannot alias at 0…"
-        );
-        assert!(
-            crate::image::TextEq::bind(&resident, Some(&store))
-                .tokens_equal(scratch, resident_tok)
-                .expect("equal"),
-            "TextEq unifies intern and scratch; raw words stay unequal"
-        );
-        assert!(
-            !resident.tokens_equal(resident_tok, &resident, scratch),
-            "GenerationHandle::tokens_equal does not treat a scratch id as intern"
-        );
-
-        let other = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial().next(),
-            cache(),
-        ));
-        let other_tok = other
-            .lock_resolver()
-            .intern("shared-meaning", &work, other.ledger())
-            .expect("other intern");
-        assert!(
-            resident.tokens_equal(resident_tok, &other, other_tok),
-            "L05 compare across generations is byte-exact, never raw token identity"
-        );
-        assert!(
-            !resident.tokens_equal(resident_tok, &other, 1),
-            "unequal meanings stay unequal after remapping"
-        );
-    }
-
-    /// Intern dense `0…` and scratch `TAG|0…` are disjoint: finalize
-    /// must dispatch on [`is_scratch_token`], not try intern then store.
-    #[test]
-    fn d02_intern_and_scratch_tokens_do_not_alias() {
-        use crate::api::prepared::source::UNBOUNDED_POLICY;
-        use crate::exec::scratch::capability::ScratchPolicy;
-        use crate::work::{GenerationHandle, GenerationState};
-
-        let work = work();
-        let generation = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial(),
-            cache(),
-        ));
-        let intern_tok = generation
-            .lock_resolver()
-            .intern("shared", &work, generation.ledger())
-            .expect("resident 0");
-        assert_eq!(intern_tok, 0);
-        assert!(is_resident_token(intern_tok));
-
-        let exhausted = ResidentTextExhausted::new(generation.clone());
-        let cap = crate::exec::scratch::ScratchCapability::start(
-            UNBOUNDED_POLICY,
-            ScratchPolicy::unbounded(),
-        )
-        .expect("scratch");
-        let mut store = exhausted.open_nonresident(&cap);
-        let scratch_tok = store.intern("shared", cap.work()).expect("scratch");
-        assert!(is_scratch_token(scratch_tok));
-        assert!(NonresidentTextStore::owns_token(scratch_tok));
-        assert!(store.live(scratch_tok));
-
-        assert_ne!(intern_tok, scratch_tok);
-        assert!(
-            crate::image::TextEq::bind(&generation, Some(&store))
-                .tokens_equal(scratch_tok, intern_tok)
-                .expect("equal")
-        );
-        assert!(
-            !generation.tokens_equal(intern_tok, &generation, scratch_tok),
-            "raw identity across spaces is not meaning"
-        );
-        assert!(
-            generation
-                .resolver()
-                .with_text(scratch_tok, |_| true)
-                .is_none(),
-            "intern resolve misses a scratch id"
-        );
-        let mut out = Vec::new();
-        assert!(
-            !store.resolve(intern_tok, &mut out).expect("miss"),
-            "scratch resolve misses an intern id"
-        );
     }
 }

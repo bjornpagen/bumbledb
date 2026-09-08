@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use bumbledb::work::{ByteKind, WorkContext, WorkError};
+use bumbledb::work::{WorkContext, WorkError};
 
 use super::{LEASE_NAMESPACE, TEMP_NAMESPACE, key_ok};
 
@@ -241,7 +241,7 @@ pub fn acquire_mutation(root: &Path, key: &str) -> io::Result<HeldLock> {
 /// The same lock and wait ceiling, with an operation's earlier stop.
 ///
 /// # Errors
-/// Refuses filesystem errors, exhausted wait, cancellation or deadline.
+/// Refuses filesystem errors, exhausted admission wait, or cancellation.
 pub fn acquire_mutation_with(
     root: &Path,
     key: &str,
@@ -259,25 +259,6 @@ pub(crate) fn acquire_mutation_checked(
     if !key_ok(key) {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid store key").into());
     }
-    let _paths = work
-        .map(|work| {
-            let root_len = root.as_os_str().len() as u64;
-            let key_len = key.len() as u64;
-            let bytes = root_len
-                .checked_mul(3)
-                .and_then(|bytes| {
-                    key_len
-                        .checked_mul(2)
-                        .and_then(|key| bytes.checked_add(key))
-                })
-                .and_then(|bytes| bytes.checked_add(96))
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "lock path size overflow")
-                })?;
-            work.reserve(ByteKind::Working, bytes)
-                .map_err(WorkIoError::from)
-        })
-        .transpose()?;
     let namespace = root.join(LEASE_NAMESPACE);
     refuse_symlink(&namespace)?;
     let file = open_lock(&namespace.join(key), "mutation.lock")?;

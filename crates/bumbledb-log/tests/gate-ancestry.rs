@@ -14,10 +14,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use bumbledb::schema::ValidateDescriptor as _;
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, RelationId, Theory as _, Uuid, Value, WorkContext};
+use bumbledb::{ChangeSet, Db, RelationId, Theory as _, Uuid, Value, WorkContext};
 
 use bumbledb_log::checkpointer::{
     CheckpointKind, CheckpointOutcome, CheckpointPolicy, publish_checkpoint, read_live_head,
@@ -63,20 +62,12 @@ fn temp_dir(tag: &str) -> PathBuf {
     path
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 100_000_000,
-        working_bytes: 100_000_000,
-        scratch_bytes: 100_000_000,
-        result_bytes: 100_000_000,
-        rows: 10_000_000,
-        work_units: 1_000_000_000,
-        timeout: Duration::from_secs(600),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn work() -> WorkContext {
-    policy().start().expect("work budget starts")
+    policy()
 }
 
 fn fresh_db(tag: &str) -> Arc<Db<bumbledb::SchemaDescriptor>> {
@@ -563,7 +554,7 @@ fn hosted_catch_up_walks_authenticated_parent_locators_only() {
         ),
     )
     .expect("one get");
-    let envelope = bumbledb_log::history::decision::decode_decision(bytes.as_bytes(), LIMITS)
+    let envelope = bumbledb_log::history::decision::decode_decision(bytes.as_slice(), LIMITS)
         .expect("decodes");
     assert_eq!(envelope.stamp(), recovery.tip);
     let mut budget = 8;

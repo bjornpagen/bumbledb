@@ -11,11 +11,11 @@ use std::sync::Arc;
 
 use super::{Db, OwnedRead, ReadFrame};
 use crate::error::{Error, Result};
-use crate::work::{ExecutionPolicy, WorkContext};
+use crate::work::WorkContext;
 
 impl<S> Db<S> {
-    /// Pin one owned coherent snapshot. Work is charged only for admitting
-    /// the pin; each later operation takes a fresh frame and its own work.
+    /// Pin one owned coherent snapshot. The context controls admission;
+    /// each later operation takes a fresh frame and its own cancellation.
     /// Canonical rows belong to the LMDB snapshot. Query operations acquire
     /// their own current cache resolver only while interpreting text tokens.
     ///
@@ -32,22 +32,14 @@ impl<S> Db<S> {
         })
     }
 
-    /// Native worker-table pin. Admits the snapshot under a dedicated
-    /// budget; later frames take their own work. Prefer [`Self::snapshot`]
+    /// Native worker-table pin. Admits the snapshot with a fresh context;
+    /// later frames take their own cancellation. Prefer [`Self::snapshot`]
     /// when the caller already holds an operation context.
     ///
     /// # Errors
     /// As [`Self::snapshot`].
     pub fn owned_read(&self) -> Result<OwnedRead<S>> {
-        let work = crate::api::db::start_operation(ExecutionPolicy {
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 1 << 20,
-            work_units: 1 << 20,
-            timeout: std::time::Duration::from_secs(60),
-        })?;
+        let work = WorkContext::new();
         self.snapshot(&work)
     }
 
@@ -63,7 +55,7 @@ impl<S> Db<S> {
         self.read(work, |frame| frame.prepare(query))
     }
 
-    /// Runs `f` over one operation frame with an explicit work budget.
+    /// Runs `f` over one operation frame with cooperative cancellation.
     /// Prefer [`Self::snapshot`] when the pin must outlive a single call.
     /// A scoped frame cannot escape its read:
     /// ```compile_fail

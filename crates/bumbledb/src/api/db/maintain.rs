@@ -10,7 +10,7 @@ use crate::work::WorkContext;
 
 impl<S> Db<S> {
     /// Compact into a fresh store at `dest` (which must not exist) under an
-    /// explicit operation allowance: one coherent source snapshot supplies
+    /// cooperative cancellation: one coherent source snapshot supplies
     /// rows, indexes, host records, attachment and generation together. The
     /// destination packs the existing physical entries in key order, without
     /// decoding rows or rebuilding indexes, in one durable

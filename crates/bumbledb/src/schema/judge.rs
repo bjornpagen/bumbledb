@@ -20,7 +20,7 @@
 //! optimized access planning. Exact value equality decides identity — a
 //! forced fingerprint collision cannot change a verdict here.
 //!
-//! Grouped state lives in charged scratch. Citations are
+//! Grouped state lives in exact transient maps. Citations are
 //! selected by canonical fact bytes **before** the labeled top-k budget
 //! truncates (C4 / CORE-021). A completed rejection names every violated
 //! statement; resource failure is not a rejection.
@@ -30,7 +30,6 @@ use crate::schema::{
     MemberSet, RelationId, Schema, SealedBound, SealedWeight, Side, StatementId, StatementKind,
     StatementView,
 };
-use crate::work::ByteReservation;
 use crate::{Value, WorkContext, WorkError};
 
 mod citation;
@@ -83,13 +82,13 @@ pub trait CandidateFacts {
     ///
     /// The default ranks the existing deterministic stream. Providers with
     /// indexed ranked visits must use these same relation-wide ranks, never
-    /// enumerate an individual bucket. At most `u64::MAX` rows are supported;
-    /// the judge's finite work allowance refuses before that can be exceeded.
+    /// enumerate an individual bucket. At most `u64::MAX` rows are supported
+    /// by this rank representation; this is not a configurable execution cap.
     /// # Errors
     /// The state's own failure channel. Returning false stops the visit.
     /// # Panics
     /// If a provider violates the supported row-count bound while its
-    /// visitor continues; the judge's charged visitor stops before this.
+    /// visitor continues.
     fn visit_ranked_rows(
         &self,
         relation: RelationId,
@@ -305,7 +304,7 @@ pub enum Judgment {
 }
 
 /// Judgment failure: not a semantic verdict. `Work` is the operation
-/// allowance; `State` is the candidate view's own failure channel (a
+/// cancellation context; `State` is the candidate view's own failure channel (a
 /// spilled grouped-state fault also travels through it, via the state's
 /// [`JudgeScratch`] conversion); `UndefinedDuration` is the explicit
 /// refusal of a ray in a duration-measured position; `MeasureOverflow`
@@ -317,7 +316,7 @@ pub enum Judgment {
 pub enum JudgeError<E> {
     Work(WorkError),
     State(E),
-    /// Host allocation failed independently of the operation's allowance.
+    /// Host allocation capacity was unavailable.
     Allocation,
     UndefinedDuration {
         statement: StatementId,
@@ -419,10 +418,10 @@ pub fn judge_incremental<S: DeltaFacts>(
 /// States whose error type is the store's own (`storage::store::StoreError`
 /// — the production candidate view and the offline sweeper) must pass
 /// [`JudgeScratch::channel`] via [`judge_final_state_with_scratch`]; the
-/// parameterless entry keeps grouped state in charged RAM only.
+/// parameterless entry reports allocation failure through [`JudgeError::Allocation`].
 ///
 /// # Errors
-/// [`JudgeError`] on exhausted work, a failing candidate view or its
+/// [`JudgeError`] on cancellation, a failing candidate view or its
 /// spilled grouped state, a ray in a duration-measured position, or an
 /// unwitnessable measure. No partial rejection is returned on any error
 /// path.
@@ -435,9 +434,9 @@ pub fn judge_final_state<S: CandidateFacts>(
     judge_final_state_with_scratch(schema, state, work, budget, JudgeScratch::disabled())
 }
 
-/// [`judge_final_state`] with an explicit grouped-state spill policy: the
-/// seam for states that want beyond-memory judgment under their own error
-/// channel (e.g. the log's migration states).
+/// [`judge_final_state`] with a grouped-map error adapter for the state's
+/// own error channel (e.g. the log's migration states). This does not select
+/// a representation or install a memory policy.
 ///
 /// # Errors
 /// As [`judge_final_state`].
@@ -454,10 +453,9 @@ pub fn judge_final_state_with_scratch<S: CandidateFacts>(
         budget,
         channel: scratch.channel,
         violations: Vec::new(),
-        citation_charges: Vec::new(),
     };
     for view in schema.statements() {
-        work.step(1)?;
+        work.checkpoint()?;
         if schema.closed_constant(view) {
             // Sealed at validation over frozen ground axioms; nothing in a
             // candidate state can change it.
@@ -505,7 +503,6 @@ pub fn judge_final_state_delta_local<S: DeltaFacts>(
         budget,
         channel: scratch.channel,
         violations: Vec::new(),
-        citation_charges: Vec::new(),
     };
     let mut delta = Vec::new();
     for (idx, _relation) in schema.relations().iter().enumerate() {
@@ -517,7 +514,7 @@ pub fn judge_final_state_delta_local<S: DeltaFacts>(
     }
     delta.sort_by_key(|&(id, _)| id);
     for view in theory.delta_local_statements(schema, &delta) {
-        work.step(1)?;
+        work.checkpoint()?;
         match view {
             StatementView::Key(_, statement) => {
                 if !judge.key_delta_local(state, statement)? {
@@ -547,10 +544,6 @@ struct Judge<'s, 'w, E> {
     budget: JudgeBudget,
     channel: Option<fn(ScratchFault) -> E>,
     violations: Vec<JudgedViolation>,
-    /// Working-byte reservations covering the cited example facts held by
-    /// this judgment; released when the verdict's ownership passes to the
-    /// caller at return.
-    citation_charges: Vec<ByteReservation>,
 }
 
 impl<E> Judge<'_, '_, E> {
@@ -565,7 +558,7 @@ impl<E> Judge<'_, '_, E> {
     /// Stream proposed rows with their stable logical-order rank — from
     /// the sealed extension for closed relations, from the state otherwise.
     /// Physical encounter order may differ. Charge one work step per row;
-    /// false stops the walk and charged decoded rows stay borrowed.
+    /// false stops the walk and decoded rows stay borrowed.
     fn for_each_row<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -575,7 +568,7 @@ impl<E> Judge<'_, '_, E> {
         let sealed = self.schema.relation(relation);
         if let Some(extension) = sealed.body().closed_rows() {
             for (seq, row) in extension.iter().enumerate() {
-                self.work.step(1)?;
+                self.work.checkpoint()?;
                 let decoded =
                     crate::encoding::decode_values(sealed.layout().encoded(&row.fact), |_| {
                         unreachable!("closed relations refuse str columns")
@@ -589,7 +582,7 @@ impl<E> Judge<'_, '_, E> {
         }
         let mut smuggled = None;
         let walked = state.visit_ranked_rows(relation, &mut |rank, row| {
-            if let Err(error) = self.work.step(1) {
+            if let Err(error) = self.work.checkpoint() {
                 smuggled = Some(JudgeError::Work(error));
                 return Ok(false);
             }
@@ -618,7 +611,7 @@ impl<E> Judge<'_, '_, E> {
     ) -> Result<Option<()>, JudgeError<E>> {
         let mut smuggled = None;
         let indexed = state.visit_compiled_group(compiled, determinant, &mut |row| {
-            if let Err(error) = self.work.step(1) {
+            if let Err(error) = self.work.checkpoint() {
                 smuggled = Some(JudgeError::Work(error));
                 return Ok(false);
             }
@@ -670,7 +663,7 @@ impl<E> Judge<'_, '_, E> {
         };
         let mut smuggled = None;
         let indexed = state.visit_ranked_compiled_group(compiled, &physical, &mut |rank, row| {
-            if let Err(error) = self.work.step(1) {
+            if let Err(error) = self.work.checkpoint() {
                 smuggled = Some(JudgeError::Work(error));
                 return Ok(false);
             }
@@ -733,7 +726,7 @@ impl<E> Judge<'_, '_, E> {
         let mut walk_error = None;
         state
             .visit_added_rows(relation, &mut |row| {
-                if let Err(error) = self.work.step(1) {
+                if let Err(error) = self.work.checkpoint() {
                     walk_error = Some(JudgeError::Work(error));
                     return Ok(false);
                 }
@@ -792,8 +785,8 @@ impl<E> Judge<'_, '_, E> {
         state
             .visit_added_rows(statement.relation, &mut |row| {
                 let inspected = (|| {
-                    self.work.step(1)?;
-                    determinant.project(row, scalar_fields)?;
+                    self.work.checkpoint()?;
+                    determinant.project(row, scalar_fields);
                     // A lawful scalar group has at most one row. Reprobing
                     // good groups is bounded; remembering them is unnecessary.
                     // Check known BAD groups before probing: many additions to
@@ -890,7 +883,7 @@ impl<E> Judge<'_, '_, E> {
                 .expect("a projected interval position holds an interval value");
             let key = span_key(0, start, end, seq);
             seq += 1;
-            if let Err(error) = self.work.step(1) {
+            if let Err(error) = self.work.checkpoint() {
                 walk_error = Some(JudgeError::Work(error));
                 return Ok(false);
             }
@@ -912,7 +905,7 @@ impl<E> Judge<'_, '_, E> {
         let mut previous: Option<u64> = None;
         let mut prev_seq = 0u64;
         spans.for_each(|key, _| {
-            self.work.step(1)?;
+            self.work.checkpoint()?;
             let (_, start, end, at) = parse_span_key(key);
             if let Some(prev_end) = previous
                 && start < prev_end
@@ -1010,7 +1003,7 @@ impl<E> Judge<'_, '_, E> {
     }
 
     /// Scalar key: a determinant seen twice is a violation. Membership is
-    /// exact encoded determinant bytes in the charged map — every competing
+    /// exact encoded determinant bytes in the transient map — every competing
     /// row lands in its group before any uniqueness is enforced.
     fn key_scalar<S: CandidateFacts<Error = E>>(
         &mut self,
@@ -1049,7 +1042,7 @@ impl<E> Judge<'_, '_, E> {
     }
 
     /// Pointwise key: two rows with one determinant may coexist only with
-    /// disjoint interval tails. Spans are staged in the charged map under
+    /// disjoint interval tails. Spans are staged in the transient map under
     /// fixed-width `(group token, start, end, seq)` keys, whose exact byte
     /// order IS the sweep order; adjacent overlap detects every violation.
     fn key_pointwise<S: CandidateFacts<Error = E>>(
@@ -1081,7 +1074,7 @@ impl<E> Judge<'_, '_, E> {
         let mut violated = false;
         let mut previous: Option<(u64, u64, u64)> = None; // token, end, seq
         spans.for_each(|key, _| {
-            self.work.step(1)?;
+            self.work.checkpoint()?;
             let (token, start, end, seq) = parse_span_key(key);
             if let Some((prev_token, prev_end, prev_seq)) = previous
                 && prev_token == token
@@ -1179,10 +1172,11 @@ impl<E> Judge<'_, '_, E> {
             if walk_error.is_some() {
                 return Ok(false);
             }
-            let checked =
-                self.work.step(1).map_err(JudgeError::Work).and_then(|()| {
-                    self.containment_closed_row(statement, members, row, &mut pending)
-                });
+            let checked = self
+                .work
+                .checkpoint()
+                .map_err(JudgeError::Work)
+                .and_then(|()| self.containment_closed_row(statement, members, row, &mut pending));
             match checked {
                 Ok(()) => Ok(true),
                 Err(error) => {
@@ -1200,7 +1194,7 @@ impl<E> Judge<'_, '_, E> {
     }
 
     /// Tuple existence: stage every satisfying target projection in the
-    /// charged set, then stream source rows and probe by exact bytes.
+    /// exact set, then stream source rows and probe by exact bytes.
     fn containment_scalar<S: CandidateFacts<Error = E>>(
         &mut self,
         state: &S,
@@ -1265,7 +1259,7 @@ impl<E> Judge<'_, '_, E> {
         let mut runs = self.grouped();
         let mut current: Option<(u64, u64, u64)> = None; // token, run start, run end
         spans.for_each(|key, _| {
-            self.work.step(1)?;
+            self.work.checkpoint()?;
             let (token, start, end, _) = parse_span_key(key);
             match current {
                 Some((run_token, run_start, run_end)) if run_token == token && start <= run_end => {
@@ -1331,13 +1325,15 @@ impl<E> Judge<'_, '_, E> {
         // and only surfaces if a target row references the group — exactly
         // the reference semantics, where unreferenced groups are never
         // measured.
-        // Every finite weight is at most u64::MAX; a finite u64 work
-        // allowance admits at most u64::MAX source visits. Thus finite
-        // totals fit u128 in every traversal order. The only reachable
-        // semantic source failure is an undefined duration (identical for
-        // every ray). Keep checked overflow defensively, not a narrowed sum.
+        // Every finite weight is at most u64::MAX. Keep the accumulator
+        // widened and checked, independent of traversal order or any work
+        // policy; an undefined duration or overflow remains a typed error.
         self.for_each_row(state, statement.source.relation, |_judge, _seq, row| {
-            source_rows += 1;
+            source_rows = source_rows
+                .checked_add(1)
+                .ok_or(JudgeError::MeasureOverflow {
+                    statement: statement.id,
+                })?;
             if !satisfies(&statement.source, row) {
                 return Ok(true);
             }
@@ -2327,7 +2323,7 @@ impl<E> Judge<'_, '_, E> {
             }
             if satisfies(side, row) {
                 // Exact keys are the only retained group representation.
-                // The reusable borrowed encoding buffer remains charged.
+                // The same borrowed encoding buffer is reused for the next row.
                 let marked = key
                     .encode_projection(row, &binding.logical_scalars)
                     .and_then(|key| affected.insert_if_absent(key));
@@ -2353,8 +2349,7 @@ impl<E> Judge<'_, '_, E> {
 
     fn finish(&mut self, pending: PendingViolation) {
         if pending.violated {
-            let (examples, truncated, charges) = pending.citations.into_examples();
-            self.citation_charges.extend(charges);
+            let (examples, truncated) = pending.citations.into_examples();
             self.violations.push(JudgedViolation {
                 statement: pending.statement,
                 kind: pending.kind,
@@ -2436,7 +2431,7 @@ fn merge_coverage_runs<E>(
 ) -> Result<(), JudgeError<E>> {
     let mut current: Option<(u64, u64, u64)> = None;
     spans.for_each(|key, _| {
-        work.step(1)?;
+        work.checkpoint()?;
         let (token, start, end, _) = parse_span_key(key);
         match current {
             Some((run_token, run_start, run_end)) if run_token == token && start <= run_end => {

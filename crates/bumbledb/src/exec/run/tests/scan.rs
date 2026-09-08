@@ -368,20 +368,6 @@ fn scan_and_batch_paths_agree_across_fixtures() {
     }
 }
 
-fn scan_work(units: u64) -> crate::work::WorkContext {
-    crate::work::ExecutionPolicy {
-        input_bytes: u64::MAX,
-        working_bytes: u64::MAX,
-        scratch_bytes: u64::MAX,
-        result_bytes: u64::MAX,
-        rows: u64::MAX,
-        work_units: units,
-        timeout: std::time::Duration::from_secs(3600),
-    }
-    .start()
-    .expect("valid scan work")
-}
-
 #[derive(Default)]
 struct ScanCounters {
     cancel: Option<crate::work::WorkContext>,
@@ -514,18 +500,14 @@ fn fused_scan_plan(residual: bool) -> (Schema, ValidatedPlan) {
 
 #[test]
 fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
-    use crate::work::{Resource, WorkError};
+    use crate::work::WorkError;
     let quantum = crate::exec::sink::STEP_QUANTUM as usize;
     let (schema, plan) = fused_scan_plan(true);
     let rows: Vec<_> = (0..2049).map(|i| (i + 1, 0)).collect();
     let views = views_of(&schema, &[rows]);
     for (positions, pending) in [(false, 0), (true, 0), (false, 31), (true, 31)] {
-        for cancellation in [false, true] {
-            let work = scan_work(if cancellation {
-                u64::MAX
-            } else {
-                (quantum - 1) as u64
-            });
+        {
+            let work = crate::work::WorkContext::new();
             let mut colts = colts_for(&plan, &views);
             if positions {
                 drop(colts[0].reset(crate::image::view::View::Bound(
@@ -541,7 +523,7 @@ fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
             let mut bindings = Bindings::new(plan.slot_count());
             let mut sink = FusedScanSink::new(&plan);
             let mut counters = ScanCounters {
-                cancel: cancellation.then(|| work.clone()),
+                cancel: Some(work.clone()),
                 ..ScanCounters::default()
             };
             let error = executor
@@ -550,20 +532,10 @@ fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
             let crate::error::Error::Store(error) = error else {
                 panic!("expected typed work refusal");
             };
-            if cancellation {
-                assert!(matches!(
-                    *error,
-                    crate::storage::store::StoreError::Work(WorkError::Cancelled)
-                ));
-            } else {
-                assert!(matches!(
-                    *error,
-                    crate::storage::store::StoreError::Work(WorkError::Exhausted {
-                        resource: Resource::WorkUnits,
-                        ..
-                    })
-                ));
-            }
+            assert!(matches!(
+                *error,
+                crate::storage::store::StoreError::Work(WorkError::Cancelled)
+            ));
             assert_eq!(
                 counters.residuals,
                 quantum - pending,
@@ -584,7 +556,6 @@ fn rejecting_fused_scan_stops_within_one_quantum_without_sink_or_fallback() {
 
 #[test]
 fn bounded_fused_scan_preserves_answers_physical_counters_and_tail_work() {
-    use crate::work::Resource;
     let quantum = crate::exec::sink::STEP_QUANTUM as usize;
     for residual in [false, true] {
         let (schema, plan) = fused_scan_plan(residual);
@@ -598,7 +569,7 @@ fn bounded_fused_scan_preserves_answers_physical_counters_and_tail_work() {
             .collect();
         let views = views_of(&schema, &[rows]);
         let mut colts = colts_for(&plan, &views);
-        let work = scan_work(u64::MAX);
+        let work = crate::work::WorkContext::new();
         let mut executor = Executor::new(&plan);
         executor.begin_work(&work, &mut colts);
         let mut bindings = Bindings::new(plan.slot_count());
@@ -619,11 +590,7 @@ fn bounded_fused_scan_preserves_answers_physical_counters_and_tail_work() {
         );
         assert_eq!(counters.residuals, if residual { 1025 } else { 0 });
         assert_eq!(counters.emitted, expected.len() as u64);
-        assert_eq!(
-            work.used(Resource::WorkUnits),
-            1025,
-            "end_work flushes the tail once"
-        );
+
         assert!(executor.ledger.is_none());
     }
 }
@@ -636,7 +603,7 @@ fn fused_scan_propagates_run_and_end_failures_without_successful_fallback() {
         let views = views_of(&schema, &[(0..1025).map(|i| (i, i)).collect()]);
         let mut colts = colts_for(&plan, &views);
         let mut executor = Executor::new(&plan);
-        let work = scan_work(u64::MAX);
+        let work = crate::work::WorkContext::new();
         executor.begin_work(&work, &mut colts);
         let mut bindings = Bindings::new(plan.slot_count());
         let mut sink = FusedScanSink::new(&plan);

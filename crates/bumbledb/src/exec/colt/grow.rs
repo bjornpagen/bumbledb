@@ -9,24 +9,9 @@ impl Colt {
         let ctrl_needed = self.ctrl.len() + new_nbuckets * 8;
         let bucket_needed = self.buckets.len() + new_nbuckets * stride;
         let dense_needed = self.dense.len() + usize::try_from(m.len).expect("64-bit usize");
-        reserve_pool(
-            ctrl_needed,
-            &mut self.ctrl,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            bucket_needed,
-            &mut self.buckets,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
-        reserve_pool(
-            dense_needed,
-            &mut self.dense,
-            self.work.as_ref(),
-            &mut self.charges,
-        )?;
+        reserve_pool(ctrl_needed, &mut self.ctrl, self.work.as_ref())?;
+        reserve_pool(bucket_needed, &mut self.buckets, self.work.as_ref())?;
+        reserve_pool(dense_needed, &mut self.dense, self.work.as_ref())?;
         let ctrl_start = self.ctrl.len();
         let bucket_start = self.buckets.len();
         let dense_start = self.dense.len();
@@ -59,7 +44,7 @@ impl Colt {
         nbm: usize,
         key: &mut Vec<u64>,
     ) -> Result<(), WorkError> {
-        reserve_pool(arity, key, self.work.as_ref(), &mut self.charges)?;
+        reserve_pool(arity, key, self.work.as_ref())?;
         for i in 0..usize::try_from(m.len).expect("64-bit usize") {
             if i % super::force::FORCE_BATCH == 0 {
                 self.poll_force_batch((m.len as usize - i).min(super::force::FORCE_BATCH))?;

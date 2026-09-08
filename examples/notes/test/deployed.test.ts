@@ -33,7 +33,7 @@ function requireEnv(): { base: string; token: string } {
 async function jsonObject(response: Response): Promise<Record<string, unknown>> {
 	const body: unknown = await response.json()
 	assert.ok(typeof body === "object" && body !== null && !Array.isArray(body))
-	return body
+	return body as Record<string, unknown>
 }
 
 function hex(): string {

@@ -20,13 +20,12 @@ import {
 	receiptWire,
 	refWire,
 	registerChange,
-	submitOptions,
-	work
+	submitOptions
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
 const OPERATION = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId
-const adminOptions = { ...work, operationId: OPERATION }
+const adminOptions = { operationId: OPERATION }
 
 describe("publication phase on the wire", function suite() {
 	test("submit decided preserves confirmed phase from native wire", async function submitConfirmed() {
@@ -37,26 +36,23 @@ describe("publication phase on the wire", function suite() {
 				Effect.scoped(
 					Effect.gen(function* () {
 						double.plan("logHistoryOpen", { result: handleWire() })
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						double.plan("logCommandSeal", {
 							result: { command: { __command: true }, ref: refWire }
 						})
 						const changes = { __changes: true }
 						registerChange(changes, { native: "change" })
-						const command = yield* machine.Command.seal(
-							{
-								scope: {
-									databaseId: refWire.identity.databaseId,
-									incarnationId: refWire.identity.incarnationId,
-									schemaId: refWire.identity.schemaId
-								},
-								id: { receiptEpoch: 1n, requestId: refWire.requestId },
-								changes,
-								precondition: { kind: "blind" },
-								result: { attempt: "6f6f6f6f-6f6f-6f6f-6f6f-6f6f6f6f6f6f" }
-							} as never,
-							work
-						)
+						const command = yield* machine.Command.seal({
+							scope: {
+								databaseId: refWire.identity.databaseId,
+								incarnationId: refWire.identity.incarnationId,
+								schemaId: refWire.identity.schemaId
+							},
+							id: { receiptEpoch: 1n, requestId: refWire.requestId },
+							changes,
+							precondition: { kind: "blind" },
+							result: { attempt: "6f6f6f6f-6f6f-6f6f-6f6f-6f6f6f6f6f6f" }
+						} as never)
 						double.plan("logHistoryCall", {
 							result: {
 								verb: "submit",

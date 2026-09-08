@@ -328,19 +328,58 @@ impl<E, S> From<FrameError> for ReadError<E, S> {
     }
 }
 
-/// Decode a chunked stream with one bounded carry buffer. Chunk items are
-/// `B: AsRef<[u8]>` so a [`bumbledb::work::ChargedBytes`] (or `Vec<u8>`)
-/// iterator decodes without a caller-side payload copy. Records may split
-/// across chunk boundaries; the carry never exceeds one record plus one
-/// chunk. Counters in the end record must match what was decoded, and bytes
+enum RecordExtent {
+    /// Minimum prefix needed to finish the header or its declared payload.
+    Incomplete(usize),
+    Complete(usize),
+}
+
+fn record_extent(bytes: &[u8], limits: StreamLimits) -> Result<RecordExtent, FrameError> {
+    let Some(&tag) = bytes.first() else {
+        return Ok(RecordExtent::Incomplete(1));
+    };
+    let header = match tag {
+        TAG_FACT => 13,
+        TAG_SYSTEM => {
+            if bytes.len() < 3 {
+                return Ok(RecordExtent::Incomplete(3));
+            }
+            3 + usize::from(u16::from_be_bytes(bytes[1..3].try_into().expect("width"))) + 8
+        }
+        TAG_END => 17,
+        got => return Err(FrameError::Tag { at: 0, got }),
+    };
+    if bytes.len() < header {
+        return Ok(RecordExtent::Incomplete(header));
+    }
+    let size = if tag == TAG_END {
+        header
+    } else {
+        let payload = u64::from_be_bytes(bytes[header - 8..header].try_into().expect("width"));
+        let payload = usize::try_from(payload).map_err(|_| FrameError::LengthOverflow)?;
+        if payload > limits.record_bytes {
+            return Err(FrameError::LimitExceeded);
+        }
+        header
+            .checked_add(payload)
+            .ok_or(FrameError::LengthOverflow)?
+    };
+    Ok(if bytes.len() < size {
+        RecordExtent::Incomplete(size)
+    } else {
+        RecordExtent::Complete(size)
+    })
+}
+
+/// Decode a chunked stream with one reusable carry buffer. Chunk items are
+/// `B: AsRef<[u8]>` so an owned or borrowed chunk
+/// iterator decodes without a caller-side payload copy. Complete records
+/// borrow the chunk directly; only a record split across chunks uses the
+/// carry. Counters in the end record must match what was decoded, and bytes
 /// after the end record refuse.
 ///
 /// # Errors
 /// Grammar refusals, chunk-supplier failures and sink refusals.
-#[expect(
-    clippy::too_many_lines,
-    reason = "one bounded decode loop over the frozen chunk grammar"
-)]
 pub fn read_stream<E, S, B: AsRef<[u8]>>(
     chunks: impl IntoIterator<Item = Result<B, E>>,
     sink: &mut dyn StreamSink<Error = S>,
@@ -355,67 +394,13 @@ pub fn read_stream<E, S, B: AsRef<[u8]>>(
     let mut system_records = 0u64;
     let mut finished: Option<(u64, u64)> = None;
 
-    let mut consume = |carry: &mut Vec<u8>| -> Result<bool, ReadError<E, S>> {
-        // Try to parse one complete record from the carry front.
-        let Some(&tag) = carry.first() else {
-            return Ok(false);
-        };
-        let record_len: usize;
-        match tag {
-            TAG_FACT => {
-                if carry.len() < 13 {
-                    return Ok(false);
-                }
-                let len = u64::from_be_bytes(carry[5..13].try_into().expect("width"));
-                let len = usize::try_from(len).map_err(|_| FrameError::LengthOverflow)?;
-                if len > limits.record_bytes {
-                    return Err(FrameError::LimitExceeded.into());
-                }
-                record_len = 13usize.checked_add(len).ok_or(FrameError::LengthOverflow)?;
-                if carry.len() < record_len {
-                    return Ok(false);
-                }
-            }
-            TAG_SYSTEM => {
-                if carry.len() < 3 {
-                    return Ok(false);
-                }
-                let key_len =
-                    usize::from(u16::from_be_bytes(carry[1..3].try_into().expect("width")));
-                if carry.len() < 3 + key_len + 8 {
-                    return Ok(false);
-                }
-                let len = u64::from_be_bytes(
-                    carry[3 + key_len..3 + key_len + 8]
-                        .try_into()
-                        .expect("width"),
-                );
-                let len = usize::try_from(len).map_err(|_| FrameError::LengthOverflow)?;
-                if len > limits.record_bytes {
-                    return Err(FrameError::LimitExceeded.into());
-                }
-                record_len = (3 + key_len + 8)
-                    .checked_add(len)
-                    .ok_or(FrameError::LengthOverflow)?;
-                if carry.len() < record_len {
-                    return Ok(false);
-                }
-            }
-            TAG_END => {
-                if carry.len() < 17 {
-                    return Ok(false);
-                }
-                record_len = 17;
-            }
-            got => return Err(FrameError::Tag { at: 0, got }.into()),
-        }
+    let mut consume = |record: &[u8]| -> Result<(), ReadError<E, S>> {
         if finished.is_some() {
             return Err(FrameError::TrailingBytes { at: 0 }.into());
         }
-        let record = &carry[..record_len];
         stream.update(record);
         total_bytes += record.len() as u64;
-        match tag {
+        match record[0] {
             TAG_FACT => {
                 application.update(record);
                 let relation = u32::from_be_bytes(record[1..5].try_into().expect("width"));
@@ -440,16 +425,43 @@ pub fn read_stream<E, S, B: AsRef<[u8]>>(
             }
             _ => unreachable!("tag was validated"),
         }
-        carry.drain(..record_len);
-        Ok(true)
+        Ok(())
     };
 
     for chunk in chunks {
         let chunk = chunk.map_err(ReadError::Chunk)?;
-        carry.extend_from_slice(chunk.as_ref());
-        while consume(&mut carry)? {}
+        let mut bytes = chunk.as_ref();
+        loop {
+            let pending = !carry.is_empty();
+            let available = if pending { carry.as_slice() } else { bytes };
+            if available.is_empty() {
+                break;
+            }
+            match record_extent(available, limits)? {
+                RecordExtent::Complete(size) => {
+                    consume(&available[..size])?;
+                    if pending {
+                        debug_assert_eq!(size, carry.len(), "carry holds just the split record");
+                        carry.clear();
+                    } else {
+                        bytes = &bytes[size..];
+                    }
+                }
+                RecordExtent::Incomplete(needed) => {
+                    if !pending {
+                        carry.extend_from_slice(bytes);
+                        break;
+                    }
+                    let take = (needed - carry.len()).min(bytes.len());
+                    if take == 0 {
+                        break;
+                    }
+                    carry.extend_from_slice(&bytes[..take]);
+                    bytes = &bytes[take..];
+                }
+            }
+        }
     }
-    while consume(&mut carry)? {}
     if !carry.is_empty() {
         return Err(FrameError::Truncated { at: carry.len() }.into());
     }
@@ -671,74 +683,150 @@ mod tests {
 
     #[test]
     fn streams_roundtrip_identically_across_chunk_boundaries() {
-        // A chunk size small enough to split every record proves the carry
-        // parser; the digests must not depend on the chunking.
-        let (big_chunks, big) = write_sample(1 << 20);
-        let (small_chunks, small) = write_sample(4_096);
-        assert!(small_chunks.len() >= big_chunks.len());
-        assert_eq!(big.application_digest, small.application_digest);
-        assert_eq!(big.system_digest, small.system_digest);
-        assert_eq!(big.stream_digest, small.stream_digest);
-        let mut sink = CollectSink::default();
-        let summary = read_stream(
-            small_chunks
-                .into_iter()
-                .map(Ok::<_, std::convert::Infallible>),
-            &mut sink,
-            StreamLimits::DEFAULT,
-        )
-        .unwrap();
-        assert_eq!(summary.application_digest, big.application_digest);
-        assert_eq!(summary.system_digest, big.system_digest);
-        assert_eq!(summary.rows, 3);
-        assert_eq!(summary.system_records, 3);
-        assert_eq!(sink.facts.len(), 3);
-        assert_eq!(sink.facts[1].1, b"row-b-longer-payload");
-        assert_eq!(sink.system[0].0, b"r-key-1");
-        assert_eq!(sink.system[2].1, b"applied-batch-evidence");
+        // The writer has a 4 KiB minimum. Rechunk the fixture explicitly
+        // so small records really split at every header/payload boundary.
+        let (chunks, expected) = write_sample(4_096);
+        let bytes = chunks.concat();
+        for width in 1..=bytes.len() + 1 {
+            let mut sink = CollectSink::default();
+            let summary = read_stream(
+                bytes
+                    .chunks(width)
+                    .flat_map(|chunk| [Ok::<_, std::convert::Infallible>(&[][..]), Ok(chunk)]),
+                &mut sink,
+                StreamLimits::DEFAULT,
+            )
+            .unwrap();
+            assert_eq!(summary.application_digest, expected.application_digest);
+            assert_eq!(summary.system_digest, expected.system_digest);
+            assert_eq!(summary.stream_digest, expected.stream_digest);
+            assert_eq!(summary.total_bytes, expected.total_bytes);
+            assert_eq!(summary.rows, 3);
+            assert_eq!(summary.system_records, 3);
+            assert_eq!(sink.facts.len(), 3);
+            assert_eq!(sink.facts[1].1, b"row-b-longer-payload");
+            assert_eq!(sink.system[0].0, b"r-key-1");
+            assert_eq!(sink.system[2].1, b"applied-batch-evidence");
+        }
     }
 
-    /// Charged chunk owners decode through `as_ref` without a payload `to_vec`.
+    /// Iterator items are ordinary owners; the decoder does not collect them.
     #[test]
-    fn charged_bytes_chunk_iterator_decodes_without_payload_copy() {
-        use bumbledb::ExecutionPolicy;
-        use bumbledb::work::{ByteKind, ChargedBytes};
-        use std::time::Duration;
-
-        let work = ExecutionPolicy {
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 1 << 16,
-            work_units: 1_024,
-            timeout: Duration::from_secs(30),
+    fn owned_chunk_iterator_drops_each_chunk_before_the_next_fetch() {
+        struct Chunk<'a> {
+            bytes: Vec<u8>,
+            live: &'a std::cell::Cell<bool>,
         }
-        .start()
-        .expect("work");
+        impl AsRef<[u8]> for Chunk<'_> {
+            fn as_ref(&self) -> &[u8] {
+                &self.bytes
+            }
+        }
+        impl Drop for Chunk<'_> {
+            fn drop(&mut self) {
+                self.live.set(false);
+            }
+        }
+        let live = std::cell::Cell::new(false);
         let (chunks, expected) = write_sample(4_096);
-        let charged: Vec<ChargedBytes> = chunks
-            .into_iter()
-            .map(|bytes| {
-                ChargedBytes::adopt(&work, ByteKind::Working, bytes.into_boxed_slice())
-                    .expect("adopt")
+        let bytes = chunks.concat();
+        let fetched = bytes.chunks(7).map(|bytes| {
+            assert!(!live.replace(true), "previous chunk dropped before fetch");
+            Ok::<_, ()>(Chunk {
+                bytes: bytes.to_vec(),
+                live: &live,
             })
-            .collect();
+        });
         let mut sink = CollectSink::default();
-        let summary = read_stream(
-            charged
-                .iter()
-                .map(|chunk| Ok::<_, std::convert::Infallible>(chunk.as_bytes())),
-            &mut sink,
-            StreamLimits::DEFAULT,
-        )
-        .expect("charged chunks decode");
+        let summary =
+            read_stream(fetched, &mut sink, StreamLimits::DEFAULT).expect("owned chunks decode");
         assert_eq!(summary.rows, expected.rows);
         assert_eq!(summary.system_records, expected.system_records);
         assert_eq!(summary.application_digest, expected.application_digest);
-        for owner in charged {
-            drop(owner.into_owner());
+        assert!(!live.get(), "last chunk dropped");
+    }
+
+    #[test]
+    fn streaming_decode_does_not_fetch_past_a_frame_or_sink_failure() {
+        struct Refuse;
+        impl StreamSink for Refuse {
+            type Error = ();
+            fn fact(&mut self, _: u32, _: &[u8]) -> Result<(), ()> {
+                Err(())
+            }
+            fn system(&mut self, _: &[u8], _: &[u8]) -> Result<(), ()> {
+                Err(())
+            }
         }
+        for corrupt in [false, true] {
+            let (chunks, _) = write_sample(4_096);
+            let mut bytes = chunks.concat();
+            if corrupt {
+                bytes[0] = 0xff;
+            }
+            let chunks = std::iter::once(Ok::<_, ()>(bytes)).chain(std::iter::from_fn(|| {
+                panic!("fetched after terminal failure")
+            }));
+            let result = read_stream(chunks, &mut Refuse, StreamLimits::DEFAULT);
+            if corrupt {
+                assert!(matches!(
+                    result,
+                    Err(ReadError::Frame(FrameError::Tag { .. }))
+                ));
+            } else {
+                assert!(matches!(result, Err(ReadError::Sink(()))));
+            }
+        }
+    }
+
+    #[test]
+    fn streaming_decode_borrows_complete_records_from_the_chunk() {
+        struct Borrowed<'a>(&'a [u8]);
+        impl Borrowed<'_> {
+            fn check(&self, bytes: &[u8]) {
+                let start = self.0.as_ptr().addr();
+                let end = start + self.0.len();
+                let address = bytes.as_ptr().addr();
+                assert!(
+                    address >= start && address + bytes.len() <= end,
+                    "a complete record is borrowed from the received chunk, not copied"
+                );
+            }
+        }
+        impl StreamSink for Borrowed<'_> {
+            type Error = std::convert::Infallible;
+            fn fact(&mut self, _: u32, row: &[u8]) -> Result<(), Self::Error> {
+                self.check(row);
+                Ok(())
+            }
+            fn system(&mut self, key: &[u8], value: &[u8]) -> Result<(), Self::Error> {
+                self.check(key);
+                self.check(value);
+                Ok(())
+            }
+        }
+        let (chunks, expected) = write_sample(4_096);
+        assert_eq!(chunks.len(), 1, "the fixture has no split records");
+        let bytes = &chunks[0];
+        // The workspace alloc-counter lane runs this in an isolated process.
+        // Pointer assertions above remain authoritative without that feature.
+        let before = bumbledb::alloc_counter::snapshot().window;
+        let summary = read_stream(
+            std::iter::once(Ok::<_, std::convert::Infallible>(bytes.as_slice())),
+            &mut Borrowed(bytes),
+            StreamLimits::DEFAULT,
+        )
+        .unwrap();
+        let after = bumbledb::alloc_counter::snapshot().window;
+        assert_eq!(after, before, "complete records need no decode allocation");
+        eprintln!(
+            "complete-record decode: allocs={}, bytes={}",
+            after.allocs - before.allocs,
+            after.alloc_bytes - before.alloc_bytes,
+        );
+        assert_eq!(summary.stream_digest, expected.stream_digest);
+        assert_eq!(summary.rows, expected.rows);
+        assert_eq!(summary.system_records, expected.system_records);
     }
 
     #[test]

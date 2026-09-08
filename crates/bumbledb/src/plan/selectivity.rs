@@ -148,7 +148,9 @@ pub(crate) fn occurrence_stats_on(
 fn selection_matches(value: &Const) -> u64 {
     match value {
         Const::ParamSet(_) => PARAM_SET_PLANNING_ROWS,
-        Const::WordSet(words) => u64::try_from(words.len()).expect("bounded set").max(1),
+        Const::WordSet(words) => u64::try_from(words.words.len())
+            .expect("bounded set")
+            .max(1),
         _ => 1,
     }
 }

@@ -28,7 +28,6 @@ use crate::schema::{FieldId, Side, StatementDescriptor, StatementKind, Weight};
 use crate::storage::store::fingerprint::FP_LEN;
 use crate::storage::store::judge_bridge::{SchemaJudge, UnindexedRows};
 use crate::storage::store::verify::{self, VerifyFinding};
-use crate::work::Resource;
 use bumbledb_theory::schema::Bound;
 
 const USER: RelationId = RelationId(0);
@@ -812,7 +811,7 @@ fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts(
     );
 }
 
-/// A judge wrapper measuring the production judgment's own work-unit cost.
+/// A judge wrapper measuring actual allocation requests inside judgment.
 struct MeasuredJudge<'s> {
     schema: &'s Schema,
     cost: std::cell::Cell<u64>,
@@ -826,13 +825,13 @@ impl CandidateJudge for MeasuredJudge<'_> {
         candidate: &CandidateState<'_, '_>,
         work: &WorkContext,
     ) -> StoreResult<Judgment<Self::Rejection>> {
-        let before = work.used(Resource::WorkUnits);
+        let before = crate::alloc_counter::count();
         let judged = SchemaJudge::new(self.schema).judge_incremental(
             LawfulParent::established(),
             candidate,
             work,
         )?;
-        self.cost.set(work.used(Resource::WorkUnits) - before);
+        self.cost.set(crate::alloc_counter::count() - before);
         Ok(judged)
     }
 }
@@ -881,13 +880,11 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
     judge.cost.get()
 }
 
-/// STRUCTURAL work regression (never timing): the production judgment of a
-/// one-row mutation costs work proportional to the delta's determinant
-/// groups, not to the relation — flat under an 8× relation growth and far
-/// below one work unit per relation row, with the untouched containment/
-/// capacity relations never entering the judgment at all.
+/// Allocation regression, not timing or a count of physical storage reads.
+/// One-row judgment must not create relation-sized temporary representations.
+/// The judge's no-scan doubles independently enforce indexed traversal.
 #[test]
-fn incremental_judgment_work_is_delta_shaped_not_relation_shaped() {
+fn incremental_judgment_allocations_are_delta_shaped_not_relation_shaped() {
     let (_dir, path) = store_dir("incremental-workcount");
     let schema = delta_schema();
     let store = Store::create(&path, &schema, MapPolicy::default())
@@ -914,19 +911,27 @@ fn incremental_judgment_work_is_delta_shaped_not_relation_shaped() {
     seed_users(&store, &schema, 256, 2048);
     let large = measured_one_row_judgment(&store, &schema, 1_000_002);
 
-    assert!(
-        small < 256,
-        "one-row judgment against 256 rows must be delta-shaped: {small} work units"
-    );
-    assert!(
-        large < 256,
-        "one-row judgment against 2048 rows (+192 bookings/rooms) must stay \
-         delta-shaped: {large} work units"
-    );
-    assert!(
-        large <= small + 32,
-        "judgment work must not grow with the relation: {small} -> {large}"
-    );
+    #[cfg(feature = "alloc-counter")]
+    {
+        assert!(
+            small > 0 && large > 0,
+            "the allocator counter must observe real work"
+        );
+        assert!(
+            small < 256,
+            "one-row judgment against 256 rows must be delta-shaped: {small} allocation requests"
+        );
+        assert!(
+            large < 256,
+            "one-row judgment against 2048 rows (+192 bookings/rooms) must stay \
+         delta-shaped: {large} allocation requests"
+        );
+        assert!(
+            large <= small + 32,
+            "judgment allocations must not grow with the relation: {small} -> {large}"
+        );
+    }
+    let _ = (small, large);
 }
 
 #[test]

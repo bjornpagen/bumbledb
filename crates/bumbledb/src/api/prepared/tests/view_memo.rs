@@ -86,23 +86,52 @@ fn trim_drops_parked_views_and_preserves_answers() {
     let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
     let params = [BindValue::U64(0), BindValue::I64(-100)];
     let before = answers_of(&fix.execute(&mut prepared, &params).expect("execute"));
-    prepared.trim();
+    prepared.release_memory();
     let after = answers_of(&fix.execute(&mut prepared, &params).expect("re-execute"));
     assert_eq!(before, after, "trim changes cost, never answers");
 }
 
-fn memo_operation(units: u64) -> crate::work::WorkContext {
-    crate::work::ExecutionPolicy {
-        input_bytes: u64::MAX,
-        working_bytes: u64::MAX,
-        scratch_bytes: u64::MAX,
-        result_bytes: u64::MAX,
-        rows: u64::MAX,
-        work_units: units,
-        timeout: std::time::Duration::from_secs(3600),
-    }
-    .start()
-    .expect("valid memo operation")
+#[test]
+fn query_release_deallocates_active_join_pools_without_clearing_shared_cache() {
+    let rows: Vec<_> = (0..8192).map(|id| (id, id % 4, "memo", 1)).collect();
+    let fix = posting_store("view-memo-release-pools", &rows);
+    let mut prepared = fix.prepare(&by_account_query()).expect("prepare");
+    let params = [BindValue::U64(0), BindValue::I64(-100)];
+    let before = answers_of(&fix.execute(&mut prepared, &params).expect("execute"));
+    let retained = |prepared: &PreparedQuery<T>| {
+        let [PreparedRule::FreeJoin(rule)] = prepared.pipeline.main_rules() else {
+            panic!("free join fixture")
+        };
+        rule.memo
+            .colts
+            .iter()
+            .map(Colt::retained_bytes)
+            .sum::<usize>()
+    };
+    let warm_bytes = retained(&prepared);
+    assert!(warm_bytes > 8192, "fixture must grow the join pools");
+    let generation = prepared.cache.cache_generation();
+    let images = prepared.cache.image_count();
+    prepared.release_memory();
+    eprintln!(
+        "join pool bytes: warm={warm_bytes}, released={}",
+        retained(&prepared)
+    );
+    assert_eq!(
+        retained(&prepared),
+        0,
+        "release must drop active pool capacity"
+    );
+    assert_eq!(prepared.cache.cache_generation(), generation);
+    assert_eq!(prepared.cache.image_count(), images);
+    let after = answers_of(
+        &fix.execute(&mut prepared, &params)
+            .expect("reuse prepared plan"),
+    );
+    assert_eq!(before, after);
+    prepared.release_memory();
+    prepared.release_memory();
+    assert_eq!(retained(&prepared), 0, "release is idempotent");
 }
 
 fn memo_window(draw: u64) -> [FilterPredicate; 2] {
@@ -128,29 +157,24 @@ fn rebuild_memo_window(
 ) {
     let filters = memo_window(draw);
     let buffer = std::mem::take(memo.spare_mut(0));
-    let view = crate::image::view::apply(
-        image,
-        &filters,
-        &[],
-        buffer,
-        image.generation().text_eq(None),
-    )
-    .expect("numeric window");
+    let view =
+        crate::image::view::apply(image, &filters, &[], buffer, image.generation().text_eq())
+            .expect("numeric window");
     *memo.spare_mut(0) = memo.colts[0].reset(view).recycle();
     memo.set_bound(0, epoch, &filters, None);
 }
 
 /// The operation context belongs to the active execution slot, whereas
-/// cached contents and retained pool reservations travel through the LRU.
+/// cached contents and retained pools travel through the LRU.
 #[test]
 #[expect(
     clippy::too_many_lines,
-    reason = "one table-driven activation protocol checks all context and reservation outcomes"
+    reason = "one table-driven activation protocol checks all context and ownership outcomes"
 )]
 fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
     use crate::image::view::View;
     use crate::schema::ValidateDescriptor as _;
-    use crate::work::{Resource, WorkError};
+    use crate::work::WorkError;
 
     let schema = descriptor().validate().expect("fixture schema");
     let rows: Vec<_> = (0..320).map(|id| (id, 0, "m", 0)).collect();
@@ -161,7 +185,7 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
         crate::image::ViewEpoch::Store(crate::storage::store::RelationVersion::from_storage(1));
 
     for activation in ["bound-hit", "unbound-hit", "lru-miss"] {
-        for refusal in ["cancelled-prior", "cancelled-current", "no-current-units"] {
+        for refusal in ["cancelled-prior", "cancelled-current", "fresh-current"] {
             let mut memo = ViewMemo::new();
             memo.push(
                 Colt::new(View::Unbound, &[], vec![vec![0]]),
@@ -169,7 +193,7 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
             );
             let mut owners = Vec::new();
             for draw in 0..4 {
-                let work = memo_operation(u64::MAX);
+                let work = crate::work::WorkContext::new();
                 memo.colts[0].bind(Some(&work));
                 memo.tick += 1;
                 assert!(!memo.bind(0, epoch, &memo_window(draw), &[]));
@@ -188,21 +212,28 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
                 3,
                 "all three parked slots are populated"
             );
-            let before: Vec<_> = owners
-                .iter()
-                .map(|work| work.used(Resource::WorkingBytes))
-                .collect();
-            assert!(before.iter().take(3).all(|&bytes| bytes > 0));
+            let retained = |memo: &ViewMemo| {
+                memo.colts.iter().map(Colt::retained_bytes).sum::<usize>()
+                    + memo
+                        .occs
+                        .iter()
+                        .flat_map(|occ| occ.parked.iter().flatten())
+                        .map(|parked| parked.colt.retained_bytes())
+                        .sum::<usize>()
+                    + memo
+                        .occs
+                        .iter()
+                        .map(|occ| occ.spare.capacity() * 4)
+                        .sum::<usize>()
+            };
+            let before = retained(&memo);
+            assert!(before > 0);
             if refusal == "cancelled-prior" {
                 for work in &owners {
                     work.cancel();
                 }
             }
-            let current = memo_operation(if refusal == "no-current-units" {
-                0
-            } else {
-                u64::MAX
-            });
+            let current = crate::work::WorkContext::new();
             if refusal == "cancelled-current" {
                 current.cancel();
             }
@@ -214,13 +245,9 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
             let draw = if activation == "lru-miss" { 4 } else { 0 };
             let hit = memo.bind(0, epoch, &memo_window(draw), &[]);
             assert_eq!(hit, activation != "lru-miss", "{activation}");
-            assert_eq!(
-                owners
-                    .iter()
-                    .map(|work| work.used(Resource::WorkingBytes))
-                    .collect::<Vec<_>>(),
-                before,
-                "activation transfers no reservation to a different ledger"
+            assert!(
+                retained(&memo) <= before,
+                "activation never creates larger pools"
             );
             if hit {
                 // Rebuild the same cached view in retained pools: an already
@@ -233,7 +260,7 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
 
             let result = memo.colts[0].force_root();
             match refusal {
-                "cancelled-prior" => {
+                "cancelled-prior" | "fresh-current" => {
                     result.unwrap_or_else(|error| panic!(
                         "{activation}: parked prior context leaked into fresh operation: {error:?}"
                     ));
@@ -249,43 +276,20 @@ fn four_draw_memo_activation_preserves_current_work_and_pool_ownership() {
                             .unwrap()
                             .is_some()
                     );
-                    assert!(current.used(Resource::WorkUnits) >= 64);
+                    assert_eq!(current.checkpoint(), Ok(()));
                 }
                 "cancelled-current" => {
                     assert_eq!(result, Err(WorkError::Cancelled), "{activation}");
                 }
-                "no-current-units" => assert!(
-                    matches!(
-                        result,
-                        Err(WorkError::Exhausted {
-                            resource: Resource::WorkUnits,
-                            ..
-                        })
-                    ),
-                    "{activation}: cached rich context bypassed current allowance: {result:?}"
-                ),
                 _ => unreachable!(),
             }
-            assert_eq!(
-                owners
-                    .iter()
-                    .map(|work| work.used(Resource::WorkingBytes))
-                    .collect::<Vec<_>>(),
-                before,
-                "retained pools keep their original reservation owners"
-            );
-            assert_eq!(
-                current.used(Resource::WorkingBytes),
-                0,
-                "retained pools do not grow"
-            );
+            let retained = retained(&memo);
+            let before = crate::alloc_counter::snapshot().window;
             drop(memo);
-            assert!(
-                owners
-                    .iter()
-                    .all(|work| work.used(Resource::WorkingBytes) == 0),
-                "dropping active and parked pools refunds their owners"
-            );
+            let after = crate::alloc_counter::snapshot().window;
+            #[cfg(feature = "alloc-counter")]
+            assert!(after.dealloc_bytes - before.dealloc_bytes >= retained as u64);
+            let _ = (retained, before, after);
         }
     }
 }

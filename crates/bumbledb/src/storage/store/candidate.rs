@@ -358,7 +358,7 @@ impl<'store> WriteOwner<'store> {
         // here cannot change the final state.
         for kind in [ChangeKind::Remove, ChangeKind::Add] {
             for record in changes.records().filter(|record| record.kind == kind) {
-                self.work.step(1)?;
+                self.work.checkpoint()?;
                 let relation = record.relation;
                 match kind {
                     ChangeKind::Remove => {
@@ -393,7 +393,7 @@ impl<'store> WriteOwner<'store> {
             // same transaction as the rows they cover. Host-record-only
             // seals never reach this arm (they change no relation's rows).
             for relation in &changed_relations {
-                self.work.step(1)?;
+                self.work.checkpoint()?;
                 let next =
                     super::format::read_relation_version(&inner.meta, &gated.txn, *relation)?
                         .next()?;
@@ -569,7 +569,7 @@ impl CandidateState<'_, '_> {
             .fields_of(key.relation)
             .ok_or(StoreError::ForeignSchema)?;
         self.visit_determinant_bucket(key.id, &projected, work, &mut |id, bytes| {
-            work.step(1)?;
+            work.checkpoint()?;
             let decoded = crate::canonical::decode(fields, bytes, work)?;
             if key.scalar_values(decoded.values()).as_slice() == determinant {
                 visit(id.0, decoded.values())
@@ -711,27 +711,23 @@ fn validate_host(host: &HostChanges<'_>, work: &WorkContext) -> StoreResult<()> 
     work.checkpoint()?;
     let mut previous: Option<&[u8]> = None;
     for record in host.records {
-        work.step(1)?;
+        work.checkpoint()?;
         let key = match *record {
-            HostRecordChange::Put { key, value } => {
-                work.input(value.len() as u64)?;
-                key
-            }
-            HostRecordChange::Delete { key } => key,
+            HostRecordChange::Put { key, .. } | HostRecordChange::Delete { key } => key,
         };
         if key.len() > HOST_KEY_MAX {
             return Err(StoreError::HostKey(HostKeyFault::TooLong {
                 actual: key.len(),
             }));
         }
-        work.input(key.len() as u64)?;
+        work.checkpoint()?;
         if previous.is_some_and(|previous| previous >= key) {
             return Err(StoreError::HostKey(HostKeyFault::NotStrictlyOrdered));
         }
         previous = Some(key);
     }
-    if let AttachmentChange::Put(bytes) = host.attachment {
-        work.input(bytes.len() as u64)?;
+    if let AttachmentChange::Put(_) = host.attachment {
+        work.checkpoint()?;
     }
     Ok(())
 }
@@ -751,7 +747,7 @@ fn put_chunked(
         .meta
         .put_reserved(&mut txn.txn, key, value.len(), |space| {
             for chunk in value.chunks(BYTE_QUANTUM) {
-                work.step(chunk.len() as u64).map_err(|error| {
+                work.checkpoint().map_err(|error| {
                     stopped = Some(error);
                     std::io::Error::from(std::io::ErrorKind::Interrupted)
                 })?;
@@ -775,7 +771,7 @@ fn apply_host_changes(
     let mut buffer = [0u8; 1 + HOST_KEY_MAX];
     let mut mutated = false;
     for (index, record) in host.records.iter().enumerate() {
-        work.step(1)?;
+        work.checkpoint()?;
         #[cfg(not(test))]
         let _ = index;
         #[cfg(test)]
@@ -813,7 +809,7 @@ fn apply_host_changes(
             }
         }
     }
-    work.step(1)?;
+    work.checkpoint()?;
     match host.attachment {
         AttachmentChange::Keep => {}
         AttachmentChange::Put(bytes) => {

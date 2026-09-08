@@ -1,15 +1,15 @@
 //! Shared routing/admission metadata (C7).
 //!
 //! The runtime-wide lock covers only capability routes, resource state and
-//! byte/count charges. Payloads live in the owning worker table. Absence or
+//! native handle counts. Payloads live in the owning worker table. Absence or
 //! generation mismatch refuses — IDs are not kept as revoked tombstones.
 //!
 //! Consumer contract (L13/L14/L16):
 //! - `Capability { runtime, worker, kind, id, generation }` is the only token.
-//! - `RegistryAdmission::admit` reserves count/bytes then installs on a worker.
+//! - `RegistryAdmission::admit` reserves a handle slot then installs on a worker.
 //! - `Runtime::submit_payload` / `SnapshotSession::submit` borrow one entry.
 //! - `Runtime::close_resource` is the joined close; it cannot `QueueFull`.
-//! - `DraftPayload` persists [`registry_draft::DraftLedger`].
+//! - Failed drafts release their pending rows and stay terminal.
 //! - `Output::Page` / `Rows` carry [`super::QueuedOutput`]. No `Cursor.pending`.
 //! - Lock handles mint with `NativeKind::RepositoryLock`.
 //! - `with_payload`, `RetainedGuard`, and JS-driven `WriterSession` are gone.
@@ -27,6 +27,7 @@ use super::{Runtime, RuntimeError, lock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NativeKind {
     Snapshot,
+    Prepared,
     Result,
     Cursor,
     Draft,
@@ -71,19 +72,6 @@ pub struct Capability {
     pub generation: u64,
 }
 
-impl Capability {
-    #[must_use]
-    pub const fn header(self) -> ResourceHeader {
-        ResourceHeader {
-            runtime: self.runtime,
-            worker: self.worker,
-            kind: self.kind,
-            id: self.id,
-            generation: self.generation,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultState {
     Live,
@@ -117,7 +105,6 @@ struct Route {
     worker: u32,
     generation: u64,
     state: ResourceState,
-    bytes: u64,
     close: bool,
 }
 
@@ -163,12 +150,11 @@ impl NativeRegistry {
     }
 
     /// Reserves a route row. Caller must already have reserved handle
-    /// count and byte charge. No payload is stored here.
+    /// count. No payload is stored here.
     pub(crate) fn insert_route(
         &self,
         worker: u32,
         kind: NativeKind,
-        bytes: u64,
     ) -> Result<Capability, RuntimeError> {
         if worker >= self.workers {
             return Err(RuntimeError::Internal);
@@ -182,7 +168,6 @@ impl NativeRegistry {
                 worker,
                 generation,
                 state: ResourceState::Live,
-                bytes,
                 close: false,
             },
         );
@@ -196,14 +181,14 @@ impl NativeRegistry {
     }
 
     /// Drops a route that was reserved but never installed. No tombstone.
-    pub(crate) fn rollback_route(&self, cap: Capability) -> Option<u64> {
+    pub(crate) fn rollback_route(&self, cap: Capability) -> Option<()> {
         let mut routes = self.routes();
         let route = routes.remove(&(cap.kind, cap.id))?;
         if route.generation != cap.generation {
             routes.insert((cap.kind, cap.id), route);
             return None;
         }
-        Some(route.bytes)
+        Some(())
     }
 
     pub(crate) fn state(&self, cap: Capability) -> Result<ResourceState, RuntimeError> {
@@ -278,14 +263,14 @@ impl NativeRegistry {
     }
 
     /// Removes a drained route. No tombstone remains.
-    pub(crate) fn release(&self, cap: Capability) -> Option<u64> {
+    pub(crate) fn release(&self, cap: Capability) -> Option<()> {
         let mut routes = self.routes();
         let route = routes.remove(&(cap.kind, cap.id))?;
         if route.generation != cap.generation {
             routes.insert((cap.kind, cap.id), route);
             return None;
         }
-        Some(route.bytes)
+        Some(())
     }
 
     /// Idempotent join: the row is gone (drained) or already closing with
@@ -347,7 +332,6 @@ impl NativeRegistry {
 /// table and draft ingestion can mutate through capabilities.
 pub(crate) mod registry_draft {
     use std::sync::Arc;
-    use std::time::Instant;
 
     use bumbledb::{RelationId, Value};
 
@@ -357,46 +341,31 @@ pub(crate) mod registry_draft {
         pub values: Vec<Value>,
     }
 
-    /// Independent cumulative work/deadline for one draft. Finish sees the
-    /// same spend as every ingest chunk. `terminal` poisons the draft.
-    #[derive(Debug, Clone)]
-    pub struct DraftLedger {
-        pub used_work: u64,
-        pub allowance_work: u64,
-        pub deadline: Instant,
-        pub terminal: bool,
-    }
-
     pub(crate) struct DraftPayload {
         pub schema: Arc<bumbledb::schema::Schema>,
         pub pending: Vec<PendingChange>,
-        pub used_input: u64,
-        pub used_rows: u64,
-        pub allowance_input: u64,
-        pub allowance_rows: u64,
-        pub ledger: DraftLedger,
+        pub terminal: bool,
     }
 }
 
 /// Reserve-then-install admission. The JS wrapper holds a capability
-/// token only — it does not own the retained charge or the payload.
+/// token only — it does not own the payload.
 pub(crate) struct RegistryAdmission {
     pub runtime: Arc<Runtime>,
     pub cap: Capability,
 }
 
 impl RegistryAdmission {
-    /// Reserves handle/byte capacity and returns the capability immediately.
+    /// Reserves a handle slot and returns the capability immediately.
     /// Same-worker install is local; JS/cross-worker install is async
     /// (capability first, table insert later). A failed enqueue rolls the
     /// route back — no `ready_rx`, no thread-join.
     pub(crate) fn admit(
         runtime: Arc<Runtime>,
         kind: NativeKind,
-        bytes: u64,
         payload: Payload,
     ) -> Result<Self, RuntimeError> {
-        let cap = runtime.reserve_native_route(kind, bytes)?;
+        let cap = runtime.reserve_native_route(kind)?;
         if let Err(error) = runtime.install_send_payload(cap, payload) {
             runtime.rollback_native_route(cap);
             return Err(error);

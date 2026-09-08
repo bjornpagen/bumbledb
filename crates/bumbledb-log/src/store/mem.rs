@@ -535,7 +535,7 @@ mod tests {
             .unwrap()
         {
             ReceivedHead::Present { body, .. } => {
-                assert_eq!(body.as_bytes(), b"two", "the CAS landed");
+                assert_eq!(body.as_slice(), b"two", "the CAS landed");
             }
             ReceivedHead::Absent => panic!("head exists"),
         }

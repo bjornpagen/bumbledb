@@ -1,9 +1,9 @@
 //! Snapshot and execution-session jobs over L07/L12 owned read/frame.
 //!
-//! Each operation receives a fresh `WorkContext` from its policy. The
-//! snapshot's acquisition deadline is never reused. Prepared queries stay
-//! in the worker table (`SnapshotAccess::install`) so L12's execute-prepared
-//! path reuses the real object.
+//! Each operation receives a fresh cancellation `WorkContext`. The
+//! snapshot's age does not expire later operations. One-shot plans drop
+//! with their operation. Explicit preparation owns one reusable worker-table
+//! object and an independent share of the same snapshot pin.
 //!
 //! Point reads decode canonical rows from `OwnedRead::get_dyn`. Prepared
 //! executions acquire their own cache resolver through the core query path;
@@ -35,15 +35,14 @@ pub(crate) fn snapshot_get_work(
             .get_dyn(relation, key, &row, context)
             .map_err(|error| engine_error(&error))?;
         Ok(Output::Row(
-            hit.map(|row| crate::marshal::row_out_charged(context, &row))
+            hit.map(|row| crate::marshal::queued_row(context, &row))
                 .transpose()?,
         ))
     })
 }
 
-/// One complete bounded execution: prepare on the owned frame, seal a
-/// `CompleteResult` (failed work never becomes a logical result), then
-/// install the prepared query so the worker table retains reuse.
+/// Prepare, execute and drop the one-shot plan before returning its
+/// independent completed result. Nothing is installed for later operations.
 pub(crate) fn execute_complete_work(
     query: Query,
     params: Vec<crate::marshal::OwnedParam>,
@@ -67,6 +66,38 @@ fn owned_execute_complete(
     let result = prepared
         .execute_complete_with_work(&frame, context, args.as_slice())
         .map_err(|error| engine_error(&error))?;
-    access.install(prepared);
     Ok(result)
+}
+
+pub(crate) fn prepare_work(
+    runtime: std::sync::Arc<crate::runtime::Runtime>,
+    query: Query,
+) -> SnapshotWork {
+    Box::new(move |context, access| {
+        context.checkpoint()?;
+        access
+            .prepare(&runtime, &query, context)
+            .map(Output::Prepared)
+    })
+}
+
+pub(crate) fn execute_prepared_work(params: Vec<crate::marshal::OwnedParam>) -> SnapshotWork {
+    Box::new(move |context, access| {
+        context.checkpoint()?;
+        access
+            .execute(context, &crate::param_args(&params))
+            .map(Output::CompleteResult)
+    })
+}
+
+pub(crate) fn release_prepared_memory_work() -> SnapshotWork {
+    Box::new(|context, access| {
+        context.checkpoint()?;
+        access
+            .prepared
+            .as_deref_mut()
+            .ok_or(RuntimeError::ClosedHandle)?
+            .release_memory();
+        Ok(Output::Ready)
+    })
 }

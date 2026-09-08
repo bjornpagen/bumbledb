@@ -10,22 +10,12 @@ fn options() -> Options {
         cleanup_capacity: 4,
         owner_capacity: 4,
         native_handle_capacity: 8,
-        aggregate_bytes: [100; 4],
-        chunk_bytes: 100,
         cleanup_timeout: Duration::from_millis(20),
     }
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 10,
-        working_bytes: 10,
-        scratch_bytes: 10,
-        result_bytes: 10,
-        rows: 10,
-        work_units: 10,
-        timeout: Duration::from_secs(5),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn submit(runtime: &Runtime, work: Work) -> (Arc<Operation>, Receiver<()>) {
@@ -54,19 +44,19 @@ fn close(runtime: &Runtime) -> CloseReport {
 }
 
 #[test]
-fn retained_completion_keeps_reservations_until_taken() {
+fn retained_completion_keeps_its_operation_slot_until_taken() {
     let runtime = Runtime::start(options()).unwrap();
     let (operation, done) = submit(
         &runtime,
         Box::new(|context| {
-            context.step(3)?;
+            context.checkpoint()?;
             Ok(Output::Ready)
         }),
     );
     done.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert_eq!(runtime.inspect().reserved, [10; 4]);
+    assert_eq!(runtime.inspect().retained, 1);
     assert!(matches!(runtime.take(&operation), Ok(Output::Ready)));
-    assert_eq!(runtime.inspect().reserved, [0; 4]);
+    assert_eq!(runtime.inspect().retained, 0);
     // PINNED (P12's runtimeTake double-take note, decided wave-E): a second
     // take is the TYPED SpentHandle refusal, never a null/None payload —
     // runtime_take and every *Take verb ride this one path.
@@ -99,7 +89,7 @@ fn saturated_workers_still_report_incomplete_then_reclaim_late_success() {
     assert!(matches!(close(&runtime), CloseReport::Incomplete(_)));
     let inspection = runtime.inspect();
     assert_eq!(inspection.phase, Phase::Closing);
-    assert_eq!(inspection.reserved, [20; 4]);
+    assert_eq!(inspection.retained, 2);
     assert!(matches!(
         runtime.submit(policy(), Box::new(|| {}), |_| Ok(Box::new(|_| Ok(
             Output::Ready
@@ -110,7 +100,7 @@ fn saturated_workers_still_report_incomplete_then_reclaim_late_success() {
     done.recv_timeout(Duration::from_secs(2)).unwrap();
     queued_done.recv_timeout(Duration::from_secs(2)).unwrap();
     assert_eq!(close(&runtime), CloseReport::Closed);
-    assert_eq!(runtime.inspect().reserved, [0; 4]);
+    assert_eq!(runtime.inspect().retained, 0);
     assert!(matches!(
         runtime.take(&queued),
         Err(RuntimeError::Work(WorkError::Cancelled))
@@ -118,7 +108,7 @@ fn saturated_workers_still_report_incomplete_then_reclaim_late_success() {
 }
 
 #[test]
-fn queue_wait_uses_original_deadline_and_cancel_has_reserved_capacity() {
+fn queue_wait_does_not_expire_and_cancel_has_reserved_cleanup_capacity() {
     let runtime = Runtime::start(options()).unwrap();
     let (release, blocked) = mpsc::channel();
     let (entered, running) = mpsc::channel();
@@ -132,15 +122,18 @@ fn queue_wait_uses_original_deadline_and_cancel_has_reserved_capacity() {
     );
     running.recv_timeout(Duration::from_secs(2)).unwrap();
     let (notify, done) = mpsc::channel();
-    let mut short = policy();
-    short.timeout = Duration::from_millis(1);
-    let expired = runtime
+    let waiting = runtime
         .submit(
-            short,
+            policy(),
             Box::new(move || {
                 notify.send(()).unwrap();
             }),
-            |_| Ok(Box::new(|_| panic!("expired queue must not execute"))),
+            |_| {
+                Ok(Box::new(|context| {
+                    context.checkpoint()?;
+                    Ok(Output::Ready)
+                }))
+            },
         )
         .unwrap();
     let (third, third_done) = submit(&runtime, Box::new(|_| Ok(Output::Ready)));
@@ -157,7 +150,8 @@ fn queue_wait_uses_original_deadline_and_cancel_has_reserved_capacity() {
             notify.send(report).unwrap();
         }),
     );
-    // A finite incomplete report, not a timing sleep, proves the original clock expired.
+    // Cleanup reports promptly even when the worker cannot yet join. This
+    // does not install an execution deadline on an unrelated queued operation.
     assert!(matches!(
         cancelled.recv_timeout(Duration::from_secs(2)).unwrap(),
         CloseReport::Incomplete(_)
@@ -167,26 +161,16 @@ fn queue_wait_uses_original_deadline_and_cancel_has_reserved_capacity() {
     done.recv_timeout(Duration::from_secs(2)).unwrap();
     third_done.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(matches!(runtime.take(&first), Ok(Output::Ready)));
+    assert!(matches!(runtime.take(&waiting), Ok(Output::Ready)));
     assert!(matches!(
-        runtime.take(&expired),
-        Err(RuntimeError::Work(WorkError::DeadlineExceeded))
+        runtime.take(&third),
+        Err(RuntimeError::Work(WorkError::Cancelled))
     ));
     assert_eq!(close(&runtime), CloseReport::Closed);
 }
 
 #[test]
-fn aggregate_refusal_happens_before_input_prepare_and_refunds_failures() {
-    let mut small = options();
-    small.aggregate_bytes = [9; 4];
-    let runtime = Runtime::start(small).unwrap();
-    assert!(matches!(
-        runtime.submit(policy(), Box::new(|| {}), |_| panic!(
-            "must reserve before copy"
-        )),
-        Err(RuntimeError::ResourceLimit { .. })
-    ));
-    assert_eq!(runtime.inspect().reserved, [0; 4]);
-    assert_eq!(close(&runtime), CloseReport::Closed);
+fn failed_preparation_releases_the_operation_slot() {
     let runtime = Runtime::start(options()).unwrap();
     assert!(matches!(
         runtime.submit(policy(), Box::new(|| {}), |_| Err(
@@ -194,7 +178,40 @@ fn aggregate_refusal_happens_before_input_prepare_and_refunds_failures() {
         )),
         Err(RuntimeError::InvalidArgument)
     ));
-    assert_eq!(runtime.inspect().reserved, [0; 4]);
+    assert_eq!(runtime.inspect().retained, 0);
+    assert_eq!(close(&runtime), CloseReport::Closed);
+}
+
+#[test]
+fn admission_counts_outstanding_jobs_and_reuses_released_slots() {
+    let runtime = Runtime::start(options()).unwrap();
+
+    let slots = runtime.options.workers + runtime.options.queue_capacity;
+    let mut completed = Vec::new();
+    for _ in 0..slots {
+        let (notify, done) = mpsc::channel();
+        let operation = runtime
+            .submit(policy(), Box::new(move || notify.send(()).unwrap()), |_| {
+                Ok(Box::new(|_| Ok(Output::Ready)))
+            })
+            .expect("available operation slot");
+        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        completed.push(operation);
+    }
+    assert_eq!(runtime.inspect().retained, slots);
+    assert!(matches!(
+        runtime.submit(policy(), Box::new(|| {}), |_| panic!(
+            "full queue must refuse before preparation"
+        )),
+        Err(RuntimeError::QueueFull)
+    ));
+    for operation in completed {
+        assert!(matches!(runtime.take(&operation), Ok(Output::Ready)));
+    }
+    assert_eq!(runtime.inspect().retained, 0);
+    let (next, done) = submit(&runtime, Box::new(|_| Ok(Output::Ready)));
+    done.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(runtime.take(&next), Ok(Output::Ready)));
     assert_eq!(close(&runtime), CloseReport::Closed);
 }
 
@@ -209,7 +226,7 @@ fn panicked_worker_faults_runtime_and_releases_other_operations() {
         Err(RuntimeError::Internal)
     ));
     assert_eq!(close(&runtime), CloseReport::Closed);
-    assert_eq!(runtime.inspect().reserved, [0; 4]);
+    assert_eq!(runtime.inspect().retained, 0);
 }
 
 #[test]
@@ -238,22 +255,12 @@ fn owner_options() -> Options {
         cleanup_capacity: 8,
         owner_capacity: 4,
         native_handle_capacity: 8,
-        aggregate_bytes: [1 << 20; 4],
-        chunk_bytes: 1 << 16,
         cleanup_timeout: Duration::from_millis(200),
     }
 }
 
-fn owner_policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 1 << 16,
-        working_bytes: 1 << 16,
-        scratch_bytes: 1 << 16,
-        result_bytes: 1 << 16,
-        rows: 1 << 16,
-        work_units: 1 << 16,
-        timeout: Duration::from_secs(5),
-    }
+fn owner_policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn unique_base(tag: &str) -> std::path::PathBuf {
@@ -472,7 +479,7 @@ fn d29_worker_inbox_wakeup_reaches_a_sleeping_pool() {
 fn d29_repository_lock_kind_is_stamped_on_the_capability() {
     let runtime = Runtime::start(options()).unwrap();
     let cap = runtime
-        .reserve_native_route(super::registry::NativeKind::RepositoryLock, 0)
+        .reserve_native_route(super::registry::NativeKind::RepositoryLock)
         .expect("lock route");
     assert_eq!(cap.kind, super::registry::NativeKind::RepositoryLock);
     runtime.rollback_native_route(cap);
@@ -483,24 +490,29 @@ fn d29_repository_lock_kind_is_stamped_on_the_capability() {
 #[test]
 fn d29_failed_native_admission_does_not_leave_a_route() {
     let runtime = Runtime::start(options()).unwrap();
+    let handles: Vec<_> = (0..runtime.options.native_handle_capacity)
+        .map(|_| runtime.retain_native().unwrap())
+        .collect();
     assert!(matches!(
-        runtime.reserve_native_route(super::registry::NativeKind::Result, u64::MAX),
-        Err(RuntimeError::ResourceLimit { .. })
+        runtime.reserve_native_route(super::registry::NativeKind::Result),
+        Err(RuntimeError::ResourceLimit {
+            dimension: "nativeHandleCapacity",
+            ..
+        })
     ));
-    assert_eq!(runtime.inspect().natives, 0);
+    assert_eq!(runtime.inspect().natives, handles.len());
     assert_eq!(runtime.registry.route_count(), 0);
-    assert_eq!(runtime.inspect().reserved[3], 0);
+    drop(handles);
+    assert_eq!(runtime.inspect().natives, 0);
     assert_eq!(close(&runtime), CloseReport::Closed);
 }
 
 #[test]
-fn retained_native_guard_refunds_registry_charge_on_drop() {
+fn retained_native_guard_releases_handle_slot_on_drop() {
     let runtime = Runtime::start(options()).unwrap();
-    let guard = runtime.retain_native(7).expect("admit native");
+    let guard = runtime.retain_native().expect("admit native");
     assert_eq!(runtime.inspect().natives, 1);
-    assert_eq!(runtime.inspect().reserved[3], 7);
     drop(guard);
     assert_eq!(runtime.inspect().natives, 0);
-    assert_eq!(runtime.inspect().reserved[3], 0);
     assert_eq!(close(&runtime), CloseReport::Closed);
 }

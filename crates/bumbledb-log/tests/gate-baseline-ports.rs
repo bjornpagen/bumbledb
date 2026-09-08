@@ -15,7 +15,7 @@ use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, StatementDescriptor,
     ValueType,
 };
-use bumbledb::{ChangeSet, Db, ExecutionPolicy, FieldId, Uuid, Value};
+use bumbledb::{ChangeSet, Db, FieldId, Uuid, Value, WorkContext};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{
@@ -329,29 +329,20 @@ fn rep004_entity_bytes_are_application_owned_and_retry_stable() {
 
 /// ENG-007 baseline (audit/20: infrastructure failure was flattened into a
 /// semantic rejection by the fresh-ID burn machine): the burn machine is
-/// DELETED. Successor property: resource exhaustion is a typed operational
+/// DELETED. Successor property: cancellation is a typed operational
 /// refusal (`NotSubmitted(Work)`) that never masquerades as a durable
-/// `InvariantRejected`, and the identical command decides once real budget
-/// arrives (G03/G06/G09 boundary).
+/// `InvariantRejected`, and the identical command decides with a fresh
+/// cancellation context (G03/G06/G09 boundary).
 #[test]
-fn eng007_exhaustion_is_operational_not_a_semantic_rejection() {
+fn eng007_cancellation_is_operational_not_a_semantic_rejection() {
     let (db, history) = create_history("eng007", two_relation_schema());
     let command = seal_with(&db, history.identity(), 0x31, |draft| {
         draft
             .insert(RelationId(0), &[Value::U64(9)])
             .expect("insert");
     });
-    let starved = ExecutionPolicy {
-        input_bytes: 1,
-        working_bytes: 1,
-        scratch_bytes: 1,
-        result_bytes: 1,
-        rows: 1,
-        work_units: 1,
-        timeout: std::time::Duration::from_secs(60),
-    }
-    .start()
-    .expect("starved budget starts");
+    let starved = WorkContext::new();
+    starved.cancel();
     match history.submit(&command, &starved) {
         SubmitOutcome::NotSubmitted { error, .. } => {
             assert!(
@@ -359,11 +350,14 @@ fn eng007_exhaustion_is_operational_not_a_semantic_rejection() {
                     error,
                     LogError::Work(_) | LogError::Core(_) | LogError::Storage(_)
                 ),
-                "exhaustion is typed and operational: {error:?}"
+                "cancellation is typed and operational: {error:?}"
             );
         }
         SubmitOutcome::Decided { receipt, .. } => {
-            panic!("a starved budget cannot decide: {:?}", receipt.outcome)
+            panic!(
+                "a cancelled submission cannot decide: {:?}",
+                receipt.outcome
+            )
         }
         SubmitOutcome::OutcomeUnknown { error, .. } => {
             panic!("local submission is definite: {error:?}")

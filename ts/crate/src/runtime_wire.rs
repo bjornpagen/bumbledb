@@ -6,7 +6,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use bumbledb::work::{ByteKind, ExecutionPolicy, Resource, WorkError};
+use bumbledb::work::{WorkContext, WorkError};
 use napi::bindgen_prelude::{
     BigInt, Buffer, Env, External, FromNapiValue, Function, JsValue, Object, Uint8Array, Unknown,
 };
@@ -71,28 +71,12 @@ pub(crate) fn owner(handle: &RuntimeHandle) -> Result<&Arc<Runtime>, RuntimeErro
 
 #[napi(object)]
 pub struct RuntimeOptionsWire {
-    pub workers: f64,
-    pub queue_capacity: f64,
-    pub cleanup_capacity: f64,
-    pub owner_capacity: f64,
-    pub native_handle_capacity: f64,
-    pub input_bytes: BigInt,
-    pub working_bytes: BigInt,
-    pub scratch_bytes: BigInt,
-    pub result_bytes: BigInt,
-    pub chunk_bytes: BigInt,
-    pub cleanup_timeout_ms: f64,
-}
-
-#[napi(object)]
-pub struct PolicyWire {
-    pub input_bytes: BigInt,
-    pub working_bytes: BigInt,
-    pub scratch_bytes: BigInt,
-    pub result_bytes: BigInt,
-    pub rows: BigInt,
-    pub work_units: BigInt,
-    pub timeout_ms: f64,
+    pub workers: Option<f64>,
+    pub queue_capacity: Option<f64>,
+    pub cleanup_capacity: Option<f64>,
+    pub owner_capacity: Option<f64>,
+    pub native_handle_capacity: Option<f64>,
+    pub cleanup_timeout_ms: Option<f64>,
 }
 
 #[expect(
@@ -105,28 +89,6 @@ fn unsigned(value: f64) -> Result<u32, RuntimeError> {
         return Err(RuntimeError::InvalidArgument);
     }
     Ok(value as u32)
-}
-
-fn integer(value: &BigInt) -> Result<u64, RuntimeError> {
-    let (negative, value, lossless) = value.get_u64();
-    if negative || !lossless {
-        return Err(RuntimeError::InvalidArgument);
-    }
-    Ok(value)
-}
-
-impl PolicyWire {
-    pub(crate) fn parse(&self) -> Result<ExecutionPolicy, RuntimeError> {
-        Ok(ExecutionPolicy {
-            input_bytes: integer(&self.input_bytes)?,
-            working_bytes: integer(&self.working_bytes)?,
-            scratch_bytes: integer(&self.scratch_bytes)?,
-            result_bytes: integer(&self.result_bytes)?,
-            rows: integer(&self.rows)?,
-            work_units: integer(&self.work_units)?,
-            timeout: Duration::from_millis(u64::from(unsigned(self.timeout_ms)?)),
-        })
-    }
 }
 
 pub const ERROR_CODES: &[&str] = &[
@@ -144,7 +106,6 @@ pub const ERROR_CODES: &[&str] = &[
     "ResourceLimit",
     "Engine",
     "Cancelled",
-    "DeadlineExceeded",
 ];
 
 fn error_code(error: &RuntimeError) -> &'static str {
@@ -154,31 +115,15 @@ fn error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::ClosedHandle => "ClosedHandle",
         RuntimeError::SpentHandle => "SpentHandle",
         RuntimeError::QueueFull => "QueueFull",
-        RuntimeError::InvalidArgument | RuntimeError::Work(WorkError::InvalidTimeout) => {
-            "InvalidArgument"
-        }
+        RuntimeError::InvalidArgument => "InvalidArgument",
         RuntimeError::Internal => "Internal",
         RuntimeError::DirectoryBusy => "DirectoryBusy",
         RuntimeError::WriterBusy => "WriterBusy",
         RuntimeError::InvalidPath => "InvalidPath",
-        RuntimeError::Io { .. } => "Io",
-        RuntimeError::ResourceLimit { .. } | RuntimeError::Work(WorkError::Exhausted { .. }) => {
-            "ResourceLimit"
-        }
+        RuntimeError::Io { .. } | RuntimeError::Work(WorkError::Allocation) => "Io",
+        RuntimeError::ResourceLimit { .. } => "ResourceLimit",
         RuntimeError::Engine { .. } => "Engine",
         RuntimeError::Work(WorkError::Cancelled) => "Cancelled",
-        RuntimeError::Work(WorkError::DeadlineExceeded) => "DeadlineExceeded",
-    }
-}
-
-fn resource_name(resource: Resource) -> &'static str {
-    match resource {
-        Resource::InputBytes => "inputBytes",
-        Resource::WorkingBytes => "workingBytes",
-        Resource::ScratchBytes => "scratchBytes",
-        Resource::ResultBytes => "resultBytes",
-        Resource::Rows => "rows",
-        Resource::WorkUnits => "workUnits",
     }
 }
 
@@ -208,16 +153,8 @@ pub(crate) fn reason_object(env: &Env, error: RuntimeError) -> napi::Result<Obje
             object.set("requested", BigInt::from(requested))?;
             object.set("limit", BigInt::from(limit))?;
         }
-        RuntimeError::Work(WorkError::Exhausted {
-            resource,
-            used,
-            requested,
-            limit,
-        }) => {
-            object.set("dimension", resource_name(resource))?;
-            object.set("used", BigInt::from(used))?;
-            object.set("requested", BigInt::from(requested))?;
-            object.set("limit", BigInt::from(limit))?;
+        RuntimeError::Work(WorkError::Allocation) => {
+            object.set("kind", "OutOfMemory")?;
         }
         _ => {}
     }
@@ -245,22 +182,40 @@ pub fn runtime_open(
     options: RuntimeOptionsWire,
 ) -> napi::Result<External<RuntimeHandle>> {
     let parse = || -> Result<Options, RuntimeError> {
+        let defaults = Options::default();
         Ok(Options {
-            workers: unsigned(options.workers)? as usize,
-            queue_capacity: unsigned(options.queue_capacity)? as usize,
-            cleanup_capacity: unsigned(options.cleanup_capacity)? as usize,
-            owner_capacity: unsigned(options.owner_capacity)? as usize,
-            native_handle_capacity: unsigned(options.native_handle_capacity)? as usize,
-            aggregate_bytes: [
-                integer(&options.input_bytes)?,
-                integer(&options.working_bytes)?,
-                integer(&options.scratch_bytes)?,
-                integer(&options.result_bytes)?,
-            ],
-            chunk_bytes: integer(&options.chunk_bytes)?,
-            cleanup_timeout: Duration::from_millis(u64::from(unsigned(
-                options.cleanup_timeout_ms,
-            )?)),
+            workers: options
+                .workers
+                .map(unsigned)
+                .transpose()?
+                .map_or(defaults.workers, |value| value as usize),
+            queue_capacity: options
+                .queue_capacity
+                .map(unsigned)
+                .transpose()?
+                .map_or(defaults.queue_capacity, |value| value as usize),
+            cleanup_capacity: options
+                .cleanup_capacity
+                .map(unsigned)
+                .transpose()?
+                .map_or(defaults.cleanup_capacity, |value| value as usize),
+            owner_capacity: options
+                .owner_capacity
+                .map(unsigned)
+                .transpose()?
+                .map_or(defaults.owner_capacity, |value| value as usize),
+            native_handle_capacity: options
+                .native_handle_capacity
+                .map(unsigned)
+                .transpose()?
+                .map_or(defaults.native_handle_capacity, |value| value as usize),
+            cleanup_timeout: options
+                .cleanup_timeout_ms
+                .map(unsigned)
+                .transpose()?
+                .map_or(defaults.cleanup_timeout, |value| {
+                    Duration::from_millis(u64::from(value))
+                }),
         })
     };
     let options = parse().map_err(|error| thrown(env, error))?;
@@ -290,10 +245,6 @@ pub struct InspectionWire {
     pub owners: BigInt,
     pub databases: BigInt,
     pub natives: BigInt,
-    pub input_bytes: BigInt,
-    pub working_bytes: BigInt,
-    pub scratch_bytes: BigInt,
-    pub result_bytes: BigInt,
 }
 
 impl From<Inspection> for InspectionWire {
@@ -311,10 +262,6 @@ impl From<Inspection> for InspectionWire {
             owners: BigInt::from(value.owners as u64),
             databases: BigInt::from(value.databases as u64),
             natives: BigInt::from(value.natives as u64),
-            input_bytes: BigInt::from(value.reserved[0]),
-            working_bytes: BigInt::from(value.reserved[1]),
-            scratch_bytes: BigInt::from(value.reserved[2]),
-            result_bytes: BigInt::from(value.reserved[3]),
         }
     }
 }
@@ -400,7 +347,6 @@ pub fn runtime_inspect(env: Env, handle: &External<RuntimeHandle>) -> napi::Resu
 pub fn runtime_ready(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
@@ -411,13 +357,13 @@ pub fn runtime_ready(
         .build()?;
     let operation = runtime
         .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             Box::new(move || {
                 let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
             }),
             |_| {
                 Ok(Box::new(|context| {
-                    context.step(1)?;
+                    context.checkpoint()?;
                     Ok(Output::Ready)
                 }))
             },
@@ -434,7 +380,7 @@ pub fn runtime_ready(
     unsafe_code,
     reason = "N-API exposes the actual typed-array backing only through its raw API; validate before constructing a Rust slice"
 )]
-pub(crate) fn unshared_input(env: Env, value: Unknown, maximum: u64) -> napi::Result<Uint8Array> {
+pub(crate) fn unshared_input(env: Env, value: Unknown) -> napi::Result<Uint8Array> {
     let mut kind = 0;
     let mut length = 0;
     let mut data = std::ptr::null_mut();
@@ -471,18 +417,7 @@ pub(crate) fn unshared_input(env: Env, value: Unknown, maximum: u64) -> napi::Re
     if !valid {
         return Err(thrown(env, RuntimeError::InvalidArgument));
     }
-    if length as u64 > maximum {
-        return Err(thrown(
-            env,
-            RuntimeError::ResourceLimit {
-                dimension: "chunkBytes",
-                used: 0,
-                requested: length as u64,
-                limit: maximum,
-            },
-        ));
-    }
-    // SAFETY: exact Uint8 kind, attached unshared backing, bounded length. No
+    // SAFETY: exact Uint8 kind, attached unshared backing. No
     // application callback/JS runs between this check and the owned copy.
     unsafe { Uint8Array::from_napi_value(env.raw(), value.raw()) }
 }
@@ -491,24 +426,11 @@ pub(crate) fn unshared_input(env: Env, value: Unknown, maximum: u64) -> napi::Re
 pub fn runtime_hash(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     bytes: Unknown,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let bytes = unshared_input(env, bytes, runtime.options.chunk_bytes)?;
-    let length = bytes.len() as u64;
-    if length > runtime.options.chunk_bytes {
-        return Err(thrown(
-            env,
-            RuntimeError::ResourceLimit {
-                dimension: "chunkBytes",
-                used: 0,
-                requested: length,
-                limit: runtime.options.chunk_bytes,
-            },
-        ));
-    }
+    let bytes = unshared_input(env, bytes)?;
     let callback = callback
         .build_threadsafe_function()
         .callee_handled::<false>()
@@ -516,29 +438,26 @@ pub fn runtime_hash(
         .build()?;
     let operation = runtime
         .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             Box::new(move || {
                 let _ = callback.call((), ThreadsafeFunctionCallMode::NonBlocking);
             }),
             |context| {
-                context.input(length)?;
-                let reservation = context.reserve(ByteKind::Working, length)?;
+                context.checkpoint()?;
                 let mut owned = Vec::new();
                 owned
                     .try_reserve_exact(bytes.len())
-                    .map_err(|_| RuntimeError::Internal)?;
+                    .map_err(|_| WorkError::Allocation)?;
                 owned.extend_from_slice(&bytes);
                 Ok(Box::new(move |context| {
                     let mut hash = bumbledb::digest::Digest::new();
                     for chunk in owned.chunks(4096) {
-                        context.step(chunk.len() as u64)?;
+                        context.checkpoint()?;
                         hash.update(chunk);
                     }
-                    let result = context.reserve(ByteKind::Result, 32)?;
                     let digest = hash.finalize();
                     drop(owned);
-                    drop(reservation);
-                    Ok(Output::Hash(digest, result))
+                    Ok(Output::Hash(digest))
                 }))
             },
         )
@@ -568,7 +487,7 @@ pub fn runtime_take(env: Env, handle: &External<OperationHandle>) -> napi::Resul
         .map_err(|error| thrown(env, error))?
     {
         Output::Ready => Ok(None),
-        Output::Hash(value, _reservation) => Ok(Some(Buffer::from(value.to_vec()))),
+        Output::Hash(value) => Ok(Some(Buffer::from(value.to_vec()))),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
@@ -631,20 +550,12 @@ pub(crate) fn take_output(env: Env, handle: &OperationHandle) -> napi::Result<Ou
 pub fn runtime_directory_acquire(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     path: String,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    if path.len() as u64 > runtime.options.chunk_bytes {
-        return Err(thrown(env, RuntimeError::InvalidPath));
-    }
     let operation = runtime
-        .acquire_directory(
-            path,
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-        )
+        .acquire_directory(path, WorkContext::new(), notification(callback)?)
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -667,11 +578,10 @@ pub fn runtime_directory_take(
 pub fn runtime_directory_begin(
     env: Env,
     handle: &External<DirectoryHandle>,
-    policy: PolicyWire,
 ) -> napi::Result<External<OperationHandle>> {
     let owner = directory(handle).map_err(|error| thrown(env, error))?;
     let operation = owner
-        .begin_work(policy.parse().map_err(|error| thrown(env, error))?)
+        .begin_work(WorkContext::new())
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(owner.runtime(), operation))
 }
@@ -717,7 +627,6 @@ pub fn runtime_directory_close(
 pub fn runtime_directory_db_open(
     env: Env,
     handle: &External<DirectoryHandle>,
-    policy: PolicyWire,
     child_name: String,
     spec: Object,
     create: bool,
@@ -725,19 +634,16 @@ pub fn runtime_directory_db_open(
 ) -> napi::Result<External<OperationHandle>> {
     use crate::runtime::owners::ManagedDbOutcome;
     let owner = directory(handle).map_err(|error| thrown(env, error))?;
-    if child_name.len() as u64 > owner.runtime().options.chunk_bytes {
-        return Err(thrown(env, RuntimeError::InvalidPath));
-    }
     let reference = owner.reference();
     // The legacy schema converter remains on the JS thread. The operation is
     // registered before conversion; only owned Rust descriptors reach workers.
     let mut marshal_error = None;
     let operation = owner.runtime().submit_owned(
         owner,
-        policy.parse().map_err(|error| thrown(env, error))?,
+        WorkContext::new(),
         notification(callback)?,
         |context| {
-            context.input(child_name.len() as u64)?;
+            context.checkpoint()?;
             let parsed = match crate::descriptor_of(&spec) {
                 Ok(parsed) => parsed,
                 Err(error) => {
@@ -861,75 +767,54 @@ pub fn runtime_managed_db_close(
 // apply/submit keeps the whole writer operation inside one native job.
 // ---------------------------------------------------------------------------
 
-pub struct SessionHandle {
+pub struct PreparedHandle {
     identity: usize,
     session: Arc<crate::runtime::session::SnapshotSession>,
-    /// `None`: the owning worker-session capability — close drains the
-    /// pinned thread. `Some(closed)`: a snapshot-bound EXECUTION session
-    /// sharing the snapshot's pinned session (chapter 35 `Snapshot.session`)
-    /// — close spends only this capability, never the snapshot's thread.
-    exec: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
-impl SessionHandle {
-    pub(crate) fn exec_over(session: Arc<crate::runtime::session::SnapshotSession>) -> Self {
+impl PreparedHandle {
+    pub(crate) fn new(session: crate::runtime::session::SnapshotSession) -> Self {
         Self {
             identity: identity(),
-            session,
-            exec: Some(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            session: Arc::new(session),
         }
     }
 }
 
-pub(crate) fn session(
-    handle: &SessionHandle,
+pub(crate) fn prepared(
+    handle: &PreparedHandle,
 ) -> Result<&crate::runtime::session::SnapshotSession, RuntimeError> {
     if handle.identity != identity() {
         return Err(RuntimeError::ForeignRuntime);
     }
-    if let Some(closed) = &handle.exec
-        && closed.load(std::sync::atomic::Ordering::Acquire)
-    {
-        return Err(RuntimeError::ClosedHandle);
+    if handle.session.capability().kind != crate::runtime::NativeKind::Prepared {
+        return Err(RuntimeError::InvalidArgument);
     }
     Ok(&handle.session)
 }
 
-/// Adopt one snapshot-bound execution session. Snapshot adoption has its
-/// own typed output; no caller must inspect a union of unrelated handles.
+/// Adopt one compiled worker-owned plan. Dropping an untaken output closes
+/// the same resource; JavaScript is never its only cleanup authority.
 #[napi]
-pub fn runtime_session_take(
+pub fn runtime_prepared_take(
     env: Env,
     handle: &External<OperationHandle>,
-) -> napi::Result<External<SessionHandle>> {
+) -> napi::Result<External<PreparedHandle>> {
     match take_output(env, handle)? {
-        Output::ExecSession(opened) => Ok(External::new(SessionHandle::exec_over(opened.session))),
+        Output::Prepared(session) => Ok(External::new(PreparedHandle::new(session))),
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
     }
 }
 
 #[napi]
-pub fn runtime_session_close(
+pub fn runtime_prepared_close(
     env: Env,
-    handle: &External<SessionHandle>,
+    handle: &External<PreparedHandle>,
     callback: Function<CloseWire, ()>,
 ) -> napi::Result<()> {
-    if handle.identity != identity() {
-        return Err(thrown(env, RuntimeError::ForeignRuntime));
-    }
-    let report = reporter(callback)?;
-    if let Some(closed) = &handle.exec {
-        // An execution session is a spendable capability SHARING the
-        // snapshot's pinned session: close spends only this capability
-        // (idempotent — a second close joins the spent state); the pinned
-        // thread and its in-flight jobs stay owned by the snapshot, whose
-        // own close drains them. Nothing native is held here, so the
-        // report is Closed by construction.
-        closed.store(true, std::sync::atomic::Ordering::Release);
-        report(crate::runtime::CloseReport::Closed);
-        return Ok(());
-    }
-    handle.session.drain(report);
+    prepared(handle)
+        .map_err(|error| thrown(env, error))?
+        .drain(reporter(callback)?);
     Ok(())
 }
 

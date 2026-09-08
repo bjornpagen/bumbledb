@@ -1,5 +1,123 @@
 use super::*;
 
+#[test]
+fn changing_text_parameters_do_not_retain_their_entire_history() {
+    let fix = posting_store("text-parameter-reclamation", &[(1, 7, "live", 10)]);
+    let mut prepared = fix.prepare(&by_memo_query()).unwrap();
+    assert_eq!(
+        amounts_of(&fix.execute(&mut prepared, &memo_param("live")).unwrap()),
+        [10]
+    );
+    let generation = prepared.cache.cache_generation();
+    let payload = "x".repeat(1024);
+    let mut first = String::new();
+    for turn in 0..128 {
+        let text = format!("obsolete-{turn}-{payload}");
+        if turn == 0 {
+            first.clone_from(&text);
+        }
+        assert!(
+            fix.execute(&mut prepared, &memo_param(&text))
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let owner = prepared.cache.acquire();
+    let retained = owner.lock_resolver().retained_bytes();
+    eprintln!(
+        "text parameter churn: 128 distinct ~1KiB parameters, retained interner bytes={retained}"
+    );
+    assert_eq!(
+        prepared.cache.cache_generation(),
+        generation,
+        "churn must not globally rotate unrelated caches"
+    );
+    assert_eq!(
+        owner.resolver().lookup(&first),
+        None,
+        "obsolete parameters are reclaimed automatically"
+    );
+    assert!(
+        retained < 16 * 1024,
+        "retention must not grow with all historical parameters"
+    );
+    #[cfg(feature = "alloc-counter")]
+    let live_after_short = crate::alloc_counter::snapshot().absolute.live_bytes;
+    for turn in 128..4224 {
+        let text = format!("obsolete-{turn}-{payload}");
+        assert!(
+            fix.execute(&mut prepared, &memo_param(&text))
+                .unwrap()
+                .is_empty()
+        );
+    }
+    #[cfg(feature = "alloc-counter")]
+    {
+        let live_after_long = crate::alloc_counter::snapshot().absolute.live_bytes;
+        eprintln!(
+            "text churn live heap: after 128={live_after_short}, after 4224={live_after_long}"
+        );
+        assert!(
+            live_after_long.saturating_sub(live_after_short) < 8192,
+            "retained heap must plateau, not accumulate another 4 MiB of historical text"
+        );
+    }
+    assert!(owner.lock_resolver().retained_bytes() < 16 * 1024);
+    assert_eq!(
+        amounts_of(&fix.execute(&mut prepared, &memo_param("live")).unwrap()),
+        [10]
+    );
+}
+
+#[test]
+fn scalar_parameter_memo_shares_the_canonical_string_and_release_drops_its_owner() {
+    let fix = posting_store("shared-parameter-text-owner", &[(1, 7, "live", 10)]);
+    let mut prepared = fix.prepare(&by_memo_query()).unwrap();
+    let payload = "absent".repeat(1024);
+    assert!(
+        fix.execute(&mut prepared, &memo_param(&payload))
+            .unwrap()
+            .is_empty()
+    );
+    let generation = prepared.cache.acquire();
+    let Const::Text(parameter) = &prepared.resolved_params[0] else {
+        panic!("owned text parameter")
+    };
+    let canonical = generation.resolver().owned_text(parameter.word).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&canonical, &parameter.text));
+    assert!(std::sync::Arc::ptr_eq(
+        &canonical,
+        prepared.param_word_memo[0].text.as_ref().unwrap()
+    ));
+    let weak = std::sync::Arc::downgrade(&canonical);
+    drop(canonical);
+    generation.lock_resolver().reclaim_unowned();
+    assert!(
+        weak.upgrade().is_some(),
+        "retained parameter owns its token"
+    );
+    assert!(
+        fix.execute(&mut prepared, &memo_param(&payload))
+            .unwrap()
+            .is_empty()
+    );
+    prepared.release_memory();
+    generation.lock_resolver().reclaim_unowned();
+    assert!(
+        weak.upgrade().is_none(),
+        "release drops all query-owned copies of the text owner"
+    );
+    assert_eq!(generation.resolver().lookup(&payload), None);
+    assert!(
+        generation.resolver().lookup("live").is_some(),
+        "shared cached image remains live"
+    );
+    assert_eq!(
+        amounts_of(&fix.execute(&mut prepared, &memo_param("live")).unwrap()),
+        [10]
+    );
+}
+
 fn uuid_param_fixture() -> (StoreFix, Query, [crate::Uuid; 3]) {
     let ids = [
         crate::Uuid::from_bytes([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
@@ -247,7 +365,8 @@ fn resident_string_param_rebinds_after_shared_cache_generation_rotates() {
 
     // Trim drops alpha's views and retires its resolver. A sibling query
     // then deliberately reuses token zero for beta in the shared cache.
-    alpha.trim();
+    alpha.release_memory();
+    fix.db.clear_cache();
     assert_eq!(
         amounts_of(&fix.execute(&mut beta, &memo_param("beta")).expect("beta")),
         vec![20],
@@ -274,13 +393,10 @@ impl<'a, P: BindArgs<'a>> BindArgs<'a> for RotateAfterBind<P> {
         work: &crate::work::WorkContext,
     ) -> crate::error::Result<()> {
         self.0.bind(prepared, work)?;
-        prepared.cache.trim();
+        prepared.cache.clear();
         let generation = prepared.cache.acquire();
         let interner = crate::image::intern::InternerHandle::new(&generation, work);
-        assert!(matches!(
-            interner.intern_or_spill("beta")?,
-            crate::image::ResidentAdmit::Ready(0),
-        ));
+        assert_eq!(interner.intern("beta")?.word, 0);
         Ok(())
     }
 }
@@ -341,7 +457,7 @@ fn param_word_memo_preserves_tokens_across_rebinds_and_new_rows() {
     let run = |prepared: &mut PreparedQuery<T>, text: &str| {
         let out = fix.execute(prepared, &memo_param(text)).expect("execute");
         let memo = &prepared.param_word_memo[0];
-        assert_eq!(memo.text, text);
+        assert_eq!(memo.text.as_deref(), Some(text));
         (amounts_of(&out), memo.word.expect("bound token"))
     };
     let alpha = run(&mut prepared, "alpha");

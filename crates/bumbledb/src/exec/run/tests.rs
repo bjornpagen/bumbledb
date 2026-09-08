@@ -161,7 +161,7 @@ fn colts_with_params(
                     &occurrence.filters,
                     params,
                     Vec::new(),
-                    image.generation().text_eq(None),
+                    image.generation().text_eq(),
                 )
                 .expect("fixture apply"),
                 &[],

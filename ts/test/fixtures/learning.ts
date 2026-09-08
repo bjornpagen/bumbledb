@@ -11,7 +11,7 @@ import { ref, weigh, within } from "#capacity.ts"
 import { on } from "#face.ts"
 import { f64, i64, interval, str, u64, uuid } from "#fields.ts"
 import { relation } from "#relation.ts"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "#runtime.ts"
+import type { NativeRuntimeOptions } from "#runtime.ts"
 import { schema } from "#schema.ts"
 import { capacity, contained, key } from "#statements.ts"
 
@@ -41,22 +41,7 @@ export const runtimeOptions: NativeRuntimeOptions = {
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 64,
-	inputBytes: 16_000_000n,
-	workingBytes: 64_000_000n,
-	scratchBytes: 64_000_000n,
-	resultBytes: 16_000_000n,
-	chunkBytes: 1_000_000n,
 	cleanupTimeout: "2 seconds"
-}
-
-export const work: ExecutionPolicy = {
-	inputBytes: 4_000_000n,
-	workingBytes: 16_000_000n,
-	scratchBytes: 16_000_000n,
-	resultBytes: 4_000_000n,
-	rows: 100_000n,
-	workUnits: 10_000_000n,
-	timeout: "10 seconds"
 }
 
 /** A fresh store directory per test; the caller's scope owns the database. */

@@ -21,8 +21,7 @@ import {
 	localBinding,
 	makeIntegration,
 	makeWireDouble,
-	provideRuntime,
-	work
+	provideRuntime
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
@@ -36,7 +35,7 @@ describe("LocalHistory.open", function suite() {
 			provideRuntime(
 				Effect.scoped(
 					Effect.gen(function* () {
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						return history.identity
 					})
 				)
@@ -59,7 +58,7 @@ describe("LocalHistory.open", function suite() {
 			failure: { source: "protocol", reason: { _tag: "DatabaseMissing" } }
 		})
 		const exit = await Effect.runPromiseExit(
-			provideRuntime(Effect.scoped(machine.LocalHistory.open(localBinding, schema, work)))
+			provideRuntime(Effect.scoped(machine.LocalHistory.open(localBinding, schema)))
 		)
 		assert.ok(Exit.isFailure(exit))
 		const failures = double.calls.map((call) => call.verb)
@@ -75,7 +74,6 @@ describe("LocalHistory.open", function suite() {
 			provideRuntime(
 				Effect.scoped(
 					machine.LocalHistory.create(localBinding, schema, {
-						...work,
 						creation: {
 							operationId: "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId,
 							artifact: new Uint8Array([1, 2, 3])
@@ -99,7 +97,6 @@ describe("LocalHistory.open", function suite() {
 			provideRuntime(
 				Effect.scoped(
 					machine.LocalHistory.create(localBinding, schema, {
-						...work,
 						creation: {
 							operationId: "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId,
 							artifact: new Uint8Array([1])
@@ -121,9 +118,7 @@ describe("LocalHistory.open", function suite() {
 			origin: { bucket: "b", prefix: "p" },
 			identity: localBinding.identity
 		} as unknown as Parameters<typeof machine.LocalHistory.open>[0]
-		const exit = await Effect.runPromiseExit(
-			provideRuntime(Effect.scoped(machine.LocalHistory.open(hosted, schema, work)))
-		)
+		const exit = await Effect.runPromiseExit(provideRuntime(Effect.scoped(machine.LocalHistory.open(hosted, schema))))
 		assert.ok(Exit.isFailure(exit))
 		assert.equal(double.calls.length, 0)
 	})
@@ -140,7 +135,7 @@ describe("HostedHistory.open", function suite() {
 			origin: { bucket: "tenants", prefix: "app/t1" },
 			identity: localBinding.identity
 		}
-		await Effect.runPromise(provideRuntime(Effect.scoped(machine.HostedHistory.open(hosted, schema, work))))
+		await Effect.runPromise(provideRuntime(Effect.scoped(machine.HostedHistory.open(hosted, schema))))
 		const request = double.calls[0]?.request as {
 			binding: { kind: string; credentials: { kind: string } }
 		}
@@ -158,7 +153,7 @@ describe("bounded inspect", function suite() {
 			provideRuntime(
 				Effect.scoped(
 					Effect.gen(function* () {
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						double.plan("logHistoryCall", {
 							result: {
 								verb: "inspect",
@@ -178,14 +173,18 @@ describe("bounded inspect", function suite() {
 									rootCapacity: 64,
 									gc: "marking",
 									lastMaintenanceError: null,
-									diskBytes: 1n << 20n,
-									workingBytes: 512n,
+									storage: {
+										virtualMapBytes: 1n << 30n,
+										populatedFileBytes: 1n << 20n,
+										nonFreePageBytes: 512n,
+										allocatedDiskBytes: null
+									},
 									queued: 0n,
 									active: 1n
 								}
 							}
 						})
-						return yield* history.inspect(work)
+						return yield* history.inspect()
 					})
 				)
 			)
@@ -198,6 +197,13 @@ describe("bounded inspect", function suite() {
 		assert.equal(report.roots.capacity, 64)
 		assert.equal(report.gc, "marking")
 		assert.equal(report.lastMaintenanceError, null)
+		assert.deepEqual(report.storage, {
+			virtualMapBytes: 1n << 30n,
+			populatedFileBytes: 1n << 20n,
+			nonFreePageBytes: 512n,
+			allocatedDiskBytes: null
+		})
+		assert.equal("accounted" in report, false, "LMDB pages are not heap accounting")
 	})
 })
 
@@ -210,10 +216,10 @@ describe("closed capabilities", function suite() {
 			provideRuntime(
 				Effect.scoped(
 					Effect.gen(function* () {
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						yield* history.close()
 						const calls = double.calls.length
-						const exit = yield* Effect.exit(history.inspect(work))
+						const exit = yield* Effect.exit(history.inspect())
 						return { calls, exit, after: double.calls.length }
 					})
 				)

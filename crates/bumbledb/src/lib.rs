@@ -30,15 +30,7 @@
 //!     Item(id) -> Item;
 //! }
 //! # let dir = std::env::temp_dir().join("bumbledb-doc-cross-schema");
-//! # let work = bumbledb::start_operation(bumbledb::ExecutionPolicy {
-//! #     input_bytes: 1 << 30,
-//! #     working_bytes: 1 << 30,
-//! #     scratch_bytes: 1 << 30,
-//! #     result_bytes: 1 << 30,
-//! #     rows: 1 << 30,
-//! #     work_units: 1 << 30,
-//! #     timeout: std::time::Duration::from_secs(3600),
-//! # }).unwrap();
+//! # let work = bumbledb::WorkContext::new();
 //! # let _ = std::fs::remove_dir_all(&dir);
 //! let db = bumbledb::Db::create(&dir, Ledger, work).unwrap().unwrap();
 //! db.write(|tx| {
@@ -87,11 +79,11 @@ pub use allen::{AllenMask, Basic, classify};
 pub use api::db::{AcceptedCollection, CollectionBuilder};
 pub use api::db::{
     ApplyExpected, ApplyOutcome, Db, Fact, InstanceBuilder, Key, MutationReport, OwnedInstance,
-    OwnedRead, ReadFrame, ReadInstance, RowReader, Witness, WriteTx, start_operation,
+    OwnedRead, ReadFrame, ReadInstance, RowReader, Witness, WriteTx,
 };
 pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,
-    PreparedQuery, ResultCursor, ResultIdentity, ResultPage,
+    PreparedQuery, ResultCursor, ResultIdentity, ResultPage, ResultRow,
 };
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
@@ -125,10 +117,9 @@ pub use storage::GenerationId;
 pub use storage::store::CloseReport;
 pub use storage::store::format::LAYOUT as STORAGE_FORMAT_VERSION;
 pub use work::{
-    ExecutionPolicy, GenerationHandle, GenerationState, ResolverView, ScratchAppend,
-    ScratchClaimKey, ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe, ScratchRelation,
-    ScratchTextLookup, ScratchWordKey, ScratchWriteBatch, WeakGenerationHandle, WorkContext,
-    WorkError,
+    GenerationHandle, GenerationState, ResolverView, ScratchAppend, ScratchClaimKey,
+    ScratchExactKey, ScratchLookup, ScratchMapId, ScratchProbe, ScratchRelation, ScratchWordKey,
+    ScratchWriteBatch, WeakGenerationHandle, WorkContext, WorkError,
 };
 
 /// Successor physical store: LMDB owner, owned snapshots, private

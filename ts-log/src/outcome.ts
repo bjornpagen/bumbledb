@@ -8,7 +8,7 @@
  * use the same three-way certainty with
  * their existing protocol operation identities; there is no new journal.
  */
-import type { Violation } from "@bjornpagen/bumbledb"
+import type { StorageInspection, Violation } from "@bjornpagen/bumbledb"
 import type { LogError } from "#errors.ts"
 import type {
 	CommandRef,
@@ -104,7 +104,7 @@ export interface HistoryInspection {
 	readonly roots: { readonly count: number; readonly capacity: number }
 	readonly gc: "idle" | "marking" | "sweeping"
 	readonly lastMaintenanceError: string | null
-	readonly accounted: { readonly diskBytes: bigint; readonly workingBytes: bigint }
+	readonly storage: StorageInspection
 	readonly operations: { readonly queued: bigint; readonly active: bigint }
 }
 
@@ -115,13 +115,12 @@ export interface CacheSlotReport {
 	readonly binding: string
 	readonly state: CacheSlotState
 	readonly borrows: number
-	readonly diskBytes: bigint
 }
 
 export interface CacheInspection {
 	readonly openCount: number
 	readonly opening: number
-	readonly budget: { readonly bytes: bigint; readonly maxOpen: number }
+	readonly maxOpen: number
 	readonly evictions: bigint
 	readonly slots: readonly CacheSlotReport[]
 }

@@ -17,7 +17,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
+import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, Uuid, u64 } from "@bjornpagen/bumbledb"
 import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Exit, ManagedRuntime, Result } from "effect"
@@ -38,24 +38,10 @@ const runtimeOptions: NativeRuntimeOptions = {
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 64,
-	inputBytes: 8_000_000n,
-	workingBytes: 8_000_000n,
-	scratchBytes: 8_000_000n,
-	resultBytes: 1_000_000n,
-	chunkBytes: 1_000_000n,
 	cleanupTimeout: "2 seconds"
 }
-const work: ExecutionPolicy = {
-	inputBytes: 1_000_000n,
-	workingBytes: 1_000_000n,
-	scratchBytes: 1_000_000n,
-	resultBytes: 100_000n,
-	rows: 100_000n,
-	workUnits: 10_000_000n,
-	timeout: "10 seconds"
-}
-const submitOptions = { ...work, attempts: 4, backoff: { baseMillis: 1, capMillis: 10 } }
-const readOptions = { ...work, consistency: { kind: "cached" } as const }
+const submitOptions = { attempts: 4, backoff: { baseMillis: 1, capMillis: 10 } }
+const readOptions = { consistency: { kind: "cached" } as const }
 
 function ok<A, E>(result: Result.Result<A, E>): A {
 	assert.ok(Result.isSuccess(result), "expected success")
@@ -82,7 +68,7 @@ function identityOf(schemaId: DatabaseIdentity["schemaId"], seed: string): Datab
  */
 const creation = (seed: string) =>
 	Effect.gen(function* () {
-		const identity = yield* productionCodec.schemaIdentity(lower(Journal), work)
+		const identity = yield* productionCodec.schemaIdentity(lower(Journal))
 		return {
 			operationId: ok(OperationId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(seed, 16)))))),
 			artifact: new TextEncoder().encode(identity.snapshot)
@@ -95,23 +81,20 @@ function binding(directory: string, identity: DatabaseIdentity): LocalBinding {
 
 /** Seal one insert command under the given history scope. */
 const sealInsert = (scope: DatabaseIdentity, changes: ChangeSet<typeof Journal>, requestSeed: string) =>
-	Command.seal(
-		{
-			scope,
-			id: {
-				receiptEpoch: ok(ReceiptEpoch.from(1n)),
-				requestId: ok(RequestId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(requestSeed, 16))))))
-			},
-			changes,
-			precondition: { kind: "blind" },
-			result: {}
+	Command.seal({
+		scope,
+		id: {
+			receiptEpoch: ok(ReceiptEpoch.from(1n)),
+			requestId: ok(RequestId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(requestSeed, 16))))))
 		},
-		work
-	)
+		changes,
+		precondition: { kind: "blind" },
+		result: {}
+	})
 
 const buildChanges = (rows: ReadonlyArray<{ id: bigint; body: string }>) =>
 	Effect.gen(function* () {
-		const draft = yield* ChangeSet.builder(Journal, work)
+		const draft = yield* ChangeSet.builder(Journal)
 		yield* draft.insert(Note, rows)
 		return yield* draft.finish()
 	})
@@ -124,12 +107,11 @@ test("same-schema cross-origin caches refuse before serving or mutating anything
 		const exit = await runtime.runPromiseExit(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const compiled = yield* Schema.compile(Journal, work)
+					const compiled = yield* Schema.compile(Journal)
 					const tenantA = identityOf(compiled.schemaId, "aa")
 					const tenantB = identityOf(compiled.schemaId, "bb")
 					// Two tenants, same schema, distinct directories.
 					const historyA = yield* LocalHistory.create(binding(dirA, tenantA), Journal, {
-						...work,
 						creation: yield* creation("a1")
 					})
 					const changes = yield* buildChanges([{ id: 1n, body: "tenant-a-secret" }])
@@ -141,12 +123,12 @@ test("same-schema cross-origin caches refuse before serving or mutating anything
 					// B's identity binding. Equal schema and equal revision must
 					// not be enough — the origin binding refuses before any
 					// fact crosses scope.
-					const attack = yield* Effect.exit(LocalHistory.open(binding(dirA, tenantB), Journal, work))
+					const attack = yield* Effect.exit(LocalHistory.open(binding(dirA, tenantB), Journal))
 					assert.ok(Exit.hasFails(attack), "the foreign-origin open refuses")
 					// Tenant A's data is untouched and still served to A.
-					const reopened = yield* LocalHistory.open(binding(dirA, tenantA), Journal, work)
+					const reopened = yield* LocalHistory.open(binding(dirA, tenantA), Journal)
 					const snapshot = yield* reopened.snapshot(readOptions)
-					const stillThere = yield* snapshot.get(Note, { id: 1n }, work)
+					const stillThere = yield* snapshot.get(Note, { id: 1n })
 					assert.ok(stillThere._tag === "Some", "the refused attack mutated nothing")
 					yield* reopened.close()
 					return true
@@ -167,13 +149,12 @@ test("a retained command ref resolves after reopen and receipts outlive their sc
 	try {
 		const exit = await runtime.runPromiseExit(
 			Effect.gen(function* () {
-				const compiled = yield* Schema.compile(Journal, work)
+				const compiled = yield* Schema.compile(Journal)
 				const tenant = identityOf(compiled.schemaId, "cc")
 				// Scope 1: create, submit, retain the ref and receipt, close.
 				const { ref, receipt } = yield* Effect.scoped(
 					Effect.gen(function* () {
 						const history = yield* LocalHistory.create(binding(dir, tenant), Journal, {
-							...work,
 							creation: yield* creation("c1")
 						})
 						const changes = yield* buildChanges([{ id: 7n, body: "durable" }])
@@ -191,8 +172,8 @@ test("a retained command ref resolves after reopen and receipts outlive their sc
 				// exact recorded outcome (never NotSubmitted, never invented).
 				yield* Effect.scoped(
 					Effect.gen(function* () {
-						const history = yield* LocalHistory.open(binding(dir, tenant), Journal, work)
-						const resolved = yield* history.resolve(ref, work)
+						const history = yield* LocalHistory.open(binding(dir, tenant), Journal)
+						const resolved = yield* history.resolve(ref)
 						assert.equal(resolved.kind, "found")
 						if (resolved.kind === "found") {
 							assert.equal(resolved.receipt.outcome.kind, "committed")
@@ -218,15 +199,13 @@ test("closed and foreign capabilities refuse typed without dispatching", async (
 		const exit = await runtime.runPromiseExit(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const compiled = yield* Schema.compile(Journal, work)
+					const compiled = yield* Schema.compile(Journal)
 					const tenantA = identityOf(compiled.schemaId, "dd")
 					const tenantB = identityOf(compiled.schemaId, "ee")
 					const historyA = yield* LocalHistory.create(binding(dirA, tenantA), Journal, {
-						...work,
 						creation: yield* creation("d1")
 					})
 					const historyB = yield* LocalHistory.create(binding(dirB, tenantB), Journal, {
-						...work,
 						creation: yield* creation("e1")
 					})
 					// A command sealed for tenant B submitted through tenant A's
@@ -240,7 +219,7 @@ test("closed and foreign capabilities refuse typed without dispatching", async (
 					// typed without dispatch; the receipt table it held is gone
 					// from THIS handle but not from the durable directory.
 					yield* historyA.close()
-					const late = yield* Effect.exit(historyA.inspect(work))
+					const late = yield* Effect.exit(historyA.inspect())
 					assert.ok(Exit.hasFails(late), "a closed capability refuses typed")
 					// Tenant B is completely unaffected by A's lifecycle.
 					const own = yield* historyB.submit(foreign, submitOptions)
@@ -265,9 +244,9 @@ test("open never creates: a missing configured database is a typed refusal, not 
 		const exit = await runtime.runPromiseExit(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const compiled = yield* Schema.compile(Journal, work)
+					const compiled = yield* Schema.compile(Journal)
 					const tenant = identityOf(compiled.schemaId, "0f")
-					const attempt = yield* Effect.exit(LocalHistory.open(binding(dir, tenant), Journal, work))
+					const attempt = yield* Effect.exit(LocalHistory.open(binding(dir, tenant), Journal))
 					assert.ok(Exit.hasFails(attempt), "open of a missing database refuses")
 					return true
 				})
@@ -300,7 +279,7 @@ test("a hosted binding under the local constructor refuses typed with no genesis
 		const exit = await runtime.runPromiseExit(
 			Effect.scoped(
 				// Deliberate wrong-binding forgery crossing the typed wall.
-				LocalHistory.open(hostile as unknown as LocalBinding, Journal, work)
+				LocalHistory.open(hostile as unknown as LocalBinding, Journal)
 			)
 		)
 		assert.ok(Exit.hasFails(exit), "the backend-discriminated binding refuses TYPED, never a defect")

@@ -45,14 +45,7 @@ fn view_of(schema: &Schema, rows: &[(u64, u64)]) -> Arc<crate::image::RelationIm
 }
 
 fn all(image: &Arc<crate::image::RelationImage>) -> View {
-    apply(
-        image,
-        &[],
-        &[],
-        Vec::new(),
-        image.generation().text_eq(None),
-    )
-    .expect("unfiltered image")
+    apply(image, &[], &[], Vec::new(), image.generation().text_eq()).expect("unfiltered image")
 }
 
 fn scalars(columns: &[usize]) -> Vec<SelectionLevel> {

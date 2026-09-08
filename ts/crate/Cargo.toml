@@ -10,6 +10,9 @@ publish = false
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+alloc-counter = ["bumbledb/alloc-counter"]
+
 # SAFETY comment on the block. `unsafe_op_in_unsafe_fn` keeps the napi trait
 [lints.rust]
 unsafe_code = "deny"

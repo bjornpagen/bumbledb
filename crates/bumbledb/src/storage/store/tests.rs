@@ -29,7 +29,7 @@ use crate::schema::{
     ValueType,
 };
 use crate::testutil::TempDir;
-use crate::work::{ExecutionPolicy, WorkContext};
+use crate::work::WorkContext;
 use crate::{ChangeSet, Value};
 
 use super::candidate::{
@@ -112,31 +112,22 @@ pub(super) fn other_schema() -> Schema {
 }
 
 pub(super) fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 24,
-        work_units: 1 << 40,
-        timeout: Duration::from_secs(120),
-    }
-    .start()
-    .expect("work context")
+    WorkContext::new()
 }
 
-pub(super) fn short_work(timeout: Duration) -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 24,
-        work_units: 1 << 40,
-        timeout,
+/// A test host explicitly requests cancellation after the chosen wait.
+pub(super) fn cancel_after(delay: Duration) -> WorkContext {
+    let work = WorkContext::new();
+    if delay.is_zero() {
+        work.cancel();
+    } else {
+        let cancel = work.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(delay);
+            cancel.cancel();
+        });
     }
-    .start()
-    .expect("short work context")
+    work
 }
 
 /// Tiny-map policy for forced growth schedules.

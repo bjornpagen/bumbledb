@@ -84,7 +84,7 @@ fn a_wrong_width_stored_blob_refuses_typed() {
     // stored length disagrees with the schema refuses as corruption at
     // the one shared walker (never truncation, never silent padding).
     let schema = schema();
-    let work = crate::api::prepared::source::unbounded_work().expect("ledger");
+    let work = crate::api::prepared::source::unbounded_work();
     let healthy =
         crate::canonical::CanonicalRow::encode(schema.relation(D).fields(), &fact(3), &work)
             .expect("canonical")
@@ -95,8 +95,13 @@ fn a_wrong_width_stored_blob_refuses_typed() {
         let interner = TextInterner::default();
         let mut text = TextWords::Lookup(&interner);
         let mut out = Vec::new();
-        row_words(schema.relation(D).fields(), bytes, &mut text, &mut out)?
-            .expect_ready("lookup never spills");
+        row_words(
+            schema.relation(D).fields(),
+            bytes,
+            &mut text,
+            &mut out,
+            &mut Vec::new(),
+        )?;
         Ok(out)
     };
     let words = walk(&healthy).expect("the healthy row walks");

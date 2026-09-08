@@ -24,7 +24,7 @@ use lane_support::{HEAD_CAP, LIMITS, Mirror, insert_user, op, work};
 fn try_verified(
     store: &MemStore,
     reference: &ObjectRef,
-) -> Result<bumbledb::work::ChargedBytes, bumbledb_log::store::ObjectError> {
+) -> Result<bumbledb_log::store::ReceivedBody, bumbledb_log::store::ObjectError> {
     get_verified(
         store,
         "t",
@@ -104,6 +104,39 @@ fn gc01_unreferenced_old_epoch_object_is_collected_and_new_epoch_twin_survives()
 }
 
 #[test]
+fn cancelled_protected_walk_publishes_no_marks_and_can_resume() {
+    let store = MemStore::new();
+    let mirror = tenant("gc-cancel-mark", &store, 4);
+    close_epoch(&store, "t", op(0x15), &gc_policy(), &work()).unwrap();
+    let before = mirror.head();
+    assert!(matches!(before.gc, GcPhase::Marking { .. }));
+    let cancelled = work();
+    let requested = cancelled.clone();
+    store.set_gate(move |operation, _| {
+        if operation == Op::GetObject {
+            requested.cancel();
+        }
+        None
+    });
+    let result = mark(&store, "t", LIMITS, &gc_policy(), &cancelled);
+    assert!(matches!(
+        result,
+        Err(GcError::Work(bumbledb::WorkError::Cancelled))
+    ));
+    assert_eq!(mirror.head(), before, "no incomplete deletion certificate");
+    store.set_gate(|_, _| None);
+    let reference = mark(&store, "t", LIMITS, &gc_policy(), &work()).unwrap();
+    assert!(matches!(mirror.head().gc, GcPhase::Sweeping { .. }));
+    let body = try_verified(&store, &reference).unwrap();
+    let keys = decode_marks(body.as_slice(), op(0x15), body.len()).unwrap();
+    assert_eq!(
+        keys.len(),
+        4,
+        "every protected decision survives cancellation"
+    );
+}
+
+#[test]
 fn gc02_a_writer_paused_across_the_barrier_cannot_publish_its_old_head() {
     // The epoch-closing CAS invalidates every old publication attempt: a
     // writer paused between reading the head and its CAS loses when the
@@ -138,7 +171,7 @@ fn gc02_a_writer_paused_across_the_barrier_cannot_publish_its_old_head() {
         let writer = scope.spawn(|| {
             // The paused old writer resumes its exact-version CAS after the
             // barrier: it must lose, never acknowledge.
-            store.replace_head(&head_key("t"), &version, head.as_bytes())
+            store.replace_head(&head_key("t"), &version, head.as_slice())
         });
         reached_rx.recv().expect("writer reached its CAS");
         close_epoch(&store, "t", op(0x22), &gc_policy(), &work()).expect("barrier publishes");
@@ -199,9 +232,9 @@ fn gc03_named_restore_point_protects_an_old_checkpoint_until_release() {
         .expect("collection with pin");
     assert!(report.finished);
     let bytes = try_verified(&store, &old_checkpoint).expect("pinned manifest survives");
-    let manifest = bumbledb_log::codec::decode_manifest(bytes.as_bytes(), ckpt_policy().stream)
+    let manifest = bumbledb_log::codec::decode_manifest(bytes.as_slice(), ckpt_policy().stream)
         .expect("decodes");
-    drop(bytes.into_owner());
+    drop(bytes);
     for chunk in &manifest.chunks {
         try_verified(&store, chunk).expect("pinned chunk survives");
     }

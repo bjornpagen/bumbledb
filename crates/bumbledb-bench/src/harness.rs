@@ -12,7 +12,7 @@ mod work;
 pub use cold::{measure_cold, org_touch};
 pub use measure::{measure, measure_batched, measure_interleaved};
 pub use stats::{normalized_p50, stats};
-pub use work::{bench_policy, bench_work, capped_work_units};
+pub use work::bench_work;
 
 /// Warmup and measured sample counts. Each family selects its protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

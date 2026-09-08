@@ -57,12 +57,9 @@ impl<S> PreparedQuery<S> {
         self.execute_source(&source, params, out)
     }
 
-    /// As [`Self::execute_collect`], under the CALLER's work context
-    /// instead of the lease's embedded one — the native runtime threads
-    /// each wire operation's bounded `WorkContext` (deadline, cancellation
-    /// and byte/step budgets) through here so the executor's in-join polls,
-    /// COLT growth charges and sink budgets observe the operation's own
-    /// policy, not the long-lived session lease's unbounded ledger.
+    /// As [`Self::execute_collect`], using this caller's cancellation context
+    /// instead of the snapshot frame's context. Retaining a snapshot does not
+    /// extend an earlier operation's cancellation lifetime.
     /// # Errors
     /// As [`Self::execute`].
     ///
@@ -77,12 +74,8 @@ impl<S> PreparedQuery<S> {
     ) -> Result<Answers> {
         let source = QuerySource::store(instance.snapshot(), work);
         let mut out = Answers::new();
-        // Collect promises a resident answer set. Reuse streamed result
-        // accounting without a scratch tier; a byte refusal drops the
-        // private carrier instead of publishing a partial collection.
-        let mut charge = super::result::ResultCharge::new(work, usize::MAX);
-        self.execute_source_charged(&source, params, &mut out, Some(&mut charge))?;
-        charge.finish_resident(&out)?;
+        self.execute_source(&source, params, &mut out)?;
+        work.checkpoint().map_err(super::source::work_error)?;
         Ok(out)
     }
 
@@ -92,27 +85,14 @@ impl<S> PreparedQuery<S> {
         params: P,
         out: &mut Answers,
     ) -> Result<()> {
-        self.execute_source_charged(source, params, out, None)
-    }
-
-    /// As [`Self::execute_source`], with the streamed result-construction
-    /// accounting installed (the sealed-result path): finalize charges
-    /// result bytes as rows land and routes past-allowance growth into the
-    /// scratch backing during construction.
-    pub(super) fn execute_source_charged<'p, P: super::BindArgs<'p>>(
-        &mut self,
-        source: &QuerySource<'_>,
-        params: P,
-        out: &mut Answers,
-        charge: Option<&mut super::result::ResultCharge<'_>>,
-    ) -> Result<()> {
         self.check_identity(source.pinned())?;
+        // Previous raw sink contents are invalid for this new execution;
+        // completed Answers own their payload independently.
+        self.execution_texts.clear();
         let generation = if self.no_text_probe {
-            debug_assert!(self.nonresident.is_none());
             debug_assert!(self.text_generation.is_none());
             None
         } else {
-            self.release_text_store();
             let generation = self.cache.acquire();
             self.bind_text_generation(&generation);
             Some(generation)
@@ -120,7 +100,6 @@ impl<S> PreparedQuery<S> {
         #[cfg(test)]
         {
             self.last_visits = 0;
-            self.used_nonresident_text = false;
         }
         out.begin(self.signature.columns.len());
         params.bind(self, source.work())?;
@@ -136,40 +115,33 @@ impl<S> PreparedQuery<S> {
                 &cache,
                 generation.expect("non-probe pipelines always pin a generation"),
             );
-            self.run_bound(&images, out, charge)
+            self.run_bound(&images, out)
         };
         #[cfg(test)]
         {
             self.last_visits = source.visit_count();
-            self.used_nonresident_text = self.nonresident.is_some();
+        }
+        let result = result.and_then(|()| {
+            source
+                .work()
+                .checkpoint()
+                .map_err(super::source::work_error)
+        });
+        if result.is_err() {
+            out.clear();
+            self.resolve_memo.clear();
         }
         result
     }
 
-    /// The main sink's RAM allowance before its distinct state continues
-    /// in temporary LMDB. A tuning default; zero forces the spill from the
-    /// first row (the Q-FALLBACK/F-RESOURCE forcing affordance).
-    #[doc(hidden)]
-    pub fn set_sink_ram(&mut self, bytes: usize) {
-        self.sink_ram = bytes;
-    }
-
-    fn run_bound(
-        &mut self,
-        images: &SourceImages<'_>,
-        out: &mut Answers,
-        charge: Option<&mut super::result::ResultCharge<'_>>,
-    ) -> Result<()> {
+    fn run_bound(&mut self, images: &SourceImages<'_>, out: &mut Answers) -> Result<()> {
         if self.pipeline.is_empty_cq() {
             return Ok(());
         }
-        // Only pipelines that consume the main sink retain its ledger.
+        // Only pipelines that consume the main sink retain its cancellation context.
         // Point probes copy directly into Answers; empty CQs emit nothing.
         self.sink
-            .begin_execution(Some(crate::exec::sink::SinkBudget {
-                work: images.source().work().clone(),
-                ram_bytes: self.sink_ram,
-            }));
+            .begin_execution(Some(images.source().work().clone()));
         // ONE numerical guard per whole engine operation:
         // queries with computed scalar outputs establish the canonical FPU
         // environment here, hold it across every rule/derived stage and
@@ -188,22 +160,8 @@ impl<S> PreparedQuery<S> {
             None => None,
         };
 
-        let attempt = self.run_rules(images, &mut NoopCounters);
-        let ran = match attempt {
-            Ok(ran) => ran,
-            // One bounded restart on the SAME pinned snapshot (chapter 12
-            // §6): a resident reservation refusal reroutes every Free Join
-            // rule through the complete cursor fallback — never an endless
-            // replan loop. The work ledger retains the discarded attempt's cost.
-            Err(error) if !self.forced_fallback && super::source::is_working_exhaustion(&error) => {
-                self.forced_fallback = true;
-                let retried = self.run_rules(images, &mut NoopCounters);
-                self.forced_fallback = false;
-                retried?
-            }
-            Err(error) => return Err(error),
-        };
-        self.finish_sink(images, ran, out, charge)
+        let ran = self.run_rules(images, &mut NoopCounters)?;
+        self.finish_sink(images, ran, out)
     }
 
     /// Route every Free Join rule through the complete cursor fallback —
@@ -220,7 +178,6 @@ impl<S> PreparedQuery<S> {
         images: &SourceImages<'_>,
         ran: bool,
         out: &mut Answers,
-        charge: Option<&mut super::result::ResultCharge<'_>>,
     ) -> Result<()> {
         // raised before finalize — never a partial result. Executor-side
 
@@ -233,10 +190,9 @@ impl<S> PreparedQuery<S> {
             &mut self.answer_scratch,
             &mut self.resolve_memo,
             &interner,
-            self.nonresident.as_mut(),
             &self.signature.columns,
             out,
-            charge,
+            images.source().work(),
         )
     }
 
@@ -294,11 +250,7 @@ impl<S> PreparedQuery<S> {
             }
             PreparedRule::KeyProbe(_) => false,
         };
-        let fallback = fallback || self.nonresident.is_some();
         let interner = images.interner();
-        if self.nonresident.is_some() {
-            self.rehome_bound_text(&interner, images.source().work())?;
-        }
         let rules = self.pipeline.main_rules_mut();
         let ran = match &mut rules[rule_idx] {
             PreparedRule::KeyProbe(rule) => {
@@ -307,7 +259,6 @@ impl<S> PreparedQuery<S> {
                     images.source(),
                     self.schema.as_ref(),
                     &interner,
-                    &mut self.nonresident,
                     &self.resolved_params,
                     &mut rule.row,
                     &mut self.key_scratch,
@@ -318,9 +269,8 @@ impl<S> PreparedQuery<S> {
                 true
             }
             PreparedRule::FreeJoin(rule) => {
-                let mut use_fallback = fallback;
-                let mut ran_resident = true;
-                if !use_fallback {
+                let mut ran_resident = false;
+                if !fallback {
                     let plan = &rule.plan;
                     let resolved =
                         if fast_eligible && rule.resolution == super::ResolutionState::Complete {
@@ -328,7 +278,6 @@ impl<S> PreparedQuery<S> {
                         } else {
                             let complete = LiteralResolution {
                                 interner: &interner,
-                                store: &mut self.nonresident,
                                 work: images.source().work(),
                                 params: &self.resolved_params,
                                 missed: &self.missed_params,
@@ -346,11 +295,9 @@ impl<S> PreparedQuery<S> {
                             complete
                         };
                     ran_resident = resolved;
-                    if self.nonresident.is_some() {
-                        use_fallback = true;
-                    } else if resolved {
+                    if resolved {
                         let work = images.source().work();
-                        let joined = match &mut self.sink {
+                        match &mut self.sink {
                             super::EitherSink::Computed(s) => run_join(
                                 plan,
                                 self.schema.as_ref(),
@@ -363,7 +310,6 @@ impl<S> PreparedQuery<S> {
                                 &mut rule.memo,
                                 &occ_images,
                                 &mut retired,
-                                &mut self.nonresident,
                                 s.as_mut(),
                                 counters,
                             )?,
@@ -379,7 +325,6 @@ impl<S> PreparedQuery<S> {
                                 &mut rule.memo,
                                 &occ_images,
                                 &mut retired,
-                                &mut self.nonresident,
                                 s,
                                 counters,
                             )?,
@@ -404,30 +349,25 @@ impl<S> PreparedQuery<S> {
                                     &mut rule.memo,
                                     &occ_images,
                                     &mut retired,
-                                    &mut self.nonresident,
                                     s.as_mut(),
                                     counters,
                                 );
-                                // Restore before propagating a refusal or
-                                // selecting the nonresident fallback.
+                                // Restore the invocation-local proof before propagating errors.
                                 rule.executor.set_physical_distinct(None);
                                 let _ = s.set_physical_distinct(None);
-                                joined?
+                                joined?;
                             }
-                        };
-                        use_fallback = !joined;
-                    } else {
-                        ran_resident = false;
+                        }
                     }
                 }
-                if use_fallback {
+                if fallback {
                     let mut ctx = super::fallback::FallbackCtx {
                         source: images.source(),
                         schema: self.schema.as_ref(),
                         interner: &interner,
                         params: &self.resolved_params,
                         missed: &self.missed_params,
-                        nonresident: &mut self.nonresident,
+                        retained_texts: &mut self.execution_texts,
                     };
                     match &mut self.sink {
                         super::EitherSink::Computed(s) => super::fallback::run_fallback(
@@ -491,7 +431,6 @@ impl<S> PreparedQuery<S> {
             source,
             self.schema.as_ref(),
             &interner,
-            &mut self.nonresident,
             &self.resolved_params,
             row,
             &mut self.key_scratch,
@@ -517,13 +456,7 @@ impl<S> PreparedQuery<S> {
             }
             match ty {
                 ValueType::String => {
-                    out.push_word(
-                        &interner,
-                        self.nonresident.as_mut(),
-                        ty,
-                        words[0],
-                        &mut self.resolve_memo,
-                    )?;
+                    out.push_word(&interner, ty, words[0], &mut self.resolve_memo)?;
                 }
                 _ => out.cells.push(Answers::word_cell(ty, words[0])?),
             }

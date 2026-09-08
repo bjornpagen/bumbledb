@@ -1,7 +1,6 @@
 use super::{Answer, AnswerValue, Answers, Cell, ResolveMemo, ValueType};
 
 use crate::error::Result;
-use crate::image::NonresidentTextStore;
 use crate::image::intern::InternerHandle;
 use bumbledb_theory::Interval;
 use bumbledb_theory::schema::IntervalElement;
@@ -64,7 +63,7 @@ impl Answers {
         }
     }
 
-    pub fn answers(&self) -> impl Iterator<Item = Answer<'_>> {
+    pub fn answers(&self) -> impl ExactSizeIterator<Item = Answer<'_>> {
         (0..self.len()).map(move |answer| Answer {
             buffer: self,
             answer,
@@ -183,7 +182,6 @@ impl Answers {
     pub(super) fn push_word(
         &mut self,
         interner: &InternerHandle<'_>,
-        store: Option<&mut NonresidentTextStore>,
         ty: &ValueType,
         word: u64,
         memo: &mut ResolveMemo,
@@ -194,7 +192,7 @@ impl Answers {
             ValueType::I64 => Cell::I64((word ^ (1 << 63)).cast_signed()),
             ValueType::F64 => Cell::F64(crate::encoding::decode_f64(word.to_be_bytes())?),
             ValueType::String => {
-                let (start, len) = memo.resolve(interner, store, word, self)?;
+                let (start, len) = memo.resolve(interner, word, self)?;
                 Cell::String { start, len }
             }
             ValueType::FixedBytes { .. } => {

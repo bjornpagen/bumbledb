@@ -18,8 +18,7 @@ import {
 	makeWireDouble,
 	provideRuntime,
 	refWire,
-	registerChange,
-	work
+	registerChange
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
@@ -45,7 +44,7 @@ function input(overrides: Partial<Record<"result" | "requestId", unknown>> = {})
 
 function plannedSeal(double: Double, machine: Machine, sealInput = input()) {
 	double.plan("logCommandSeal", { result: { command: { __command: true }, ref: refWire } })
-	return machine.Command.seal(sealInput, work)
+	return machine.Command.seal(sealInput)
 }
 
 describe("Command.seal", function suite() {
@@ -76,7 +75,7 @@ describe("Command.seal", function suite() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
 		const exit = await Effect.runPromiseExit(
-			Effect.scoped(machine.Command.seal(input({ result: { nested: { object: true } } }), work))
+			Effect.scoped(machine.Command.seal(input({ result: { nested: { object: true } } })))
 		)
 		assert.ok(Exit.isFailure(exit))
 		assert.ok(Exit.hasFails(exit))
@@ -91,9 +90,7 @@ describe("Command.seal", function suite() {
 		// against the native result_cell_in). Out of range is caller misuse
 		// refused here, never a mid-marshal native throw.
 		for (const value of [1n << 64n, -(1n << 63n) - 1n]) {
-			const exit = await Effect.runPromiseExit(
-				Effect.scoped(machine.Command.seal(input({ result: { units: value } }), work))
-			)
+			const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(input({ result: { units: value } }))))
 			assert.ok(Exit.isFailure(exit))
 			const error = Exit.findErrorOption(exit)
 			assert.ok(error._tag === "Some")
@@ -102,7 +99,7 @@ describe("Command.seal", function suite() {
 		// The exact boundary values still cross.
 		double.plan("logCommandSeal", { result: { command: { __command: true }, ref: refWire } })
 		await Effect.runPromise(
-			Effect.scoped(machine.Command.seal(input({ result: { hi: (1n << 64n) - 1n, lo: -(1n << 63n) } }), work))
+			Effect.scoped(machine.Command.seal(input({ result: { hi: (1n << 64n) - 1n, lo: -(1n << 63n) } })))
 		)
 		assert.equal(double.calls.filter((call) => call.verb === "logCommandSeal").length, 1)
 	})
@@ -114,7 +111,7 @@ describe("Command.seal", function suite() {
 			...input(),
 			changes: { __someone: "else" }
 		} as unknown as CommandInput<typeof schema>
-		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(foreign, work)))
+		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(foreign)))
 		assert.ok(Exit.isFailure(exit))
 		assert.equal(double.calls.length, 0)
 	})
@@ -124,7 +121,7 @@ describe("Command.seal", function suite() {
 		const machine = makeLogMachine(double.wire, makeIntegration())
 		const sealInput = input()
 		closeRegisteredChange(sealInput.changes as unknown as object)
-		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(sealInput, work)))
+		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(sealInput)))
 		assert.ok(Exit.isFailure(exit))
 		const error = Exit.findErrorOption(exit)
 		assert.ok(error._tag === "Some")
@@ -138,7 +135,7 @@ describe("Command.seal", function suite() {
 		const changes = { __changes: true }
 		registerChange(changes, { native: "change" }, { schemaId: "9e".repeat(32) })
 		const mismatched = { ...input(), changes } as unknown as CommandInput<typeof schema>
-		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(mismatched, work)))
+		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(mismatched)))
 		assert.ok(Exit.isFailure(exit))
 		const error = Exit.findErrorOption(exit)
 		assert.ok(error._tag === "Some")
@@ -157,9 +154,9 @@ describe("Command.encode / Command.decode", function suite() {
 				Effect.gen(function* () {
 					const command = yield* plannedSeal(double, machine)
 					double.plan("logCommandEncode", { result: bytes })
-					const encoded = yield* machine.Command.encode(command, work)
+					const encoded = yield* machine.Command.encode(command)
 					yield* command.close()
-					const closedExit = yield* Effect.exit(machine.Command.encode(command, work))
+					const closedExit = yield* Effect.exit(machine.Command.encode(command))
 					return { encoded, closedExit }
 				})
 			)
@@ -179,7 +176,7 @@ describe("Command.encode / Command.decode", function suite() {
 			provideRuntime(
 				Effect.scoped(
 					Effect.gen(function* () {
-						const command = yield* machine.Command.decode(new Uint8Array([1, 2]), schema, work)
+						const command = yield* machine.Command.decode(new Uint8Array([1, 2]), schema)
 						return command.ref
 					})
 				)
@@ -198,7 +195,7 @@ describe("Command.encode / Command.decode", function suite() {
 			failure: { source: "protocol", reason: { _tag: "ForeignIdentity" } }
 		})
 		const exit = await Effect.runPromiseExit(
-			provideRuntime(Effect.scoped(machine.Command.decode(new Uint8Array([1]), schema, work)))
+			provideRuntime(Effect.scoped(machine.Command.decode(new Uint8Array([1]), schema)))
 		)
 		assert.ok(Exit.isFailure(exit))
 		const error = Exit.findErrorOption(exit)
@@ -210,9 +207,7 @@ describe("Command.encode / Command.decode", function suite() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
 		const shared = new Uint8Array(new SharedArrayBuffer(4))
-		const exit = await Effect.runPromiseExit(
-			provideRuntime(Effect.scoped(machine.Command.decode(shared, schema, work)))
-		)
+		const exit = await Effect.runPromiseExit(provideRuntime(Effect.scoped(machine.Command.decode(shared, schema))))
 		assert.ok(Exit.isFailure(exit))
 		assert.equal(double.calls.length, 0)
 	})

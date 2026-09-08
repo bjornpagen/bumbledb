@@ -1,0 +1,2 @@
+patchedDependencies:
+  alchemy@2.0.0-beta.76: patches/alchemy@2.0.0-beta.76.patch

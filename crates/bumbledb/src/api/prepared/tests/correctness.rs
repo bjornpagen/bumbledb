@@ -236,7 +236,7 @@ fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
         .collect();
     let store = posting_store("prepared-proved-output", &rows);
     let query = keyed_range_query(true);
-    for (fallback, ram_bytes) in [(false, usize::MAX), (false, 0), (true, usize::MAX)] {
+    for fallback in [false, true] {
         let mut append = store.prepare(&query).unwrap();
         assert!(
             output_hashing_is_elided(&append),
@@ -252,7 +252,6 @@ fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
         assert!(!output_hashing_is_elided(&hashed));
         for prepared in [&mut append, &mut hashed] {
             prepared.force_cursor_fallback(fallback);
-            prepared.set_sink_ram(ram_bytes);
         }
         for (lower, upper) in [(0u64, 3u64), (4, 8), (9, 11), (0, 11), (0, 3)] {
             let params = [BindValue::U64(lower), BindValue::U64(upper)];
@@ -644,8 +643,7 @@ fn heap_prepared_witnesses_require_the_same_schema_laws() {
     unkeyed.statements.clear();
     let admit = |descriptor: SchemaDescriptor, rows: &[(u64, u64)]| {
         let mut builder =
-            InstanceBuilder::new(descriptor, crate::api::db::test_operation().expect("work"))
-                .expect("schema");
+            InstanceBuilder::new(descriptor, crate::api::db::test_operation()).expect("schema");
         let facts: Vec<_> = rows
             .iter()
             .map(|&(id, payload)| vec![Value::U64(id), Value::U64(payload)])
@@ -750,31 +748,47 @@ fn forced_cursor_fallback_agrees_with_the_resident_path() {
 }
 
 #[test]
-fn forced_sink_spill_preserves_the_answer_set() {
-    // Q-DISK (distinct-state half): zero RAM allowance forces the main
-    // sink's seen-set/result rows into the scratch tier from row one; the
-    // published set is unchanged.
-    let rows: &[(u64, u64, &str, i64)] = &[
-        (1, 3, "a", 10),
-        (2, 3, "b", 25),
-        (3, 7, "b", 25),
-        (4, 7, "d", 40),
-    ];
-    let store = posting_store("prepared-forced-spill", rows);
-    let query = by_account_query();
-
-    let mut spilled = store.prepare(&query).expect("prepare");
-    spilled.set_sink_ram(0);
-    let got = store
-        .execute(&mut spilled, &[BindValue::U64(3), BindValue::I64(0)])
-        .expect("spilled execute");
-    assert_eq!(answers_of(&got), vec![("a".into(), 10), ("b".into(), 25)]);
-
-    // Success → success reuse on the same spilled plan (Q-ATOMIC shape).
-    let got = store
-        .execute(&mut spilled, &[BindValue::U64(7), BindValue::I64(0)])
-        .expect("spilled re-execute");
-    assert_eq!(answers_of(&got), vec![("b".into(), 25), ("d".into(), 40)]);
+fn explicitly_spilled_projection_finalizes_exactly_and_reuses_its_plan() {
+    let store = posting_store(
+        "prepared-explicit-spill",
+        &[
+            (1, 3, "a", 10),
+            (2, 3, "b", 25),
+            (3, 7, "b", 25),
+            (4, 7, "d", 40),
+        ],
+    );
+    let mut prepared = store.prepare(&by_account_query()).unwrap();
+    for account in [3, 7, 3] {
+        let expected = store
+            .execute(&mut prepared, &[BindValue::U64(account), BindValue::I64(0)])
+            .unwrap();
+        let EitherSink::Projection(sink) = &mut prepared.sink else {
+            panic!("projection")
+        };
+        sink.force_spill().unwrap();
+        let work = crate::work::WorkContext::new();
+        let generation = prepared
+            .text_generation
+            .as_ref()
+            .unwrap()
+            .upgrade()
+            .unwrap();
+        let interner = crate::image::intern::InternerHandle::new(&generation, &work);
+        let mut actual = Answers::new();
+        actual.begin(prepared.signature.columns.len());
+        super::super::finalize::finalize(
+            &mut prepared.sink,
+            &mut prepared.answer_scratch,
+            &mut prepared.resolve_memo,
+            &interner,
+            &prepared.signature.columns,
+            &mut actual,
+            &work,
+        )
+        .unwrap();
+        assert_eq!(answers_of(&actual), answers_of(&expected));
+    }
 }
 
 #[test]
@@ -792,7 +806,7 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
     let mut prepared = store.prepare(&by_account_query()).expect("prepare");
     let sealed = store
         .db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
+        .read(crate::api::db::test_operation(), |instance| {
             prepared.execute_complete(instance, &[BindValue::U64(3), BindValue::I64(0)])
         })
         .expect("sealed result");
@@ -801,7 +815,7 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
     let mut rows_seen = Vec::new();
     let mut terminal_pages = 0;
     while let Some(page) = cursor
-        .next_page_with_work(&crate::api::db::test_operation().unwrap(), 1 << 20)
+        .next_page(&crate::api::db::test_operation())
         .expect("page")
     {
         for answer in 0..page.rows.len() {
@@ -819,17 +833,10 @@ fn execute_complete_seals_only_full_results_and_pages_them() {
     assert_eq!(terminal_pages, 1, "exactly one terminal frame");
 }
 
-/// Chapter 12 §6 composition: a resident working-byte refusal (image slab
-/// charge) licenses exactly ONE restart through the complete cursor
-/// fallback — which succeeds under the same ledger because cursors and the
-/// scratch-backed sink state do not need the resident slabs. A ledger too
-/// small for either path surfaces the typed exhaustion instead of looping.
+/// Selective cursor execution agrees with resident execution; cancellation
+/// is an error, never a reason to restart or fabricate an empty answer.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end exhaustion-restart scenario"
-)]
-fn working_byte_exhaustion_restarts_once_into_the_fallback() {
+fn selective_cursor_execution_is_exact_and_cancellation_does_not_restart() {
     use bumbledb_theory::schema::{
         FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValueType,
     };
@@ -909,76 +916,23 @@ fn working_byte_exhaustion_restarts_once_into_the_fallback() {
     );
     assert_eq!(expected.len(), 8, "amounts 2040..=2047");
 
-    let bounded = |working_bytes: u64| {
-        crate::work::ExecutionPolicy {
-            input_bytes: u64::MAX,
-            working_bytes,
-            scratch_bytes: u64::MAX,
-            result_bytes: u64::MAX,
-            rows: u64::MAX,
-            work_units: u64::MAX,
-            timeout: std::time::Duration::from_secs(3600),
+    let mut cursor = fix.prepare(&query).unwrap();
+    cursor.force_cursor_fallback(true);
+    fix.db.read(crate::work::WorkContext::new(), |instance| {
+        let cancelled = crate::work::WorkContext::new();
+        cancelled.cancel();
+        let stopped = super::super::source::QuerySource::store(instance.snapshot(), &cancelled);
+        let active = crate::work::WorkContext::new();
+        let source = super::super::source::QuerySource::store(instance.snapshot(), &active);
+        let mut out = Answers::new();
+        for _ in 0..2 {
+            cursor.execute_source(&source, &[] as &[BindValue], &mut out)?;
+            assert_eq!(render(&out), expected);
+            let result = cursor.execute_source(&stopped, &[] as &[BindValue], &mut out);
+            assert!(matches!(result, Err(Error::Store(error))
+                if matches!(*error, crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled))));
+            assert!(out.is_empty(), "no stale or partial result");
         }
-        .start()
-        .expect("bounded ledger")
-    };
-
-    // 24 KiB: far below the ~100 KiB resident slab charge, ample for the
-    // fallback's cursor scan — ONE recorded restart, identical answers.
-    let mut restarted = fix.prepare(&query).expect("prepare");
-    fix.db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
-            let work = bounded(24 << 10);
-            let source =
-                crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
-            let mut out = Answers::new();
-            restarted.execute_source(&source, &[] as &[BindValue], &mut out)?;
-            assert_eq!(render(&out), expected, "the restarted path is the query");
-            Ok(())
-        })
-        .expect("restarted execute");
-
-    // The restart composes with the sink spill, boundedly: working refusal
-    // → the ONE restart → the fallback's forced sink spill hits a scratch
-    // ledger refusal → the TYPED scratch exhaustion surfaces (a scratch
-    // refusal never licenses another restart) and no partial answer
-    // publishes (Q-ATOMIC).
-    let mut refused = fix.prepare(&query).expect("prepare");
-    refused.set_sink_ram(0);
-    fix.db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
-            let work = crate::work::ExecutionPolicy {
-                input_bytes: u64::MAX,
-                working_bytes: 24 << 10,
-                scratch_bytes: 1,
-                result_bytes: u64::MAX,
-                rows: u64::MAX,
-                work_units: u64::MAX,
-                timeout: std::time::Duration::from_secs(3600),
-            }
-            .start()
-            .expect("bounded ledger");
-            let source =
-                crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
-            let mut out = Answers::new();
-            let result = refused.execute_source(&source, &[] as &[BindValue], &mut out);
-            assert!(
-                matches!(
-                    &result,
-                    Err(crate::error::Error::Store(store)) if matches!(
-                        **store,
-                        crate::storage::store::StoreError::Work(
-                            crate::work::WorkError::Exhausted {
-                                resource: crate::work::Resource::ScratchBytes,
-                                ..
-                            }
-                        )
-                    )
-                ),
-                "typed scratch exhaustion after the one restart, got {result:?}"
-            );
-            assert_eq!(out.len(), 0, "no partial answer publishes");
-            Ok(())
-        })
-        .expect("refused execute");
+        Ok(())
+    }).unwrap();
 }

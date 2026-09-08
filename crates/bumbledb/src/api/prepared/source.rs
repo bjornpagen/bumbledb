@@ -21,44 +21,18 @@ use crate::schema::{
     CompiledProjection, CompiledTheory, DistinctnessWitness, Schema, VisitControl, VisitOutcome,
 };
 use crate::storage::store::{OwnedSnapshot, StoreError, StoreIdentity};
-use crate::work::{ExecutionPolicy, WorkContext, WorkError};
+use crate::work::{WorkContext, WorkError};
 use bumbledb_theory::schema::RelationId;
 use std::cell::Cell;
 
-/// Test-only unbounded policy — never used on production query paths.
 #[cfg(test)]
-pub(crate) const UNBOUNDED_POLICY: ExecutionPolicy = ExecutionPolicy {
-    input_bytes: u64::MAX,
-    working_bytes: u64::MAX,
-    scratch_bytes: u64::MAX,
-    result_bytes: u64::MAX,
-    rows: u64::MAX,
-    work_units: u64::MAX,
-    timeout: std::time::Duration::from_hours(24 * 365),
-};
-
-/// # Errors
-/// Only an invalid timeout, which the constant policy cannot produce in
-/// practice; kept fallible so callers stay in the one ledger constructor.
-#[cfg(test)]
-pub(crate) fn unbounded_work() -> std::result::Result<WorkContext, WorkError> {
-    UNBOUNDED_POLICY.start()
+pub(crate) fn unbounded_work() -> WorkContext {
+    WorkContext::new()
 }
 
-/// Finite default allowance for heap-instance prepare/execute paths that
-/// carry no session lease (explicit bounded operation, never unlimited).
+/// Independent cancellation state for an ordinary heap-instance execution.
 pub(crate) fn heap_default_work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 256 << 20,
-        working_bytes: 256 << 20,
-        scratch_bytes: 256 << 20,
-        result_bytes: 256 << 20,
-        rows: 1 << 24,
-        work_units: 1 << 24,
-        timeout: std::time::Duration::from_secs(3600),
-    }
-    .start()
-    .expect("valid heap default policy")
+    WorkContext::new()
 }
 
 pub(crate) fn work_error(error: WorkError) -> Error {
@@ -149,7 +123,7 @@ impl<'a> QuerySource<'a> {
         }
     }
 
-    /// Actual source-row visits this execution has charged (D10).
+    /// Actual source-row visits observed in this execution (D10).
     #[cfg(test)]
     #[must_use]
     pub(crate) fn visit_count(&self) -> usize {
@@ -232,7 +206,7 @@ impl<'a> QuerySource<'a> {
         let descriptor = schema.relation(relation);
         if let Some(extension) = descriptor.body().closed_rows() {
             for row in extension {
-                work.step(1).map_err(work_error)?;
+                work.checkpoint().map_err(work_error)?;
                 self.note_visits(1);
                 let values = crate::canonical::decode_sealed(descriptor, &row.fact, work)?;
                 let canonical = crate::canonical::CanonicalRow::encode(
@@ -253,7 +227,7 @@ impl<'a> QuerySource<'a> {
             Self::Store { snapshot, .. } => {
                 let iterator = snapshot.row_bytes(relation).map_err(store_error)?;
                 for entry in iterator {
-                    work.step(1).map_err(work_error)?;
+                    work.checkpoint().map_err(work_error)?;
                     self.note_visits(1);
                     let bytes = entry.map_err(store_error)?;
                     if !sink(bytes)? {
@@ -264,7 +238,7 @@ impl<'a> QuerySource<'a> {
             }
             Self::Heap { rows, .. } => {
                 for row in rows.rows(relation) {
-                    work.step(1).map_err(work_error)?;
+                    work.checkpoint().map_err(work_error)?;
                     self.note_visits(1);
                     if !sink(row)? {
                         return Ok(());
@@ -285,7 +259,7 @@ impl<'a> QuerySource<'a> {
                 snapshot.contains(relation, row, work).map_err(store_error)
             }
             Self::Heap { rows, work, .. } => {
-                work.step(1).map_err(work_error)?;
+                work.checkpoint().map_err(work_error)?;
                 Ok(rows
                     .rows(relation)
                     .binary_search_by(|candidate| candidate.as_ref().cmp(row))
@@ -396,7 +370,7 @@ impl<'a> QuerySource<'a> {
                 if visit_err.is_some() {
                     return Ok(false);
                 }
-                work.step(1).map_err(StoreError::Work)?;
+                work.checkpoint().map_err(StoreError::Work)?;
                 visited = visited.saturating_add(1);
                 match visit(bytes) {
                     Ok(VisitControl::Sufficient) if existence_only => {
@@ -438,7 +412,7 @@ impl<'a> QuerySource<'a> {
             witness,
             rows.rows(relation).iter().map(AsRef::as_ref),
             &mut |bytes| {
-                work.step(1).map_err(work_error)?;
+                work.checkpoint().map_err(work_error)?;
                 visit(bytes)
             },
         )?;
@@ -517,21 +491,4 @@ pub(crate) fn compile_error(error: crate::schema::CompileError) -> Error {
     Error::Corruption(crate::error::CorruptionError::MalformedValue(match error {
         crate::schema::CompileError::ProjectionIdExhausted => "projection id exhausted",
     }))
-}
-
-/// The one condition licensing the bounded resident→fallback restart: the
-/// working-byte ledger refused a reservation (image slabs, decoded
-/// batches). Other failures — semantic errors, cancellation, deadlines,
-/// storage faults — are never retried into a different path.
-pub(crate) fn is_working_exhaustion(error: &Error) -> bool {
-    matches!(
-        error,
-        Error::Store(store) if matches!(
-            **store,
-            StoreError::Work(WorkError::Exhausted {
-                resource: crate::work::Resource::WorkingBytes,
-                ..
-            })
-        )
-    )
 }

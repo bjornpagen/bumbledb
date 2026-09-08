@@ -71,9 +71,8 @@ pub trait ChainVisitor {
 /// Walk decision objects backward from `cursor` to `base` using authenticated
 /// parent locators. Each fetch is [`fetch_decision_ref`] → [`crate::store::get_verified`]
 /// under the caller's [`WorkContext`] and intersected locator/envelope
-/// [`ReceiveLimits`]. Decode borrows [`bumbledb::work::ChargedBytes::as_bytes`];
-/// the owner is dropped via [`bumbledb::work::ChargedBytes::into_owner`]
-/// only after visit.
+/// [`ReceiveLimits`]. Decode and visit borrow the received buffer, which is
+/// dropped before the next fetch.
 ///
 /// Stops at `base` without fetching another object. The caller's tip
 /// locator is taken by value and is not overwritten.
@@ -118,7 +117,7 @@ where
         })?;
         validate_parent_locator(&reference, &cursor)?;
         work.checkpoint().map_err(work_object_error)?;
-        let charged = fetch_decision_ref(
+        let received = fetch_decision_ref(
             backend,
             prefix,
             &reference,
@@ -128,7 +127,7 @@ where
             ),
         )?;
         let envelope =
-            decision::decode_decision(charged.as_bytes(), limits).map_err(ObjectError::Frame)?;
+            decision::decode_decision(received.as_slice(), limits).map_err(ObjectError::Frame)?;
         if envelope.stamp() != cursor {
             return Err(ObjectError::WrongDigest {
                 key: "decision stamp mismatch".into(),
@@ -138,66 +137,15 @@ where
         if let Some(parent_ref) = envelope.parent_object {
             validate_parent_locator(&parent_ref, &envelope.parent)?;
         }
-        let continue_walk = visitor.visit(envelope.stamp(), charged.as_bytes(), reference)?;
+        let continue_walk = visitor.visit(envelope.stamp(), received.as_slice(), reference)?;
         locator = envelope.parent_object;
         cursor = envelope.parent;
-        drop(charged.into_owner());
+        drop(received);
         if !continue_walk {
             return Ok(());
         }
     }
     Ok(())
-}
-
-/// Compatibility collector over [`walk_decision_chain`]. L08/L10/L14 must
-/// migrate to a streaming [`ChainVisitor`]; this helper exists only so those
-/// lanes can rename in one step. L09 callers do not materialize the tail.
-///
-/// # Errors
-/// Same refusals as [`walk_decision_chain`].
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Durable coordinates and work limits remain explicit at this protocol boundary"
-)]
-pub fn walk_decision_chain_collect<B: ReceivingStore>(
-    backend: &B,
-    prefix: &str,
-    cursor: DecisionStamp,
-    base: DecisionStamp,
-    locator: Option<ObjectRef>,
-    limits: Limits,
-    budget: &mut u64,
-    work: &WorkContext,
-) -> Result<Vec<(DecisionStamp, Vec<u8>, ObjectRef)>, ObjectError>
-where
-    B::Error: BackendError + ObservedError,
-{
-    struct Collect(Vec<(DecisionStamp, Vec<u8>, ObjectRef)>);
-    impl ChainVisitor for Collect {
-        type Error = ObjectError;
-        fn visit(
-            &mut self,
-            stamp: DecisionStamp,
-            bytes: &[u8],
-            reference: ObjectRef,
-        ) -> Result<bool, ObjectError> {
-            self.0.push((stamp, bytes.to_vec(), reference));
-            Ok(true)
-        }
-    }
-    let mut collect = Collect(Vec::new());
-    walk_decision_chain(
-        backend,
-        prefix,
-        cursor,
-        base,
-        locator,
-        limits,
-        budget,
-        work,
-        &mut collect,
-    )?;
-    Ok(collect.0)
 }
 
 /// A present tip locator must name the tip stamp. `None` is the
@@ -273,21 +221,10 @@ mod tests {
     };
     use crate::store::mem::{MemStore, Op};
     use crate::store::{ObjectKind, put_verified};
-    use bumbledb::{ExecutionPolicy, WorkContext};
-    use std::time::Duration;
+    use bumbledb::WorkContext;
 
     fn work() -> WorkContext {
-        ExecutionPolicy {
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 1 << 16,
-            work_units: 1_024,
-            timeout: Duration::from_secs(30),
-        }
-        .start()
-        .expect("work")
+        WorkContext::new()
     }
 
     const LIMITS: Limits = Limits {
@@ -554,16 +491,17 @@ mod tests {
         assert!(validate_parent_locator(&wrong_digest, &two).is_err());
     }
 
-    /// Receive charge stays live through decode/visit; it is not dropped
-    /// before the body is interpreted, and it refunds on cleanup.
+    /// The visitor borrows the received payload; the buffer is freed after
+    /// the visit, not retained by the walking state.
     #[test]
-    fn walker_keeps_receive_charge_through_decode_and_refunds_after() {
-        struct ChargeProbe<'a> {
-            work: &'a WorkContext,
-            baseline: u64,
-            saw_charge: bool,
+    fn walker_borrows_the_received_payload_and_frees_it_after_visiting() {
+        struct Probe<'a> {
+            expected: &'a [u8],
+            #[cfg(feature = "alloc-counter")]
+            before_return: Option<bumbledb::alloc_counter::AllocSnapshot>,
+            visited: bool,
         }
-        impl ChainVisitor for ChargeProbe<'_> {
+        impl ChainVisitor for Probe<'_> {
             type Error = ObjectError;
             fn visit(
                 &mut self,
@@ -571,18 +509,15 @@ mod tests {
                 bytes: &[u8],
                 _reference: ObjectRef,
             ) -> Result<bool, ObjectError> {
-                let used = self.work.used(Resource::WorkingBytes);
-                assert!(
-                    used >= self.baseline + bytes.len() as u64,
-                    "reservation must outlive decode into visit: used={used} baseline={} body={}",
-                    self.baseline,
-                    bytes.len()
-                );
-                self.saw_charge = true;
+                assert_eq!(bytes, self.expected);
+                #[cfg(feature = "alloc-counter")]
+                {
+                    self.before_return = Some(bumbledb::alloc_counter::snapshot());
+                }
+                self.visited = true;
                 Ok(true)
             }
         }
-        use bumbledb::work::Resource;
 
         let store = MemStore::new();
         let genesis = DecisionStamp {
@@ -592,11 +527,11 @@ mod tests {
         let (one, ref_one, _) = put_decision(&store, genesis, None, 1);
         let (two, ref_two, bytes_two) = put_decision(&store, one, Some(ref_one), 2);
         let ctx = work();
-        let baseline = ctx.used(Resource::WorkingBytes);
-        let mut probe = ChargeProbe {
-            work: &ctx,
-            baseline,
-            saw_charge: false,
+        let mut probe = Probe {
+            expected: &bytes_two,
+            #[cfg(feature = "alloc-counter")]
+            before_return: None,
+            visited: false,
         };
         let mut budget = 2;
         walk_decision_chain(
@@ -611,12 +546,22 @@ mod tests {
             &mut probe,
         )
         .unwrap();
-        assert!(probe.saw_charge);
-        assert_eq!(
-            ctx.used(Resource::WorkingBytes),
-            baseline,
-            "walk cleanup refunds the receive charge"
-        );
+        assert!(probe.visited);
+        #[cfg(feature = "alloc-counter")]
+        {
+            // Observe the release itself: MemStore intentionally retains
+            // an operation log, which is not part of the returned payload.
+            let before = probe.before_return.unwrap();
+            let after = bumbledb::alloc_counter::snapshot();
+            assert_eq!(after.window.allocs, before.window.allocs);
+            assert_eq!(after.window.deallocs, before.window.deallocs + 1);
+            let freed = after.window.dealloc_bytes - before.window.dealloc_bytes;
+            assert!(freed >= bytes_two.len() as u64);
+            assert_eq!(
+                after.absolute.live_bytes + freed,
+                before.absolute.live_bytes
+            );
+        }
         let limits = receive_limits_for_object(&ref_two, LIMITS.envelope_bytes);
         assert_eq!(
             limits.max_bytes,

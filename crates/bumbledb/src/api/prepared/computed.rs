@@ -72,6 +72,20 @@ pub(super) fn lower(finds: &[FindSpec], slots: usize) -> Lowered {
 }
 
 impl ComputedSink {
+    pub(super) fn reset(&mut self) {
+        self.error = None;
+        if self.bindings.slot_count() == 0 {
+            self.bindings.resize(self.slots + self.programs.len());
+        }
+        self.inner.reset();
+    }
+
+    pub(super) fn release_memory(&mut self) {
+        self.error = None;
+        self.bindings = Bindings::new(0);
+        self.inner.release_memory();
+    }
+
     pub(super) fn new(
         inner: EitherSink,
         programs: Vec<(usize, Arc<OutputProgram>)>,
@@ -150,6 +164,10 @@ impl ComputedSink {
 }
 
 impl Sink for ComputedSink {
+    fn retains_binding_slot(&self, slot: usize) -> bool {
+        self.inner.retains_binding_slot(slot)
+    }
+
     fn emit(&mut self, bindings: &Bindings) -> Flow {
         for slot in 0..self.slots {
             self.bindings.set(slot, bindings.get(slot));

@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use bumbledb::work::{ExecutionPolicy, WorkContext};
+use bumbledb::work::WorkContext;
 use bumbledb_log::store::fence::{DirectoryLock, acquire_directory};
 
 use super::{
@@ -56,7 +56,6 @@ pub(super) struct OwnerEntry {
     pub remove: bool,
     pub lock: Option<DirectoryLock>,
     pub databases: BTreeMap<u64, DatabaseEntry>,
-    pub bytes: u64,
 }
 
 impl OwnerEntry {
@@ -249,7 +248,7 @@ impl Runtime {
     pub fn submit_owned(
         self: &Arc<Self>,
         owner: &DirectoryOwner,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Box<dyn FnOnce() + Send>,
         prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -262,56 +261,10 @@ impl Runtime {
     pub fn acquire_directory(
         self: &Arc<Self>,
         path: String,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Box<dyn FnOnce() + Send>,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        // This is the retained path/entry allowance, distinct from the
-        // operation's temporary copies. It survives output acknowledgement.
-        let bytes = u64::try_from(path.len())
-            .map_err(|_| RuntimeError::InvalidPath)?
-            .checked_add(std::mem::size_of::<OwnerEntry>() as u64)
-            .ok_or(RuntimeError::InvalidPath)?;
-        let id = {
-            let mut state = lock(&self.state);
-            if state.phase != Phase::Open {
-                return Err(RuntimeError::ClosedHandle);
-            }
-            if state.owners.len() >= self.options.owner_capacity {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: "ownerCapacity",
-                    used: state.owners.len() as u64,
-                    requested: 1,
-                    limit: self.options.owner_capacity as u64,
-                });
-            }
-            let used = state.reserved[1];
-            let limit = self.options.aggregate_bytes[1];
-            if used.checked_add(bytes).is_none_or(|next| next > limit) {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: "workingBytes",
-                    used,
-                    requested: bytes,
-                    limit,
-                });
-            }
-            let id = state.next_id;
-            state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
-            state.reserved[1] += bytes;
-            state.owners.insert(
-                id,
-                OwnerEntry {
-                    opening: true,
-                    closing: false,
-                    cleaning: false,
-                    failed: false,
-                    remove: false,
-                    lock: None,
-                    databases: BTreeMap::new(),
-                    bytes,
-                },
-            );
-            id
-        };
+        let id = self.reserve_owner_slot()?;
         let pending = PendingDirectory {
             runtime: Arc::clone(self),
             id,
@@ -319,7 +272,7 @@ impl Runtime {
         };
         let runtime = Arc::clone(self);
         self.submit_at(Some(id), None, policy, notify, move |context| {
-            context.input(path.len() as u64)?;
+            context.checkpoint()?;
             Ok(Box::new(move |context| {
                 let mut pending = pending;
                 context.checkpoint()?;
@@ -353,13 +306,8 @@ impl Runtime {
     /// Reserves one directory-owner slot BEFORE its kernel lock exists (the
     /// log machine's history opens run the fence acquisition inside their
     /// own registered job, then install the held lock with
-    /// [`Self::install_owner_lock`] or abandon the slot). Charges the
-    /// retained path/entry allowance exactly like `acquire_directory`.
-    pub(crate) fn reserve_owner_slot(&self, path_len: usize) -> Result<u64, RuntimeError> {
-        let bytes = u64::try_from(path_len)
-            .map_err(|_| RuntimeError::InvalidPath)?
-            .checked_add(std::mem::size_of::<OwnerEntry>() as u64)
-            .ok_or(RuntimeError::InvalidPath)?;
+    /// [`Self::install_owner_lock`] or abandon the slot).
+    pub(crate) fn reserve_owner_slot(&self) -> Result<u64, RuntimeError> {
         let mut state = lock(&self.state);
         if state.phase != Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -372,19 +320,8 @@ impl Runtime {
                 limit: self.options.owner_capacity as u64,
             });
         }
-        let used = state.reserved[1];
-        let limit = self.options.aggregate_bytes[1];
-        if used.checked_add(bytes).is_none_or(|next| next > limit) {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "workingBytes",
-                used,
-                requested: bytes,
-                limit,
-            });
-        }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
-        state.reserved[1] += bytes;
         state.owners.insert(
             id,
             OwnerEntry {
@@ -395,7 +332,6 @@ impl Runtime {
                 remove: false,
                 lock: None,
                 databases: BTreeMap::new(),
-                bytes,
             },
         );
         Ok(id)
@@ -473,15 +409,7 @@ impl Runtime {
         let Some((owner_id, db_id)) = target else {
             return Ok(None);
         };
-        let policy = ExecutionPolicy {
-            input_bytes: 0,
-            working_bytes: 0,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 0,
-            work_units: 0,
-            timeout: self.options.cleanup_timeout,
-        };
+        let policy = WorkContext::new();
         let operation = self.begin_external(owner_id, Some(db_id), policy)?;
         let lease = ExternalLease {
             runtime: Arc::clone(self),
@@ -504,7 +432,7 @@ impl Runtime {
 
     /// Abandons a reserved owner slot (fence acquisition failed / open
     /// refused): the slot leaves through the ordinary cleanup lane so its
-    /// retained allowance releases and any installed lock drops.
+    /// owner slot releases and any installed lock drops.
     pub(crate) fn abandon_owner_slot(&self, id: u64) {
         let mut state = lock(&self.state);
         if let Some(entry) = state.owners.get_mut(&id) {
@@ -519,16 +447,10 @@ impl Runtime {
         self: &Arc<Self>,
         owner: u64,
         database: Option<u64>,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        let context = policy.start()?;
+        let context = policy;
         context.checkpoint()?;
-        let bytes = [
-            policy.input_bytes,
-            policy.working_bytes,
-            policy.scratch_bytes,
-            policy.result_bytes,
-        ];
         let mut state = lock(&self.state);
         if state.phase != Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -556,11 +478,9 @@ impl Runtime {
         }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
-        state.charge(&self.options, bytes)?;
         let operation = Arc::new(Operation {
             id,
             context,
-            bytes,
             owner: Some(owner),
             database,
             session: None,
@@ -657,9 +577,7 @@ impl Runtime {
                 } else {
                     drop(held);
                     let mut state = lock(&self.state);
-                    if let Some(entry) = state.owners.remove(&owner) {
-                        state.reserved[1] -= entry.bytes;
-                    }
+                    state.owners.remove(&owner);
                 }
                 self.changed.notify_all();
             }
@@ -711,9 +629,10 @@ impl DirectoryOwner {
         self.begin_close();
         self.runtime.wait_target(WaitTarget::Owner(self.id), report);
     }
-    pub fn begin_work(&self, policy: ExecutionPolicy) -> Result<Arc<Operation>, RuntimeError> {
+    pub fn begin_work(&self, policy: WorkContext) -> Result<Arc<Operation>, RuntimeError> {
         self.runtime.begin_external(self.id, None, policy)
     }
+    #[cfg(test)]
     pub fn child_path(&self, name: &str) -> Result<std::path::PathBuf, RuntimeError> {
         self.reference().child_path(name)
     }
@@ -799,15 +718,7 @@ impl ManagedDb {
         (self.owner, self.id)
     }
     pub(crate) fn access(&self) -> Result<DbLease, RuntimeError> {
-        let policy = ExecutionPolicy {
-            input_bytes: 0,
-            working_bytes: 0,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 0,
-            work_units: 0,
-            timeout: self.runtime.options.cleanup_timeout,
-        };
+        let policy = WorkContext::new();
         let operation = self
             .runtime
             .begin_external(self.owner, Some(self.id), policy)?;

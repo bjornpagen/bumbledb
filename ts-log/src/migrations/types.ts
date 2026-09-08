@@ -16,7 +16,7 @@
  * `planSetDigest` are the commitments, and a changed plan under a reused
  * label is drift.
  */
-import type { ExecutionPolicy, Schema, SchemaRelations } from "@bjornpagen/bumbledb"
+import type { Schema, SchemaRelations } from "@bjornpagen/bumbledb"
 import type { DatabaseIdentity, DecisionDigest, OperationId, PlanSetDigest } from "#identity.ts"
 import type { MigrationIntent } from "#migrations/intent.ts"
 
@@ -209,7 +209,6 @@ export interface GenerateOptions<Rels extends SchemaRelations> {
 	 */
 	readonly label?: string
 	readonly repository: MigrationRepository
-	readonly work: ExecutionPolicy
 }
 
 export type CheckOptions<Rels extends SchemaRelations> = Omit<GenerateOptions<Rels>, "label">

@@ -1,6 +1,6 @@
 use crate::exec::sink::{
     AggSpec, AggregateSink, DENSE_GROUPS_CAP, DedupState, FindSpec, GroupState, GroupTable,
-    SinkBudget, SinkSpec, SpillSet,
+    SinkSpec, SpillSet,
 };
 use crate::exec::wordmap::WordMap;
 
@@ -217,12 +217,11 @@ impl AggregateSink {
             share_float_inputs,
             group_counts: Vec::new(),
             cardinality_overflow: false,
-            budget: None,
+            work: None,
             spill: None,
             error: None,
             finished: false,
             terminal: crate::exec::sink::SinkProgress::Continue,
-            pack_bytes: 0,
             dedup,
             physical_distinct: None,
             groups,
@@ -278,9 +277,7 @@ impl AggregateSink {
 
     /// Live groups. Exact while resident; once the group state spilled it
     /// is an upper bound (a group folded across flushes counts in both
-    /// tiers) — downstream it is a capacity hint, and the stage-budget
-    /// judgment over it is conservative (a spilled interior stage may
-    /// refuse early on the bound, never publish past the budget).
+    /// tiers). Downstream consumers use it only as a capacity hint.
     #[must_use]
     pub fn group_count(&self) -> usize {
         self.groups.len()
@@ -327,14 +324,12 @@ impl AggregateSink {
         self.physical_distinct.is_some() || matches!(self.dedup, DedupState::Elided { .. })
     }
 
-    /// Install this execution's allowance on the dedup seen-set AND the
-    /// group-state pressure check (None = RAM-only harness sink; the
-    /// prepared query budgets main and interior stage sinks alike).
-    pub(crate) fn begin(&mut self, budget: Option<SinkBudget>) {
+    /// Share this execution's cancellation context with deduplication and scratch.
+    pub(crate) fn begin(&mut self, work: Option<crate::work::WorkContext>) {
         if let Some(seen) = self.dedup.seen_mut() {
-            seen.begin(budget.clone());
+            seen.begin(work.clone());
         }
-        self.budget = budget;
+        self.work = work;
     }
 
     /// The sticky failure recorded by the infallible emit path, if any —
@@ -384,9 +379,25 @@ impl AggregateSink {
     }
 
     pub fn reset(&mut self) {
+        self.clear_state();
+        self.groups.clear();
+        self.binding_scratch.resize(self.real_slots, 0);
+        self.key_scratch
+            .resize(self.group_spans.iter().map(|(_, width)| width).sum(), 0);
+        self.union_scratch.resize(
+            match &self.dedup {
+                DedupState::Union { seen, .. } | DedupState::DnfUnion { seen, .. } => {
+                    seen.ram.arity()
+                }
+                _ => 0,
+            },
+            0,
+        );
+    }
+
+    fn clear_state(&mut self) {
         self.cached_slot_count = None;
         self.physical_distinct = None;
-        self.groups.clear();
         self.float_accs.clear();
         self.group_counts.clear();
         self.cardinality_overflow = false;
@@ -396,7 +407,6 @@ impl AggregateSink {
         self.error = None;
         self.finished = false;
         self.terminal = crate::exec::sink::SinkProgress::Continue;
-        self.pack_bytes = 0;
         if let GroupState::Folds { accs, .. } = &mut self.group_state {
             accs.clear();
         }
@@ -405,6 +415,31 @@ impl AggregateSink {
         if let Some(seen) = self.dedup.seen_mut() {
             seen.clear();
         }
+    }
+
+    pub(crate) fn release_memory(&mut self) {
+        self.clear_state();
+        self.groups.release_memory();
+        match &mut self.group_state {
+            GroupState::Folds { accs, .. } => *accs = Vec::new(),
+            GroupState::Pack { claims, .. } => *claims = Vec::new(),
+        }
+        if let Some(seen) = self.dedup.seen_mut() {
+            seen.release_memory();
+        }
+        self.work = None;
+        self.float_accs = Vec::new();
+        self.group_counts = Vec::new();
+        self.union_scratch = Vec::new();
+        self.key_scratch = Vec::new();
+        self.binding_scratch = Vec::new();
+        self.dedup_survivors = Vec::new();
+        self.fold_sources = Vec::new();
+        self.fold_inputs = Vec::new();
+        self.cached_key_slots = Vec::new();
+        self.cached_outer_slots = Vec::new();
+        self.cached_constant_group = false;
+        self.scan_count = 0;
     }
 }
 

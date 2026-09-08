@@ -5,9 +5,7 @@
 
 mod lane_support;
 
-use std::time::Duration;
-
-use bumbledb::ExecutionPolicy;
+use bumbledb::WorkContext;
 use bumbledb_log::admin;
 use bumbledb_log::checkpointer::{CheckpointKind, CheckpointPolicy, publish_checkpoint};
 use bumbledb_log::gc::{GcError, GcPolicy, run_collection};
@@ -105,19 +103,16 @@ fn ops02_cancelled_maintenance_stops_typed_and_resumes_from_durable_progress() {
             u64::from(request),
         ));
     }
-    // An exhausted work budget stops the checkpoint with a typed refusal and
-    // publishes nothing.
-    let starved = ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 20,
-        work_units: 1,
-        timeout: Duration::from_secs(600),
-    }
-    .start()
-    .expect("starved budget");
+    // Cancel at the first chunk upload, after checkpoint work has started.
+    // Immutable orphan chunks are harmless; no checkpoint head may publish.
+    let starved = WorkContext::new();
+    let cancel = starved.clone();
+    store.set_gate(move |operation, key| {
+        if operation == bumbledb_log::store::mem::Op::PutObject && key.contains("/chunk/") {
+            cancel.cancel();
+        }
+        None
+    });
     let refused = publish_checkpoint(
         mirror.db(),
         &store,
@@ -137,7 +132,8 @@ fn ops02_cancelled_maintenance_stops_typed_and_resumes_from_durable_progress() {
             .is_none(),
         "a cancelled checkpoint published nothing"
     );
-    // A fresh budget completes the same maintenance.
+    assert_eq!(starved.checkpoint(), Err(bumbledb::WorkError::Cancelled));
+    // A fresh context completes the same maintenance.
     publish_checkpoint(
         mirror.db(),
         &store,
@@ -148,23 +144,13 @@ fn ops02_cancelled_maintenance_stops_typed_and_resumes_from_durable_progress() {
         &work(),
     )
     .expect("resumed checkpoint");
-    // GC under a starved budget stops typed; durable phase state remains
-    // resumable and a fresh budget converges.
+    // GC cancellation stops typed; durable phase state remains resumable.
     let gc_policy = GcPolicy {
         head_cap: HEAD_CAP,
         ..GcPolicy::DEFAULT
     };
-    let starved = ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 20,
-        work_units: 1,
-        timeout: Duration::from_secs(600),
-    }
-    .start()
-    .expect("starved budget");
+    let starved = WorkContext::new();
+    starved.cancel();
     let stopped = run_collection(&store, "t", op(0x11), LIMITS, &gc_policy, &starved);
     assert!(
         matches!(stopped, Err(GcError::Work(_) | GcError::Checkpoint(_))),

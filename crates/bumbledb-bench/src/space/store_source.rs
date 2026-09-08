@@ -5,12 +5,11 @@
 
 use std::path::Path;
 
+use bumbledb::WorkContext;
 use bumbledb::store::{MapReport, OwnedSnapshot, StorePageStats};
-use bumbledb::{WorkContext, start_operation};
 
 use super::Namespace;
 use super::census::{CensusSource, EntrySize, PageStats};
-use crate::harness::bench_policy;
 
 /// One coherent snapshot plus the map report taken with it.
 pub struct StoreCensusSource<'a> {
@@ -103,12 +102,6 @@ impl PhysicalSplit {
             live_transactions: map.live_transactions,
         }
     }
-}
-
-/// Mint a census work context. Not a product default.
-/// # Errors
-pub fn census_work() -> Result<WorkContext, String> {
-    start_operation(bench_policy()).map_err(|error| format!("census work: {error:?}"))
 }
 
 /// `data.mdb` beside a store directory.

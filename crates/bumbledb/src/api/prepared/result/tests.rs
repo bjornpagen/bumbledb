@@ -1,13 +1,10 @@
-//! Sealed-result behavior: RAM and scratch backings agree, collect caps
-//! honestly, the cursor's terminal framing is explicit, and result bytes
-//! are charged. Gate anchors: Q-ATOMIC / Q-DISK / Q-LIFETIME (result
-//! halves), QRY-001/002.
-
+//! Ownership, exact values, cancellation and publication of completed results.
 use super::*;
-use crate::api::prepared::source::{PinnedSource, UNBOUNDED_POLICY};
+use crate::error::Error;
+use crate::work::WorkError;
 
 fn work() -> WorkContext {
-    UNBOUNDED_POLICY.start().expect("unbounded ledger")
+    WorkContext::new()
 }
 
 fn heap_identity() -> ResultIdentity {
@@ -54,932 +51,331 @@ fn assert_rows(collected: &Answers, expected_rows: u64) {
     }
 }
 
-#[test]
-fn ram_and_scratch_backings_agree_on_every_cell() {
-    let execute = work();
-    let ram = CompleteResult::seal(sample_answers(32), heap_identity(), &execute, usize::MAX)
-        .expect("seal RAM");
-    // Forcing the allowance to zero moves the same rows into scratch.
-    let scratch = CompleteResult::seal(sample_answers(32), heap_identity(), &execute, 0)
-        .expect("seal scratch");
-    let mut ram = ram;
-    let mut scratch = scratch;
-    assert_eq!(ram.len(), 32);
-    assert_eq!(scratch.len(), 32);
-    let ram_delivery = work();
-    let scratch_delivery = work();
-    let a = ram
-        .collect_with_work(u64::MAX, &ram_delivery, u64::MAX)
-        .expect("collect RAM");
-    let b = scratch
-        .collect_with_work(u64::MAX, &scratch_delivery, u64::MAX)
-        .expect("collect scratch");
-    assert_rows(&a, 32);
-    assert_rows(&b, 32);
-    assert_eq!(ram_delivery.used(crate::work::Resource::WorkUnits), 1);
-    assert_eq!(
-        scratch_delivery.used(crate::work::Resource::WorkUnits),
-        1 + 32,
-        "one collection admission plus one scratch lookup per row, not two"
-    );
+fn sealed(rows: u64) -> CompleteResult {
+    CompleteResult::seal(sample_answers(rows), heap_identity(), &work()).unwrap()
 }
 
 #[test]
-fn collect_cap_refuses_and_leaves_the_backing_available() {
-    let execute = work();
-    for ram_allowance in [usize::MAX, 0] {
-        let mut sealed =
-            CompleteResult::seal(sample_answers(3), heap_identity(), &execute, ram_allowance)
-                .expect("seal");
-        let charge = sealed.byte_len();
-        let delivery = work();
-        assert!(matches!(
-            sealed.collect_with_work(2, &delivery, u64::MAX),
-            Err(Error::ResultBytesOverflow)
-        ));
-        assert!(matches!(
-            sealed.collect_with_work(3, &delivery, 0),
-            Err(Error::Store(_))
-        ));
-        if ram_allowance == 0 {
-            // Admit collection and its first scratch read, then refuse
-            // mid-copy. The private prefix must not consume sealed rows.
-            let limited = crate::work::ExecutionPolicy {
-                work_units: 2,
-                ..UNBOUNDED_POLICY
-            }
-            .start()
-            .expect("limited delivery");
-            assert!(matches!(
-                sealed.collect_with_work(3, &limited, u64::MAX),
-                Err(Error::Store(_))
-            ));
-            assert_eq!(limited.used(crate::work::Resource::ResultBytes), 0);
-        }
-        for _ in 0..2 {
-            let collected = sealed
-                .collect_with_work(3, &delivery, u64::MAX)
-                .expect("collect after refusal");
-            assert_rows(&collected, 3);
-        }
-        assert_eq!(sealed.len(), 3);
-        assert_eq!(sealed.byte_len(), charge);
-        assert_eq!(delivery.used(crate::work::Resource::ResultBytes), 0);
-    }
+fn sealing_and_consuming_result_move_the_same_storage() {
+    let answers = sample_answers(32);
+    let pointers = (
+        answers.cells.as_ptr(),
+        answers.text.as_ptr(),
+        answers.blob.as_ptr(),
+    );
+    let result = CompleteResult::seal(answers, heap_identity(), &work()).unwrap();
+    assert_eq!(result.identity(), heap_identity());
+    assert_eq!(result.len(), 32);
+    assert_eq!(result.arity(), 3);
+    let moved = result.into_answers();
+    assert_eq!(
+        (
+            moved.cells.as_ptr(),
+            moved.text.as_ptr(),
+            moved.blob.as_ptr()
+        ),
+        pointers
+    );
+    assert_rows(&moved, 32);
 }
 
 #[test]
 fn the_cursor_consumes_the_result_and_frames_the_terminal_page() {
-    let work = work();
-    let sealed = CompleteResult::seal(sample_answers(7), heap_identity(), &work, 0).expect("seal");
-    let mut cursor = sealed.into_cursor(3);
-    let mut delivered = 0u64;
-    let mut pages = 0;
-    let mut saw_terminal = false;
-    while let Some(page) = cursor.next_page_with_work(&work, u64::MAX).expect("page") {
-        pages += 1;
-        delivered += page.rows.len() as u64;
-        if page.terminal {
-            saw_terminal = true;
+    let mut cursor = sealed(7).into_cursor(3);
+    assert_eq!(cursor.identity(), heap_identity());
+    let mut delivered = 0;
+    for (size, terminal) in [(3, false), (3, false), (1, true)] {
+        let page = cursor.next_page(&work()).unwrap().unwrap();
+        assert_eq!(page.rows.len(), size);
+        assert_eq!(page.terminal, terminal);
+        for row in page.rows.answers() {
+            assert_eq!(row.get(0), AnswerValue::U64(delivered));
+            delivered += 1;
         }
     }
-    assert_eq!(delivered, 7, "every sealed row is delivered exactly once");
-    assert_eq!(pages, 3, "7 rows over pages of 3");
-    assert!(saw_terminal, "the terminal frame is explicit");
-    assert!(
-        cursor
-            .next_page_with_work(&work, u64::MAX)
-            .expect("spent cursor")
-            .is_none(),
-        "a drained cursor stays drained"
-    );
+    assert_eq!(delivered, 7);
+    assert!(cursor.next_page(&work()).unwrap().is_none());
+    assert!(cursor.next_page(&work()).unwrap().is_none());
 }
 
 #[test]
-fn an_empty_result_still_frames_completion() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(2);
-    let sealed = CompleteResult::seal(answers, heap_identity(), &work, usize::MAX).expect("seal");
-    let mut cursor = sealed.into_cursor(4);
-    let page = cursor
-        .next_page_with_work(&work, u64::MAX)
-        .expect("page")
-        .expect("one frame");
+fn empty_results_frame_completion_and_zero_page_size_makes_progress() {
+    let mut cursor = sealed(0).into_cursor(4);
+    let page = cursor.next_page(&work()).unwrap().unwrap();
+    assert_eq!(page.rows.arity(), 3);
     assert!(page.rows.is_empty());
-    assert!(page.terminal, "empty complete sets are still complete");
-}
-
-/// The chapter-35 retained-result seam: a sealed result kept past its
-/// execute operation stops charging that operation's ledger once rebound.
-/// Reads under the exhausted execute ledger refuse typed (the defect this
-/// closes made them refuse SPURIOUSLY, forever); after `rebind_work` the
-/// same sealed rows read whole under the fresh ledger, and every release
-/// stays exactly-once (the sealed-byte charge keeps its origin).
-#[test]
-fn rebinding_re_homes_retained_scratch_reads_onto_a_fresh_ledger() {
-    // The execute operation's ledger: enough to seal, bounded work units so
-    // its post-execute exhaustion is deterministic (the test stand-in for
-    // an expired deadline).
-    let execute = crate::work::ExecutionPolicy {
-        work_units: 4096,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("start");
-    let mut sealed = CompleteResult::seal(sample_answers(16), heap_identity(), &execute, 0)
-        .expect("seal scratch");
-    let charge = sealed.byte_len();
-    assert!(charge > 0, "sealed rows hold a result-byte charge");
-
-    // The execute operation ends; its ledger runs out.
-    while execute.step(1).is_ok() {}
-
-    // Un-rebound, retained scratch reads still consult the exhausted
-    // execute ledger — the typed refusal, with the backing left whole.
-    let refused = sealed.collect_with_work(u64::MAX, &execute, u64::MAX);
-    assert!(
-        matches!(refused, Err(Error::Store(_))),
-        "reads under the exhausted execute ledger refuse typed"
-    );
-
-    // Re-homed onto the retaining caller's fresh ledger, the same sealed
-    // rows read whole — repeatedly (collect leaves the backing).
-    let retained = work();
-    assert_rows(
-        &sealed
-            .collect_with_work(u64::MAX, &retained, u64::MAX)
-            .expect("collect rebound"),
-        16,
-    );
-    assert_rows(
-        &sealed
-            .collect_with_work(u64::MAX, &retained, u64::MAX)
-            .expect("collect again"),
-        16,
-    );
-    assert_eq!(
-        sealed.byte_len(),
-        charge,
-        "rebinding never re-prices the sealed charge"
-    );
-
-    // The consuming cursor carries the charge and the rebound backing, and
-    // rebinds again on its own: a zero-work ledger refuses the page read,
-    // a fresh one delivers the complete set with its terminal frame.
-    let mut cursor = sealed.into_cursor(5);
-    assert_eq!(cursor.byte_len(), charge);
-    let zero_work = crate::work::ExecutionPolicy {
-        work_units: 0,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("start");
-    assert!(
-        matches!(
-            cursor.next_page_with_work(&zero_work, u64::MAX),
-            Err(Error::Store(_))
-        ),
-        "cursor pages charge the ledger the cursor is bound to"
-    );
-    let mut delivered = 0u64;
-    let mut saw_terminal = false;
-    while let Some(page) = cursor
-        .next_page_with_work(&retained, u64::MAX)
-        .expect("page")
-    {
-        delivered += page.rows.len() as u64;
-        if page.terminal {
-            saw_terminal = true;
-        }
-    }
-    assert_eq!(delivered, 16, "the failed page delivered nothing twice");
-    assert!(saw_terminal, "the rebound cursor completes with its frame");
-}
-
-/// RAM and scratch results both require fresh delivery work. Exhausting the
-/// execute budget cannot poison the retained result, or exempt a RAM copy
-/// from the caller's work limit.
-#[test]
-fn ram_backed_results_require_delivery_work_and_retry_under_a_fresh_ledger() {
-    let execute = crate::work::ExecutionPolicy {
-        work_units: 4096,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("start");
-    let mut sealed = CompleteResult::seal(sample_answers(8), heap_identity(), &execute, usize::MAX)
-        .expect("seal RAM");
-    while execute.step(1).is_ok() {}
-    assert!(matches!(
-        sealed.collect_with_work(u64::MAX, &execute, u64::MAX),
-        Err(Error::Store(_))
-    ));
-    let retained = work();
-    assert_rows(
-        &sealed
-            .collect_with_work(u64::MAX, &retained, u64::MAX)
-            .expect("RAM collect"),
-        8,
-    );
-    assert_rows(
-        &sealed
-            .collect_with_work(u64::MAX, &retained, u64::MAX)
-            .expect("still whole"),
-        8,
-    );
+    assert!(page.terminal);
+    assert!(cursor.next_page(&work()).unwrap().is_none());
+    let mut cursor = sealed(2).into_cursor(0);
+    assert_eq!(cursor.next_page(&work()).unwrap().unwrap().rows.len(), 1);
+    assert!(cursor.next_page(&work()).unwrap().unwrap().terminal);
+    assert!(cursor.next_page(&work()).unwrap().is_none());
 }
 
 #[test]
-fn sealed_results_charge_the_result_ledger() {
-    let context = crate::work::ExecutionPolicy {
-        result_bytes: 64,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("start");
-    let refused = CompleteResult::seal(sample_answers(64), heap_identity(), &context, usize::MAX);
+fn delivery_context_is_independent_of_completed_execution() {
+    let execute = work();
+    let result = CompleteResult::seal(sample_answers(8), heap_identity(), &execute).unwrap();
+    execute.cancel();
     assert!(
-        refused.is_err(),
-        "64 result bytes cannot own a kilobyte of text"
+        result
+            .visit_rows(&execute, |_| panic!("cancelled visitor"))
+            .is_err()
     );
-}
-
-/// D12/D25: two rows that fit individually but not together become two
-/// successful pages. Predelivery refusal after copy returns no data and
-/// retries at the same row. Verification: `NotRun`.
-#[test]
-fn d25_two_row_page_cap_and_predelivery_abort() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    answers.push_value(&AnswerValue::String("aaaaaaaa"));
-    answers.push_value(&AnswerValue::String("bbbbbbbb"));
-    answers.push_value(&AnswerValue::String("c"));
-    let sealed = CompleteResult::seal(answers, heap_identity(), &work, usize::MAX).expect("seal");
-    let mut cursor = sealed.into_cursor(8);
-    let mut ticket = DeliveryTicket::open(&mut cursor);
-    let row1_bytes = {
-        let preview = ticket
-            .preview_page(&work, 24)
-            .expect("row1 fits")
-            .expect("nonempty");
-        assert_eq!(preview.len(), 1, "row2 must not join row1");
-        super::logical_bytes_for_test(preview)
-    };
-    let adopted = ticket.adopt().expect("preview");
-    assert_eq!(adopted.len(), 1);
-    let charge = work
-        .reserve(crate::work::ByteKind::Result, row1_bytes)
-        .expect("register output");
-    drop(charge);
-    ticket.commit();
-
-    let mut ticket = DeliveryTicket::open(&mut cursor);
-    ticket.preview_page(&work, 24).expect("row2 preview");
-    ticket.abort();
-    assert_eq!(
-        cursor.len().saturating_sub(cursor_next_for_test(&cursor)),
-        2,
-        "abort leaves row2 undelivered"
-    );
-
-    let tiny = crate::work::ExecutionPolicy {
-        result_bytes: 1,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("tiny");
-    let refused = cursor.next_page_with_work(&tiny, 1);
-    assert!(refused.is_err(), "predelivery refusal returns no page");
-    assert_eq!(
-        cursor.debug_next_row(),
-        1,
-        "predelivery refusal leaves the cursor on the refused row"
-    );
-    let retry = cursor
-        .next_page_with_work(&work, 24)
-        .expect("retry after abort")
-        .expect("row2 still there");
-    assert_eq!(retry.rows.len(), 1);
-
-    cursor.inject_backing_failure(Error::Corruption(
-        crate::error::CorruptionError::MalformedValue("result row sequence"),
-    ));
-    assert!(
-        cursor.next_page_with_work(&work, u64::MAX).is_err(),
-        "backing failure is failed"
-    );
-    assert!(
-        cursor.next_page_with_work(&work, u64::MAX).is_err(),
-        "a failed cursor never becomes EOF"
-    );
-    assert!(
-        cursor.next_page_with_work(&work, 64).is_err(),
-        "later pulls stay failed"
-    );
-}
-
-/// Oversized first row: fit is refused from the sealed lengths, the
-/// cursor stays on that row, and a later admitted pull still delivers it.
-/// Verification: `NotRun`.
-#[test]
-fn oversized_first_row_refuses_with_cursor_unchanged() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    answers.push_value(&AnswerValue::String(
-        "this-row-is-too-large-for-eight-bytes",
-    ));
-    answers.push_value(&AnswerValue::String("ok"));
-    for ram_allowance in [usize::MAX, 0] {
-        let sealed = CompleteResult::seal(
-            clone_answers(&answers),
-            heap_identity(),
-            &work,
-            ram_allowance,
-        )
-        .expect("seal");
-        let mut cursor = sealed.into_cursor(8);
-        let mut ticket = DeliveryTicket::open(&mut cursor);
-        let before = work.used(crate::work::Resource::ResultBytes);
-        let refused = ticket.preview_page(&work, 8);
-        assert!(
-            refused.is_err(),
-            "first row exceeds eight encoded bytes, got {refused:?}"
-        );
-        assert_eq!(
-            ticket.preview_charged_bytes(),
-            0,
-            "oversized refuse does not take a preview reservation"
-        );
-        assert_eq!(
-            work.used(crate::work::Resource::ResultBytes),
-            before,
-            "oversized refuse leaves no preview charge"
-        );
-        drop(ticket);
-        assert_eq!(
-            work.used(crate::work::Resource::ResultBytes),
-            before,
-            "refused oversized row left no uncharged allocation to refund"
-        );
-        assert_eq!(
-            cursor.debug_next_row(),
-            0,
-            "predelivery refusal leaves next_row"
-        );
-        let retry = cursor
-            .next_page_with_work(&work, 1024)
-            .expect("retry")
-            .expect("row still there");
-        assert_eq!(retry.rows.len(), 2);
-        assert_eq!(
-            retry.rows.get(0, 0),
-            AnswerValue::String("this-row-is-too-large-for-eight-bytes")
-        );
-        assert_eq!(retry.rows.get(1, 0), AnswerValue::String("ok"));
-        assert!(retry.terminal);
-    }
-}
-
-fn clone_answers(answers: &Answers) -> Answers {
-    let mut copy = Answers::new();
-    copy.begin(answers.arity());
-    for row in 0..answers.len() {
-        for column in 0..answers.arity() {
-            copy.push_value(&answers.get(row, column));
-        }
-    }
-    copy
-}
-
-/// Several rows that jointly fit become one page. Size comes from the
-/// sealed cells / one scratch load — the page is not encoded into an
-/// uncharged Vec and then rejected. `into_cursor(page_rows)` is the cap.
-/// Verification: `NotRun`.
-#[test]
-fn multirow_page_fits_under_byte_allowance() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    answers.push_value(&AnswerValue::U64(1));
-    answers.push_value(&AnswerValue::U64(2));
-    answers.push_value(&AnswerValue::U64(3));
-    // One U64 encodes as 9 bytes; three fit in 32. Row cap 2 must win.
-    for ram_allowance in [usize::MAX, 0] {
-        let sealed = CompleteResult::seal(
-            clone_answers(&answers),
-            heap_identity(),
-            &work,
-            ram_allowance,
-        )
-        .expect("seal");
-        let mut cursor = sealed.into_cursor(2);
-        let mut ticket = DeliveryTicket::open(&mut cursor);
-        let preview = ticket
-            .preview_page(&work, 32)
-            .expect("preview")
-            .expect("nonempty");
-        assert_eq!(
-            preview.len(),
-            2,
-            "byte allowance admits three; page_rows is 2"
-        );
-        assert_eq!(preview.get(0, 0), AnswerValue::U64(1));
-        assert_eq!(preview.get(1, 0), AnswerValue::U64(2));
-        assert_eq!(ticket.cursor.debug_next_row(), 0);
-        assert!(
-            ticket.preview_charged_bytes() > 0,
-            "multirow preview reserved before copy"
-        );
-        let adopted = ticket.adopt().expect("adopt");
-        let charge = work
-            .reserve(
-                crate::work::ByteKind::Result,
-                super::logical_bytes_for_test(&adopted),
-            )
-            .expect("register output");
-        drop(charge);
-        ticket.commit();
-        assert_eq!(cursor.debug_next_row(), 2);
-
-        let mut ticket = DeliveryTicket::open(&mut cursor);
-        let last = ticket
-            .preview_page(&work, 32)
-            .expect("last page")
-            .expect("row 3");
-        assert_eq!(last.len(), 1);
-        assert_eq!(last.get(0, 0), AnswerValue::U64(3));
-        ticket.abort();
-        assert_eq!(cursor.debug_next_row(), 2);
-    }
+    drop(execute);
+    let mut seen = 0;
+    result
+        .visit_rows(&work(), |row| {
+            assert_eq!(row.values().next().unwrap(), AnswerValue::U64(seen));
+            seen += 1;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(seen, 8);
+    assert_rows(&result.into_answers(), 8);
 }
 
 #[test]
-fn cancelled_preview_aborts_without_advancing() {
-    let work = work();
-    let sealed =
-        CompleteResult::seal(sample_answers(3), heap_identity(), &work, usize::MAX).expect("seal");
-    let mut cursor = sealed.into_cursor(8);
-    work.cancel();
-    let mut ticket = DeliveryTicket::open(&mut cursor);
+fn cancellation_cannot_seal_a_complete_owner() {
+    let execute = work();
+    let answers = sample_answers(3);
+    execute.cancel();
     assert!(
-        ticket.preview_page(&work, 1024).is_err(),
-        "cancelled work is a resource abort"
-    );
-    drop(ticket);
-    assert_eq!(cursor.debug_next_row(), 0);
-}
-
-fn cursor_next_for_test(cursor: &ResultCursor) -> u64 {
-    cursor.debug_next_row()
-}
-
-/// Preview growth is reserved onto the ticket before copy; abort refunds
-/// that owner. An oversized first row never takes a charge.
-/// Verification: `NotRun`.
-#[test]
-fn preview_growth_is_charged_and_oversized_leaves_no_uncharged_alloc() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    answers.push_value(&AnswerValue::String("aaaaaaaa"));
-    answers.push_value(&AnswerValue::String("bbbbbbbb"));
-    let sealed = CompleteResult::seal(answers, heap_identity(), &work, usize::MAX).expect("seal");
-    let baseline = work.used(crate::work::Resource::ResultBytes);
-    let mut cursor = sealed.into_cursor(8);
-
-    let mut ticket = DeliveryTicket::open(&mut cursor);
-    let refused = ticket.preview_page(&work, 8);
-    assert!(refused.is_err(), "first row does not fit eight bytes");
-    assert_eq!(ticket.preview_charged_bytes(), 0);
-    assert_eq!(work.used(crate::work::Resource::ResultBytes), baseline);
-    drop(ticket);
-    assert_eq!(
-        work.used(crate::work::Resource::ResultBytes),
-        baseline,
-        "oversized refuse did not leave a live or refundable uncharged buffer"
-    );
-    assert_eq!(cursor.debug_next_row(), 0);
-
-    let mut ticket = DeliveryTicket::open(&mut cursor);
-    let preview = ticket
-        .preview_page(&work, 24)
-        .expect("row1 fits")
-        .expect("nonempty");
-    assert_eq!(preview.len(), 1);
-    let charged = ticket.preview_charged_bytes();
-    assert!(charged > 0, "admitted preview reserved before copy");
-    assert_eq!(
-        work.used(crate::work::Resource::ResultBytes),
-        baseline + charged,
-        "the reservation stays on the ticket, not a dropped temp"
-    );
-    ticket.abort();
-    assert_eq!(
-        work.used(crate::work::Resource::ResultBytes),
-        baseline,
-        "abort refunds the ticket-owned preview charge"
-    );
-    assert_eq!(cursor.debug_next_row(), 0);
-
-    let page = cursor
-        .next_page_with_work(&work, 24)
-        .expect("retry")
-        .expect("row1");
-    assert_eq!(page.rows.len(), 1);
-    assert!(
-        page.charged_bytes() > 0,
-        "published page owns the preview reservation"
-    );
-    let after_page = work.used(crate::work::Resource::ResultBytes);
-    assert!(after_page > baseline);
-    drop(page);
-    assert_eq!(
-        work.used(crate::work::Resource::ResultBytes),
-        baseline,
-        "dropping the page refunds its owned charge"
+        matches!(CompleteResult::seal(answers, heap_identity(), &execute),
+        Err(Error::Store(error)) if matches!(*error, crate::store::StoreError::Work(WorkError::Cancelled)))
     );
 }
 
-/// Consume available result capacity, attempt a pull that fits its
-/// caller cap but cannot reserve overlap, then retry the **same** cursor
-/// with sufficient resources and receive the same first row. A budget
-/// refusal is not a sticky cursor failure.
-/// Verification: `NotRun`.
-#[test]
-fn resource_refusal_retries_same_first_row() {
-    let seal = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    answers.push_value(&AnswerValue::String("first-row-payload"));
-    answers.push_value(&AnswerValue::String("second"));
-    for ram_allowance in [usize::MAX, 0] {
-        let sealed = CompleteResult::seal(
-            clone_answers(&answers),
-            heap_identity(),
-            &seal,
-            ram_allowance,
-        )
-        .expect("seal");
-        let mut cursor = sealed.into_cursor(8);
-        let tight = crate::work::ExecutionPolicy {
-            result_bytes: 8,
-            ..UNBOUNDED_POLICY
-        }
-        .start()
-        .expect("tight delivery ledger");
-        cursor.rebind_work(&tight);
-        let mut ticket = DeliveryTicket::open(&mut cursor);
-        let refused = ticket.preview_page(&tight, 1024);
-        assert!(
-            refused.is_err(),
-            "row fits the caller cap but cannot reserve result overlap"
-        );
-        drop(ticket);
-        assert_eq!(cursor.debug_next_row(), 0, "resource abort leaves next_row");
-        let retry = cursor
-            .next_page_with_work(&seal, 1024)
-            .expect("retry after resource abort must not be a failed cursor")
-            .expect("same first row");
-        assert_eq!(retry.rows.len(), 2);
-        assert_eq!(
-            retry.rows.get(0, 0),
-            AnswerValue::String("first-row-payload")
-        );
-        assert_eq!(retry.rows.get(1, 0), AnswerValue::String("second"));
-        assert!(retry.terminal);
-    }
-}
-
-/// True backing / corruption failure stays terminal: later pulls return
-/// that error, never EOF or a successful page.
-/// Verification: `NotRun`.
-#[test]
-fn backing_failure_stays_terminal() {
-    let work = work();
-    let sealed =
-        CompleteResult::seal(sample_answers(2), heap_identity(), &work, usize::MAX).expect("seal");
-    let mut cursor = sealed.into_cursor(8);
-    cursor.inject_backing_failure(Error::Corruption(
-        crate::error::CorruptionError::MalformedValue("result row sequence"),
-    ));
-    assert!(
-        cursor.next_page_with_work(&work, u64::MAX).is_err(),
-        "injected backing failure"
-    );
-    assert!(
-        cursor.next_page_with_work(&work, u64::MAX).is_err(),
-        "a failed cursor never becomes EOF"
-    );
-    assert!(
-        cursor.next_page_with_work(&work, 64).is_err(),
-        "later pulls stay failed"
-    );
-    assert_eq!(cursor.debug_next_row(), 0, "failure does not advance");
-}
-
-/// Adopt-and-abort discards the ticket-local pending advance. A fresh
-/// unpreviewed ticket's `commit` must not steal that abandoned page.
-/// Verification: `NotRun`.
 #[test]
 fn adopt_and_abort_leaves_nothing_a_fresh_ticket_can_commit() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    answers.push_value(&AnswerValue::String("only"));
-    answers.push_value(&AnswerValue::String("next"));
-    for ram_allowance in [usize::MAX, 0] {
-        let sealed = CompleteResult::seal(
-            clone_answers(&answers),
-            heap_identity(),
-            &work,
-            ram_allowance,
-        )
-        .expect("seal");
-        let mut cursor = sealed.into_cursor(8);
-        let mut ticket = DeliveryTicket::open(&mut cursor);
-        ticket
-            .preview_page(&work, 1024)
-            .expect("preview")
-            .expect("row");
-        let adopted = ticket.adopt().expect("adopt");
-        assert_eq!(adopted.get(0, 0), AnswerValue::String("only"));
-        ticket.abort();
-        assert_eq!(cursor.debug_next_row(), 0);
-        let fresh = DeliveryTicket::open(&mut cursor);
-        fresh.commit();
-        assert_eq!(
-            cursor.debug_next_row(),
-            0,
-            "fresh unpreviewed ticket cannot commit an abandoned preview"
-        );
-        let retry = cursor
-            .next_page_with_work(&work, 1024)
-            .expect("retry after adopt-abort")
-            .expect("first row still there");
-        assert_eq!(retry.rows.get(0, 0), AnswerValue::String("only"));
-    }
-}
-
-/// Large spilled results have no resident per-row length directory.
-/// Paging must stay inside the working-memory envelope (not 8 bytes ×
-/// row count of extra resident index).
-/// Verification: `NotRun`.
-#[test]
-fn spilled_results_stay_within_working_memory_envelope() {
-    let work = work();
-    let mut answers = Answers::new();
-    answers.begin(1);
-    let n = 2048u64;
-    for i in 0..n {
-        answers.push_value(&AnswerValue::U64(i));
-    }
-    let sealed = CompleteResult::seal(answers, heap_identity(), &work, 0).expect("seal");
-    let after_seal = work.used(crate::work::Resource::WorkingBytes);
-    let mut cursor = sealed.into_cursor(8);
+    let mut cursor = sealed(3).into_cursor(2);
     let mut ticket = DeliveryTicket::open(&mut cursor);
-    let preview = ticket
-        .preview_page(&work, 1024)
-        .expect("preview")
-        .expect("first page");
-    assert_eq!(preview.get(0, 0), AnswerValue::U64(0));
-    let after_preview = work.used(crate::work::Resource::WorkingBytes);
-    assert!(
-        after_preview.saturating_sub(after_seal) < n,
-        "one page must not grow an 8-byte-per-row resident length directory"
-    );
+    ticket.preview_page(&work()).unwrap().unwrap();
+    let adopted = ticket.adopt().unwrap();
+    assert_rows(&adopted, 2);
     ticket.abort();
-    let mut delivered = 0u64;
-    loop {
-        match cursor.next_page_with_work(&work, 256).expect("page") {
-            None => break,
-            Some(page) => {
-                delivered += page.rows.len() as u64;
-                if page.terminal {
-                    break;
-                }
+    assert_eq!(cursor.debug_next_row(), 0);
+    DeliveryTicket::open(&mut cursor).commit();
+    assert_eq!(cursor.debug_next_row(), 0);
+    assert_rows(&cursor.next_page(&work()).unwrap().unwrap().rows, 2);
+    drop(cursor);
+    assert_rows(&adopted, 2);
+}
+
+#[test]
+fn dropping_a_successful_ticket_does_not_advance() {
+    let mut cursor = sealed(3).into_cursor(2);
+    {
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        ticket.preview_page(&work()).unwrap();
+        assert_eq!(ticket.previewed_rows(), 2);
+    }
+    assert_eq!(cursor.debug_next_row(), 0);
+    assert_rows(&cursor.next_page(&work()).unwrap().unwrap().rows, 2);
+}
+
+#[test]
+fn repeated_preview_cancellation_discards_the_old_pending_advance() {
+    let mut cursor = sealed(3).into_cursor(2);
+    let delivery = work();
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    ticket.preview_page(&delivery).unwrap();
+    assert_eq!(ticket.previewed_rows(), 2);
+    let adopted = ticket.adopt().unwrap();
+    delivery.cancel();
+    assert!(ticket.preview_page(&delivery).is_err());
+    assert_eq!(ticket.previewed_rows(), 0);
+    assert!(!ticket.will_be_terminal());
+    assert!(ticket.adopt().is_none());
+    ticket.commit();
+    assert_eq!(cursor.debug_next_row(), 0);
+    assert_rows(&adopted, 2);
+    assert_rows(&cursor.next_page(&work()).unwrap().unwrap().rows, 2);
+}
+
+#[test]
+fn borrowed_page_cancellation_at_first_or_last_row_retries_the_same_page() {
+    let mut cursor = sealed(3).into_cursor(3);
+    for cancel_at in [1, 3] {
+        let delivery = work();
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let mut seen = 0;
+        let failed = ticket.visit_page(&delivery, |row| {
+            assert_eq!(row.values().next().unwrap(), AnswerValue::U64(seen));
+            seen += 1;
+            if seen == cancel_at {
+                delivery.cancel();
             }
-        }
+            Ok(())
+        });
+        assert!(matches!(failed, Err(Error::Store(error))
+            if matches!(*error, crate::store::StoreError::Work(WorkError::Cancelled))));
+        assert_eq!(seen, cancel_at);
+        assert_eq!(ticket.previewed_rows(), 0);
+        assert!(ticket.adopt().is_none());
+        ticket.commit();
+        assert_eq!(cursor.debug_next_row(), 0);
     }
-    assert_eq!(delivered, n);
-    let after_pages = work.used(crate::work::Resource::WorkingBytes);
-    assert!(
-        after_pages.saturating_sub(after_seal) < n * 8,
-        "paging a spill must not retain an 8-byte-per-row working-memory directory"
-    );
-}
-
-#[test]
-fn encoded_value_len_matches_the_codec() {
-    let mut buf =
-        ChargedBuffer::with_capacity(&work(), ByteKind::Working, 0).expect("encode buffer");
-    let values = [
-        AnswerValue::Bool(true),
-        AnswerValue::U64(7),
-        AnswerValue::I64(-3),
-        AnswerValue::String("fit-check"),
-        AnswerValue::FixedBytes(&[1, 2, 3, 4]),
-        AnswerValue::Uuid(bumbledb_theory::Uuid::from_bytes([0; 16])),
-    ];
-    for value in values {
-        buf.clear();
-        super::encode_value(&value, &mut buf).expect("encode cell");
-        assert_eq!(
-            buf.len() as u64,
-            super::encoded_value_len(&value),
-            "fit length must match the codec for {value:?}"
-        );
-    }
-}
-
-#[test]
-fn construction_batches_transactions_and_seals_the_partial_tail() {
-    let execute = work();
-    let expected = sample_answers(514);
-    let mut carrier = Answers::new();
-    carrier.begin(expected.arity());
-    let mut memo = ResolveMemo::new();
-    let mut charge = ResultCharge::new(&execute, 0);
-    let mut first_txn = 0;
-    for (index, row) in expected.answers().enumerate() {
-        for column in 0..expected.arity() {
-            carrier.push_value(&row.get(column));
-        }
-        charge.note_row(&mut carrier, &mut memo).expect("append");
-        let spill = charge.spill.as_mut().expect("streaming spill");
-        if index == 0 {
-            first_txn = spill.rows.committed_txn_for_test().expect("LMDB");
-            // An aborted MapFull attempt must not duplicate rows/charges.
-            spill.rows.inject_map_full_after_reserve(1);
-        }
-        assert_eq!(
-            spill.rows.committed_txn_for_test(),
-            Some(first_txn + index / crate::exec::sink::STEP_QUANTUM as usize),
-            "only a complete carrier commits during construction"
-        );
-        assert!(carrier.len() < crate::exec::sink::STEP_QUANTUM as usize);
-    }
-    assert_eq!(carrier.len(), 1, "seal must flush the trailing row");
-    let path = charge.spill.as_ref().unwrap().rows.scratch_path().unwrap();
-    let mut sealed = charge.seal(carrier, heap_identity()).expect("seal tail");
-    let Backing::Scratch { rows, count, .. } = &sealed.backing else {
-        panic!("scratch backing");
-    };
-    assert_eq!(*count, 514);
-    assert_eq!(rows.len(), 514);
-    assert_eq!(rows.committed_txn_for_test(), Some(first_txn + 3));
-    let collected = sealed
-        .collect_with_work(514, &work(), u64::MAX)
-        .expect("collect");
-    assert_rows(&collected, 514);
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    let mut seen = 0;
     assert_eq!(
-        execute.used(crate::work::Resource::ResultBytes),
-        sealed.byte_len()
+        ticket
+            .visit_page(&work(), |row| {
+                assert_eq!(row.values().next().unwrap(), AnswerValue::U64(seen));
+                seen += 1;
+                Ok(())
+            })
+            .unwrap(),
+        Some(3)
     );
-    drop(sealed);
-    for resource in [
-        crate::work::Resource::ResultBytes,
-        crate::work::Resource::WorkingBytes,
-        crate::work::Resource::ScratchBytes,
-    ] {
-        assert_eq!(
-            execute.used(resource),
-            0,
-            "all owners refunded: {resource:?}"
-        );
-    }
-    assert!(!path.exists(), "scratch closes before cleanup");
+    assert!(
+        ticket.adopt().is_none(),
+        "borrowed delivery creates no Answers"
+    );
+    assert!(ticket.will_be_terminal());
+    ticket.commit();
+    assert_eq!(cursor.debug_next_row(), 3);
 }
 
 #[test]
-fn cancelled_partial_result_batch_cannot_seal_and_refunds_its_owners() {
-    let execute = work();
-    let mut carrier = Answers::new();
-    carrier.begin(1);
-    let mut charge = ResultCharge::new(&execute, 0);
-    let mut memo = ResolveMemo::new();
-    for i in 0..3 {
-        carrier.push_value(&AnswerValue::U64(i));
-        charge.note_row(&mut carrier, &mut memo).expect("append");
-    }
-    assert_eq!(carrier.len(), 2);
-    let path = charge.spill.as_ref().unwrap().rows.scratch_path().unwrap();
-    execute.cancel();
-    assert!(charge.seal(carrier, heap_identity()).is_err());
-    assert!(!path.exists());
-    for resource in [
-        crate::work::Resource::ResultBytes,
-        crate::work::Resource::WorkingBytes,
-        crate::work::Resource::ScratchBytes,
-    ] {
-        assert_eq!(execute.used(resource), 0);
-    }
+fn failed_or_panicking_destination_cannot_commit_a_prefix() {
+    let mut cursor = sealed(4).into_cursor(3);
+    let mut ticket = DeliveryTicket::open(&mut cursor);
+    let mut seen = 0;
+    let failure = ticket.visit_page(&work(), |_| {
+        seen += 1;
+        if seen == 2 {
+            return Err(Error::ResultBytesOverflow);
+        }
+        Ok(())
+    });
+    assert_eq!(failure, Err(Error::ResultBytesOverflow));
+    assert_eq!(ticket.previewed_rows(), 0);
+    ticket.commit();
+    let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let _ = ticket.visit_page(&work(), |_| panic!("destination failed"));
+    }));
+    assert!(unwind.is_err());
+    assert_eq!(cursor.debug_next_row(), 0);
+    assert_rows(&cursor.next_page(&work()).unwrap().unwrap().rows, 3);
 }
 
 #[test]
-fn borrowed_scratch_pages_need_one_visit_per_row_and_no_encoded_copy() {
+fn result_value_iterator_borrows_payloads_and_preserves_every_value_kind() {
+    use bumbledb_theory::{F64, Interval, Uuid};
+    let values = [
+        AnswerValue::Bool(false),
+        AnswerValue::Bool(true),
+        AnswerValue::U64(u64::MAX),
+        AnswerValue::I64(i64::MIN),
+        AnswerValue::F64(F64::from(0.5)),
+        AnswerValue::F64(F64::NAN),
+        AnswerValue::String("borrowed 🐝\0text"),
+        AnswerValue::FixedBytes(&[0, 255, 128, 42]),
+        AnswerValue::Uuid(Uuid::from_u128(u128::MAX)),
+        AnswerValue::IntervalU64(Interval::new(0, u64::MAX).unwrap()),
+        AnswerValue::IntervalI64(Interval::new(i64::MIN, i64::MAX).unwrap()),
+        AnswerValue::IntervalF64(Interval::new(F64::NEG_INFINITY, F64::INFINITY).unwrap()),
+    ];
+    let mut answers = Answers::new();
+    answers.begin(values.len());
+    for value in &values {
+        answers.push_value(value);
+    }
+    let text_range = answers.text.as_bytes().as_ptr_range();
+    let blob_range = answers.blob.as_ptr_range();
+    let result = CompleteResult::seal(answers, heap_identity(), &work()).unwrap();
+    for _ in 0..2 {
+        let mut count = 0;
+        result
+            .visit_rows(&work(), |row| {
+                assert_eq!(row.arity(), values.len());
+                let mut actual = row.values();
+                assert_eq!(actual.len(), values.len());
+                for expected in values {
+                    let value = actual.next().unwrap();
+                    assert_eq!(value, expected);
+                    match value {
+                        AnswerValue::String(text) => assert!(text_range.contains(&text.as_ptr())),
+                        AnswerValue::FixedBytes(bytes) => {
+                            assert!(blob_range.contains(&bytes.as_ptr()));
+                        }
+                        _ => {}
+                    }
+                }
+                assert!(actual.next().is_none());
+                assert!(actual.next().is_none());
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+}
+
+#[cfg(feature = "alloc-counter")]
+#[test]
+fn borrowing_completed_rows_and_pages_does_not_allocate() {
+    let result = sealed(512);
+    let delivery = work();
+    for _ in 0..2 {
+        let mut count = 0;
+        let before = crate::alloc_counter::snapshot().window;
+        result
+            .visit_rows(&delivery, |row| {
+                for value in row.values() {
+                    std::hint::black_box(value);
+                }
+                count += 1;
+                Ok(())
+            })
+            .unwrap();
+        let after = crate::alloc_counter::snapshot().window;
+        assert_eq!(count, 512);
+        assert_eq!(after.allocs, before.allocs);
+        assert_eq!(after.alloc_bytes, before.alloc_bytes);
+    }
+    let mut cursor = result.into_cursor(7);
+    let before = crate::alloc_counter::snapshot();
+    let mut total = 0;
+    loop {
+        let mut ticket = DeliveryTicket::open(&mut cursor);
+        let Some(count) = ticket
+            .visit_page(&delivery, |row| {
+                for value in row.values() {
+                    std::hint::black_box(value);
+                }
+                Ok(())
+            })
+            .unwrap()
+        else {
+            break;
+        };
+        total += count;
+        ticket.commit();
+    }
+    let after = crate::alloc_counter::snapshot();
+    assert_eq!(total, 512);
+    assert_eq!(after.window.allocs, before.window.allocs);
+    assert_eq!(after.window.alloc_bytes, before.window.alloc_bytes);
+    assert_eq!(after.absolute.live_bytes, before.absolute.live_bytes);
+}
+
+#[cfg(feature = "alloc-counter")]
+#[test]
+fn large_result_seals_without_another_copy_or_size_directory() {
     let execute = work();
     let mut answers = Answers::new();
     answers.begin(1);
-    for i in 0..3 {
-        answers.push_value(&AnswerValue::U64(i));
-    }
-    let mut cursor = CompleteResult::seal(answers, heap_identity(), &execute, 0)
-        .expect("seal")
-        .into_cursor(2);
-    let delivery = crate::work::ExecutionPolicy {
-        result_bytes: 18,
-        work_units: 3,
-        ..UNBOUNDED_POLICY
-    }
-    .start()
-    .expect("exact first-page allowance");
-    let first = cursor
-        .next_page_with_work(&delivery, 18)
-        .expect("page")
-        .expect("rows");
-    assert_eq!(first.rows.get(0, 0), AnswerValue::U64(0));
-    assert_eq!(first.rows.get(1, 0), AnswerValue::U64(1));
-    assert!(!first.terminal);
-    assert_eq!(first.charged_bytes(), 18);
-    assert_eq!(delivery.used(crate::work::Resource::WorkUnits), 3);
-    drop(first);
-    assert_eq!(delivery.used(crate::work::Resource::ResultBytes), 0);
-    let last = cursor
-        .next_page_with_work(&work(), 9)
-        .expect("tail")
-        .expect("row");
-    assert_eq!(last.rows.get(0, 0), AnswerValue::U64(2));
-    assert!(last.terminal);
-}
-
-#[test]
-fn repeated_preview_refusal_discards_the_old_pending_advance() {
-    for ram_allowance in [usize::MAX, 0] {
-        let mut cursor =
-            CompleteResult::seal(sample_answers(3), heap_identity(), &work(), ram_allowance)
-                .expect("seal")
-                .into_cursor(2);
-        let execute = work();
-        let mut ticket = DeliveryTicket::open(&mut cursor);
-        ticket
-            .preview_page(&execute, u64::MAX)
-            .expect("first preview");
-        assert_eq!(ticket.previewed_rows(), 2);
-        execute.cancel();
-        assert!(ticket.preview_page(&execute, u64::MAX).is_err());
-        assert_eq!(ticket.previewed_rows(), 0);
-        assert_eq!(ticket.preview_charged_bytes(), 0);
-        ticket.commit();
-        assert_eq!(
-            cursor.debug_next_row(),
-            0,
-            "refusal cannot commit a stale preview"
-        );
-        assert_rows(
-            &cursor
-                .next_page_with_work(&work(), u64::MAX)
-                .unwrap()
-                .unwrap()
-                .rows,
-            2,
-        );
-    }
-}
-
-#[test]
-fn scratch_sequence_holes_and_corrupt_rows_are_sticky_not_eof() {
-    for corruption in ["hole", "tail", "codec"] {
-        let execute = work();
-        let mut rows = ScratchRelation::new(&execute, 0);
-        rows.force_spill().expect("scratch");
-        let valid = [1, 0, 0, 0, 0, 0, 0, 0, 42];
-        rows.put(&0u64.to_be_bytes(), &valid).expect("first");
-        match corruption {
-            "hole" => rows.put(&2u64.to_be_bytes(), &valid).expect("gap"),
-            "codec" => rows.put(&1u64.to_be_bytes(), &[1]).expect("truncated cell"),
-            _ => {}
-        }
-        let mut cursor = CompleteResult {
-            identity: heap_identity(),
-            backing: Backing::Scratch {
-                rows,
-                arity: 1,
-                count: 3,
-            },
-            charge: None,
-        }
-        .into_cursor(3);
-        let delivery = work();
-        for _ in 0..2 {
-            assert!(matches!(
-                cursor.next_page_with_work(&delivery, u64::MAX),
-                Err(Error::Corruption(_))
-            ));
-            assert_eq!(cursor.debug_next_row(), 0);
-            assert_eq!(delivery.used(crate::work::Resource::ResultBytes), 0);
-        }
-    }
+    answers.push_value(&AnswerValue::String(&"x".repeat(9 << 20)));
+    let address = answers.text.as_ptr();
+    let before = crate::alloc_counter::snapshot();
+    let result = CompleteResult::seal(answers, heap_identity(), &execute).unwrap();
+    let after = crate::alloc_counter::snapshot();
+    assert_eq!(after.window.allocs, before.window.allocs);
+    assert_eq!(after.absolute.live_bytes, before.absolute.live_bytes);
+    let moved = result.into_answers();
+    assert_eq!(moved.text.as_ptr(), address);
+    assert_eq!(moved.text.len(), 9 << 20);
 }

@@ -22,7 +22,7 @@
 
 use bumbledb_theory::schema::{FieldDescriptor, ValueType};
 
-use super::intern::{ResidentAdmit, SENTINEL_WORD, TextInterner};
+use super::intern::{SENTINEL_WORD, TextInterner};
 use crate::canonical::field::{
     self, interval_f64_order_words, interval_i64_order_words, interval_u64_order_words,
 };
@@ -39,7 +39,7 @@ pub(crate) enum TextWords<'i> {
     Intern {
         interner: &'i mut TextInterner,
         work: &'i WorkContext,
-        generation: &'i crate::work::GenerationHandle,
+        texts: &'i mut super::TextOwners,
     },
     /// Find the token or the sentinel — scan-side comparisons where an
     /// un-interned text can equal no interned word.
@@ -56,34 +56,41 @@ pub(crate) enum TextWords<'i> {
     HandleIntern(&'i crate::image::intern::InternerHandle<'i>),
     /// As `Lookup`, locking per field through the shared handle.
     HandleLookup(&'i crate::image::intern::InternerHandle<'i>),
-    /// Exact scratch-backed resolution for nonresident execution.
-    Nonresident {
-        store: &'i mut crate::image::NonresidentTextStore,
-        work: &'i WorkContext,
-    },
 }
 
 impl TextWords<'_> {
-    fn word(&mut self, text: &str) -> Result<ResidentAdmit<u64>> {
+    fn word(&mut self, text: &str, owners: &mut Vec<super::intern::InternedText>) -> Result<u64> {
         match self {
             Self::Intern {
                 interner,
                 work,
-                generation,
-            } => match interner.intern(text, work, generation.ledger()) {
-                Ok(token) => Ok(ResidentAdmit::Ready(token)),
-                Err(
-                    crate::image::intern::InternError::Cache(_)
-                    | crate::image::intern::InternError::Allocation,
-                ) => Ok(ResidentAdmit::BeyondMemory(
-                    crate::image::ResidentTextExhausted::new((*generation).clone()),
-                )),
-                Err(error) => Err(Error::from(error)),
-            },
-            Self::Lookup(interner) => Ok(ResidentAdmit::Ready(interner.lookup_word(text))),
-            Self::HandleIntern(handle) => handle.intern_or_spill(text),
-            Self::HandleLookup(handle) => Ok(ResidentAdmit::Ready(handle.lookup_word(text))),
-            Self::Nonresident { store, work } => store.intern(text, work).map(ResidentAdmit::Ready),
+                texts,
+            } => {
+                let token = interner.intern(text, work)?;
+                texts.pin(token, || interner.owned_text(token))?;
+                Ok(token)
+            }
+            Self::Lookup(interner) => {
+                let word = interner.lookup_word(text);
+                if let Some(text) = interner.owned_text(word) {
+                    owners.push(super::intern::InternedText { word, text });
+                }
+                Ok(word)
+            }
+            Self::HandleIntern(handle) => {
+                let text = handle.intern(text)?;
+                let word = text.word;
+                owners.push(text);
+                Ok(word)
+            }
+            Self::HandleLookup(handle) => {
+                let resolver = handle.generation().lock_resolver();
+                let word = resolver.lookup_word(text);
+                if let Some(text) = resolver.owned_text(word) {
+                    owners.push(super::intern::InternedText { word, text });
+                }
+                Ok(word)
+            }
         }
     }
 }
@@ -143,7 +150,8 @@ pub(crate) fn row_words(
     bytes: &[u8],
     text: &mut TextWords<'_>,
     out: &mut Vec<u64>,
-) -> Result<ResidentAdmit<()>> {
+    owners: &mut Vec<super::intern::InternedText>,
+) -> Result<()> {
     let mut reader = Reader { bytes };
     if usize::from(u16::from_be_bytes(reader.word()?)) != fields.len() {
         return Err(corrupt("canonical row arity"));
@@ -168,12 +176,7 @@ pub(crate) fn row_words(
                 let blob = reader.blob()?;
                 let text_str =
                     std::str::from_utf8(blob).map_err(|_| corrupt("non-UTF-8 stored text"))?;
-                match text.word(text_str)? {
-                    ResidentAdmit::Ready(token) => out.push(token),
-                    ResidentAdmit::BeyondMemory(exhausted) => {
-                        return Ok(ResidentAdmit::BeyondMemory(exhausted));
-                    }
-                }
+                out.push(text.word(text_str, owners)?);
             }
             (5, ValueType::FixedBytes { len }) => {
                 let blob = reader.blob()?;
@@ -232,7 +235,7 @@ pub(crate) fn row_words(
     if !reader.bytes.is_empty() {
         return Err(corrupt("canonical row trailing bytes"));
     }
-    Ok(ResidentAdmit::Ready(()))
+    Ok(())
 }
 
 /// One decoded row's flat column words plus its field→column map — the
@@ -242,42 +245,25 @@ pub(crate) struct RowWords {
     spans: Box<[super::ColumnSpan]>,
     strings: Box<[bool]>,
     words: Vec<u64>,
+    texts: Vec<super::intern::InternedText>,
     has_text: bool,
 }
 
 impl RowWords {
-    /// A prepared key probe owns one fixed-schema row buffer. Reserve its
-    /// complete retained capacity before allocating; decoding cannot grow
-    /// this buffer because each validated field has a fixed word width.
-    pub(crate) fn prepared(
-        field_types: &[ValueType],
-        work: &WorkContext,
-    ) -> Result<(Self, crate::work::ByteReservation)> {
-        let words: usize = field_types
+    /// Fixed-schema probes reserve one row, reused across ordinary calls.
+    pub(crate) fn prepared(field_types: &[ValueType]) -> Self {
+        let mut row = Self::new(field_types);
+        let words = field_types
             .iter()
             .map(|ty| crate::ir::normalize::SlotWidth::of(ty).slots())
             .sum();
-        let shape_bytes = field_types.len()
-            * (std::mem::size_of::<super::ColumnSpan>() + std::mem::size_of::<bool>());
-        let requested = shape_bytes + words * std::mem::size_of::<u64>();
-        let mut charge = work
-            .reserve(crate::work::ByteKind::Working, requested as u64)
-            .map_err(crate::api::prepared::source::work_error)?;
-        let mut row = Self::new(field_types);
-        row.words
-            .try_reserve_exact(words)
-            .map_err(|_| Error::from_store(crate::storage::store::StoreError::Allocation))?;
-        let retained = shape_bytes + row.words.capacity() * std::mem::size_of::<u64>();
-        if retained > requested {
-            charge.join(
-                work.reserve(
-                    crate::work::ByteKind::Working,
-                    (retained - requested) as u64,
-                )
-                .map_err(crate::api::prepared::source::work_error)?,
-            );
-        }
-        Ok((row, charge))
+        row.words.reserve_exact(words);
+        row
+    }
+
+    pub(crate) fn release_memory(&mut self) {
+        self.words = Vec::new();
+        self.texts = Vec::new();
     }
 
     pub(crate) fn new(field_types: &[ValueType]) -> Self {
@@ -288,6 +274,7 @@ impl RowWords {
                 .map(|ty| matches!(ty, ValueType::String))
                 .collect(),
             words: Vec::new(),
+            texts: Vec::new(),
             has_text: field_types.iter().any(|ty| matches!(ty, ValueType::String)),
         }
     }
@@ -314,9 +301,15 @@ impl RowWords {
         fields: &[FieldDescriptor],
         bytes: &[u8],
         text: &mut TextWords<'_>,
-    ) -> Result<ResidentAdmit<()>> {
+    ) -> Result<()> {
         self.words.clear();
-        row_words(fields, bytes, text, &mut self.words)
+        self.texts.clear();
+        let result = row_words(fields, bytes, text, &mut self.words, &mut self.texts);
+        if !matches!(result, Ok(())) {
+            self.words.clear();
+            self.texts.clear();
+        }
+        result
     }
 
     pub(crate) fn span_words(&self, field: bumbledb_theory::schema::FieldId) -> &[u64] {
@@ -404,32 +397,19 @@ mod string_field_tests {
     use bumbledb_theory::schema::FieldId;
 
     #[test]
-    fn prepared_row_reserves_full_capacity_until_owner_drop() {
-        use crate::work::{ExecutionPolicy, Resource};
+    fn prepared_row_releases_words_but_keeps_its_schema() {
         let types = [ValueType::U64, ValueType::Uuid, ValueType::String];
-        let work = crate::api::db::test_operation().expect("work");
-        let (row, charge) = RowWords::prepared(&types, &work).expect("prepared row");
+        let mut row = RowWords::prepared(&types);
         assert!(row.has_text());
-        let bytes = std::mem::size_of_val(&*row.spans)
-            + std::mem::size_of_val(&*row.strings)
-            + row.words.capacity() * std::mem::size_of::<u64>();
         assert_eq!(row.words.capacity(), 4);
-        assert_eq!(charge.bytes(), bytes as u64);
-        assert_eq!(work.used(Resource::WorkingBytes), bytes as u64);
-        drop((row, charge));
-        assert_eq!(work.used(Resource::WorkingBytes), 0);
-        let tight = ExecutionPolicy {
-            working_bytes: (bytes - 1) as u64,
-            ..crate::api::prepared::source::UNBOUNDED_POLICY
-        }
-        .start()
-        .expect("work");
-        assert!(RowWords::prepared(&types, &tight).is_err());
-        assert_eq!(
-            tight.used(Resource::WorkingBytes),
-            0,
-            "refused prepare must not retain any charge"
-        );
+        let spans = row.spans.as_ptr();
+        let strings = row.strings.as_ptr();
+        row.release_memory();
+        row.release_memory();
+        assert_eq!(row.words.capacity(), 0);
+        assert_eq!(row.spans.as_ptr(), spans);
+        assert_eq!(row.strings.as_ptr(), strings);
+        assert!(row.has_text());
     }
 
     /// Probe/fallback `RowWords` must mark String columns so `holds` uses

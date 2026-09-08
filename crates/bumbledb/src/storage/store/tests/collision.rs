@@ -83,7 +83,7 @@ fn colliding_rows_stay_distinct_through_insert_contains_delete() {
 
 #[test]
 fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure_cleanup() {
-    use crate::work::{Resource, WorkError};
+    use crate::work::WorkError;
 
     for relation in [NOTE, TAG] {
         let (_dir, path) = store_dir("collision-export");
@@ -120,23 +120,9 @@ fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure
             })
             .collect();
         expected.sort();
-        // Only two row-sized buffers fit, not this three-row bucket.
-        let allowance = 2 * expected.iter().map(Vec::len).max().unwrap() as u64;
-        let bounded = || {
-            ExecutionPolicy {
-                input_bytes: 1 << 20,
-                working_bytes: allowance,
-                scratch_bytes: 0,
-                result_bytes: 0,
-                rows: 100,
-                work_units: 1 << 20,
-                timeout: Duration::from_secs(60),
-            }
-            .start()
-            .unwrap()
-        };
+        // Visitors borrow export scratch; retained consumer rows are separate.
         let snapshot = store.snapshot(&work()).expect("snapshot");
-        let context = bounded();
+        let context = WorkContext::new();
         let mut exported = Vec::new();
         let report = snapshot
             .export(&context, &mut |found, row| {
@@ -147,8 +133,8 @@ fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure
             .expect("bounded export");
         assert_eq!(report.rows, 3);
         assert_eq!(exported, expected);
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
-        let context = bounded();
+        let context = WorkContext::new();
+        let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut calls = 0;
         let failed = snapshot.export(&context, &mut |_, _| {
             calls += 1;
@@ -160,8 +146,11 @@ fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure
         });
         assert!(matches!(failed, Err(StoreError::Allocation)));
         assert_eq!(calls, 2);
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
-        let context = bounded();
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        let _ = before;
+        let context = WorkContext::new();
+        let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut calls = 0;
         let cancelled = snapshot.export(&context, &mut |_, _| {
             calls += 1;
@@ -173,7 +162,9 @@ fn export_orders_home_and_fingerprint_collisions_with_bounded_memory_and_failure
             Err(StoreError::Work(WorkError::Cancelled))
         ));
         assert_eq!(calls, 1);
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        let _ = before;
     }
 }
 

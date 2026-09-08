@@ -9,7 +9,7 @@
  *
  * Verification: NotRun until packed-consumer qualification.
  */
-import { ChangeSet, type ChangeSet as ChangeSetType, Uuid, type ExecutionPolicy, type QueryReader } from "@bjornpagen/bumbledb"
+import { ChangeSet, type ChangeSet as ChangeSetType, Uuid, type QueryReader } from "@bjornpagen/bumbledb"
 import {
 	Command,
 	type GeneratedMigrations,
@@ -32,8 +32,6 @@ import {
 	Learning,
 	makeConsumerRuntime,
 	readAttempts,
-	tinyDelivery,
-	work
 } from "../core-ts/consumer.ts"
 import {
 	backupAndRestore,
@@ -88,7 +86,7 @@ export const submitTerminal = (
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const history = yield* LocalHistory.open(binding, Learning, options)
+			const history = yield* LocalHistory.open(binding, Learning)
 			const sealed = yield* Command.seal(
 				{
 					scope: history.identity,
@@ -97,7 +95,6 @@ export const submitTerminal = (
 					precondition: { kind: "blind" },
 					result: { attempt: command.attempt }
 				},
-				work
 			)
 			yield* state.rememberRef(sealed.ref)
 			const outcome = yield* history.submit(sealed, options)
@@ -111,8 +108,7 @@ export const retrySameCommand = (
 	binding: LocalBinding,
 	command: NativeCommand,
 	studentId: Uuid,
-	state: OutboxState,
-	options: ExecutionPolicy
+	state: OutboxState
 ) =>
 	retrySameId(
 		binding,
@@ -121,8 +117,7 @@ export const retrySameCommand = (
 			attemptId: command.attempt,
 			commandId: { receiptEpoch: command.receiptEpoch, requestId: command.requestId }
 		},
-		asRequestState(state),
-		options
+		asRequestState(state)
 	)
 
 export const witnessedPin = (
@@ -134,18 +129,18 @@ export const witnessedPin = (
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const history = yield* LocalHistory.open(binding, Learning, options)
+			const history = yield* LocalHistory.open(binding, Learning)
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
-					const snapshot = yield* history.snapshot({ ...work, consistency: { kind: "latest" } })
-					const row = yield* snapshot.get(Attempt, { id: attemptId }, work)
+					const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
+					const row = yield* snapshot.get(Attempt, { id: attemptId })
 					if (Option.isNone(row)) {
 						return yield* Effect.fail({ kind: "missing" as const })
 					}
 					return { previous: row.value, at: snapshot.stateStamp }
 				})
 			)
-			const draft = yield* ChangeSet.builder(Learning, work)
+			const draft = yield* ChangeSet.builder(Learning)
 			yield* draft.delete(Attempt, [observed.previous])
 			yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.99 }])
 			const changes = yield* draft.finish()
@@ -157,7 +152,6 @@ export const witnessedPin = (
 					precondition: { kind: "exact-state", at: observed.at },
 					result: { attempt: attemptId }
 				},
-				work
 			)
 			yield* state.rememberRef(sealed.ref)
 			const outcome = yield* history.submit(sealed, options)
@@ -169,35 +163,22 @@ export const witnessedPin = (
 /** Same read helper on published snapshots — no adapter. */
 export const readPublishedAttempts = (
 	reader: QueryReader<typeof Learning>,
-	student: Uuid,
-	delivery: ExecutionPolicy
-) => readAttempts(reader, student, delivery)
-
-export const collectPublishedUnderTinyBudget = (
-	reader: QueryReader<typeof Learning>,
 	student: Uuid
-) =>
-	Effect.scoped(
-		Effect.gen(function* () {
-			const result = yield* reader.execute(attemptsFor, { student }, work)
-			return yield* result.collect({ maxBytes: tinyDelivery.resultBytes }, tinyDelivery)
-		})
-	)
+) => readAttempts(reader, student)
 
 export const provisionAndIncrement = (
 	binding: HistoryBinding,
 	plans: GeneratedMigrations,
 	operationId: OperationId,
-	state: OutboxState,
-	admin: ExecutionPolicy
+	state: OutboxState
 ) =>
 	Effect.gen(function* () {
-		const initialized = yield* initializeLearning(binding, plans, { ...admin, operationId }, asRequestState(state))
-		const generated = yield* generateIncrementUnits({ directory: "bumbledb/migrations" }, admin)
+		const initialized = yield* initializeLearning(binding, plans, { operationId }, asRequestState(state))
+		const generated = yield* generateIncrementUnits({ directory: "bumbledb/migrations" })
 		const migrated = yield* migrateLearning(
 			binding,
 			generated.generated,
-			{ ...admin, operationId },
+			{ operationId },
 			asRequestState(state)
 		)
 		return { initialized, generated, migrated }
@@ -209,7 +190,6 @@ export const backupRestoreClose = (
 	target: HistoryBinding,
 	operationId: OperationId,
 	state: OutboxState,
-	admin: ExecutionPolicy,
 	expected: RuntimeExpectation
 ) =>
 	Effect.gen(function* () {
@@ -217,7 +197,7 @@ export const backupRestoreClose = (
 			source,
 			destination,
 			target,
-			{ ...admin, operationId },
+			{ operationId },
 			asRequestState(state)
 		)
 		return { cycle, expected }

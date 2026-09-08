@@ -12,7 +12,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
+import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { key, NativeRuntime, relation, Scalar, schema, u64 } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
 import { ProtocolError } from "#errors.ts"
@@ -33,22 +33,7 @@ const runtimeOptions: NativeRuntimeOptions = {
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 64,
-	inputBytes: 16_000_000n,
-	workingBytes: 64_000_000n,
-	scratchBytes: 64_000_000n,
-	resultBytes: 16_000_000n,
-	chunkBytes: 1_000_000n,
 	cleanupTimeout: "2 seconds"
-}
-
-const work: ExecutionPolicy = {
-	inputBytes: 4_000_000n,
-	workingBytes: 16_000_000n,
-	scratchBytes: 16_000_000n,
-	resultBytes: 4_000_000n,
-	rows: 100_000n,
-	workUnits: 10_000_000n,
-	timeout: "15 seconds"
 }
 
 const gen = makeGenerator(productionCodec, productionExclusion)
@@ -83,7 +68,7 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 	test("generate compiles field arithmetic against the verified source snapshot", async function fieldBackfill() {
 		const directory = await repoDir()
 		const first = await Effect.runPromise(
-			provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work }))
+			provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory } }))
 		)
 		assert.equal(first.status, "generated")
 		const evolution = migrationIntent(AppUnits1, [
@@ -94,8 +79,7 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 				gen.generateMigrations({
 					schema: AppUnits1,
 					intent: evolution,
-					repository: { directory },
-					work
+					repository: { directory }
 				})
 			)
 		)
@@ -111,7 +95,7 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 	test("same-schema convert records units+1 instead of returning unchanged", async function sameSchemaConvert() {
 		const directory = await repoDir()
 		const first = await Effect.runPromise(
-			provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work }))
+			provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory } }))
 		)
 		assert.equal(first.status, "generated")
 		const evolution = migrationIntent(AppUnits0, [
@@ -123,8 +107,7 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 					schema: AppUnits0,
 					intent: evolution,
 					label: "increment-units",
-					repository: { directory },
-					work
+					repository: { directory }
 				})
 			)
 		)
@@ -143,21 +126,17 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 
 	test("edited or missing snapshots refuse before a new manifest is written", async function snapshotsRequired() {
 		const directory = await repoDir()
-		await Effect.runPromise(provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work })))
+		await Effect.runPromise(provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory } })))
 		const manifestBefore = await readFile(path.join(directory, "manifest.json"), "utf8")
 		await rm(path.join(directory, "meta", "base.schema.json"))
 		expectRefusal(
-			await Effect.runPromiseExit(
-				provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work }))
-			),
+			await Effect.runPromiseExit(provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory } }))),
 			"MigrationDrift"
 		)
 		assert.equal(await readFile(path.join(directory, "manifest.json"), "utf8"), manifestBefore)
 		await writeFile(path.join(directory, "meta", "base.schema.json"), '{ "relations": [] }\n', "utf8")
 		expectRefusal(
-			await Effect.runPromiseExit(
-				provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work }))
-			),
+			await Effect.runPromiseExit(provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory } }))),
 			"MigrationDrift"
 		)
 		assert.equal(await readFile(path.join(directory, "manifest.json"), "utf8"), manifestBefore)
@@ -167,7 +146,7 @@ describe("D20/D27 full-chain compile and symbolic field arithmetic", function su
 	test("empty source still supplies the empty-base snapshot to compile", async function emptySource() {
 		const directory = await repoDir()
 		const report = await Effect.runPromise(
-			provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory }, work }))
+			provide(gen.generateMigrations({ schema: AppUnits0, repository: { directory } }))
 		)
 		assert.equal(report.status, "generated")
 		const snapshots = JSON.parse(await readFile(path.join(directory, "snapshots.json"), "utf8")) as string[]

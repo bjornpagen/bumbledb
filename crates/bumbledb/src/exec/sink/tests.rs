@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod aggregate;
+mod memory;
 mod pack;
 mod projection;
 mod semantics;
@@ -169,14 +170,7 @@ fn colts_for(plan: &ValidatedPlan, images: &[Arc<crate::image::RelationImage>]) 
             let image =
                 &images[usize::try_from(occurrence.bind.edb().expect("fixture").0).expect("small")];
             Colt::new(
-                apply(
-                    image,
-                    &[],
-                    &[],
-                    Vec::new(),
-                    image.generation().text_eq(None),
-                )
-                .expect("view"),
+                apply(image, &[], &[], Vec::new(), image.generation().text_eq()).expect("view"),
                 &[],
                 columns,
             )

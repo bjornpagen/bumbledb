@@ -27,7 +27,6 @@ function statusOf(error: DbError | ProtocolError): number {
 		case "ResourceLimit":
 		case "QueueFull":
 			return 429
-		case "DeadlineExceeded":
 		case "Cancelled":
 			return 504
 		case "InvalidArgument":
@@ -118,13 +117,13 @@ export function submitResponse(outcome: SubmitOutcome): Response {
  * record remains the recovery coordinate; this response only reports that
  * THIS response is indeterminate.
  */
-export function exitResponse(exit: Exit.Exit<Response, Response>): Response {
+export function exitResponse(exit: Exit.Exit<Response, Response | DbError | ProtocolError>): Response {
 	if (Exit.isSuccess(exit)) {
 		return exit.value
 	}
 	const failure = Cause.findErrorOption(exit.cause)
 	if (Option.isSome(failure)) {
-		return failure.value
+		return failure.value instanceof Response ? failure.value : databaseErrorResponse(failure.value)
 	}
 	if (Cause.hasInterrupts(exit.cause)) {
 		return json(499, { error: "Interrupted" })

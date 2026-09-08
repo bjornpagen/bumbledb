@@ -18,7 +18,7 @@ import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
 import { backup, OperationId, restore, verifyBackup } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 import { bindingFor } from "../src/db/bindings.ts"
-import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
+import { runtimePolicy } from "../src/db/runtime-policy.ts"
 
 const OUTCOME_DIR = path.join(process.cwd(), ".bumbledb", "admin")
 
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
 		const outcome = await Effect.runPromise(
 			Effect.gen(function* () {
 				const binding = yield* bindingFor(tenantId)
-				return yield* backup(binding, { ...adminWork, operationId, destination })
+				return yield* backup(binding, { operationId, destination })
 			}).pipe(Effect.provide(layer))
 		)
 		saveOutcome(`backup-${tenantId}`, outcome)
@@ -73,7 +73,7 @@ async function main(): Promise<void> {
 			return
 		}
 		const verified = await Effect.runPromise(
-			verifyBackup({ kind: "filesystem", directory: destinationDir }, adminWork).pipe(Effect.provide(layer))
+			verifyBackup({ kind: "filesystem", directory: destinationDir }, {}).pipe(Effect.provide(layer))
 		)
 		saveOutcome("verify", verified)
 		console.log(`verify: identity ${verified.identity === undefined ? "refused" : "present"}`)
@@ -92,7 +92,6 @@ async function main(): Promise<void> {
 			Effect.gen(function* () {
 				const target = yield* bindingFor(targetTenantId)
 				return yield* restore({ kind: "filesystem", directory: destinationDir }, target, {
-					...adminWork,
 					operationId
 				})
 			}).pipe(Effect.provide(layer))

@@ -32,8 +32,8 @@ use bumbledb_log::schema_file::schema_id;
 use bumbledb_log::writer::{LocalHistory, LogError, SubmitOutcome};
 
 use support::{
-    CAP, LIMITS, base_schema, copy_field, db_id, fresh_source, incarnation, manifest, op,
-    pinned_schema, plan_pinned, plan_tagged, tagged_schema, tiny_work, work,
+    CAP, LIMITS, base_schema, cancelled_work, copy_field, db_id, fresh_source, incarnation,
+    manifest, op, pinned_schema, plan_pinned, plan_tagged, tagged_schema, work,
 };
 
 /// Hex directory name of a 16-byte id, as the executor stages targets.
@@ -547,7 +547,7 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
 }
 
 #[test]
-fn exhausted_work_is_a_resource_refusal_never_a_partial_target() {
+fn cancelled_work_never_publishes_a_partial_target() {
     let (db, root) = fresh_source("budget");
     let history = open_history(&db);
     insert_notes(&history, &[(1, "alpha"), (2, "beta"), (3, "gamma")], 1);
@@ -555,13 +555,16 @@ fn exhausted_work_is_a_resource_refusal_never_a_partial_target() {
     let steps = steps_full();
     let runner = LocalMigration::new(&history, &root.join("targets"), LIMITS);
     let request = request(&manifest, &steps, 0xd9, 0xe9);
-    // The tiny allowance exhausts mid-execution: a typed Work refusal.
-    match runner.migrate(&request, &tiny_work()) {
+    // An already cancelled attempt must refuse before freezing or publishing.
+    match runner.migrate(&request, &cancelled_work()) {
         Err(MigrationError::Work(_) | MigrationError::State(StateError::Work(_))) => {}
         other => panic!("expected work refusal, got {other:?}"),
     }
-    // No target namespace entry was published; the source froze durably
-    // (freeze precedes execution) and the SAME operation completes later.
+    assert!(
+        !root.join("targets").exists(),
+        "no target published by cancellation"
+    );
+    // The same operation completes with an independent cancellation context.
     match runner.migrate(&request, &work()).unwrap() {
         MigrateOutcome::ReadyToSwitch { .. } => {}
         other => panic!("resume with the same operation, got {other:?}"),

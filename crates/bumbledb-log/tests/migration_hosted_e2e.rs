@@ -198,7 +198,7 @@ fn head_record(store: &MemStore, key: &str) -> HeadRecord {
         )
         .unwrap()
     {
-        ReceivedHead::Present { body, .. } => decode_head(body.as_bytes(), CAP).unwrap(),
+        ReceivedHead::Present { body, .. } => decode_head(body.as_slice(), CAP).unwrap(),
         ReceivedHead::Absent => panic!("head must exist: {key}"),
     }
 }
@@ -1071,7 +1071,7 @@ mod process_loss {
             )
             .unwrap()
         {
-            ReceivedHead::Present { body, .. } => Some(decode_head(body.as_bytes(), CAP).unwrap()),
+            ReceivedHead::Present { body, .. } => Some(decode_head(body.as_slice(), CAP).unwrap()),
             ReceivedHead::Absent => None,
         }
     }

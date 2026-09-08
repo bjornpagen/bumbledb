@@ -25,16 +25,13 @@ import {
 	otherLocalBinding,
 	provideRuntime,
 	receiptWire,
-	refWire,
-	work
+	refWire
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
 
 const cacheOptions: TenantCacheOptions = {
-	maxOpen: 8,
-	budgetBytes: 1n << 30n,
-	maintenance: work
+	maxOpen: 8
 }
 
 type Double = ReturnType<typeof makeWireDouble>
@@ -56,8 +53,8 @@ describe("borrow lifecycle", function suite() {
 						const cache = yield* plannedCache(double, machine)
 						double.plan("logCacheAcquire", { result: handleWire() })
 						double.plan("logCacheAcquire", { result: handleWire() })
-						const first = yield* cache.acquire(localBinding, work)
-						const second = yield* cache.acquire(localBinding, work)
+						const first = yield* cache.acquire(localBinding)
+						const second = yield* cache.acquire(localBinding)
 						assert.notEqual(first, second)
 
 						const released = yield* first.release()
@@ -76,7 +73,7 @@ describe("borrow lifecycle", function suite() {
 							id: { receiptEpoch: second.receiptEpoch, requestId: refWire.requestId },
 							digest: refWire.digest
 						} as unknown as Parameters<typeof second.resolve>[0]
-						const outcome = yield* second.resolve(ref, work)
+						const outcome = yield* second.resolve(ref)
 						assert.equal(outcome.kind, "found")
 					})
 				)
@@ -93,10 +90,10 @@ describe("borrow lifecycle", function suite() {
 					Effect.gen(function* () {
 						const cache = yield* plannedCache(double, machine)
 						double.plan("logCacheAcquire", { result: handleWire() })
-						const borrow = yield* cache.acquire(localBinding, work)
+						const borrow = yield* cache.acquire(localBinding)
 						yield* borrow.release()
 						const dispatched = double.calls.filter((call) => call.verb === "logHistoryCall").length
-						const exit = yield* Effect.exit(borrow.inspect(work))
+						const exit = yield* Effect.exit(borrow.inspect())
 						assert.ok(Exit.isFailure(exit))
 						const error = Exit.findErrorOption(exit)
 						assert.ok(error._tag === "Some")
@@ -117,7 +114,7 @@ describe("borrow lifecycle", function suite() {
 					Effect.gen(function* () {
 						const cache = yield* plannedCache(double, machine)
 						double.plan("logCacheAcquire", { result: handleWire() })
-						const borrow = yield* cache.acquire(localBinding, work)
+						const borrow = yield* cache.acquire(localBinding)
 						const first = yield* borrow.release()
 						const second = yield* borrow.release()
 						assert.equal(first.kind, "closed")
@@ -139,7 +136,7 @@ describe("borrow lifecycle", function suite() {
 						double.plan("logCacheAcquire", { result: handleWire() })
 						yield* Effect.scoped(
 							Effect.gen(function* () {
-								yield* cache.acquire(localBinding, work)
+								yield* cache.acquire(localBinding)
 							})
 						)
 						// The inner scope released the borrow; the owner cache is intact.
@@ -162,7 +159,7 @@ describe("cache surface", function suite() {
 					Effect.gen(function* () {
 						const cache = yield* plannedCache(double, machine)
 						double.plan("logCacheAcquire", { result: handleWire() })
-						const borrow = yield* cache.acquire(localBinding, work)
+						const borrow = yield* cache.acquire(localBinding)
 						double.plan("logCacheEvict", {
 							refuse: { source: "protocol", reason: { _tag: "SlotBorrowed" } }
 						})
@@ -180,7 +177,7 @@ describe("cache surface", function suite() {
 							id: { receiptEpoch: borrow.receiptEpoch, requestId: refWire.requestId },
 							digest: refWire.digest
 						} as unknown as Parameters<typeof borrow.resolve>[0]
-						const outcome = yield* borrow.resolve(ref, work)
+						const outcome = yield* borrow.resolve(ref)
 						assert.equal(outcome.kind, "command-epoch-closed")
 					})
 				)
@@ -198,8 +195,8 @@ describe("cache surface", function suite() {
 						const cache = yield* plannedCache(double, machine)
 						double.plan("logCacheAcquire", { result: handleWire(identityWire) })
 						double.plan("logCacheAcquire", { result: handleWire(otherIdentityWire) })
-						const first = yield* cache.acquire(localBinding, work)
-						const second = yield* cache.acquire(otherLocalBinding, work)
+						const first = yield* cache.acquire(localBinding)
+						const second = yield* cache.acquire(otherLocalBinding)
 						// Same schema, different origin: distinct identities, distinct slots.
 						assert.equal(first.identity.schemaId, second.identity.schemaId)
 						assert.notEqual(first.identity.databaseId, second.identity.databaseId)
@@ -222,7 +219,7 @@ describe("cache surface", function suite() {
 							id: { receiptEpoch: first.receiptEpoch, requestId: refWire.requestId },
 							digest: refWire.digest
 						} as unknown as Parameters<typeof first.resolve>[0]
-						const outcome = yield* first.resolve(ref, work)
+						const outcome = yield* first.resolve(ref)
 						assert.equal(outcome.kind, "receipt-expired-unknown")
 					})
 				)
@@ -240,7 +237,7 @@ describe("cache surface", function suite() {
 						const cache = yield* plannedCache(double, machine)
 						const report = yield* cache.close()
 						assert.equal(report.kind, "closed")
-						const exit = yield* Effect.exit(Effect.scoped(cache.acquire(localBinding, work)))
+						const exit = yield* Effect.exit(Effect.scoped(cache.acquire(localBinding)))
 						assert.ok(Exit.isFailure(exit))
 						const error = Exit.findErrorOption(exit)
 						assert.ok(error._tag === "Some")
@@ -263,22 +260,21 @@ describe("cache surface", function suite() {
 							result: {
 								openCount: 2,
 								opening: 1,
-								budgetBytes: 1n << 30n,
 								maxOpen: 8,
 								evictions: 5n,
-								slots: [
-									{ binding: "abababab-abab-abab-abab-abababababab", state: "ready", borrows: 1, diskBytes: 4096n }
-								]
+								slots: [{ binding: "abababab-abab-abab-abab-abababababab", state: "ready", borrows: 1 }]
 							}
 						})
-						return yield* cache.inspect(work)
+						return yield* cache.inspect()
 					})
 				)
 			)
 		)
 		assert.equal(report.openCount, 2)
-		assert.equal(report.budget.maxOpen, 8)
+		assert.equal(report.maxOpen, 8)
 		assert.equal(report.slots[0]?.state, "ready")
-		assert.equal(report.slots[0]?.diskBytes, 4096n)
+		assert.equal(report.slots[0]?.borrows, 1)
+		assert.equal("budget" in report, false, "no unimplemented byte budget")
+		assert.equal("diskBytes" in (report.slots[0] ?? {}), false, "no fabricated per-slot measurement")
 	})
 })

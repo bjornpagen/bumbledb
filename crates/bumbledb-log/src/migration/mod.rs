@@ -12,7 +12,7 @@
 //! - [`compile`] — complete native plan admission: schema binding, total
 //!   source/target coverage, explicit destructive acknowledgements, exact
 //!   typing; lowering onto `bumbledb::ScalarExpr`.
-//! - [`state`] — the private, work-charged ordered-step evaluation with the
+//! - [`state`] — private, disk-backed ordered-step evaluation with the
 //!   core judge at every declared validate boundary.
 //! - [`history`] — the authoritative `Applied`/`Baseline` records stored
 //!   transactionally beside facts, outside the receipt-retirement keyspace.

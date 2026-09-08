@@ -124,9 +124,8 @@ impl Executor {
             }
             counters.batch(node_idx, yielded);
             token = next_token;
-            // The bounded-quantum ledger poll on binding exploration:
-            // cancellation/deadline and COLT growth charges fire here even
-            // when no row survives to the sink.
+            // Poll cancellation during exploration, even when no row
+            // survives to the sink.
             if !self.note_explored(yielded) {
                 break 'outer;
             }

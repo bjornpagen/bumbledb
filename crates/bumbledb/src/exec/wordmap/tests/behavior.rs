@@ -3,6 +3,110 @@ use std::collections::HashMap;
 use super::*;
 
 #[test]
+fn representation_bound_counts_entries_not_declared_bytes() {
+    let mut map = WordMap::<()>::new(1);
+    let maximum = usize::try_from((u64::from(u32::MAX) + 1) / LOAD_DEN as u64).unwrap();
+    assert_eq!(map.remaining_rows(), maximum);
+    // Exercise the arithmetic at the true boundary without allocating a
+    // 2^32-slot map. No row access uses this synthetic length.
+    map.len = maximum - 1;
+    assert_eq!(map.remaining_rows(), 1);
+    map.len = maximum;
+    assert_eq!(map.remaining_rows(), 0);
+    map.len = 0;
+}
+
+#[test]
+fn read_only_key_lookup_preserves_exact_identity_and_recycled_generations() {
+    for arity in [0, 1, 2, 8, 9] {
+        let mut map = WordMap::<()>::new(arity);
+        let first = vec![1; arity];
+        let other = vec![2; arity];
+        assert!(!map.contains_key(&first));
+        map.insert(&first);
+        assert!(map.contains_key(&first));
+        assert_eq!(map.contains_key(&other), arity == 0);
+        map.clear();
+        assert!(!map.contains_key(&first));
+        map.insert(&other);
+        assert!(map.contains_key(&other));
+        assert_eq!(map.contains_key(&first), arity == 0);
+    }
+}
+
+#[test]
+fn duplicates_at_the_load_boundary_do_not_grow_or_rehash() {
+    for arity in [1, 2, 8, 9] {
+        let mut map = WordMap::<u64>::with_capacity_hint(arity, 16);
+        let original_capacity = map.capacity();
+        let limit = map.capacity() / LOAD_DEN;
+        let keys: Vec<Vec<u64>> = (0..=limit).map(|i| vec![i as u64; arity]).collect();
+        for recycled in [false, true] {
+            if recycled {
+                map.clear();
+            }
+            for (i, key) in keys[..limit].iter().enumerate() {
+                assert!(map.get_or_insert_with(key, || i as u64).1);
+            }
+            let capacity = map.capacity();
+            let backing = (
+                map.keys.as_ptr(),
+                map.values.as_ptr(),
+                map.ctrl.as_ptr(),
+                map.stamps.as_ptr(),
+                map.dense.as_ptr(),
+            );
+            let dense = map.dense.clone();
+            #[cfg(feature = "alloc-counter")]
+            let before = crate::alloc_counter::snapshot().window;
+            for _ in 0..3 {
+                for (i, key) in keys[..limit].iter().enumerate() {
+                    let (value, inserted) =
+                        map.get_or_insert_with(key, || panic!("duplicate constructed"));
+                    assert!(!inserted);
+                    assert_eq!(*value, i as u64);
+                }
+                // Exercise the separately dispatched bulk path too.
+                for key in &keys[..limit] {
+                    map.insert_rows(key);
+                }
+            }
+            #[cfg(feature = "alloc-counter")]
+            {
+                let after = crate::alloc_counter::snapshot().window;
+                eprintln!(
+                    "duplicate boundary: arity={arity}, recycled={recycled}, allocs={}, bytes={}",
+                    after.allocs - before.allocs,
+                    after.alloc_bytes - before.alloc_bytes,
+                );
+                assert_eq!(after, before, "duplicates allocate and free nothing");
+            }
+            assert_eq!(
+                map.capacity(),
+                capacity,
+                "arity {arity}, recycled {recycled}"
+            );
+            assert_eq!(map.dense, dense, "duplicate lookup does not rehash");
+            assert_eq!(
+                backing,
+                (
+                    map.keys.as_ptr(),
+                    map.values.as_ptr(),
+                    map.ctrl.as_ptr(),
+                    map.stamps.as_ptr(),
+                    map.dense.as_ptr(),
+                ),
+                "duplicate insertion retains every backing allocation"
+            );
+        }
+        assert!(map.get_or_insert_with(&keys[limit], || 91).1);
+        assert_eq!(map.capacity(), original_capacity * 2);
+        assert_eq!(*map.get_or_insert_with(&keys[limit], || 0).0, 91);
+        assert_eq!(map.len(), limit + 1);
+    }
+}
+
+#[test]
 fn growth_layout_refuses_unrepresentable_slots_and_words_before_allocation() {
     use crate::exec::wordmap::grow::growth_layout;
 

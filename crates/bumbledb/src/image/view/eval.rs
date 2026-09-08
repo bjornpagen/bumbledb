@@ -5,7 +5,7 @@
 //! Static dispatch, never `dyn`.
 use crate::error::Error;
 use crate::image::intern::InternerHandle;
-use crate::image::{ColumnView, ColumnWidth, RelationImage, TextEq, is_scratch_token};
+use crate::image::{ColumnView, ColumnWidth, RelationImage, TextEq};
 use crate::ir::WordCmp;
 use crate::schema::Relation;
 use bumbledb_theory::schema::{FieldId, IntervalElement, ValueType};
@@ -238,7 +238,7 @@ fn word_set<'a>(set: &'a SetConst, params: &'a [Const]) -> &'a [u64] {
     match set {
         SetConst::WordSet(words) => words,
         SetConst::ParamSet(param) => match &params[usize::from(param.0)] {
-            Const::WordSet(words) => words,
+            Const::WordSet(words) => &words.words,
             _ => unreachable!("param slice: set param resolves to a word set"),
         },
     }
@@ -275,7 +275,7 @@ pub(crate) fn is_prepare_resolvable(filter: &FilterPredicate) -> bool {
             (WordCmp::Eq, Const::WordSet(_) | Const::Words(_) | Const::Interval { .. })
             | (WordCmp::Ne, Const::Words(_) | Const::Interval { .. })
             | (WordCmp::Eq | WordCmp::Ne, Const::Byte(_)) => true,
-            (op, Const::Word(_)) if ordinary(*op) => true,
+            (op, Const::Word(_) | Const::Text(_)) if ordinary(*op) => true,
             _ => false,
         },
         FilterPredicate::PointIn { point, .. } => matches!(point, ViewWordSource::Word(_)),
@@ -435,6 +435,9 @@ where
     let string_field = ops.string_field(field);
     Ok(match (got, value) {
         (Loaded::Word(word), Const::Word(c)) => words_compare(text, string_field, op, word, *c)?,
+        (Loaded::Word(word), Const::Text(c)) => {
+            words_compare(text, string_field, op, word, c.word)?
+        }
         (Loaded::Byte(byte), Const::Byte(c)) => op.compare(&byte, c),
         (Loaded::Pair(s, e), Const::Interval { start, end }) => match op {
             WordCmp::Eq => s == *start && e == *end,
@@ -443,9 +446,15 @@ where
         (Loaded::Block { words, count }, Const::Words(c)) => {
             op.compare(&words[..usize::from(count)], c.as_ref())
         }
-        (Loaded::Word(word), Const::WordSet(set)) => word_in_set(text, string_field, word, set)?,
-        (Loaded::Byte(byte), Const::WordSet(set)) => set.binary_search(&u64::from(byte)).is_ok(),
-        (Loaded::Block { words, count }, Const::WordSet(set)) => span_in_set(&words, count, set),
+        (Loaded::Word(word), Const::WordSet(set)) => {
+            word_in_set(text, string_field, word, &set.words)?
+        }
+        (Loaded::Byte(byte), Const::WordSet(set)) => {
+            set.words.binary_search(&u64::from(byte)).is_ok()
+        }
+        (Loaded::Block { words, count }, Const::WordSet(set)) => {
+            span_in_set(&words, count, &set.words)
+        }
 
         (Loaded::Word(word), Const::Byte(c)) => op.compare(&word, &u64::from(*c)),
         (Loaded::Word(word), Const::PendingIntern { bytes }) => words_compare(
@@ -562,7 +571,6 @@ pub(crate) fn kernel_scan(
     predicate: &FilterPredicate,
     params: &[Const],
     out: &mut Vec<u32>,
-    text: TextEq<'_>,
 ) -> bool {
     match predicate {
         FilterPredicate::Compare { .. } => {}
@@ -665,12 +673,10 @@ pub(crate) fn kernel_scan(
         return true;
     }
     match (image.column(usize::from(span.first_column)), value) {
-        (ColumnView::Words(words), Const::Word(c)) => {
-            if image.field_is_string(field.field())
-                && (is_scratch_token(*c) || text.scratch_epoch().is_some())
-            {
-                return false;
-            }
+        (
+            ColumnView::Words(words),
+            Const::Word(c) | Const::Text(crate::image::intern::InternedText { word: c, .. }),
+        ) => {
             let (lo, hi) = match op {
                 WordCmp::Eq => {
                     crate::exec::kernel::filter_eq_u64(words, *c, out);
@@ -706,8 +712,7 @@ pub(crate) fn kernel_scan(
 }
 
 /// Substitutes one filter's symbolic constants into its resolved slot,
-/// in place. `Ready(false)` = the positive-occurrence `Eq` short-circuit.
-/// Text-retention refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
+/// in place. `false` is the positive-occurrence `Eq` short-circuit.
 #[expect(
     clippy::too_many_lines,
     reason = "the linear table or protocol is clearer kept together"
@@ -719,7 +724,7 @@ pub(crate) fn resolve_filter_into(
     missed: &[bool],
     negated: bool,
     dst: &mut FilterPredicate,
-) -> crate::error::Result<crate::image::ResidentAdmit<bool>> {
+) -> crate::error::Result<bool> {
     match template {
         FilterPredicate::Compare { field, op, value } => {
             if let Const::PendingIntern { bytes } = value {
@@ -727,36 +732,35 @@ pub(crate) fn resolve_filter_into(
                 // the execution's generation and are cleared on rotation.
                 if matches!(
                     dst,
-                    FilterPredicate::Compare { value: Const::Word(word), .. }
-                        if crate::image::is_resident_token(*word)
-                ) {
-                    return Ok(crate::image::ResidentAdmit::Ready(true));
-                }
-                let word = match interner.latch(bytes)? {
-                    crate::image::ResidentAdmit::Ready(word) => word,
-                    crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
-                        return Ok(crate::image::ResidentAdmit::BeyondMemory(exhausted));
+                    FilterPredicate::Compare {
+                        value: Const::Text(_),
+                        ..
                     }
-                };
-                write_compare(dst, *field, *op, Some(Const::Word(word)));
-                return Ok(crate::image::ResidentAdmit::Ready(true));
+                ) {
+                    return Ok(true);
+                }
+                let word = interner.latch(bytes)?;
+                write_compare(dst, *field, *op, Some(Const::Text(word)));
+                return Ok(true);
             }
             let resolved = match value {
-                Const::Word(_) | Const::Byte(_) | Const::Interval { .. } => value.clone(),
+                Const::Word(_) | Const::Text(_) | Const::Byte(_) | Const::Interval { .. } => {
+                    value.clone()
+                }
                 Const::Words(words) => {
                     write_compare(dst, *field, *op, None);
                     write_words_value(dst, words);
-                    return Ok(crate::image::ResidentAdmit::Ready(true));
+                    return Ok(true);
                 }
                 Const::Param(param) => {
                     if missed[usize::from(param.0)] && *op == WordCmp::Eq && !negated {
-                        return Ok(crate::image::ResidentAdmit::Ready(false));
+                        return Ok(false);
                     }
                     match &params[usize::from(param.0)] {
                         Const::Words(words) => {
                             write_compare(dst, *field, *op, None);
                             write_words_value(dst, words);
-                            return Ok(crate::image::ResidentAdmit::Ready(true));
+                            return Ok(true);
                         }
                         other => other.clone(),
                     }
@@ -764,20 +768,20 @@ pub(crate) fn resolve_filter_into(
                 Const::ParamSet(param) => {
                     debug_assert_eq!(*op, WordCmp::Eq, "validated: sets only under Eq");
                     if missed[usize::from(param.0)] && !negated {
-                        return Ok(crate::image::ResidentAdmit::Ready(false));
+                        return Ok(false);
                     }
                     let Const::WordSet(words) = &params[usize::from(param.0)] else {
                         unreachable!("validated: a set param resolves to a word set")
                     };
                     write_compare(dst, *field, *op, None);
                     write_word_set_value(dst, words);
-                    return Ok(crate::image::ResidentAdmit::Ready(true));
+                    return Ok(true);
                 }
                 Const::WordSet(words) => {
                     debug_assert_eq!(*op, WordCmp::Eq, "plan-constant sets ride Eq");
                     write_compare(dst, *field, *op, None);
                     write_word_set_value(dst, words);
-                    return Ok(crate::image::ResidentAdmit::Ready(true));
+                    return Ok(true);
                 }
                 Const::PendingIntern { .. } => unreachable!("resolved or refused above"),
             };
@@ -817,11 +821,11 @@ pub(crate) fn resolve_filter_into(
                 *dst_field = *field;
                 *dst_dense = *dense;
                 dst_words.clear();
-                dst_words.extend_from_slice(words);
+                dst_words.extend_from_slice(&words.words);
             } else {
                 *dst = FilterPredicate::AnyPointIn {
                     field: *field,
-                    set: SetConst::WordSet(words.clone()),
+                    set: SetConst::WordSet(words.words.clone()),
                     dense: *dense,
                 };
             }
@@ -875,7 +879,7 @@ pub(crate) fn resolve_filter_into(
             dst.clone_from(template);
         }
     }
-    Ok(crate::image::ResidentAdmit::Ready(true))
+    Ok(true)
 }
 
 fn write_compare(dst: &mut FilterPredicate, field: OperandAddr, op: WordCmp, value: Option<Const>) {
@@ -895,19 +899,20 @@ fn write_compare(dst: &mut FilterPredicate, field: OperandAddr, op: WordCmp, val
     *dst = FilterPredicate::Compare {
         field,
         op,
-        value: value.unwrap_or(Const::WordSet(Vec::new())),
+        // None is immediately filled by the set/multiword writer. A scalar
+        // placeholder avoids allocating a box that writer may replace.
+        value: value.unwrap_or(Const::Word(0)),
     };
 }
 
-fn write_word_set_value(dst: &mut FilterPredicate, words: &[u64]) {
+fn write_word_set_value(dst: &mut FilterPredicate, words: &super::ResolvedWords) {
     let FilterPredicate::Compare { value, .. } = dst else {
         unreachable!("write_compare just shaped the slot")
     };
     if let Const::WordSet(dst_words) = value {
-        dst_words.clear();
-        dst_words.extend_from_slice(words);
+        dst_words.as_mut().clone_from(words);
     } else {
-        *value = Const::WordSet(words.to_vec());
+        *value = Const::WordSet(Box::new(words.clone()));
     }
 }
 
@@ -952,7 +957,7 @@ pub(crate) fn render_filter(out: &mut String, relation: &Relation, filter: &Filt
                     if *field == FieldId(0) && relation.body().closed_rows().is_some() =>
                 {
                     out.push('{');
-                    for (index, word) in words.iter().enumerate() {
+                    for (index, word) in words.words.iter().enumerate() {
                         if index > 0 {
                             out.push_str(", ");
                         }
@@ -1264,11 +1269,9 @@ mod gate {
 #[cfg(test)]
 mod text_eq_holds {
     use super::*;
-    use crate::api::prepared::source::UNBOUNDED_POLICY;
-    use crate::exec::scratch::capability::ScratchPolicy;
-    use crate::image::intern::InternerHandle;
-    use crate::image::{ResidentAdmit, TextEq};
-    use crate::work::{CacheLedger, CachePolicy, GenerationHandle, GenerationState};
+    use crate::image::TextEq;
+    use crate::image::intern::{InternerHandle, SENTINEL_WORD};
+    use crate::work::WorkContext;
 
     struct TextWord(u64);
     impl Operands for TextWord {
@@ -1287,62 +1290,37 @@ mod text_eq_holds {
         }
     }
 
-    fn predicate(op: WordCmp, word: u64) -> FilterPredicate {
+    fn predicate(op: WordCmp, value: Const) -> FilterPredicate {
         FilterPredicate::Compare {
             field: OperandAddr::from(FieldId(0)),
             op,
-            value: Const::Word(word),
+            value,
         }
     }
 
-    /// Spilled String Eq/Ne through `holds` / `compare_loaded` agrees with intern.
     #[test]
-    fn d02_holds_spilled_string_eq_ne_agrees_with_intern() {
-        let work = crate::api::prepared::source::unbounded_work().expect("work");
-        let generation = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial(),
-            CacheLedger::new(CachePolicy { cache_bytes: 8 }),
-        ));
-        let admitted = InternerHandle::new(&generation, &work)
-            .intern_or_spill("a-text-that-cannot-fit-eight-cache-bytes")
-            .expect("work");
-        let ResidentAdmit::BeyondMemory(exhausted) = admitted else {
-            panic!("tiny cache must spill");
-        };
-        let cap = crate::exec::scratch::ScratchCapability::start(
-            UNBOUNDED_POLICY,
-            ScratchPolicy::unbounded(),
-        )
-        .expect("scratch");
-        let mut store = exhausted.open_nonresident(&cap);
-        let scratch = store.intern("shared", cap.work()).expect("scratch");
-
-        let fat = GenerationHandle::new(GenerationState::new(
-            crate::image::CacheGeneration::initial(),
-            CacheLedger::unbounded(),
-        ));
-        let intern = fat
-            .lock_resolver()
-            .intern("shared", &work, fat.ledger())
-            .expect("intern");
-        assert_ne!(scratch, intern, "raw words stay disjoint");
-
-        let eq = TextEq::bind(&fat, Some(&store));
-        let ops = TextWord(intern);
-        let hit = holds(&predicate(WordCmp::Eq, scratch), &ops, &[], eq)
-            .expect("infallible")
-            .expect("some");
-        let miss = holds(&predicate(WordCmp::Ne, scratch), &ops, &[], eq)
-            .expect("infallible")
-            .expect("some");
-        assert!(hit, "holds/compare_loaded Eq unifies intern and scratch");
-        assert!(!miss, "holds/compare_loaded Ne is the complement");
-        let other = store.intern("other", cap.work()).expect("other");
-        let eq = TextEq::bind(&fat, Some(&store));
-        assert!(
-            !holds(&predicate(WordCmp::Eq, other), &ops, &[], eq)
-                .expect("infallible")
-                .expect("some")
-        );
+    fn string_eq_ne_compare_exact_pinned_text_and_never_match_the_sentinel() {
+        let work = WorkContext::new();
+        let generation = crate::image::test_generation();
+        let interner = InternerHandle::new(&generation, &work);
+        let shared = interner.intern("shared").unwrap();
+        let same = interner.intern("shared").unwrap();
+        let other = interner.intern("other").unwrap();
+        let eq = TextEq::bind(&generation);
+        let ops = TextWord(shared.word);
+        for (value, equal) in [
+            (Const::Text(same), true),
+            (Const::Text(other), false),
+            (Const::Word(SENTINEL_WORD), false),
+        ] {
+            assert_eq!(
+                holds(&predicate(WordCmp::Eq, value.clone()), &ops, &[], eq).unwrap(),
+                Some(equal)
+            );
+            assert_eq!(
+                holds(&predicate(WordCmp::Ne, value), &ops, &[], eq).unwrap(),
+                Some(!equal)
+            );
+        }
     }
 }

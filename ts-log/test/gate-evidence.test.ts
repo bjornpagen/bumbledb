@@ -18,7 +18,7 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
-import type { ExecutionPolicy, NativeRuntimeOptions, Violation } from "@bjornpagen/bumbledb"
+import type { NativeRuntimeOptions, Violation } from "@bjornpagen/bumbledb"
 import { ChangeSet, key, NativeRuntime, relation, schema, u64 } from "@bjornpagen/bumbledb"
 import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, ManagedRuntime } from "effect"
@@ -39,26 +39,10 @@ const runtimeOptions: NativeRuntimeOptions = {
 	cleanupCapacity: 16,
 	ownerCapacity: 16,
 	nativeHandleCapacity: 64,
-	inputBytes: 16_000_000n,
-	workingBytes: 64_000_000n,
-	scratchBytes: 64_000_000n,
-	resultBytes: 16_000_000n,
-	chunkBytes: 1_000_000n,
 	cleanupTimeout: "2 seconds"
 }
 
-const work: ExecutionPolicy = {
-	inputBytes: 4_000_000n,
-	workingBytes: 16_000_000n,
-	scratchBytes: 16_000_000n,
-	resultBytes: 4_000_000n,
-	rows: 100_000n,
-	workUnits: 10_000_000n,
-	timeout: "10 seconds"
-}
-
 const submitOptions: SubmitOptions = {
-	...work,
 	attempts: 4,
 	backoff: { baseMillis: 0, capMillis: 0 }
 }
@@ -110,7 +94,7 @@ function commandInput(scope: DatabaseIdentity, request: number, changes: ChangeS
 
 function violatingChanges(rows: ReadonlyArray<{ a: bigint; b: bigint }>) {
 	return Effect.gen(function* () {
-		const draft = yield* ChangeSet.builder(GateMini, work)
+		const draft = yield* ChangeSet.builder(GateMini)
 		yield* draft.insert(Item, rows)
 		return yield* draft.finish()
 	})
@@ -149,7 +133,7 @@ test("rejected submissions expose the complete violation set through submit, res
 	const rt = runtime()
 	try {
 		const program = Effect.gen(function* () {
-			const identityInfo = yield* productionCodec.schemaIdentity(lower(GateMini), work)
+			const identityInfo = yield* productionCodec.schemaIdentity(lower(GateMini))
 			const scope = identityFor(0x47, identityInfo.schemaId)
 			const directory = storeDir("f-evidence")
 			const binding = { kind: "local", directory, identity: scope } as const
@@ -157,7 +141,6 @@ test("rejected submissions expose the complete violation set through submit, res
 			const first = yield* Effect.scoped(
 				Effect.gen(function* () {
 					const history = yield* LocalHistory.create(binding, GateMini, {
-						...work,
 						creation: creationFor(0x47, identityInfo.snapshot)
 					})
 					// Two rows sharing key `a` violate `Item(a) -> Item`.
@@ -165,13 +148,13 @@ test("rejected submissions expose the complete violation set through submit, res
 						{ a: 1n, b: 10n },
 						{ a: 1n, b: 20n }
 					])
-					const command = yield* Command.seal(commandInput(scope, 0x09, changes), work)
+					const command = yield* Command.seal(commandInput(scope, 0x09, changes))
 					const submitted = yield* history.submit(command, submitOptions)
 					const { receipt, violations } = decidedRejection(submitted)
 					assertCompleteViolations(violations)
 
 					// Resolve returns the SAME retained evidence.
-					const resolved = yield* history.resolve(receipt.command, work)
+					const resolved = yield* history.resolve(receipt.command)
 					assert.equal(resolved.kind, "found")
 					assert.ok(resolved.kind === "found")
 					const kept = resolved.receipt.outcome
@@ -189,8 +172,8 @@ test("rejected submissions expose the complete violation set through submit, res
 			// still decodes the durable canonical evidence.
 			return yield* Effect.scoped(
 				Effect.gen(function* () {
-					const history = yield* LocalHistory.open(binding, GateMini, work)
-					const resolved = yield* history.resolve(first.ref, work)
+					const history = yield* LocalHistory.open(binding, GateMini)
+					const resolved = yield* history.resolve(first.ref)
 					assert.equal(resolved.kind, "found")
 					assert.ok(resolved.kind === "found")
 					const kept = resolved.receipt.outcome
@@ -215,21 +198,20 @@ test("at-least snapshots validate exact ancestry, never a sequence floor", async
 	const rt = runtime()
 	try {
 		const program = Effect.gen(function* () {
-			const identityInfo = yield* productionCodec.schemaIdentity(lower(GateMini), work)
+			const identityInfo = yield* productionCodec.schemaIdentity(lower(GateMini))
 			const scope = identityFor(0x51, identityInfo.schemaId)
 			const directory = storeDir("e-ancestry")
 			const binding = { kind: "local", directory, identity: scope } as const
 			return yield* Effect.scoped(
 				Effect.gen(function* () {
 					const history = yield* LocalHistory.create(binding, GateMini, {
-						...work,
 						creation: creationFor(0x51, identityInfo.snapshot)
 					})
 					// Three committed decisions (distinct keys).
 					const stamps: DecisionStamp[] = []
 					for (const request of [1, 2, 3]) {
 						const changes = yield* violatingChanges([{ a: BigInt(request), b: 0n }])
-						const command = yield* Command.seal(commandInput(scope, request, changes), work)
+						const command = yield* Command.seal(commandInput(scope, request, changes))
 						const outcome = yield* history.submit(command, submitOptions)
 						assert.equal(outcome.kind, "decided")
 						assert.ok(outcome.kind === "decided")
@@ -245,7 +227,6 @@ test("at-least snapshots validate exact ancestry, never a sequence floor", async
 					yield* Effect.scoped(
 						Effect.gen(function* () {
 							const snapshot = yield* history.snapshot({
-								...work,
 								consistency: { kind: "at-least", at: first }
 							})
 							assert.equal(snapshot.freshness.kind, "at-least")
@@ -257,7 +238,7 @@ test("at-least snapshots validate exact ancestry, never a sequence floor", async
 					// silently accepted as a floor; it must refuse WrongLineage.
 					const forged = { seq: 1n, hash: "ee".repeat(32) as DecisionStamp["hash"] }
 					const wrongLineage = yield* Effect.flip(
-						Effect.scoped(history.snapshot({ ...work, consistency: { kind: "at-least", at: forged } }))
+						Effect.scoped(history.snapshot({ consistency: { kind: "at-least", at: forged } }))
 					)
 					assert.ok(wrongLineage instanceof ProtocolError, "an older wrong-hash stamp must refuse typed")
 					assert.equal(wrongLineage.code, "WrongLineage")
@@ -265,7 +246,7 @@ test("at-least snapshots validate exact ancestry, never a sequence floor", async
 					// A same-sequence-as-tip wrong hash refuses too.
 					const forgedTip = { seq: tip.seq, hash: "dd".repeat(32) as DecisionStamp["hash"] }
 					const tipLineage = yield* Effect.flip(
-						Effect.scoped(history.snapshot({ ...work, consistency: { kind: "at-least", at: forgedTip } }))
+						Effect.scoped(history.snapshot({ consistency: { kind: "at-least", at: forgedTip } }))
 					)
 					assert.ok(tipLineage instanceof ProtocolError)
 					assert.equal(tipLineage.code, "WrongLineage")
@@ -273,7 +254,7 @@ test("at-least snapshots validate exact ancestry, never a sequence floor", async
 					// A future stamp refuses the structured NotYetAvailable.
 					const future = { seq: 99n, hash: "09".repeat(32) as DecisionStamp["hash"] }
 					const notYet = yield* Effect.flip(
-						Effect.scoped(history.snapshot({ ...work, consistency: { kind: "at-least", at: future } }))
+						Effect.scoped(history.snapshot({ consistency: { kind: "at-least", at: future } }))
 					)
 					assert.ok(notYet instanceof ProtocolError)
 					assert.equal(notYet.code, "NotYetAvailable")

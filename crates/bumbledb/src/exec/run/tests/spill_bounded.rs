@@ -1,27 +1,16 @@
 //! Spill-bounded derived consumption (D09). Verification: `NotRun`.
-//! A scratch-backed stage walks through L03's charged visitor: `Err`
+//! A scratch-backed stage walks through L03's borrowed visitor: `Err`
 //! stops immediately and `Ok(false)` is a clean early stop. Peak decode
 //! storage is one row. No `type_name` / `size_of`.
 
 use crate::api::prepared::derived::{ScratchStage, SealedStage};
 use crate::error::Error;
 use crate::exec::scratch::ScratchRelation;
-use crate::work::ExecutionPolicy;
+use crate::work::WorkContext;
 use bumbledb_theory::schema::ValueType;
-use std::time::Duration;
 
 fn work() -> crate::work::WorkContext {
-    ExecutionPolicy {
-        input_bytes: u64::MAX,
-        working_bytes: u64::MAX,
-        scratch_bytes: u64::MAX,
-        result_bytes: u64::MAX,
-        rows: u64::MAX,
-        work_units: u64::MAX,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .expect("ledger")
+    WorkContext::new()
 }
 
 fn encode_row(words: &[u64]) -> Vec<u8> {
@@ -34,13 +23,15 @@ fn encode_row(words: &[u64]) -> Vec<u8> {
 
 fn scratch_stage(rows: &[[u64; 2]]) -> ScratchStage {
     let work = work();
-    let mut dest = ScratchRelation::new(&work, 0);
+    let mut dest = ScratchRelation::new(&work);
     dest.force_spill().expect("spill");
     for (index, row) in rows.iter().enumerate() {
         dest.put(&(index as u64).to_be_bytes(), &encode_row(row))
             .expect("put");
     }
     ScratchStage {
+        generation: crate::image::test_generation(),
+        texts: crate::image::TextOwners::default(),
         rows: dest,
         field_types: vec![ValueType::U64, ValueType::U64],
         row_words: 2,
@@ -48,7 +39,7 @@ fn scratch_stage(rows: &[[u64; 2]]) -> ScratchStage {
     }
 }
 
-/// D09: join/negation consumption of a scratch stage is one charged
+/// D09: join/negation consumption of a scratch stage is one borrowed
 /// visitor, not a Vec of every decoded row.
 #[test]
 fn d09_scratch_stage_visit_is_one_row_and_fallible() {
@@ -65,10 +56,7 @@ fn d09_scratch_stage_visit_is_one_row_and_fallible() {
     let refused = SealedStage::for_each_scratch_row(&mut stage, &work(), |_| {
         seen += 1;
         if seen == 2 {
-            return Err(Error::DerivedBudgetExceeded {
-                rounds: 0,
-                tuples: 2,
-            });
+            return Err(Error::ResultBytesOverflow);
         }
         Ok(true)
     });

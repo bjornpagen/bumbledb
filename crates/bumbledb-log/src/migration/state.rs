@@ -1,11 +1,12 @@
-//! Ordered-step evaluation state: the executor's private, work-charged
+//! Ordered-step evaluation state: the executor's private, disk-backed
 //! relation sets between plan boundaries.
 //!
 //! Each relation is a spill-backed exact set (canonical bytes as keys).
 //! Map transforms stream compiled expressions into that set and deduplicate
 //! there. Finishing a transform does not reconstruct a resident row map.
-//! Every byte held is reserved by the core scratch owner; an exhausted
-//! budget refuses instead of growing a database-sized shadow map.
+//! Empty relations allocate no scratch environment; the first insertion
+//! creates temporary LMDB storage. This is deliberate staging, not a
+//! memory threshold or a fallback from a database-sized heap map.
 //!
 //! Every `validate-schema` boundary judges the COMPLETE intermediate state
 //! with the core judge — a later step cannot hide an earlier invalid
@@ -21,7 +22,7 @@ use bumbledb::schema::judge::{
     CandidateFacts, JudgeBudget, JudgedViolation, Judgment, judge_final_state,
 };
 use bumbledb::schema::{FieldDescriptor, RelationId, Schema};
-use bumbledb::work::{DEFAULT_RAM_BYTES, ScratchRelation};
+use bumbledb::work::ScratchRelation;
 use bumbledb::{ReadInstance, Value, WorkContext, WorkError};
 
 use super::compile::{CompiledAction, CompiledPlan};
@@ -36,15 +37,14 @@ struct StagedRelation {
 impl StagedRelation {
     fn new(work: &WorkContext) -> Self {
         Self {
-            scratch: RefCell::new(ScratchRelation::new(work, DEFAULT_RAM_BYTES)),
+            scratch: RefCell::new(ScratchRelation::new(work)),
         }
     }
 
     fn insert_canonical(&self, key: &[u8]) -> Result<(), StateError> {
-        self.scratch
-            .borrow_mut()
-            .put(key, &[])
-            .map_err(StateError::Core)
+        let mut scratch = self.scratch.borrow_mut();
+        scratch.force_spill()?;
+        scratch.put(key, &[]).map_err(StateError::Core)
     }
 
     fn spilled(&self) -> bool {
@@ -123,7 +123,7 @@ impl MapSpill {
         fields: &[FieldDescriptor],
         out: &[Value],
     ) -> Result<(), StateError> {
-        work.rows(1)?;
+        work.checkpoint()?;
         let canonical = CanonicalRow::encode(fields, out, work)?;
         self.staged.insert_canonical(canonical.as_bytes())
     }
@@ -241,7 +241,7 @@ impl MigrationState {
             let staged = StagedRelation::new(work);
             for row in read.scan(id)? {
                 let values = row?;
-                work.rows(1)?;
+                work.checkpoint()?;
                 let canonical = CanonicalRow::encode(fields, &values, work)?;
                 staged.insert_canonical(canonical.as_bytes())?;
             }
@@ -279,7 +279,7 @@ impl MigrationState {
                         .entry(*target)
                         .or_insert_with(|| StagedRelation::new(work));
                     for row in rows {
-                        work.rows(1)?;
+                        work.checkpoint()?;
                         let canonical = CanonicalRow::encode(fields, row, work)?;
                         staged.insert_canonical(canonical.as_bytes())?;
                     }
@@ -294,7 +294,7 @@ impl MigrationState {
                     let mut spill = MapSpill::new(work);
                     if let Some(input) = self.relations.get(source) {
                         input.visit_values(source_fields, work, &mut |values| {
-                            work.step(expressions.len() as u64)?;
+                            work.checkpoint()?;
                             let mut out = Vec::with_capacity(expressions.len());
                             for expression in expressions {
                                 let value = evaluator
@@ -419,4 +419,60 @@ impl CandidateFacts for JudgeBound<'_> {
 
 fn relation_fields(schema: &Schema, relation: RelationId) -> &[FieldDescriptor] {
     schema.relation(relation).fields()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_uses_disk_from_the_first_key_and_deduplicates_exact_wide_keys() {
+        let staged = StagedRelation::new(&WorkContext::new());
+        assert!(
+            !staged.spilled(),
+            "empty relations need no scratch environment"
+        );
+        let mut key = vec![b'x'; 1024];
+        staged.insert_canonical(&key).unwrap();
+        assert!(
+            staged.spilled(),
+            "staging is disk storage, not a RAM threshold"
+        );
+        staged.insert_canonical(&key).unwrap();
+        key[1023] = b'y';
+        staged.insert_canonical(&key).unwrap();
+        let mut found = [false; 2];
+        let mut count = 0;
+        staged
+            .visit_keys(&mut |bytes| {
+                assert_eq!(&bytes[..1023], &key[..1023]);
+                let which = usize::from(bytes[1023] == b'y');
+                assert!(!found[which]);
+                found[which] = true;
+                count += 1;
+                Ok(true)
+            })
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(found, [true, true]);
+        let mut visits = 0;
+        assert!(
+            staged
+                .visit_keys(&mut |_| {
+                    visits += 1;
+                    Err(StateError::Work(WorkError::Cancelled))
+                })
+                .is_err()
+        );
+        assert_eq!(visits, 1, "visitor failure must not continue the scan");
+    }
+
+    #[test]
+    fn cancellation_before_first_staged_row_refuses_without_opening_scratch() {
+        let work = WorkContext::new();
+        let staged = StagedRelation::new(&work);
+        work.cancel();
+        assert!(staged.insert_canonical(b"cancelled").is_err());
+        assert!(!staged.spilled());
+    }
 }

@@ -24,16 +24,27 @@ impl ViewMemo {
         &mut self.occs[occ].spare
     }
 
-    /// Memory-pressure trim: drop parked bindings, active views and spare
-    /// buffers. Derived occurrences return to `Derived`; store occurrences
-    /// to `Unbound` — the next execution rebuilds what it needs.
-    pub(super) fn trim(&mut self) {
+    /// Forget generation-specific views, keeping the active pools reusable.
+    pub(super) fn invalidate(&mut self) {
         for (occ, memo) in self.occs.iter_mut().enumerate() {
             for slot in &mut memo.parked {
                 *slot = None;
             }
-            memo.spare = Vec::new();
+            memo.spare.clear();
             let _ = self.colts[occ].reset(crate::image::view::View::Unbound);
+            if !matches!(memo.active, Binding::Derived) {
+                memo.active = Binding::Unbound;
+            }
+        }
+    }
+
+    pub(super) fn release_memory(&mut self) {
+        for (colt, memo) in self.colts.iter_mut().zip(&mut self.occs) {
+            for slot in &mut memo.parked {
+                *slot = None;
+            }
+            memo.spare = Vec::new();
+            colt.release_memory();
             if !matches!(memo.active, Binding::Derived) {
                 memo.active = Binding::Unbound;
             }
@@ -75,7 +86,7 @@ impl ViewMemo {
         occ: usize,
         epoch: ViewEpoch,
         filters: &[FilterPredicate],
-        selections: Option<&[Vec<u64>]>,
+        selections: Option<&[crate::image::view::ResolvedWords]>,
     ) {
         match &mut self.occs[occ].active {
             Binding::Bound(bound) => {
@@ -84,7 +95,10 @@ impl ViewMemo {
                 bound.filters.extend_from_slice(filters);
                 match (selections, &mut bound.selections) {
                     (Some(keys), Some(bound)) => keys.clone_into(bound),
-                    _ => bound.selections = selections.map(<[Vec<u64>]>::to_vec),
+                    _ => {
+                        bound.selections =
+                            selections.map(<[crate::image::view::ResolvedWords]>::to_vec);
+                    }
                 }
                 bound.last_used = self.tick;
             }
@@ -92,7 +106,7 @@ impl ViewMemo {
                 self.occs[occ].active = Binding::Bound(Bound {
                     epoch,
                     filters: filters.to_vec(),
-                    selections: selections.map(<[Vec<u64>]>::to_vec),
+                    selections: selections.map(<[crate::image::view::ResolvedWords]>::to_vec),
                     last_used: self.tick,
                 });
             }
@@ -104,7 +118,7 @@ impl ViewMemo {
         occ: usize,
         epoch: ViewEpoch,
         filters: &[FilterPredicate],
-        selections: &[Vec<u64>],
+        selections: &[crate::image::view::ResolvedWords],
     ) -> bool {
         let tick = self.tick;
         let colt = &mut self.colts[occ];

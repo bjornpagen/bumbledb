@@ -13,6 +13,5 @@ export const runtimeErrorCodes = [
 	"Io",
 	"ResourceLimit",
 	"Engine",
-	"Cancelled",
-	"DeadlineExceeded"
+	"Cancelled"
 ] as const

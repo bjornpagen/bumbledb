@@ -12,7 +12,7 @@
 use std::time::Duration;
 
 use bumbledb::Theory as _;
-use bumbledb::work::ExecutionPolicy;
+use bumbledb::work::WorkContext;
 use bumbledb_log::history::decision::{
     GenesisProvenance, GenesisRecord, blank_initial_digests, genesis_stamp,
 };
@@ -41,22 +41,12 @@ fn options() -> Options {
         cleanup_capacity: 8,
         owner_capacity: 8,
         native_handle_capacity: 16,
-        aggregate_bytes: [64 << 20; 4],
-        chunk_bytes: 1 << 20,
         cleanup_timeout: Duration::from_millis(500),
     }
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 16 << 20,
-        working_bytes: 16 << 20,
-        scratch_bytes: 16 << 20,
-        result_bytes: 16 << 20,
-        rows: 1 << 20,
-        work_units: 1 << 30,
-        timeout: Duration::from_secs(10),
-    }
+fn policy() -> WorkContext {
+    WorkContext::new()
 }
 
 fn unique_dir(tag: &str) -> std::path::PathBuf {
@@ -227,7 +217,7 @@ fn at_least_proves_exact_ancestry_never_a_sequence_floor() {
     let base = unique_dir("e-ancestry");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 41);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
@@ -348,7 +338,7 @@ fn at_least_with_pruned_evidence_is_witness_unavailable_never_a_claim() {
     let base = unique_dir("e-pruned");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 43);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
@@ -432,7 +422,7 @@ fn rejected_submissions_expose_the_complete_decoded_violation_set() {
     let base = unique_dir("f-evidence");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 47);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
@@ -527,12 +517,12 @@ fn rejected_submissions_expose_the_complete_decoded_violation_set() {
 }
 
 #[test]
-fn d13_resolve_refuses_incomplete_evidence_and_retry_returns_found() {
+fn d13_cancelled_resolve_refuses_and_retry_returns_complete_evidence() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("d13-resolve");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 73);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
     let schema = validated(&spec.descriptor);
@@ -560,26 +550,21 @@ fn d13_resolve_refuses_incomplete_evidence_and_retry_returns_found() {
             panic!("violating submit must decide, got {phase:?}: {fail:?}")
         }
     }
-    let starved = ExecutionPolicy {
-        input_bytes: 32,
-        working_bytes: 32,
-        scratch_bytes: 32,
-        result_bytes: 32,
-        rows: 1,
-        work_units: 1,
-        timeout: Duration::from_millis(1),
-    }
-    .start()
-    .expect("starved work");
+    let cancelled = WorkContext::new();
+    cancelled.cancel();
     assert!(
         matches!(
-            run_history_verb(&opened.resource, HistoryVerb::Resolve(reference), &starved),
-            Err(RuntimeError::Work(_))
+            run_history_verb(
+                &opened.resource,
+                HistoryVerb::Resolve(reference),
+                &cancelled
+            ),
+            Err(RuntimeError::Work(bumbledb::work::WorkError::Cancelled))
         ),
-        "incomplete rejection evidence must refuse through the work channel"
+        "cancelled resolution must refuse, never fabricate an empty rejection"
     );
     match run_history_verb(&opened.resource, HistoryVerb::Resolve(reference), &work)
-        .expect("retry with sufficient budget")
+        .expect("retry with a fresh cancellation context")
     {
         Output::Machine(MachineOutput::Resolve(owned)) => {
             assert!(matches!(owned.outcome, ResolveOutcome::Found(_)));
@@ -599,7 +584,7 @@ fn multiple_statements_and_truncation_labels_survive_the_decode() {
     let base = unique_dir("f-multi");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let spec = open_spec_for(GatePair.descriptor(), &dir, true, 53);
     let opened = open_history(&runtime, &spec, &work).expect("creates");
@@ -647,7 +632,7 @@ fn multiple_statements_and_truncation_labels_survive_the_decode() {
 
 #[test]
 fn malformed_evidence_bytes_refuse_typed_never_an_empty_rejection() {
-    let work = policy().start().unwrap();
+    let work = policy();
     let descriptor = GateMini.descriptor();
     let schema = validated(&descriptor);
 
@@ -724,7 +709,7 @@ fn refused_opens_release_the_directory_synchronously() {
     let base = unique_dir("probe-lineage");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
     let created = open_history(
         &runtime,
         &open_spec_for(GateMini.descriptor(), &dir, true, 3),
@@ -765,7 +750,7 @@ fn submit_owned_carries_publication_phase() {
     let base = unique_dir("submit-phase");
     std::fs::create_dir_all(&base).unwrap();
     let dir = base.join("tenant");
-    let work = policy().start().unwrap();
+    let work = policy();
 
     let spec = open_spec_for(GateMini.descriptor(), &dir, true, 51);
     let opened = open_history(&runtime, &spec, &work).expect("creates");

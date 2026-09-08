@@ -14,10 +14,10 @@ use crate::image::cache::ImageCache;
 use crate::schema::judge::{JudgeBudget, Judgment, MapState, judge_final_state};
 use crate::schema::{Schema, Theory, ValidateDescriptor as _};
 use crate::storage::store::{MapPolicy, Store};
-use crate::work::{CachePolicy, WorkContext};
+use crate::work::WorkContext;
 
 impl<S: Theory> Db<S> {
-    /// Create a new durable database under an explicit operation allowance.
+    /// Create a new durable database with cooperative cancellation.
     /// The declared theory is judged over the empty state (with its sealed
     /// closed extensions) before any directory is touched; an unsatisfiable
     /// declaration is a rejection, not a store.
@@ -40,7 +40,7 @@ impl<S: Theory> Db<S> {
         Ok(Admission::Accepted(Self::assemble(store, schema, work)?))
     }
 
-    /// Open an existing database under an explicit operation allowance.
+    /// Open an existing database with cooperative cancellation.
     /// Family, layout and schema fingerprint are verified against one read
     /// view before adoption; refusal mutates nothing.
     /// # Errors
@@ -80,10 +80,7 @@ impl<S> Db<S> {
             .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))?;
         let schema = Arc::new(schema);
         let closed = Arc::new(super::closed::ClosedRows::build(schema.as_ref(), &work)?);
-        let cache = Arc::new(ImageCache::with_policy(
-            schema.as_ref(),
-            CachePolicy::platform_default(),
-        ));
+        let cache = Arc::new(ImageCache::new(schema.as_ref()));
         Ok(Self {
             store,
             schema,

@@ -1,18 +1,12 @@
-//! The charged transient relation/map: every
-//! intermediate owner that can outgrow RAM — projection/union distinct
-//! sets, aggregate group state, recursion seen/frontier sets, completed
-//! results — spills through this abstraction, never through a private
-//! external-sort/partition framework.
+//! Transient exact maps shared by staging and query operators.
 //!
 //! Two tiers, one logical map of exact byte keys:
 //!
-//! - **RAM**: a fallibly grown ordered table, charged to the operation's
-//!   `working_bytes` in chunked reservations before growth.
-//! - **Temporary LMDB**: an execution-owned scratch environment created on
-//!   first crossing of the RAM allowance. Existing entries copy over in
-//!   bounded batches (the transfer's transient overlap is reserved before
-//!   the copy starts); once spilled, the execution stays on disk — no
-//!   oscillating tier manager. Scratch writes never claim authoritative
+//! - **RAM**: an ordinary ordered table with no allocation quota.
+//! - **Temporary LMDB**: an explicitly requested, execution-owned scratch
+//!   environment. Existing entries copy over in bounded batches; no byte
+//!   threshold or allocation refusal switches the representation.
+//!   Scratch writes never claim authoritative
 //!   durability: the environment is `NO_SYNC`, unreachable from any
 //!   persistent-store constructor, and its loss loses only this query
 //!   attempt. The authoritative store always uses durable commits.
@@ -36,30 +30,15 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::error::{Error, Result};
-use crate::work::{ByteKind, ByteReservation, WorkContext, WorkError};
+use crate::work::{WorkContext, WorkError};
 
 pub mod append;
-pub mod capability;
 pub mod keys;
-pub mod text;
 pub use append::ScratchAppend;
-pub use capability::{ScratchCapability, ScratchPolicy};
 pub use keys::{
     ScratchClaimKey, ScratchExactKey, ScratchMapId, ScratchProbe, ScratchVisit, ScratchVisitor,
     ScratchWideClaimKey, ScratchWordKey,
 };
-pub use text::ScratchTextLookup;
-
-/// The default RAM allowance per scratch relation before the LMDB tier
-/// takes over.
-pub const DEFAULT_RAM_BYTES: usize = 8 << 20;
-
-/// Working-byte reservations are taken in chunks of this size so the
-/// charge vector stays small while growth is still charged before it
-/// happens. Small enough that several small maps under one bounded
-/// operation budget do not pin whole budgets per map; grouped judgment
-/// can hold many small maps at once.
-const CHARGE_CHUNK: usize = 4 << 10;
 
 /// Copy batch size for the RAM→LMDB transition (entries per transaction).
 const SPILL_BATCH: u16 = 1024;
@@ -89,53 +68,30 @@ struct StagedScratchPut {
     if_absent: bool,
 }
 
-/// Transaction-scoped scratch writes (C2): staged named-map puts, byte
-/// deltas, token/bucket sequence and reservations commit or abort together
-/// with the LMDB transaction. [`ScratchWriteBatch::commit`] applies the
-/// ledger only after that transaction succeeds. Drop or [`Self::abort`]
-/// refunds every reservation and leaves the environment untouched.
+/// Transaction-scoped named-map puts. Drop or [`Self::abort`] leaves the
+/// relation untouched. The RAM tier applies the batch after its cancellation
+/// check; the LMDB tier commits all writes and bucket identities together.
 pub struct ScratchWriteBatch {
-    logical_delta: i64,
-    entry_delta: i64,
-    next_bucket_seq: Option<u64>,
-    reservations: Vec<ByteReservation>,
-    target_charged: usize,
     staged: Vec<StagedScratchPut>,
 }
 
 impl ScratchWriteBatch {
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            logical_delta: 0,
-            entry_delta: 0,
-            next_bucket_seq: None,
-            reservations: Vec::new(),
-            target_charged: 0,
-            staged: Vec::new(),
-        }
-    }
-
-    pub fn record(&mut self, byte_delta: i64, entries: i64) {
-        self.logical_delta += byte_delta;
-        self.entry_delta += entries;
-    }
-
-    pub fn assign_bucket_seq(&mut self, next: u64) {
-        self.next_bucket_seq = Some(next);
+        Self { staged: Vec::new() }
     }
 
     /// Stage a named-map put. Applied in [`Self::commit`] with the same
-    /// LMDB transaction as the ledger mutation.
+    /// LMDB transaction as other writes in this batch.
     /// # Errors
-    /// Refuses sizes outside the scratch ledger's signed representation.
+    /// Refuses an unallocatable batch capacity.
     pub fn put(&mut self, map: ScratchMapId, key: &[u8], value: &[u8]) -> Result<()> {
         self.stage(map, key, value, false)
     }
 
     /// Stage a named-map insert-if-absent. Membership is decided at commit.
     /// # Errors
-    /// Refuses sizes outside the scratch ledger's signed representation.
+    /// Refuses an unallocatable batch capacity.
     pub fn insert_if_absent(&mut self, map: ScratchMapId, key: &[u8], value: &[u8]) -> Result<()> {
         self.stage(map, key, value, true)
     }
@@ -147,7 +103,7 @@ impl ScratchWriteBatch {
         value: &[u8],
         if_absent: bool,
     ) -> Result<()> {
-        self.record(signed_bytes(entry_retained(key, value))?, 1);
+        self.staged.try_reserve(1).map_err(|_| allocation())?;
         self.staged.push(StagedScratchPut {
             map,
             key: Box::from(key),
@@ -158,36 +114,19 @@ impl ScratchWriteBatch {
     }
 
     #[must_use]
-    pub const fn pending_bytes(&self) -> i64 {
-        self.logical_delta
+    pub const fn pending_entries(&self) -> usize {
+        self.staged.len()
     }
 
-    #[must_use]
-    pub const fn pending_entries(&self) -> i64 {
-        self.entry_delta
-    }
-
-    /// Abort drops the batch; no ledger mutation survives (C2).
+    /// Abort drops the batch without changing the relation.
     pub fn abort(self) {}
 
-    /// Commit staged puts with one LMDB transaction. Ledger mutations
-    /// apply only after that transaction succeeds; `MapFull` abort refunds
-    /// and retries so the retained charge is one committed attempt.
+    /// Commit staged puts together. On the disk tier, `MapFull` aborts the
+    /// transaction, grows the virtual mapping and retries the same batch.
     /// # Errors
-    /// Stopped work, reservation refusal, or scratch I/O failure.
+    /// Cancellation, allocation failure, or scratch I/O failure.
     pub fn commit(self, relation: &mut ScratchRelation) -> Result<()> {
         relation.commit_batch(self)
-    }
-
-    fn apply_to_env(mut self, env: &mut ScratchAccounting) {
-        env.logical = env.logical.saturating_add_signed(
-            isize::try_from(self.logical_delta).expect("64-bit address space"),
-        );
-        env.charged = self.target_charged;
-        env.charges.extend(std::mem::take(&mut self.reservations));
-        if let Some(seq) = self.next_bucket_seq {
-            env.bucket_seq = seq;
-        }
     }
 }
 
@@ -241,50 +180,15 @@ fn work_error(error: WorkError) -> Error {
     Error::from_store(crate::storage::store::StoreError::Work(error))
 }
 
-fn signed_bytes(bytes: usize) -> Result<i64> {
-    i64::try_from(bytes).map_err(|_| {
-        work_error(WorkError::Exhausted {
-            resource: crate::work::Resource::ScratchBytes,
-            used: 0,
-            requested: bytes as u64,
-            limit: i64::MAX.cast_unsigned(),
-        })
-    })
-}
-
 fn allocation() -> Error {
     Error::from_store(crate::storage::store::StoreError::Allocation)
-}
-
-fn entry_retained(key: &[u8], value: &[u8]) -> usize {
-    key.len() + value.len() + 64
-}
-
-fn adjust_retained(
-    work: &WorkContext,
-    bytes: &mut usize,
-    charged: &mut usize,
-    reservations: &mut Vec<ByteReservation>,
-    old: usize,
-    new: usize,
-) -> Result<()> {
-    if new > old {
-        // charge advances live bytes after successful admission. Applying
-        // the delta again here would count every insertion/growth twice.
-        charge(work, bytes, charged, reservations, new - old)?;
-    } else {
-        *bytes = bytes.checked_sub(old - new).ok_or_else(allocation)?;
-    }
-    Ok(())
 }
 
 /// One transient exact map: insert-if-absent, get/put, bounded iteration,
 /// disposal. Consumed by lifecycle materialization and query operators.
 pub struct ScratchRelation {
     tier: Tier,
-    ram_limit: usize,
     work: WorkContext,
-    policy: capability::ScratchPolicy,
     entries: u64,
 }
 
@@ -292,7 +196,6 @@ impl std::fmt::Debug for ScratchRelation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ScratchRelation")
             .field("entries", &self.entries)
-            .field("ram_limit", &self.ram_limit)
             .finish_non_exhaustive()
     }
 }
@@ -300,74 +203,24 @@ impl std::fmt::Debug for ScratchRelation {
 type RamMap = BTreeMap<Box<[u8]>, Box<[u8]>>;
 
 enum Tier {
-    Ram {
-        maps: [RamMap; ScratchMapId::COUNT],
-        bytes: usize,
-        charged: usize,
-        charges: Vec<ByteReservation>,
-    },
+    Ram { maps: [RamMap; ScratchMapId::COUNT] },
     Lmdb(Box<ScratchEnv>),
 }
 
 impl ScratchRelation {
-    pub(crate) fn with_policy(work: &WorkContext, policy: ScratchPolicy) -> Self {
-        Self::with_policy_and_ram(work, policy, policy.ram_bytes_per_relation)
-    }
-
-    pub(crate) fn with_policy_and_ram(
-        work: &WorkContext,
-        policy: ScratchPolicy,
-        ram_limit: usize,
-    ) -> Self {
+    #[must_use]
+    pub fn new(work: &WorkContext) -> Self {
         Self {
             tier: Tier::Ram {
                 maps: std::array::from_fn(|_| BTreeMap::new()),
-                bytes: 0,
-                charged: 0,
-                charges: Vec::new(),
             },
-            ram_limit,
             work: work.clone(),
-            policy,
             entries: 0,
         }
     }
 
-    #[must_use]
-    pub fn new(work: &WorkContext, ram_limit: usize) -> Self {
-        Self::with_policy_and_ram(
-            work,
-            ScratchPolicy {
-                scratch_bytes: work.limit(crate::work::Resource::ScratchBytes),
-                ram_bytes_per_relation: ram_limit,
-            },
-            ram_limit,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_default_budget(work: &WorkContext) -> Self {
-        Self::new(work, DEFAULT_RAM_BYTES)
-    }
-
     pub(crate) const fn len(&self) -> u64 {
         self.entries
-    }
-
-    /// Re-home this relation onto a caller-supplied operation ledger: every
-    /// SUBSEQUENT step/checkpoint/reservation charges `work` instead of the
-    /// ledger the relation was built under. The retained-result
-    /// seam: a sealed result outlives its execute operation, and its scratch
-    /// reads must not keep consulting that operation's expired deadline.
-    ///
-    /// Release stays linear by construction: byte reservations already taken
-    /// ([`ByteReservation`]) each own an `Arc` to their ORIGINATING ledger
-    /// and refund exactly their charge on drop — rebinding moves none of
-    /// them, so nothing releases twice and nothing leaks. The scratch
-    /// directory itself is unlinked exactly once, by drop order, regardless
-    /// of how many times the relation was rebound.
-    pub(crate) fn rebind_work(&mut self, work: &WorkContext) {
-        self.work = work.clone();
     }
 
     #[must_use]
@@ -376,9 +229,9 @@ impl ScratchRelation {
     }
 
     #[cfg(test)]
-    pub(crate) fn inject_map_full_after_reserve(&mut self, times: u32) {
+    pub(crate) fn inject_map_full_before_commit(&mut self, times: u32) {
         if let Tier::Lmdb(env) = &mut self.tier {
-            env.accounting.map_full_after_reserve = times;
+            env.state.map_full_before_commit = times;
         }
     }
 
@@ -387,22 +240,6 @@ impl ScratchRelation {
         match &self.tier {
             Tier::Ram { .. } => None,
             Tier::Lmdb(env) => Some(env.env.info().last_txn_id),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn logical_bytes(&self) -> usize {
-        match &self.tier {
-            Tier::Ram { bytes, .. } => *bytes,
-            Tier::Lmdb(env) => env.accounting.logical,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn reserved_bytes(&self) -> usize {
-        match &self.tier {
-            Tier::Ram { charged, .. } => *charged,
-            Tier::Lmdb(env) => env.accounting.charged,
         }
     }
 
@@ -420,16 +257,10 @@ impl ScratchRelation {
 
     #[cfg(test)]
     pub(crate) fn setup_at(work: &WorkContext, path: &std::path::Path) -> Result<Self> {
-        let policy = ScratchPolicy {
-            scratch_bytes: work.limit(crate::work::Resource::ScratchBytes),
-            ram_bytes_per_relation: 0,
-        };
-        let env = ScratchEnv::create_at(work, policy, path)?;
+        let env = ScratchEnv::create_at(work, path)?;
         Ok(Self {
             tier: Tier::Lmdb(Box::new(env)),
-            ram_limit: 0,
             work: work.clone(),
-            policy,
             entries: 0,
         })
     }
@@ -439,21 +270,13 @@ impl ScratchRelation {
     /// # Errors
     /// Stopped work, allocation/scratch refusal, or scratch I/O failure.
     pub(crate) fn insert_if_absent(&mut self, key: &[u8], value: &[u8]) -> Result<bool> {
-        self.work.step(1).map_err(work_error)?;
-        self.maybe_spill(key.len() + value.len())?;
+        self.work.checkpoint().map_err(work_error)?;
         let fresh = match &mut self.tier {
-            Tier::Ram {
-                maps,
-                bytes,
-                charged,
-                charges,
-            } => {
+            Tier::Ram { maps } => {
                 let map = &mut maps[ScratchMapId::Default.index()];
                 if map.contains_key(key) {
                     false
                 } else {
-                    let grown = entry_retained(key, value);
-                    charge(&self.work, bytes, charged, charges, grown)?;
                     map.insert(Box::from(key), Box::from(value));
                     true
                 }
@@ -470,24 +293,13 @@ impl ScratchRelation {
 
     /// Upsert: stores `value` under `key`, replacing any previous value.
     /// # Errors
-    /// Work allowance, allocation, or scratch-storage failure.
+    /// Cancellation, allocation, or scratch-storage failure.
     pub fn put(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
-        self.work.step(1).map_err(work_error)?;
-        self.maybe_spill(key.len() + value.len())?;
+        self.work.checkpoint().map_err(work_error)?;
         match &mut self.tier {
-            Tier::Ram {
-                maps,
-                bytes,
-                charged,
-                charges,
-            } => {
+            Tier::Ram { maps } => {
                 let map = &mut maps[ScratchMapId::Default.index()];
                 let fresh = !map.contains_key(key);
-                let old = map
-                    .get(key)
-                    .map_or(0, |existing| entry_retained(key, existing));
-                let new = entry_retained(key, value);
-                adjust_retained(&self.work, bytes, charged, charges, old, new)?;
                 map.insert(Box::from(key), Box::from(value));
                 if fresh {
                     self.entries += 1;
@@ -506,7 +318,7 @@ impl ScratchRelation {
     /// # Errors
     /// As [`Self::insert_if_absent`].
     pub(crate) fn get(&mut self, key: &[u8], out: &mut Vec<u8>) -> Result<bool> {
-        self.work.step(1).map_err(work_error)?;
+        self.work.checkpoint().map_err(work_error)?;
         out.clear();
         match &mut self.tier {
             Tier::Ram { maps, .. } => match maps[ScratchMapId::Default.index()].get(key) {
@@ -520,10 +332,10 @@ impl ScratchRelation {
         }
     }
 
-    /// Walk every (key, value) in key order, charging one work step per
+    /// Walk every (key, value) in key order, checking cancellation per
     /// entry. The callback returns `false` to stop early.
     /// # Errors
-    /// Work allowance, scratch-storage failure, or the callback's failure.
+    /// Cancellation, scratch-storage failure, or the callback's failure.
     pub fn for_each(&mut self, visit: KeyValueVisit<'_>) -> Result<()> {
         self.for_each_from(&[], visit)
     }
@@ -555,7 +367,7 @@ impl ScratchRelation {
 
     /// Get an ordered fixed-word key.
     /// # Errors
-    /// Work allowance or scratch-storage failure.
+    /// Cancellation or scratch-storage failure.
     pub fn get_words<const WORDS: usize>(
         &mut self,
         key: ScratchWordKey<WORDS>,
@@ -575,22 +387,11 @@ impl ScratchRelation {
     /// # Errors
     /// As [`Self::put`].
     pub fn put_map(&mut self, name: ScratchMapId, key: &[u8], value: &[u8]) -> Result<()> {
-        self.work.step(1).map_err(work_error)?;
-        self.maybe_spill(key.len() + value.len())?;
+        self.work.checkpoint().map_err(work_error)?;
         match &mut self.tier {
-            Tier::Ram {
-                maps,
-                bytes,
-                charged,
-                charges,
-            } => {
+            Tier::Ram { maps } => {
                 let map = &mut maps[name.index()];
                 let fresh = !map.contains_key(key);
-                let old = map
-                    .get(key)
-                    .map_or(0, |existing| entry_retained(key, existing));
-                let new = entry_retained(key, value);
-                adjust_retained(&self.work, bytes, charged, charges, old, new)?;
                 map.insert(Box::from(key), Box::from(value));
                 if fresh && name == ScratchMapId::Default {
                     self.entries += 1;
@@ -618,7 +419,7 @@ impl ScratchRelation {
         key: &[u8],
         visit: impl FnOnce(ScratchProbe<&[u8]>) -> Result<R>,
     ) -> Result<R> {
-        self.work.step(1).map_err(work_error)?;
+        self.work.checkpoint().map_err(work_error)?;
         match &self.tier {
             Tier::Ram { maps, .. } => {
                 let probe = match maps[map.index()].get(key) {
@@ -646,9 +447,9 @@ impl ScratchRelation {
 
     /// Get from a named map. `Ok(false)` clears `out`.
     /// # Errors
-    /// Work allowance or scratch-storage failure.
+    /// Cancellation or scratch-storage failure.
     pub fn get_map(&mut self, name: ScratchMapId, key: &[u8], out: &mut Vec<u8>) -> Result<bool> {
-        self.work.step(1).map_err(work_error)?;
+        self.work.checkpoint().map_err(work_error)?;
         out.clear();
         match &mut self.tier {
             Tier::Ram { maps, .. } => match maps[name.index()].get(key) {
@@ -701,7 +502,7 @@ impl ScratchRelation {
                 // and borrow its entries; neither a cloned resume key nor
                 // a fresh tree search is needed for the next row.
                 for (key, value) in &maps[name.index()] {
-                    self.work.step(1).map_err(work_error)?;
+                    self.work.checkpoint().map_err(work_error)?;
                     let lookup = ScratchLookup {
                         inner: ScratchLookupInner::Ram { maps },
                     };
@@ -727,7 +528,7 @@ impl ScratchRelation {
                     std::ops::Bound::Included(start),
                     std::ops::Bound::Unbounded,
                 )) {
-                    self.work.step(1).map_err(work_error)?;
+                    self.work.checkpoint().map_err(work_error)?;
                     if !visit(key, value)? {
                         return Ok(());
                     }
@@ -739,41 +540,18 @@ impl ScratchRelation {
     }
 
     fn commit_batch(&mut self, batch: ScratchWriteBatch) -> Result<()> {
-        let incoming = batch
-            .staged
-            .iter()
-            .map(|put| put.key.len() + put.value.len())
-            .sum();
-        self.maybe_spill(incoming)?;
-        if let Tier::Ram {
-            maps,
-            bytes,
-            charged,
-            charges,
-        } = &mut self.tier
-        {
-            // Admit the complete bounded batch before the first mutation.
+        self.work.checkpoint().map_err(work_error)?;
+        if let Tier::Ram { maps } = &mut self.tier {
+            // Check cancellation before the first mutation, not mid-batch.
             // The exact dictionary's two directions must commit together
             // in RAM just as they do in an LMDB write transaction.
-            self.work
-                .step(batch.staged.len() as u64)
-                .map_err(work_error)?;
-            let incoming = batch
-                .staged
-                .iter()
-                .map(|put| entry_retained(&put.key, &put.value))
-                .sum();
-            let mut envelope = *bytes;
-            charge(&self.work, &mut envelope, charged, charges, incoming)?;
             for put in batch.staged {
                 let map = &mut maps[put.map.index()];
                 let old = map.get(put.key.as_ref());
                 if put.if_absent && old.is_some() {
                     continue;
                 }
-                let previous = old.map_or(0, |value| entry_retained(&put.key, value));
                 let fresh = old.is_none();
-                *bytes = *bytes - previous + entry_retained(&put.key, &put.value);
                 map.insert(put.key, put.value);
                 if fresh && put.map == ScratchMapId::Default {
                     self.entries += 1;
@@ -811,7 +589,7 @@ impl ScratchRelation {
             bound.len() <= MAX_INLINE_KEY,
             "predecessor bounds must be inline-sized"
         );
-        self.work.step(1).map_err(work_error)?;
+        self.work.checkpoint().map_err(work_error)?;
         key_out.clear();
         value_out.clear();
         match &mut self.tier {
@@ -847,7 +625,7 @@ impl ScratchRelation {
                     std::ops::Bound::Included(start),
                     std::ops::Bound::Unbounded,
                 )) {
-                    self.work.step(1).map_err(work_error)?;
+                    self.work.checkpoint().map_err(work_error)?;
                     if !visit(key, value)? {
                         return Ok(());
                     }
@@ -858,38 +636,21 @@ impl ScratchRelation {
         }
     }
 
-    /// Force the RAM→LMDB transition now (the Q-FALLBACK/F-RESOURCE test
-    /// affordance, and the explicit route when a caller knows the working
-    /// set will not fit).
+    /// Explicitly move the map into private temporary LMDB storage.
     /// # Errors
-    /// Scratch directory/environment failure, stopped work, or refusal of
-    /// the transfer's reserved overlap — the relation stays whole (RAM
+    /// Scratch directory/environment failure or stopped work; the relation stays whole (RAM
     /// tier intact) on error, so the caller can surface a typed refusal
     /// without a half-moved table.
-    pub(crate) fn force_spill(&mut self) -> Result<()> {
+    pub fn force_spill(&mut self) -> Result<()> {
         if self.spilled() {
             return Ok(());
         }
-        let Tier::Ram {
-            maps,
-            bytes,
-            charged: _,
-            charges: _,
-        } = &self.tier
-        else {
+        let Tier::Ram { maps } = &self.tier else {
             unreachable!("spilled() checked above");
         };
-        // Reserve the transfer overlap BEFORE creating anything: the old
-        // table stays charged, and the new environment's copy is charged
-        // as scratch for the whole payload.
-        let payload = *bytes as u64;
-        let _transfer = self
-            .policy
-            .reserve(&self.work, payload)
-            .map_err(work_error)?;
-        let mut env = ScratchEnv::create(&self.work, self.policy)?;
+        let mut env = ScratchEnv::create(&self.work)?;
+        let mut batch: Vec<(&[u8], &[u8])> = Vec::with_capacity(usize::from(SPILL_BATCH));
         for map_id in ScratchMapId::ALL {
-            let mut batch: Vec<(&[u8], &[u8])> = Vec::with_capacity(usize::from(SPILL_BATCH));
             for (key, value) in &maps[map_id.index()] {
                 batch.push((key, value));
                 if batch.len() == usize::from(SPILL_BATCH) {
@@ -899,43 +660,14 @@ impl ScratchRelation {
             }
             if !batch.is_empty() {
                 env.write_batch(&self.work, map_id, &batch)?;
+                batch.clear();
             }
         }
         // Ownership switches only after the copy completed; dropping the
-        // RAM tier releases its working-byte reservations.
+        // RAM tier releases its ordinary allocations.
         self.tier = Tier::Lmdb(Box::new(env));
         Ok(())
     }
-
-    fn maybe_spill(&mut self, incoming: usize) -> Result<()> {
-        if let Tier::Ram { bytes, .. } = &self.tier
-            && bytes + incoming + 64 > self.ram_limit
-        {
-            self.force_spill()?;
-        }
-        Ok(())
-    }
-}
-
-fn charge(
-    work: &WorkContext,
-    bytes: &mut usize,
-    charged: &mut usize,
-    reservations: &mut Vec<ByteReservation>,
-    grown: usize,
-) -> Result<()> {
-    let next = bytes.checked_add(grown).ok_or_else(allocation)?;
-    if next > *charged {
-        let target = next.checked_add(CHARGE_CHUNK - 1).ok_or_else(allocation)? / CHARGE_CHUNK
-            * CHARGE_CHUNK;
-        let reservation = work
-            .reserve(ByteKind::Working, (target - *charged) as u64)
-            .map_err(work_error)?;
-        reservations.push(reservation);
-        *charged = target;
-    }
-    *bytes = next;
-    Ok(())
 }
 
 /// The execution-owned temporary LMDB environment: one directory, one
@@ -947,25 +679,18 @@ struct ScratchEnv {
     env: heed::Env<heed::WithoutTls>,
     databases: [heed::Database<heed::types::Bytes, heed::types::Bytes>; ScratchMapId::COUNT],
     map_bytes: usize,
-    accounting: ScratchAccounting,
+    state: ScratchState,
     _cleanup: DirCleanup,
 }
 
-/// The committed accounting state is disjoint from the environment
-/// handle borrowed by a write transaction. A batch owns its provisional
-/// reservations until commit; failed attempts mutate neither side.
-struct ScratchAccounting {
-    /// Conservative reserved-page envelope (charged until disposal).
-    charges: Vec<ByteReservation>,
-    charged: usize,
-    /// Live logical key+value bytes; shrink/overwrite does not refund
-    /// `charged`, so repeated traffic cannot become lifetime billing.
-    logical: usize,
+/// State disjoint from the environment handle borrowed by a transaction.
+/// Bucket identities advance only after a successful commit.
+#[derive(Default)]
+struct ScratchState {
     /// Sequence for bucket suffixes of oversized keys.
     bucket_seq: u64,
-    policy: ScratchPolicy,
     #[cfg(test)]
-    map_full_after_reserve: u32,
+    map_full_before_commit: u32,
 }
 
 /// Unlinks the scratch directory on drop — declared last in
@@ -979,9 +704,8 @@ impl Drop for DirCleanup {
 }
 
 impl ScratchEnv {
-    fn create(work: &WorkContext, policy: ScratchPolicy) -> Result<Self> {
+    fn create(work: &WorkContext) -> Result<Self> {
         work.checkpoint().map_err(work_error)?;
-        policy.enforce(work).map_err(work_error)?;
         let cleanup = exclusive_scratch_dir()?;
         #[cfg(test)]
         if take_fail_after_exclusive_dir() {
@@ -992,17 +716,12 @@ impl ScratchEnv {
                 )),
             )));
         }
-        Self::open_owned(work, policy, cleanup)
+        Self::open_owned(cleanup)
     }
 
     #[cfg(test)]
-    fn create_at(
-        work: &WorkContext,
-        policy: ScratchPolicy,
-        path: &std::path::Path,
-    ) -> Result<Self> {
+    fn create_at(work: &WorkContext, path: &std::path::Path) -> Result<Self> {
         work.checkpoint().map_err(work_error)?;
-        policy.enforce(work).map_err(work_error)?;
         let cleanup = exclusive_create(path)?;
         if take_fail_after_exclusive_dir() {
             drop(cleanup);
@@ -1012,7 +731,7 @@ impl ScratchEnv {
                 )),
             )));
         }
-        Self::open_owned(work, policy, cleanup)
+        Self::open_owned(cleanup)
     }
 
     #[expect(
@@ -1021,7 +740,7 @@ impl ScratchEnv {
                   NO_SYNC weakens durability and scratch uses an exclusively \
                   created directory so no second environment opens it"
     )]
-    fn open_owned(work: &WorkContext, policy: ScratchPolicy, cleanup: DirCleanup) -> Result<Self> {
+    fn open_owned(cleanup: DirCleanup) -> Result<Self> {
         let mut options = heed::EnvOpenOptions::new().read_txn_without_tls();
         options
             .map_size(INITIAL_MAP)
@@ -1052,20 +771,11 @@ impl ScratchEnv {
             return Err(Error::from(error));
         }
         let databases = created.try_into().map_err(|_| allocation())?;
-        let _ = work;
         Ok(Self {
             env,
             databases,
             map_bytes: INITIAL_MAP,
-            accounting: ScratchAccounting {
-                charges: Vec::new(),
-                charged: 0,
-                logical: 0,
-                bucket_seq: 0,
-                policy,
-                #[cfg(test)]
-                map_full_after_reserve: 0,
-            },
+            state: ScratchState::default(),
             _cleanup: cleanup,
         })
     }
@@ -1136,7 +846,7 @@ impl ScratchEnv {
     ) -> Result<Option<Vec<u8>>> {
         let range = self.db(map).prefix_iter(txn, prefix).map_err(Error::from)?;
         for entry in range {
-            work.step(1).map_err(work_error)?;
+            work.checkpoint().map_err(work_error)?;
             let (physical, value) = entry.map_err(Error::from)?;
             let (stored_key, _) = split_bucket_value(value)?;
             if stored_key == key {
@@ -1155,6 +865,7 @@ impl ScratchEnv {
     ) -> Result<bool> {
         let work = work.clone();
         self.with_retry(move |env| {
+            work.checkpoint().map_err(work_error)?;
             let db = env.db(map);
             let mut physical = Vec::new();
             if Self::inline_key(key, &mut physical) {
@@ -1166,12 +877,9 @@ impl ScratchEnv {
                 {
                     return Ok(false);
                 }
-                let grown = physical.len() + value.len() + 32;
-                let mut batch = env.accounting.prepare_batch(&work, signed_bytes(grown)?)?;
-                batch.record(0, 1);
                 db.put(&mut wtxn, physical.as_slice(), value)
                     .map_err(Error::from)?;
-                env.accounting.finish_write(wtxn, batch)?;
+                env.state.finish_write(wtxn, env.state.bucket_seq)?;
                 return Ok(true);
             }
             // Oversized key: exact bucket membership before insertion.
@@ -1188,16 +896,13 @@ impl ScratchEnv {
             }
             let mut wtxn = env.env.write_txn().map_err(Error::from)?;
             let mut physical = prefix;
-            let seq = env.accounting.bucket_seq;
+            let seq = env.state.bucket_seq;
             physical.extend_from_slice(&seq.to_be_bytes());
             let stored = join_bucket_value(key, value);
-            let grown = physical.len() + stored.len() + 32;
-            let mut batch = env.accounting.prepare_batch(&work, signed_bytes(grown)?)?;
-            batch.record(0, 1);
-            batch.assign_bucket_seq(seq + 1);
+            let next_seq = seq.checked_add(1).ok_or_else(allocation)?;
             db.put(&mut wtxn, physical.as_slice(), stored.as_slice())
                 .map_err(Error::from)?;
-            env.accounting.finish_write(wtxn, batch)?;
+            env.state.finish_write(wtxn, next_seq)?;
             Ok(true)
         })
     }
@@ -1211,24 +916,18 @@ impl ScratchEnv {
     ) -> Result<bool> {
         let work = work.clone();
         self.with_retry(move |env| {
+            work.checkpoint().map_err(work_error)?;
             let db = env.db(map);
             let mut physical = Vec::new();
             if Self::inline_key(key, &mut physical) {
                 let mut wtxn = env.env.write_txn().map_err(Error::from)?;
-                let old = db
+                let fresh = db
                     .get(&wtxn, physical.as_slice())
                     .map_err(Error::from)?
-                    .map_or(0, |existing| physical.len() + existing.len() + 32);
-                let fresh = old == 0;
-                let new = physical.len() + value.len() + 32;
-                let delta = signed_bytes(new)? - signed_bytes(old)?;
-                let mut batch = env.accounting.prepare_batch(&work, delta)?;
-                if fresh {
-                    batch.record(0, 1);
-                }
+                    .is_none();
                 db.put(&mut wtxn, physical.as_slice(), value)
                     .map_err(Error::from)?;
-                env.accounting.finish_write(wtxn, batch)?;
+                env.state.finish_write(wtxn, env.state.bucket_seq)?;
                 return Ok(fresh);
             }
             let mut prefix = Vec::new();
@@ -1242,30 +941,18 @@ impl ScratchEnv {
                 (physical, false, None)
             } else {
                 let mut physical = prefix.clone();
-                let seq = env.accounting.bucket_seq;
+                let seq = env.state.bucket_seq;
                 physical.extend_from_slice(&seq.to_be_bytes());
                 (physical, true, Some(seq))
             };
             let stored = join_bucket_value(key, value);
-            let new = physical.len() + stored.len() + 32;
-            let old = if fresh {
-                0
-            } else {
-                db.get(&wtxn, physical.as_slice())
-                    .map_err(Error::from)?
-                    .map_or(0, |existing| physical.len() + existing.len() + 32)
+            let next_seq = match seq {
+                Some(seq) => seq.checked_add(1).ok_or_else(allocation)?,
+                None => env.state.bucket_seq,
             };
-            let delta = signed_bytes(new)? - signed_bytes(old)?;
-            let mut batch = env.accounting.prepare_batch(&work, delta)?;
-            if fresh {
-                batch.record(0, 1);
-            }
-            if let Some(seq) = seq {
-                batch.assign_bucket_seq(seq + 1);
-            }
             db.put(&mut wtxn, physical.as_slice(), stored.as_slice())
                 .map_err(Error::from)?;
-            env.accounting.finish_write(wtxn, batch)?;
+            env.state.finish_write(wtxn, next_seq)?;
             Ok(fresh)
         })
     }
@@ -1363,7 +1050,7 @@ impl ScratchEnv {
         // cannot serve as a continuation key for the physical map.
         let range = self.db(map).iter(&rtxn).map_err(Error::from)?;
         for entry in range {
-            work.step(1).map_err(work_error)?;
+            work.checkpoint().map_err(work_error)?;
             let (physical, raw) = entry.map_err(Error::from)?;
             let (key, value) = match physical.first() {
                 Some(0x00) => (&physical[1..], raw),
@@ -1408,7 +1095,7 @@ impl ScratchEnv {
         );
         let range = self.db(map).range(&rtxn, &bounds).map_err(Error::from)?;
         for entry in range {
-            work.step(1).map_err(work_error)?;
+            work.checkpoint().map_err(work_error)?;
             let (physical, value) = entry.map_err(Error::from)?;
             let keep = match physical.first() {
                 Some(0x00) => visit(&physical[1..], value)?,
@@ -1456,7 +1143,7 @@ impl ScratchEnv {
         match range.next() {
             None => Ok(false),
             Some(entry) => {
-                work.step(1).map_err(work_error)?;
+                work.checkpoint().map_err(work_error)?;
                 let (physical, value) = entry.map_err(Error::from)?;
                 match physical.first() {
                     Some(0x00) => {
@@ -1485,28 +1172,24 @@ impl ScratchEnv {
         self.with_retry(move |env| {
             let db = env.db(map);
             let mut wtxn = env.env.write_txn().map_err(Error::from)?;
-            let mut grown = 0usize;
             let mut physical = Vec::new();
-            let mut seq = env.accounting.bucket_seq;
+            let mut seq = env.state.bucket_seq;
             for (key, value) in batch {
-                work.step(1).map_err(work_error)?;
+                work.checkpoint().map_err(work_error)?;
                 if Self::inline_key(key, &mut physical) {
                     db.put(&mut wtxn, physical.as_slice(), value)
                         .map_err(Error::from)?;
-                    grown += physical.len() + value.len() + 32;
                 } else {
                     Self::bucket_prefix(key, &mut physical);
                     physical.extend_from_slice(&seq.to_be_bytes());
-                    seq += 1;
+                    seq = seq.checked_add(1).ok_or_else(allocation)?;
                     let stored = join_bucket_value(key, value);
                     db.put(&mut wtxn, physical.as_slice(), stored.as_slice())
                         .map_err(Error::from)?;
-                    grown += physical.len() + stored.len() + 32;
                 }
             }
-            let mut batch = env.accounting.prepare_batch(&work, signed_bytes(grown)?)?;
-            batch.assign_bucket_seq(seq);
-            env.accounting.finish_write(wtxn, batch)?;
+            work.checkpoint().map_err(work_error)?;
+            env.state.finish_write(wtxn, seq)?;
             Ok(())
         })
     }
@@ -1516,33 +1199,30 @@ impl ScratchEnv {
         let staged = batch.staged;
         self.with_retry(move |env| {
             let mut wtxn = env.env.write_txn().map_err(Error::from)?;
-            let mut grown = 0i64;
             let mut inserted = 0u64;
-            let mut seq = env.accounting.bucket_seq;
+            let mut seq = env.state.bucket_seq;
             let mut physical = Vec::new();
             for put in &staged {
-                work.step(1).map_err(work_error)?;
+                work.checkpoint().map_err(work_error)?;
                 let db = env.db(put.map);
                 if Self::inline_key(&put.key, &mut physical) {
                     // NO_OVERWRITE either inserts or returns the existing
                     // value in one tree walk. Fresh staged keys need no
                     // separate membership search before their insertion.
-                    let old = db
+                    let exists = db
                         .get_or_put(&mut wtxn, physical.as_slice(), put.value.as_ref())
                         .map_err(Error::from)?
-                        .map(|existing| physical.len() + existing.len() + 32);
-                    if put.if_absent && old.is_some() {
+                        .is_some();
+                    if put.if_absent && exists {
                         continue;
                     }
-                    if old.is_none() && put.map == ScratchMapId::Default {
+                    if !exists && put.map == ScratchMapId::Default {
                         inserted += 1;
                     }
-                    if old.is_some() {
+                    if exists {
                         db.put(&mut wtxn, physical.as_slice(), put.value.as_ref())
                             .map_err(Error::from)?;
                     }
-                    grown += signed_bytes(physical.len() + put.value.len() + 32)?
-                        - signed_bytes(old.unwrap_or(0))?;
                     continue;
                 }
                 let mut prefix = Vec::new();
@@ -1556,70 +1236,35 @@ impl ScratchEnv {
                 } else {
                     let mut physical = prefix;
                     physical.extend_from_slice(&seq.to_be_bytes());
-                    seq += 1;
+                    seq = seq.checked_add(1).ok_or_else(allocation)?;
                     (physical, true)
                 };
                 let stored = join_bucket_value(&put.key, &put.value);
                 if fresh && put.map == ScratchMapId::Default {
                     inserted += 1;
                 }
-                let new = physical_key.len() + stored.len() + 32;
-                let old = if fresh {
-                    0
-                } else {
-                    db.get(&wtxn, physical_key.as_slice())
-                        .map_err(Error::from)?
-                        .map_or(0, |existing| physical_key.len() + existing.len() + 32)
-                };
                 db.put(&mut wtxn, physical_key.as_slice(), stored.as_slice())
                     .map_err(Error::from)?;
-                grown += signed_bytes(new)? - signed_bytes(old)?;
             }
-            let mut ledger = env.accounting.prepare_batch(&work, grown)?;
-            ledger.assign_bucket_seq(seq);
-            env.accounting.finish_write(wtxn, ledger)?;
+            work.checkpoint().map_err(work_error)?;
+            env.state.finish_write(wtxn, seq)?;
             Ok(inserted)
         })
     }
 }
 
-impl ScratchAccounting {
-    fn prepare_batch(&self, work: &WorkContext, logical_delta: i64) -> Result<ScratchWriteBatch> {
-        let mut batch = ScratchWriteBatch::new();
-        batch.record(logical_delta, 0);
-        batch.target_charged = self.charged;
-        if logical_delta <= 0 {
-            return Ok(batch);
-        }
-        let grown = usize::try_from(logical_delta).map_err(|_| allocation())?;
-        self.policy.enforce(work).map_err(work_error)?;
-        let target_logical = self.logical.checked_add(grown).ok_or_else(allocation)?;
-        // Live growth inside the paid envelope needs no new reservation.
-        // Enforce both caps on the actual rounded growth, not logical bytes
-        // added to a counter which already contains that reserved capacity.
-        while target_logical > batch.target_charged {
-            batch.reservations.push(
-                self.policy
-                    .reserve(work, CHARGE_CHUNK as u64)
-                    .map_err(work_error)?,
-            );
-            batch.target_charged += CHARGE_CHUNK;
-        }
-        Ok(batch)
-    }
-
-    fn finish_write(&mut self, wtxn: heed::RwTxn<'_>, batch: ScratchWriteBatch) -> Result<()> {
+impl ScratchState {
+    fn finish_write(&mut self, wtxn: heed::RwTxn<'_>, next_bucket_seq: u64) -> Result<()> {
         #[cfg(test)]
-        if self.map_full_after_reserve > 0 {
-            self.map_full_after_reserve -= 1;
+        if self.map_full_before_commit > 0 {
+            self.map_full_before_commit -= 1;
             drop(wtxn);
-            batch.abort();
             return Err(Error::Lmdb(crate::error::LmdbFailure::Mdb(
                 heed::MdbError::MapFull,
             )));
         }
         wtxn.commit().map_err(Error::from)?;
-        batch.apply_to_env(self);
+        self.bucket_seq = next_bucket_seq;
         Ok(())
     }
 }

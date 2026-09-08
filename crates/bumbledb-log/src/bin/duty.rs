@@ -13,9 +13,8 @@
 //! the five-verb store) is deleted with those representations.
 
 use std::process::ExitCode;
-use std::time::Duration;
 
-use bumbledb::{ExecutionPolicy, Uuid, WorkContext};
+use bumbledb::{Uuid, WorkContext};
 
 use bumbledb_log::backup::{backup_root, read_backup_manifest, verify_backup};
 use bumbledb_log::certainty::AdminCertainty;
@@ -43,18 +42,8 @@ const LIMITS: Limits = Limits {
     result_bytes: 64 * 1024,
 };
 
-fn work() -> Result<WorkContext, String> {
-    ExecutionPolicy {
-        input_bytes: 1 << 32,
-        working_bytes: 1 << 32,
-        scratch_bytes: 1 << 34,
-        result_bytes: 1 << 32,
-        rows: u64::MAX,
-        work_units: u64::MAX,
-        timeout: Duration::from_hours(24),
-    }
-    .start()
-    .map_err(|error| format!("work budget: {error:?}"))
+fn work() -> WorkContext {
+    WorkContext::new()
 }
 
 /// One backend value over the two supported drivers. Production reads
@@ -311,7 +300,7 @@ fn backend_of(args: &Args, root_name: &str, standard: bool) -> Result<AnyStore, 
 )]
 fn run() -> Result<(), String> {
     let args = parse_args(std::env::args())?;
-    let work = work()?;
+    let work = work();
     let prefix = args.require("--prefix")?.to_string();
     let gc_policy = GcPolicy::DEFAULT;
     match args.command.as_str() {
@@ -519,7 +508,6 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bumbledb::work::Resource;
     use bumbledb_log::store::{ObjectKind, ReceiveLimits, get_verified, put_verified};
 
     fn scratch(tag: &str) -> std::path::PathBuf {
@@ -536,21 +524,11 @@ mod tests {
     }
 
     fn modest_work() -> WorkContext {
-        ExecutionPolicy {
-            input_bytes: 0,
-            working_bytes: 1 << 20,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 0,
-            work_units: 1_024,
-            timeout: Duration::from_secs(5),
-        }
-        .start()
-        .expect("work")
+        WorkContext::new()
     }
 
     #[test]
-    fn any_store_receive_object_and_receive_head_keep_charged_bytes_not_a_vec() {
+    fn any_store_receive_object_and_receive_head_return_owned_payloads() {
         let root = scratch("receive");
         let store = AnyStore::Fs(FsStore::new(&root));
         let ctx = modest_work();
@@ -560,30 +538,18 @@ mod tests {
             .create_head("t/HEAD", b"duty-head")
             .expect("create_head");
         let transport = TransportContext::new(&ctx, ReceiveLimits::capped(1 << 20));
-        let baseline = ctx.used(Resource::WorkingBytes);
         let body = get_verified(&store, "t", &reference, transport).expect("verified");
-        assert!(
-            ctx.used(Resource::WorkingBytes) > baseline,
-            "duty AnyStore must not hand out an uncharged Vec"
-        );
-        assert_eq!(body.as_bytes(), b"duty-payload");
+        assert_eq!(body.as_slice(), b"duty-payload");
         let received = store
             .receive_object(&reference.key("t"), transport)
             .expect("receive_object");
-        assert!(
-            received.into_charged().is_some(),
-            "receive_object keeps ChargedBytes when work is present"
-        );
+        assert_eq!(received, body);
         match store
             .receive_head("t/HEAD", transport)
             .expect("receive_head")
         {
             ReceivedHead::Present { body: head, .. } => {
-                assert_eq!(head.as_bytes(), b"duty-head");
-                assert!(
-                    head.into_charged().is_some(),
-                    "receive_head keeps ChargedBytes when work is present"
-                );
+                assert_eq!(head, b"duty-head");
             }
             ReceivedHead::Absent => panic!("duty AnyStore receive_head must see the created head"),
         }

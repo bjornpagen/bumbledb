@@ -4,16 +4,17 @@ import Bumbledb.Query.Denotation
 # Exec/Reach — interior DAG, one linear reach, the query denotation
 
 Level 0: `evalInteriors`, `reachOp`, `reachDen = lfpS`, `evalQuery`.
-The denotation is `evalQuery`; the budget is a resource abort.
+The denotation is `evalQuery`; a cancelled execution returns no partial answer.
 
 Level 1: `evalLinearReach`, `evalQueryList`, proved equal to Level 0.
 `fueledLoop` is a **private** termination metric (`missingCount_le` is
 why `cands.length + 1` always suffices). It is not a parameter of any
 public def and not a Bridge incompleteness caveat.
 
-Engine `DerivedBudgetExceeded` is incompleteness vs `evalQuery` —
-one derived-tuples ledger over interior tables and `reachDen` alike —
-the same class as `ResultBytesOverflow` vs `rulesAnswers`.
+The engine has no configured round or tuple limit. Cooperative cancellation,
+unavailable allocation capacity, and representation overflow are errors, not
+successful prefixes of `evalQuery`. These operational errors do not change
+the denotation or turn Lean's private termination metric into a runtime policy.
 
 ## Narrowings recorded (law 5)
 
@@ -914,4 +915,3 @@ theorem snapshot_single {q : Query} {I J : Instance} (C : Classify)
       (InteriorEnv.update_congr hW hrec) t
 
 end Bumbledb.Query
-

@@ -114,7 +114,7 @@ fn deliver_result(
     let mut delivered = 0;
     let mut terminal = false;
     while let Some(page) = cursor
-        .next_page_with_work(&work(), 1 << 20)
+        .next_page(&work())
         .map_err(|e| format!("cursor delivery: {e:?}"))?
     {
         if terminal {

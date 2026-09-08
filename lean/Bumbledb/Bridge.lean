@@ -532,9 +532,9 @@ def ledger : List Obligation := [
     "lean/conformance/cases",
 
   .row @Query.evalLinearReach_eq_lfp `Bumbledb.Query.evalLinearReach_eq_lfp
-    "The reach driver computes those answers when it terminates. DerivedBudgetExceeded is incompleteness vs evalQuery (interior tables and reachDen on one ledger) — not vs a fueled Lean evaluator (there isn't one)."
-    "run_reach (crates/bumbledb/src/api/prepared/reach.rs); Error::DerivedBudgetExceeded (crates/bumbledb/src/error.rs)"
-    "reach_budgets_are_exact_and_refusal_does_not_poison_reuse (crates/bumbledb/src/api/prepared/tests/reach.rs)",
+    "The reach driver returns the complete finite closure on success. Cancellation reports an error without a partial answer; there is no configured round or tuple limit. Lean's private termination metric is not an engine resource policy."
+    "run_reach (crates/bumbledb/src/api/prepared/reach.rs); WorkError::Cancelled (crates/bumbledb/src/work.rs)"
+    "cancelled_reach_publishes_no_prefix_and_allows_reuse (crates/bumbledb/src/api/prepared/tests/reach.rs); a_chain_of_66k_edges_completes_beyond_the_former_round_limit (crates/bumbledb-bench/src/querygen/tests.rs)",
 
   .row @Query.evalQuery_sound `Bumbledb.Query.evalQuery_sound
     "Interior DAG once, then either main rulesAnswers or reachDen plus main — listed by evalQueryList."

@@ -29,8 +29,8 @@ use crate::history::{
 use crate::manifest::RecoveryRoot;
 use crate::manifest::wire::{self, Reader};
 use crate::store::{
-    BackendError, ChargedBytes, ConditionalOutcome, ObjectError, ObjectKind, ObjectRef,
-    ObservedError, ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext,
+    BackendError, ConditionalOutcome, ObjectError, ObjectKind, ObjectRef, ObservedError,
+    ReceiveLimits, ReceivedBody, ReceivedHead, ReceivingStore, TransportContext,
     backend as backend_error, get_verified, hex32, read_head_bounded,
 };
 
@@ -267,7 +267,7 @@ where
     let key = reference.key(dest_prefix);
     // put_object is idempotent for identical bytes and refuses conflicts.
     destination
-        .put_object(&key, bytes.as_bytes())
+        .put_object(&key, bytes.as_slice())
         .map_err(backend_error)
         .map_err(BackupError::Object)?;
     // Verified bytes: read back from the destination, not trust in the PUT.
@@ -278,12 +278,12 @@ where
         TransportContext::new(work, ReceiveLimits::exact(reference.length)),
     )
     .map_err(|_| BackupError::Incomplete { key: key.clone() })?;
-    if copied.as_bytes() != bytes.as_bytes() {
+    if copied.as_slice() != bytes.as_slice() {
         return Err(BackupError::Incomplete { key });
     }
     let length = bytes.len() as u64;
-    drop(copied.into_owner());
-    drop(bytes.into_owner());
+    drop(copied);
+    drop(bytes);
     Ok(length)
 }
 
@@ -321,10 +321,10 @@ where
             &reference,
             TransportContext::new(self.work, ReceiveLimits::exact(reference.length)),
         )?;
-        if copied.as_bytes() != bytes {
+        if copied.as_slice() != bytes {
             return Err(ObjectError::WrongDigest { key });
         }
-        drop(copied.into_owner());
+        drop(copied);
         *self.bytes += reference.length;
         *self.objects += 1;
         self.decisions.push(CopiedDecision {
@@ -381,14 +381,14 @@ where
     //    destination after the copy.
     let (checkpoint, application_digest, system_digest) = match root.checkpoint {
         Some(reference) => {
-            let charged = get_verified(
+            let received = get_verified(
                 source,
                 source_prefix,
                 &reference,
                 TransportContext::new(work, ReceiveLimits::exact(reference.length)),
             )?;
-            let checkpoint_manifest = codec::decode_manifest(charged.as_bytes(), stream)?;
-            drop(charged.into_owner());
+            let checkpoint_manifest = codec::decode_manifest(received.as_slice(), stream)?;
+            drop(received);
             if checkpoint_manifest.identity != identity {
                 return Err(BackupError::Corrupt("checkpoint names a foreign identity"));
             }
@@ -488,7 +488,7 @@ where
             )
             .map_err(BackupError::Object)?
             {
-                ReceivedHead::Present { body, .. } if body.as_bytes() == encoded => false,
+                ReceivedHead::Present { body, .. } if body.as_slice() == encoded => false,
                 ReceivedHead::Present { .. } => return Err(BackupError::ConflictingOperation),
                 ReceivedHead::Absent => return Err(BackupError::CompletionUnresolved),
             }
@@ -660,7 +660,7 @@ where
 {
     work.checkpoint()?;
     let key = backup_manifest_key(dest_prefix, operation);
-    let charged = match read_head_bounded(
+    let received = match read_head_bounded(
         destination,
         &key,
         TransportContext::new(work, ReceiveLimits::capped(MANIFEST_CAP as u64)),
@@ -670,9 +670,9 @@ where
         ReceivedHead::Present { body, .. } => body,
         ReceivedHead::Absent => return Err(BackupError::Incomplete { key }),
     };
-    let manifest = decode_backup_manifest(charged.as_bytes())?;
-    let digest = *blake3::hash(charged.as_bytes()).as_bytes();
-    drop(charged);
+    let manifest = decode_backup_manifest(received.as_slice())?;
+    let digest = *blake3::hash(received.as_slice()).as_bytes();
+    drop(received);
     if manifest.operation != operation {
         return Err(BackupError::ConflictingOperation);
     }
@@ -711,15 +711,15 @@ where
     let mut objects = 0u64;
     let mut bytes = 0u64;
     if let Some(reference) = manifest.checkpoint {
-        let charged = get_verified(
+        let received = get_verified(
             destination,
             dest_prefix,
             &reference,
             TransportContext::new(work, ReceiveLimits::exact(reference.length)),
         )?;
-        let checkpoint_manifest = codec::decode_manifest(charged.as_bytes(), stream)?;
-        let manifest_len = charged.len() as u64;
-        drop(charged.into_owner());
+        let checkpoint_manifest = codec::decode_manifest(received.as_slice(), stream)?;
+        let manifest_len = received.len() as u64;
+        drop(received);
         if checkpoint_manifest.identity != manifest.identity
             || checkpoint_manifest.decision != manifest.base
             || checkpoint_manifest.application_digest != manifest.application_digest
@@ -741,7 +741,7 @@ where
             )?;
             objects += 1;
             bytes += chunk_bytes.len() as u64;
-            drop(chunk_bytes.into_owner());
+            drop(chunk_bytes);
         }
     }
     // The tail chain must connect tip back to base through exactly the
@@ -769,7 +769,7 @@ where
         .map_err(|_| BackupError::Incomplete {
             key: reference.key(dest_prefix),
         })?;
-        let envelope = decision::decode_decision(body.as_bytes(), limits)
+        let envelope = decision::decode_decision(body.as_slice(), limits)
             .map_err(|_| BackupError::Corrupt("backed-up decision malformed"))?;
         if envelope.stamp() != expected {
             return Err(BackupError::Corrupt("backed-up decision stamp mismatch"));
@@ -777,7 +777,7 @@ where
         objects += 1;
         bytes += body.len() as u64;
         expected = envelope.parent;
-        drop(body.into_owner());
+        drop(body);
     }
     if expected != manifest.base {
         return Err(BackupError::Corrupt("tail chain does not reach the base"));
@@ -829,7 +829,7 @@ where
     Dst: ReceivingStore,
     Dst::Error: BackendError + ObservedError,
 {
-    type Item = Result<ChargedBytes, BackupError>;
+    type Item = Result<ReceivedBody, BackupError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.done {
@@ -861,7 +861,7 @@ where
                 return Some(Err(BackupError::Object(error)));
             }
         };
-        let Ok(envelope) = decision::decode_decision(body.as_bytes(), self.limits) else {
+        let Ok(envelope) = decision::decode_decision(body.as_slice(), self.limits) else {
             self.done = true;
             return Some(Err(BackupError::Corrupt("backed-up decision malformed")));
         };
@@ -878,7 +878,7 @@ where
             )));
         }
         // Advance along the recorded parent-stamp chain — never follow a
-        // source-location ObjectRef. The charged owner is the item.
+        // source-location ObjectRef. The received buffer is the iterator item.
         self.expected = envelope.stamp();
         Some(Ok(body))
     }

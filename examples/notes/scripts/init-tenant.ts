@@ -31,7 +31,7 @@ import { decodeRuntimeContract, initialize } from "@bjornpagen/bumbledb-log/migr
 import { Effect, Result } from "effect"
 import { saveTenantBinding } from "../src/db/bindings.ts"
 import { generatedDirectory, loadGeneratedMigrations } from "../src/db/generated.ts"
-import { adminWork, runtimePolicy } from "../src/db/runtime-policy.ts"
+import { runtimePolicy } from "../src/db/runtime-policy.ts"
 
 const MIGRATIONS_DIR = generatedDirectory()
 
@@ -91,7 +91,7 @@ async function main(): Promise<void> {
 				}
 
 	const outcome = await Effect.runPromise(
-		initialize(binding, plans, { ...adminWork, operationId }).pipe(
+		initialize(binding, plans, { operationId }).pipe(
 			Effect.provide(NativeRuntime.layer(runtimePolicy.native))
 		)
 	)

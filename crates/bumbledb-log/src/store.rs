@@ -18,8 +18,7 @@
 //! HEAD/object reads are only [`ReceivingStore::receive_head`] /
 //! [`ReceivingStore::receive_object`]. Those verbs report
 //! [`TransportObservation`]; they do not emit a publication verdict.
-//! [`get_verified`] keeps the receive reservation on [`ChargedBytes`] until
-//! the caller decodes or drops it.
+//! [`get_verified`] transfers one received buffer to the caller for decoding.
 
 pub mod fence;
 pub mod fs;
@@ -28,7 +27,6 @@ pub mod receive;
 #[cfg(feature = "store")]
 pub mod s3;
 
-pub use bumbledb::work::ChargedBytes;
 pub use fence::{
     DirectoryLock, HeldLock, LockIdentity, RepositoryLock, acquire_directory,
     acquire_repository_lock,
@@ -341,7 +339,7 @@ where
                     receive: ReceiveLimits::exact(bytes.len() as u64),
                 },
             ) {
-                Ok(body) if body.as_bytes() == bytes => {}
+                Ok(body) if body.as_slice() == bytes => {}
                 Ok(_) => return Err(ObjectError::ImmutableConflict { key }),
                 Err(error) => match error.observation() {
                     TransportObservation::Missing => {
@@ -360,27 +358,21 @@ where
 
 /// Fetch one referenced object and verify its length and domain-separated
 /// digest. The caller's [`TransportContext`] work and envelope bind the
-/// read; the receive reservation stays on the returned [`ChargedBytes`]
-/// until the caller decodes or drops it.
+/// read; the returned buffer is the receive buffer, without a second copy.
 ///
 /// # Errors
-/// Missing work context, backend failure, definite absence, cap overrun,
+/// Cancellation, backend failure, definite absence, cap overrun,
 /// or verification refusal.
 pub fn get_verified<B: ReceivingStore>(
     backend_store: &B,
     prefix: &str,
     reference: &ObjectRef,
     ctx: TransportContext<'_>,
-) -> Result<ChargedBytes, ObjectError>
+) -> Result<ReceivedBody, ObjectError>
 where
     B::Error: BackendError + ObservedError,
 {
-    if ctx.work.is_none() {
-        return Err(backend(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "get_verified requires WorkContext",
-        )));
-    }
+    ctx.checkpoint().map_err(backend)?;
     let key = reference.key(prefix);
     let receive = ReceiveLimits::capped(ctx.receive.max_bytes.min(reference.length));
     let body = backend_store
@@ -392,13 +384,9 @@ where
             },
         )
         .map_err(|error| map_receive(&key, error))?;
-    receive::verify_body(&key, reference.kind, reference, body.as_bytes())?;
-    body.into_charged().ok_or_else(|| {
-        backend(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "receive dropped its reservation before decode",
-        ))
-    })
+    receive::verify_body(&key, reference.kind, reference, body.as_slice(), ctx)?;
+    ctx.checkpoint().map_err(backend)?;
+    Ok(body)
 }
 
 fn map_receive<E: BackendError + ObservedError>(key: &str, error: E) -> ObjectError {
@@ -446,7 +434,7 @@ pub fn fetch_decision_ref<B: ReceivingStore>(
     prefix: &str,
     reference: &ObjectRef,
     ctx: TransportContext<'_>,
-) -> Result<ChargedBytes, ObjectError>
+) -> Result<ReceivedBody, ObjectError>
 where
     B::Error: BackendError + ObservedError,
 {
@@ -484,10 +472,10 @@ where
             Ok(body) => {
                 // Decisions are content addressed under their own digest
                 // domain; verify before interpretation.
-                if object_digest(ObjectKind::Decision, body.as_bytes()) != *digest.as_bytes() {
+                if object_digest(ObjectKind::Decision, body.as_slice()) != *digest.as_bytes() {
                     return Err(ObjectError::WrongDigest { key });
                 }
-                return Ok((epoch, body.as_bytes().to_vec()));
+                return Ok((epoch, body.as_slice().to_vec()));
             }
             Err(error) if error.observation() == TransportObservation::Missing => {
                 if epoch == epoch_floor {

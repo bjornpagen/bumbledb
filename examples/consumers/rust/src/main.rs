@@ -13,11 +13,9 @@
 //!
 //! Verification: NotRun until packed-consumer qualification.
 
-use std::time::Duration;
-
 use bumbledb::{
     Admission, ApplyExpected, ApplyOutcome, BindValue, ChangeSet, ChangeSetBuilder, CloseReport,
-    Db, ExecutionPolicy, F64, Fact, Interval, Uuid, WorkContext, start_operation,
+    Db, F64, Fact, Interval, Uuid, WorkContext,
 };
 
 bumbledb::schema! {
@@ -38,32 +36,9 @@ bumbledb::schema! {
     Student(id) <=[units]{0..budget} Attempt(student);
 }
 
-/// Finite host policy. Zero means none; nothing here invents MAX/year.
+/// A caller-controlled cancellation context, not an allocation quota.
 fn work() -> WorkContext {
-    start_operation(ExecutionPolicy {
-        input_bytes: 4_000_000,
-        working_bytes: 16_000_000,
-        scratch_bytes: 16_000_000,
-        result_bytes: 4_000_000,
-        rows: 100_000,
-        work_units: 10_000_000,
-        timeout: Duration::from_secs(10),
-    })
-    .expect("finite work")
-}
-
-/// A budget that cannot pay for a completed two-row answer.
-fn tiny_delivery() -> WorkContext {
-    start_operation(ExecutionPolicy {
-        input_bytes: 4_000_000,
-        working_bytes: 16_000_000,
-        scratch_bytes: 16_000_000,
-        result_bytes: 8,
-        rows: 100_000,
-        work_units: 10_000_000,
-        timeout: Duration::from_secs(2),
-    })
-    .expect("tiny delivery work")
+    WorkContext::new()
 }
 
 fn insert_fact<'a, F: Fact<'a>>(
@@ -194,16 +169,23 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         "one student, one exact grouped summary row"
     );
 
-    // Tiny delivery work is a fresh frame budget: it does not inherit the snapshot.
-    let tiny = tiny_delivery();
+    // Cancellation is per operation, not inherited from the snapshot lifetime.
+    let cancelled = WorkContext::new();
     let snapshot = db.snapshot(&work)?;
-    let frame = snapshot.frame(&tiny);
-    let mut oversized = frame.prepare(&attempts_for)?;
-    assert!(
+    let frame = snapshot.frame(&cancelled);
+    let mut reusable = frame.prepare(&attempts_for)?;
+    cancelled.cancel();
+    let error = frame
+        .execute_collect(&mut reusable, &[BindValue::Uuid(student_id.0)])
+        .expect_err("cancelled execution refuses");
+    assert!(matches!(error, bumbledb::Error::Store(error)
+            if matches!(*error, bumbledb::store::StoreError::Work(bumbledb::work::WorkError::Cancelled))));
+    let frame = snapshot.frame(&work);
+    assert_eq!(
         frame
-            .execute_collect(&mut oversized, &[BindValue::Uuid(student_id.0)])
-            .is_err(),
-        "D07: a result-bytes cap of 8 must refuse a two-row collect"
+            .execute_collect(&mut reusable, &[BindValue::Uuid(student_id.0)])?
+            .len(),
+        2
     );
     drop(snapshot);
 

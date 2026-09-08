@@ -2,15 +2,13 @@
 //! slot lock from one canonical-row scan. Heap epochs never enter the
 //! generation map — a heap instance has no durable identity to key by, so
 //! its images rebuild per execution (correctness over reuse).
-//! Admission is charged onto the shared image before slab growth.
-//! Cache refusal is [`ResidentAdmit::BeyondMemory`], not a swallowed
-//! allocation Error — L05 execute/spill must open scratch text from it.
+//! Images allocate normally and publish only after their complete scan succeeds.
 use std::sync::{Arc, Mutex};
 
 use crate::api::prepared::source::QuerySource;
 use crate::error::Result;
 use crate::image::ViewEpoch;
-use crate::image::{RelationImage, ResidentAdmit, build_from_source, synthesize_closed};
+use crate::image::{RelationImage, build_from_source, synthesize_closed};
 use crate::schema::Schema;
 use crate::storage::store::RelationVersion;
 use crate::work::GenerationHandle;
@@ -26,7 +24,7 @@ impl ImageCache {
         schema: &Schema,
         rel: RelationId,
         epoch: ViewEpoch,
-    ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
+    ) -> Result<Arc<RelationImage>> {
         let generation = self.acquire();
         self.get_or_build_with(source, schema, rel, epoch, &generation)
     }
@@ -40,7 +38,7 @@ impl ImageCache {
         rel: RelationId,
         epoch: ViewEpoch,
         generation: &GenerationHandle,
-    ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
+    ) -> Result<Arc<RelationImage>> {
         match (self.slot(rel), epoch) {
             (RelationSlot::Closed(slot), ViewEpoch::Closed) => {
                 self.get_or_synthesize(schema, rel, slot, generation)
@@ -68,36 +66,31 @@ impl ImageCache {
         cache: &VersionCache,
         version: RelationVersion,
         generation: &GenerationHandle,
-    ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
+    ) -> Result<Arc<RelationImage>> {
         {
             let inner = cache.lock();
             if let Some(cached) = inner.map.get(&version)
                 && cached.image.generation().ptr_eq(generation)
             {
-                return Ok(ResidentAdmit::Ready(Arc::clone(&cached.image)));
+                return Ok(Arc::clone(&cached.image));
             }
         }
-        let image = match build_from_source(source, schema, generation, rel)? {
-            ResidentAdmit::Ready(image) => image,
-            ResidentAdmit::BeyondMemory(exhausted) => {
-                return Ok(ResidentAdmit::BeyondMemory(exhausted));
-            }
-        };
+        let image = build_from_source(source, schema, generation, rel)?;
 
         let mut inner = cache.lock();
         if version < inner.newest || !generation.ptr_eq(&self.acquire()) {
-            return Ok(ResidentAdmit::Ready(image));
+            return Ok(image);
         }
         inner.newest = version;
         match inner.map.entry(version) {
             std::collections::hash_map::Entry::Occupied(mut winner) => {
                 if winner.get().image.generation().ptr_eq(generation) {
-                    Ok(ResidentAdmit::Ready(Arc::clone(&winner.get().image)))
+                    Ok(Arc::clone(&winner.get().image))
                 } else {
                     winner.insert(Cached {
                         image: Arc::clone(&image),
                     });
-                    Ok(ResidentAdmit::Ready(image))
+                    Ok(image)
                 }
             }
             std::collections::hash_map::Entry::Vacant(slot) => {
@@ -105,7 +98,7 @@ impl ImageCache {
                     image: Arc::clone(&image),
                 });
                 inner.map.retain(|&v, _| v >= version);
-                Ok(ResidentAdmit::Ready(image))
+                Ok(image)
             }
         }
     }
@@ -116,27 +109,22 @@ impl ImageCache {
         rel: RelationId,
         slot: &Mutex<Option<Arc<RelationImage>>>,
         generation: &GenerationHandle,
-    ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
+    ) -> Result<Arc<RelationImage>> {
         if let Some(image) = slot.lock().expect("closed cache mutex").as_ref()
             && image.generation().ptr_eq(generation)
         {
-            return Ok(ResidentAdmit::Ready(Arc::clone(image)));
+            return Ok(Arc::clone(image));
         }
-        let built = match synthesize_closed(rel, schema.relation(rel), generation.clone())? {
-            ResidentAdmit::Ready(built) => built,
-            ResidentAdmit::BeyondMemory(exhausted) => {
-                return Ok(ResidentAdmit::BeyondMemory(exhausted));
-            }
-        };
+        let built = synthesize_closed(rel, schema.relation(rel), generation.clone())?;
         let mut slot = slot.lock().expect("closed cache mutex");
         if let Some(winner) = slot.as_ref()
             && winner.generation().ptr_eq(generation)
         {
-            return Ok(ResidentAdmit::Ready(Arc::clone(winner)));
+            return Ok(Arc::clone(winner));
         }
         if generation.ptr_eq(&self.acquire()) {
             *slot = Some(Arc::clone(&built));
         }
-        Ok(ResidentAdmit::Ready(built))
+        Ok(built)
     }
 }

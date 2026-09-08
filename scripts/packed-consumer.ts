@@ -7,23 +7,20 @@ import * as path from "node:path"
 import { Db, DbError } from "@bjornpagen/bumbledb"
 import { ProtocolError, protocolErrorCodes } from "@bjornpagen/bumbledb-log"
 import { AuthoringError } from "@bjornpagen/bumbledb"
-import { Effect, Exit } from "effect"
+import { Effect, Exit, Stream } from "effect"
 import {
 	Learning,
 	attemptsFor,
-	collectUnderTinyBudget,
 	coreProgram,
 	drainPages,
 	incrementUnits,
 	incrementUnitsAsF64,
 	makeConsumerRuntime,
 	newAttempt,
-	readAttempts,
-	tinyDelivery,
-	work
+	readAttempts
 } from "./core-ts/consumer.ts"
 import { incrementUnitsIntent, knownInvalidMixRefuses, mintIntent } from "./log-ts/consumer.ts"
-import { collectPublishedUnderTinyBudget, mintCommand } from "./native-ledger/consumer.ts"
+import { readPublishedAttempts, mintCommand } from "./native-ledger/consumer.ts"
 
 const consumer = createRequire(import.meta.url)
 const core = createRequire(consumer.resolve("@bjornpagen/bumbledb"))
@@ -49,17 +46,17 @@ const authoringRecovery = Effect.gen(function* () {
 }).pipe(Effect.catchTag("AuthoringError", (failure) => Effect.succeed(failure.message)))
 assert.equal(Effect.runSync(authoringRecovery), "packed authoring refusal")
 
-const resourceError = new DbError({
+const cancelledError = new DbError({
 	operation: "packed-consumer",
-	reason: { _tag: "ResourceLimit", dimension: "workingBytes", used: 0n, requested: 10n, limit: 9n }
+	reason: { _tag: "Cancelled" }
 })
 assert.equal(
 	Effect.runSync(
-		Effect.fail(resourceError).pipe(
-			Effect.catchReason("DbError", "ResourceLimit", (reason) => Effect.succeed(reason.limit))
+		Effect.fail(cancelledError).pipe(
+			Effect.catchReason("DbError", "Cancelled", (reason) => Effect.succeed(reason._tag))
 		)
 	),
-	9n
+	"Cancelled"
 )
 assert.ok(protocolErrorCodes.includes("ForeignIdentity"))
 assert.equal(
@@ -86,29 +83,22 @@ try {
 				const studentId = crypto.randomUUID()
 				const attemptId = crypto.randomUUID()
 				const store = path.join(dir, "d07")
-				const db = yield* Db.create(store, Learning, work)
-				const changes = yield* newAttempt(studentId, attemptId, work)
-				const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+				const db = yield* Db.create(store, Learning)
+				const changes = yield* newAttempt(studentId, attemptId)
+				const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 				assert.ok(outcome.kind === "accepted" || outcome.kind === "no-change")
-				const snapshot = yield* db.snapshot(work)
-				const rows = yield* readAttempts(snapshot, studentId, work)
+				const snapshot = yield* db.snapshot()
+				const rows = yield* readAttempts(snapshot, studentId)
 				assert.ok(rows.length >= 1)
-				const paged = yield* drainPages(snapshot, studentId, work)
+				const paged = yield* drainPages(snapshot, studentId)
 				assert.equal(paged, rows.length, "D07: pages and collect must agree on admitted rows")
-				const tiny = yield* Effect.exit(collectUnderTinyBudget(snapshot, studentId))
-				assert.ok(Exit.isFailure(tiny), "D07: tiny collect must fail, not return a complete page")
-				const tinyLedger = yield* Effect.exit(collectPublishedUnderTinyBudget(snapshot, studentId))
-				assert.ok(Exit.isFailure(tinyLedger), "D07: native-ledger tiny collect must fail")
-				const cursor = yield* snapshot.execute(attemptsFor, { student: studentId }, work)
-				const refused = yield* Effect.exit(
-					cursor.collect({ maxBytes: tinyDelivery.resultBytes }, tinyDelivery)
-				)
-				assert.ok(Exit.isFailure(refused), "D07: same-cursor tiny collect must refuse")
-				const retried = yield* cursor.collect({ maxBytes: work.resultBytes }, work)
-				assert.ok(
-					retried.length >= 1,
-					"D12: predelivery refusal must return no data and leave the cursor unadvanced"
-				)
+				assert.deepEqual(yield* readPublishedAttempts(snapshot, studentId), rows)
+				const result = yield* snapshot.execute(attemptsFor, { student: studentId })
+				assert.deepEqual(yield* result.collect(), rows)
+				assert.deepEqual(yield* result.collect(), rows, "collection does not consume the result")
+				const pages = result.pages()
+				assert.equal(yield* pages.pipe(Stream.runFold(() => 0, (count, page) => count + page.length)), rows.length)
+				assert.ok(Exit.isFailure(yield* Effect.exit(result.collect())), "paging transfers the result once")
 				return yield* db.close()
 			})
 		)

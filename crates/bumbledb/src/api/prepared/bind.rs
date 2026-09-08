@@ -5,6 +5,7 @@ use super::{
 
 use crate::error::{Error, Mismatch, Result};
 use crate::image::intern::InternerHandle;
+use crate::image::view::ResolvedWords;
 use crate::ir::{ParamId, Value};
 use crate::work::WorkContext;
 use bumbledb_theory::schema::IntervalElement;
@@ -31,18 +32,18 @@ impl<S> PreparedQuery<S> {
         self.visit_rules_mut(|rule| {
             if let PreparedRule::FreeJoin(rule) = rule {
                 forget_resolved_text(rule);
-                rule.memo.trim();
+                rule.memo.invalidate();
             }
         });
         self.visit_rec_arms_mut(|arm| {
             forget_resolved_text(arm);
-            arm.memo.trim();
+            arm.memo.invalidate();
         });
         self.derived = super::reach::DerivedImages::default();
-        self.resolve_memo.forget_scratch();
+        self.resolve_memo.clear();
         for memo in &mut self.param_word_memo {
+            memo.text = None;
             memo.word = None;
-            memo.epoch = None;
         }
         self.text_generation = Some(generation.downgrade());
     }
@@ -58,82 +59,6 @@ impl<S> PreparedQuery<S> {
         self.visit_rec_arms_mut(|arm| {
             arm.executor = Executor::with_batch_size(&arm.plan, batch);
         });
-    }
-
-    /// Drop the execution-local scratch store only after forgetting every
-    /// memo that named its tokens. Scratch literal templates keep their
-    /// original bytes; only the per-execution resolved slots contain tags.
-    pub(super) fn release_text_store(&mut self) {
-        if self.nonresident.is_some() {
-            self.visit_rules_mut(|rule| {
-                if let PreparedRule::FreeJoin(fj) = rule {
-                    forget_resolved_text(fj);
-                }
-            });
-            self.visit_rec_arms_mut(forget_resolved_text);
-        }
-        for memo in &mut self.param_word_memo {
-            if memo.word.is_some_and(crate::image::is_scratch_token) {
-                memo.word = None;
-                memo.epoch = None;
-            }
-        }
-        self.resolve_memo.forget_scratch();
-        self.nonresident = None;
-    }
-
-    /// After spill, rewrite live String params into the store so filter
-    /// `Const::Param` and sink words share one namespace with row tokens.
-    pub(super) fn rehome_bound_text(
-        &mut self,
-        interner: &InternerHandle<'_>,
-        work: &WorkContext,
-    ) -> Result<()> {
-        let Some(store) = self.nonresident.as_mut() else {
-            return Ok(());
-        };
-        for idx in 0..self.params.len() {
-            let string_param = matches!(
-                &self.params[idx],
-                super::ParamSpec::Scalar {
-                    ty: ValueType::String,
-                    ..
-                } | super::ParamSpec::Set {
-                    elem: ValueType::String,
-                    ..
-                }
-            );
-            if !string_param {
-                continue;
-            }
-            match &mut self.resolved_params[idx] {
-                Const::Word(token) if crate::image::is_resident_token(*token) => {
-                    let Some(text) = interner.with_text(*token, std::borrow::ToOwned::to_owned)
-                    else {
-                        continue;
-                    };
-                    *token = store.intern(&text, work)?;
-                    if let Some(memo) = self.param_word_memo.get_mut(idx) {
-                        memo.word = Some(*token);
-                        memo.epoch = Some(store.epoch());
-                    }
-                }
-                Const::WordSet(words) => {
-                    for word in words.iter_mut() {
-                        if crate::image::is_resident_token(*word) {
-                            let Some(text) =
-                                interner.with_text(*word, std::borrow::ToOwned::to_owned)
-                            else {
-                                continue;
-                            };
-                            *word = store.intern(&text, work)?;
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        Ok(())
     }
 
     /// Foreign snapshot is a typed error before anything else runs.
@@ -240,16 +165,11 @@ impl<S> PreparedQuery<S> {
 
                 if matches!(ty, ValueType::String)
                     && let BindValue::Str(text) = value
+                    && let Some(resolved) = self.param_word_memo[idx].resolved(text)
                 {
-                    let memo = &self.param_word_memo[idx];
-                    if let Some(word) = memo.word
-                        && memo.text == text
-                        && param_memo_live(memo, self.nonresident.as_ref())
-                    {
-                        self.resolved_params[idx] = Const::Word(word);
-                        self.missed_params[idx] = false;
-                        return Ok(());
-                    }
+                    self.resolved_params[idx] = resolved;
+                    self.missed_params[idx] = false;
+                    return Ok(());
                 }
                 let owner = &self.text_generation;
                 let cache = &self.cache;
@@ -259,7 +179,7 @@ impl<S> PreparedQuery<S> {
                         .and_then(crate::work::cache::WeakGenerationHandle::upgrade)
                         .unwrap_or_else(|| cache.acquire());
                     let interner = InternerHandle::new(&generation, work);
-                    super::text::intern_admitted(&interner, &mut self.nonresident, text, work)
+                    interner.intern(text).map(Const::Text)
                 })?
                 else {
                     return Err(Error::ParamTypeMismatch {
@@ -267,26 +187,8 @@ impl<S> PreparedQuery<S> {
                         expected: *ty,
                     });
                 };
-                if let (BindValue::Str(text), ValueType::String) = (value, ty)
-                    && let Const::Word(word) = &resolved
-                {
-                    let memo = &mut self.param_word_memo[idx];
-                    memo.text.clear();
-                    memo.text.push_str(text);
-                    if crate::image::is_resident_token(*word) {
-                        memo.word = Some(*word);
-                        memo.epoch = None;
-                    } else if crate::image::is_scratch_token(*word) {
-                        // Execution-local: bound to the minting store's owner epoch.
-                        memo.word = Some(*word);
-                        memo.epoch = self
-                            .nonresident
-                            .as_ref()
-                            .map(crate::image::NonresidentTextStore::epoch);
-                    } else {
-                        memo.word = None;
-                        memo.epoch = None;
-                    }
+                if let (BindValue::Str(_), ValueType::String) = (value, ty) {
+                    self.param_word_memo[idx].remember(&resolved);
                 }
 
                 if *point && matches!(resolved, Const::Word(u64::MAX)) {
@@ -319,7 +221,7 @@ impl<S> PreparedQuery<S> {
                 words.clear();
                 words
             }
-            _ => Vec::new(),
+            _ => Box::default(),
         };
         // Numeric sets never need a text generation. String sets acquire it
         // once, lazily, and keep the same resolver for every element.
@@ -334,7 +236,7 @@ impl<S> PreparedQuery<S> {
         for (element, value) in values.iter().enumerate() {
             let Some(word_count) = element_words(value, expected, &mut words, |text| {
                 let interner = InternerHandle::new(&generation, work);
-                super::text::intern_admitted(&interner, &mut self.nonresident, text, work)
+                interner.intern(text).map(Const::Text)
             })?
             else {
                 // Park the pooled Vec back before erroring: the slot
@@ -350,7 +252,7 @@ impl<S> PreparedQuery<S> {
             };
             debug_assert_eq!(word_count, element_width, "one span per element");
 
-            if point && words.last() == Some(&u64::MAX) {
+            if point && words.words.last() == Some(&u64::MAX) {
                 words.clear();
                 self.resolved_params[idx] = Const::WordSet(words);
                 return Err(Error::PointParamAtCeiling { param });
@@ -358,24 +260,25 @@ impl<S> PreparedQuery<S> {
         }
 
         if element_width == 1 {
-            words.sort_unstable();
-            words.dedup();
+            words.words.sort_unstable();
+            words.words.dedup();
+            words.dedup_texts();
         } else {
             match element_width {
-                2 => sort_dedup_spans::<2>(&mut words),
-                3 => sort_dedup_spans::<3>(&mut words),
-                4 => sort_dedup_spans::<4>(&mut words),
-                5 => sort_dedup_spans::<5>(&mut words),
-                6 => sort_dedup_spans::<6>(&mut words),
-                7 => sort_dedup_spans::<7>(&mut words),
-                8 => sort_dedup_spans::<8>(&mut words),
+                2 => sort_dedup_spans::<2>(&mut words.words),
+                3 => sort_dedup_spans::<3>(&mut words.words),
+                4 => sort_dedup_spans::<4>(&mut words.words),
+                5 => sort_dedup_spans::<5>(&mut words.words),
+                6 => sort_dedup_spans::<6>(&mut words.words),
+                7 => sort_dedup_spans::<7>(&mut words.words),
+                8 => sort_dedup_spans::<8>(&mut words.words),
                 _ => unreachable!("bytes<N> spans are 2..=8 words (N ≤ 64)"),
             }
         }
 
         // The empty set matches nothing under Eq on a positive occurrence;
         // the miss short-circuit machinery carries exactly that.
-        self.missed_params[idx] = words.is_empty();
+        self.missed_params[idx] = words.words.is_empty();
         self.resolved_params[idx] = Const::WordSet(words);
         Ok(())
     }
@@ -402,8 +305,8 @@ fn sort_dedup_spans<const K: usize>(words: &mut Vec<u64>) {
 fn element_words(
     value: &Value,
     expected: &ValueType,
-    out: &mut Vec<u64>,
-    intern_text: impl FnOnce(&str) -> Result<u64>,
+    out: &mut ResolvedWords,
+    intern_text: impl FnOnce(&str) -> Result<Const>,
 ) -> Result<Option<usize>> {
     if let ValueType::FixedBytes { len } = expected {
         let Value::FixedBytes(raw) = value else {
@@ -413,7 +316,7 @@ fn element_words(
             return Ok(None);
         }
         let (words, count) = crate::ir::normalize::fixed_bytes_word_buf(raw);
-        out.extend_from_slice(&words[..count]);
+        out.words.extend_from_slice(&words[..count]);
         return Ok(Some(count));
     }
     let Some(resolved) = convert_scalar(element_view(value), expected, intern_text)? else {
@@ -421,19 +324,23 @@ fn element_words(
     };
     Ok(Some(match resolved {
         Const::Word(scalar) => {
-            out.push(scalar);
+            out.words.push(scalar);
             1
         }
         Const::Byte(byte) => {
-            out.push(u64::from(byte));
+            out.words.push(u64::from(byte));
             1
         }
         Const::Interval { .. } => {
             unreachable!("validated: no interval-typed param sets (IntervalParamSet)")
         }
+        Const::Text(text) => {
+            out.push_text(text);
+            1
+        }
         // Uuid elements are two-word spans, exactly like bytes<16>.
         Const::Words(words) => {
-            out.extend_from_slice(&words);
+            out.words.extend_from_slice(&words);
             words.len()
         }
         Const::Param(_) | Const::ParamSet(_) | Const::WordSet(_) | Const::PendingIntern { .. } => {
@@ -445,7 +352,6 @@ fn element_words(
 /// One execution's literal-resolution context, shared by resident and fallback paths.
 pub(super) struct LiteralResolution<'a, 'generation> {
     pub interner: &'a InternerHandle<'generation>,
-    pub store: &'a mut Option<crate::image::NonresidentTextStore>,
     pub work: &'a WorkContext,
     pub params: &'a [Const],
     pub missed: &'a [bool],
@@ -456,7 +362,7 @@ impl LiteralResolution<'_, '_> {
         &mut self,
         plan: &crate::plan::fj::ValidatedPlan,
         out_filters: &mut [Vec<FilterPredicate>],
-        out_selections: &mut [Vec<Vec<u64>>],
+        out_selections: &mut [Vec<ResolvedWords>],
     ) -> Result<bool> {
         for (occ_idx, occurrence) in plan.occurrences().iter().enumerate() {
             if occurrence.role.discharged() {
@@ -478,7 +384,7 @@ impl LiteralResolution<'_, '_> {
             let selections = &mut out_selections[occ_idx];
             if selections.len() != occurrence.selections.len() {
                 selections.clear();
-                selections.resize_with(occurrence.selections.len(), Vec::new);
+                selections.resize_with(occurrence.selections.len(), ResolvedWords::default);
             }
             debug_assert!(
                 !negated || occurrence.selections.is_empty(),
@@ -499,62 +405,40 @@ impl LiteralResolution<'_, '_> {
         negated: bool,
         slot: &mut FilterPredicate,
     ) -> Result<bool> {
-        match crate::image::view::resolve_filter_into(
+        self.work.checkpoint().map_err(super::source::work_error)?;
+        crate::image::view::resolve_filter_into(
             self.interner,
             template,
             self.params,
             self.missed,
             negated,
             slot,
-        )? {
-            crate::image::ResidentAdmit::Ready(keep) => Ok(keep),
-            crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
-                let opened = super::text::install(self.store, &exhausted, self.work)?;
-                let (field, op, bytes) = match template {
-                    FilterPredicate::Compare {
-                        field,
-                        op,
-                        value: Const::PendingIntern { bytes },
-                    } => (*field, *op, bytes),
-                    _ => unreachable!("only a pending text literal can exhaust the interner"),
-                };
-                let text = std::str::from_utf8(bytes)
-                    .expect("IR string literals are UTF-8 by construction");
-                let word = opened.intern(text, self.work)?;
-                // Scratch words are execution-local: write the slot, keep
-                // PendingIntern on the template so the next execute re-interns.
-                *slot = FilterPredicate::Compare {
-                    field,
-                    op,
-                    value: Const::Word(word),
-                };
-                Ok(true)
-            }
-        }
+        )
     }
 
     pub(super) fn selection(
         &mut self,
         selection: &crate::plan::fj::Selection,
-        out: &mut Vec<u64>,
+        out: &mut ResolvedWords,
     ) -> Result<bool> {
+        self.work.checkpoint().map_err(super::source::work_error)?;
         if let Const::PendingIntern { bytes } = &selection.value {
-            if matches!(out.as_slice(), [word] if crate::image::is_resident_token(*word)) {
+            if matches!(out.texts.as_slice(), [text] if out.words.as_slice() == [text.word]) {
                 return Ok(true);
             }
             out.clear();
             let text = std::str::from_utf8(bytes)
                 .expect("IR string literals are UTF-8 by construction (Value::String)");
-            let word = super::text::intern_admitted(self.interner, self.store, text, self.work)?;
-            out.push(word);
+            out.push_text(self.interner.intern(text)?);
             return Ok(true);
         }
         out.clear();
-        let push_const = |constant: &Const, out: &mut Vec<u64>| match constant {
-            Const::Word(word) => out.push(*word),
-            Const::Byte(byte) => out.push(u64::from(*byte)),
-            Const::Words(words) => out.extend_from_slice(words),
-            Const::Interval { start, end } => out.extend([*start, *end]),
+        let push_const = |constant: &Const, out: &mut ResolvedWords| match constant {
+            Const::Word(word) => out.words.push(*word),
+            Const::Text(text) => out.push_text(text.clone()),
+            Const::Byte(byte) => out.words.push(u64::from(*byte)),
+            Const::Words(words) => out.words.extend_from_slice(words),
+            Const::Interval { start, end } => out.words.extend([*start, *end]),
             Const::WordSet(_)
             | Const::Param(_)
             | Const::ParamSet(_)
@@ -563,8 +447,11 @@ impl LiteralResolution<'_, '_> {
             }
         };
         match &selection.value {
-            value
-            @ (Const::Word(_) | Const::Byte(_) | Const::Words(_) | Const::Interval { .. }) => {
+            value @ (Const::Word(_)
+            | Const::Text(_)
+            | Const::Byte(_)
+            | Const::Words(_)
+            | Const::Interval { .. }) => {
                 push_const(value, out);
             }
             Const::Param(param) => {
@@ -580,10 +467,10 @@ impl LiteralResolution<'_, '_> {
                 let Const::WordSet(words) = &self.params[usize::from(param.0)] else {
                     unreachable!("validated: a set param resolves to a word set")
                 };
-                out.extend_from_slice(words);
+                out.clone_from(words);
             }
 
-            Const::WordSet(words) => out.extend_from_slice(words),
+            Const::WordSet(words) => out.clone_from(words),
             Const::PendingIntern { .. } => unreachable!("resolved above"),
         }
         Ok(true)
@@ -608,7 +495,7 @@ fn element_view(value: &Value) -> BindValue<'_> {
 fn convert_scalar(
     value: BindValue<'_>,
     expected: &ValueType,
-    intern_text: impl FnOnce(&str) -> Result<u64>,
+    intern_text: impl FnOnce(&str) -> Result<Const>,
 ) -> Result<Option<Const>> {
     let resolved = match (value, expected) {
         (BindValue::Bool(v), ValueType::Bool) => Const::Byte(u8::from(v)),
@@ -670,10 +557,9 @@ fn convert_scalar(
             start: interval.start().to_order_key(),
             end: interval.end().to_order_key(),
         },
-        // Interning is append-only and never misses: the bound text's
-        // token is final. A text absent from every image is an ordinary
-        // unequal word — no sentinel machinery, no dictionary descent.
-        (BindValue::Str(text), ValueType::String) => Const::Word(intern_text(text)?),
+        // The resolved text carries its canonical owner. An unstored text
+        // is an ordinary unequal token, not a missing parameter.
+        (BindValue::Str(text), ValueType::String) => intern_text(text)?,
 
         _ => return Ok(None),
     };
@@ -692,19 +578,24 @@ fn uuid_words(id: crate::Uuid) -> [u64; 2] {
     ]
 }
 
-fn param_memo_live(
-    memo: &super::ParamWordMemo,
-    store: Option<&crate::image::NonresidentTextStore>,
-) -> bool {
-    match memo.epoch {
-        None => memo.word.is_some_and(crate::image::is_resident_token),
-        Some(epoch) => {
-            let Some(store) = store else {
-                return false;
-            };
-            let eq = store.text_eq().with_memo_stamp(epoch);
-            eq.accepts_stamp(epoch) && memo.word.is_some_and(|word| store.live(word))
+impl super::ParamWordMemo {
+    fn resolved(&self, text: &str) -> Option<Const> {
+        let word = self.word?;
+        if self.text.as_deref() != Some(text) {
+            return None;
         }
+        Some(Const::Text(crate::image::intern::InternedText {
+            word,
+            text: std::sync::Arc::clone(self.text.as_ref()?),
+        }))
+    }
+
+    fn remember(&mut self, resolved: &Const) {
+        let Const::Text(token) = resolved else {
+            unreachable!("text conversion pins its token")
+        };
+        self.text = Some(std::sync::Arc::clone(&token.text));
+        self.word = Some(token.word);
     }
 }
 
@@ -722,6 +613,130 @@ fn forget_resolved_text(rule: &mut super::FreeJoinRule) {
 #[cfg(test)]
 mod scalar_resolution_tests {
     use super::*;
+
+    #[test]
+    fn resolved_text_filters_and_selections_keep_owners_and_reuse_clone_storage() {
+        let generation = crate::image::test_generation();
+        let work = crate::api::prepared::source::unbounded_work();
+        let handle = InternerHandle::new(&generation, &work);
+        let mut source = ResolvedWords::default();
+        for text in ["alpha", "beta", "alpha"] {
+            let owned = handle.intern(text).unwrap();
+            source.push_text(owned);
+        }
+        source.words.sort_unstable();
+        source.words.dedup();
+        source.dedup_texts();
+        assert_eq!(source.words.len(), 2);
+        assert_eq!(source.texts.len(), 2, "one owner per distinct set element");
+        let params = [Const::WordSet(Box::new(source))];
+        let template = FilterPredicate::Compare {
+            field: crate::image::view::OperandAddr::from_slot(0),
+            op: crate::ir::WordCmp::Eq,
+            value: Const::ParamSet(ParamId(0)),
+        };
+        let selection = crate::plan::fj::Selection {
+            field: bumbledb_theory::schema::FieldId(0),
+            value: Const::ParamSet(ParamId(0)),
+        };
+        let mut filter = template.clone();
+        let mut keys = ResolvedWords::default();
+        let mut resolution = LiteralResolution {
+            interner: &handle,
+            work: &work,
+            params: &params,
+            missed: &[false],
+        };
+        assert!(resolution.filter(&template, false, &mut filter).unwrap());
+        assert!(resolution.selection(&selection, &mut keys).unwrap());
+        let before = crate::alloc_counter::snapshot().window;
+        for _ in 0..32 {
+            assert!(resolution.filter(&template, false, &mut filter).unwrap());
+            assert!(resolution.selection(&selection, &mut keys).unwrap());
+        }
+        let after = crate::alloc_counter::snapshot().window;
+        eprintln!(
+            "resolved text set, 32 filter+selection copies: allocations={}, bytes={}",
+            after.allocs - before.allocs,
+            after.alloc_bytes - before.alloc_bytes
+        );
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(
+            after.allocs - before.allocs,
+            0,
+            "warm resolution must clone into reusable vectors"
+        );
+        drop(params);
+        generation.lock_resolver().reclaim_unowned();
+        assert!(generation.resolver().lookup("alpha").is_some());
+        assert!(generation.resolver().lookup("beta").is_some());
+        drop(filter);
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(
+            generation.lock_resolver().len(),
+            2,
+            "selection owns its text independently"
+        );
+        drop(keys);
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(generation.lock_resolver().len(), 0);
+    }
+
+    #[test]
+    fn resolved_scalar_text_filter_and_literal_selection_keep_the_same_text_owner() {
+        let generation = crate::image::test_generation();
+        let work = crate::api::prepared::source::unbounded_work();
+        let handle = InternerHandle::new(&generation, &work);
+        let params = [Const::Text(handle.intern("needle").unwrap())];
+        let template = FilterPredicate::Compare {
+            field: crate::image::view::OperandAddr::from_slot(0),
+            op: crate::ir::WordCmp::Eq,
+            value: Const::Param(ParamId(0)),
+        };
+        let selection = crate::plan::fj::Selection {
+            field: bumbledb_theory::schema::FieldId(0),
+            value: Const::PendingIntern {
+                bytes: Box::from(b"needle".as_slice()),
+            },
+        };
+        let mut filter = template.clone();
+        let mut keys = ResolvedWords::default();
+        let mut resolution = LiteralResolution {
+            interner: &handle,
+            work: &work,
+            params: &params,
+            missed: &[false],
+        };
+        assert!(resolution.filter(&template, false, &mut filter).unwrap());
+        assert!(resolution.selection(&selection, &mut keys).unwrap());
+        let Const::Text(parameter) = &params[0] else {
+            panic!("owned scalar text")
+        };
+        let FilterPredicate::Compare {
+            value: Const::Text(resolved),
+            ..
+        } = &filter
+        else {
+            panic!("owned filter text")
+        };
+        assert!(std::sync::Arc::ptr_eq(&parameter.text, &resolved.text));
+        assert!(std::sync::Arc::ptr_eq(&parameter.text, &keys.texts[0].text));
+        drop(params);
+        generation.lock_resolver().reclaim_unowned();
+        assert!(generation.resolver().lookup("needle").is_some());
+        drop(filter);
+        generation.lock_resolver().reclaim_unowned();
+        assert!(generation.resolver().lookup("needle").is_some());
+        drop(keys);
+        generation.lock_resolver().reclaim_unowned();
+        assert_eq!(generation.resolver().lookup("needle"), None);
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            std::mem::size_of::<Const>(),
+            32,
+            "text-set ownership cannot inflate every scalar constant"
+        );
+    }
 
     #[test]
     fn nontext_scalars_and_type_mismatches_never_acquire_a_text_resolver() {
@@ -761,7 +776,7 @@ mod scalar_resolution_tests {
                     .is_none()
             );
         }
-        let mut words = Vec::new();
+        let mut words = ResolvedWords::default();
         assert_eq!(
             element_words(&Value::U64(7), &ValueType::U64, &mut words, |_| panic!(
                 "nontext set resolver"
@@ -769,14 +784,14 @@ mod scalar_resolution_tests {
             .unwrap(),
             Some(1)
         );
-        assert_eq!(words, [7]);
+        assert_eq!(words.words, [7]);
     }
 
     #[test]
     fn text_conversion_uses_the_supplied_resolver_and_propagates_refusal() {
         let result = convert_scalar(BindValue::Str("needle"), &ValueType::String, |text| {
             assert_eq!(text, "needle");
-            Ok(42)
+            Ok(Const::Word(42))
         })
         .unwrap();
         assert!(matches!(result, Some(Const::Word(42))));

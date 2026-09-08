@@ -42,8 +42,8 @@ use bumbledb_log::schema_file::schema_id;
 use bumbledb_log::writer::{LocalHistory, SubmitOutcome};
 
 use support::{
-    CAP, LIMITS, base_schema, db_id, fresh_source, incarnation, manifest, op, pinned_schema,
-    plan_pinned, plan_tagged, tagged_schema, temp_dir, tiny_work, work,
+    CAP, LIMITS, base_schema, cancelled_work, db_id, fresh_source, incarnation, manifest, op,
+    pinned_schema, plan_pinned, plan_tagged, tagged_schema, temp_dir, work,
 };
 
 fn hex_name(bytes: &[u8]) -> String {
@@ -148,11 +148,11 @@ fn is_store_locked(error: &MigrationError) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Work exhaustion is ONE typed resource refusal, wherever the charge lands.
+// Cancellation is one typed operational refusal.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn a_work_refusal_is_typed_work_even_when_the_freeze_commit_charges_it() {
+fn cancellation_before_freeze_is_one_typed_work_refusal() {
     let (db, root) = fresh_source("evwork");
     let history = open_history(&db);
     insert_notes(&history, &[(1, "alpha"), (2, "beta")], 1);
@@ -160,15 +160,13 @@ fn a_work_refusal_is_typed_work_even_when_the_freeze_commit_charges_it() {
     let steps = steps_full();
     let runner = LocalMigration::new(&history, &root.join("targets"), LIMITS);
     let request = request(&plans, &steps, 0xd1, 0xe1);
-    // The tiny budget cannot even afford the durable freeze commit: the
-    // charge lands inside the log writer session, and MUST still surface as
-    // the ONE typed resource refusal (the SDK maps `Work` to the exact core
-    // reason; a nested `Log(Work)` would be respelled as migration drift).
-    match runner.migrate(&request, &tiny_work()) {
+    // Explicit cancellation must remain the one typed Work refusal, never
+    // schema drift or a successfully published target.
+    match runner.migrate(&request, &cancelled_work()) {
         Err(MigrationError::Work(_)) => {}
         other => panic!("expected the typed Work refusal, got {other:?}"),
     }
-    // The SAME operation completes under a real budget.
+    // The same operation completes with a fresh cancellation context.
     match runner.migrate(&request, &work()).unwrap() {
         MigrateOutcome::ReadyToSwitch { .. } => {}
         other => panic!("resume with the same operation, got {other:?}"),

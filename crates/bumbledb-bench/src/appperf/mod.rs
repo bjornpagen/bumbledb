@@ -158,9 +158,6 @@ pub struct CostAccount {
     /// Actual visitor counts (L01 `consume_visits`). Missing is a hole, not zero.
     pub source_visits: Option<u64>,
     pub group_visits: Option<u64>,
-    /// Charged-owner snapshot (L03). Logical bytes, not RSS.
-    pub work_units: Option<u64>,
-    pub working_bytes: Option<u64>,
     /// Compiled index roster size for the cell's schema.
     pub roster_entries: Option<u64>,
     /// Virtual map vs allocated disk. Never report map as RSS.

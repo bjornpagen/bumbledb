@@ -12,7 +12,6 @@ import { bindingFor } from "../../../../src/db/bindings.ts"
 import { setPinned } from "../../../../src/db/commands.ts"
 import { getNote } from "../../../../src/db/reads.ts"
 import { Note } from "../../../../src/db/schema.ts"
-import { requestPolicy } from "../../../../src/db/runtime-policy.ts"
 import { appRuntime, Databases } from "../../../../src/db/server.ts"
 import { exitResponse, respond, submitResponse } from "../../../../src/http.ts"
 
@@ -24,11 +23,10 @@ const readNote = Effect.fn("routes.readNote")(
 		const principal = yield* requirePrincipal(request)
 		const binding = yield* bindingFor(principal.tenantId)
 		const id = yield* Effect.fromResult(Uuid.parse(rawId))
-		const work = requestPolicy(request)
 		const databases = yield* Databases
-		const db = yield* databases.acquire(binding, work)
-		const snapshot = yield* db.snapshot({ ...work, consistency: { kind: "latest" } })
-		const found = yield* getNote(snapshot, id, work)
+		const db = yield* databases.acquire(binding)
+		const snapshot = yield* db.snapshot({ consistency: { kind: "latest" } })
+		const found = yield* getNote(snapshot, id)
 		if (Option.isNone(found)) {
 			return Response.json({ error: "NotFound" }, { status: 404 })
 		}
@@ -44,10 +42,9 @@ const patchNote = Effect.fn("routes.patchNote")(
 		const binding = yield* bindingFor(principal.tenantId)
 		const id = yield* Effect.fromResult(Uuid.parse(rawId))
 		const requestKey = yield* Effect.fromResult(Uuid.parse(body.requestKey))
-		const work = requestPolicy(request)
 		const databases = yield* Databases
-		const db = yield* databases.acquire(binding, work)
-		const result = yield* setPinned(db, principal.tenantId, requestKey, id, body.pinned, work)
+		const db = yield* databases.acquire(binding)
+		const result = yield* setPinned(db, principal.tenantId, requestKey, id, body.pinned)
 		if (result.kind === "missing") {
 			return Response.json({ error: "NotFound" }, { status: 404 })
 		}

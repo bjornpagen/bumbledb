@@ -107,43 +107,40 @@ export function makeWireDouble(): WireDouble {
 			queueMicrotask(() => callback(CLOSED))
 		},
 		logErrorCodes: () => [],
-		logHistoryOpen: (_runtime: unknown, _policy: unknown, request: unknown, callback: () => void) =>
+		logHistoryOpen: (_runtime: unknown, request: unknown, callback: () => void) =>
 			start("logHistoryOpen", request, callback),
 		logHistoryTake: take,
-		logHistoryCall: (capability: unknown, _policy: unknown, request: unknown, callback: () => void) =>
+		logHistoryCall: (capability: unknown, request: unknown, callback: () => void) =>
 			start("logHistoryCall", { capability, request }, callback),
 		logHistoryResult: take,
 		logHistoryClose: (capability: unknown, callback: (report: CloseWire) => void) =>
 			close("logHistoryClose", capability, callback),
 		runtimeSnapshotClose: (snapshot: unknown, callback: (report: CloseWire) => void) =>
 			close("runtimeSnapshotClose", snapshot, callback),
-		logCommandSeal: (change: unknown, _policy: unknown, request: unknown, callback: () => void) =>
+		logCommandSeal: (change: unknown, request: unknown, callback: () => void) =>
 			start("logCommandSeal", { change, request }, callback),
-		logCommandDecode: (_runtime: unknown, _policy: unknown, bytes: unknown, schema: unknown, callback: () => void) =>
+		logCommandDecode: (_runtime: unknown, bytes: unknown, schema: unknown, callback: () => void) =>
 			start("logCommandDecode", { bytes, schema }, callback),
 		logCommandTake: take,
-		logCommandEncode: (command: unknown, _policy: unknown, callback: () => void) =>
-			start("logCommandEncode", command, callback),
+		logCommandEncode: (command: unknown, callback: () => void) => start("logCommandEncode", command, callback),
 		logBytesTake: take,
 		logCommandClose: (command: unknown, callback: (report: CloseWire) => void) =>
 			close("logCommandClose", command, callback),
-		logCacheMake: (_runtime: unknown, _policy: unknown, request: unknown, callback: () => void) =>
+		logCacheMake: (_runtime: unknown, request: unknown, callback: () => void) =>
 			start("logCacheMake", request, callback),
 		logCacheTake: take,
-		logCacheAcquire: (cache: unknown, _policy: unknown, request: unknown, callback: () => void) =>
+		logCacheAcquire: (cache: unknown, request: unknown, callback: () => void) =>
 			start("logCacheAcquire", { cache, request }, callback),
 		logBorrowTake: take,
-		logCacheInspect: (cache: unknown, _policy: unknown, callback: () => void) =>
-			start("logCacheInspect", cache, callback),
+		logCacheInspect: (cache: unknown, callback: () => void) => start("logCacheInspect", cache, callback),
 		logCacheInspectTake: take,
-		logCacheEvict: (cache: unknown, _policy: unknown, request: unknown, callback: () => void) =>
+		logCacheEvict: (cache: unknown, request: unknown, callback: () => void) =>
 			start("logCacheEvict", { cache, request }, callback),
 		logCacheEvictTake: take,
 		logBorrowRelease: (borrow: unknown, callback: (report: CloseWire) => void) =>
 			close("logBorrowRelease", borrow, callback),
 		logCacheClose: (cache: unknown, callback: (report: CloseWire) => void) => close("logCacheClose", cache, callback),
-		logAdmin: (_runtime: unknown, _policy: unknown, request: unknown, callback: () => void) =>
-			start("logAdmin", request, callback),
+		logAdmin: (_runtime: unknown, request: unknown, callback: () => void) => start("logAdmin", request, callback),
 		logAdminTake: take
 	}
 
@@ -219,7 +216,7 @@ export function makeIntegration(): CoreIntegration {
 	const die = () => Effect.die(new Error("wire double: core reader is not exercised here"))
 	// The reader is a deliberately inert stub: these language-layer tests
 	// never execute core reads; the seam shape is what is typed.
-	const reader = (() => ({ get: die, execute: die, session: die })) as unknown as CoreIntegration["reader"]
+	const reader = (() => ({ get: die, execute: die, prepare: die })) as unknown as CoreIntegration["reader"]
 	return {
 		reader,
 		changes(value) {
@@ -234,18 +231,7 @@ export function makeIntegration(): CoreIntegration {
 
 // ── Shared fixtures ────────────────────────────────────────────────────────
 
-export const work = {
-	inputBytes: 1024n,
-	workingBytes: 1024n,
-	scratchBytes: 1024n,
-	resultBytes: 1024n,
-	rows: 64n,
-	workUnits: 64n,
-	timeout: 1000
-}
-
 export const submitOptions = {
-	...work,
 	attempts: 3,
 	backoff: { baseMillis: 5, capMillis: 50 }
 }

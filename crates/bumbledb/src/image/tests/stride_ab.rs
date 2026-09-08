@@ -144,7 +144,7 @@ fn scan(
     buf: Vec<u32>,
 ) -> (Duration, Vec<u32>) {
     let t = Instant::now();
-    let view = apply(image, preds, &[], buf, image.generation().text_eq(None)).expect("apply");
+    let view = apply(image, preds, &[], buf, image.generation().text_eq()).expect("apply");
     let dt = t.elapsed();
     assert_eq!(view.len(), 0, "the last predicate rejects every row");
     (dt, view.recycle())

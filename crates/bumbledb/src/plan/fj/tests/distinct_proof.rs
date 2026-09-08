@@ -252,7 +252,7 @@ fn projected_composite_key_accepts_only_equality_single_value_pins() {
     }
     for (op, value) in [
         (WordCmp::Lt, Const::Word(7)),
-        (WordCmp::Eq, Const::WordSet(vec![7, 8])),
+        (WordCmp::Eq, Const::WordSet(vec![7, 8].into())),
         (WordCmp::Eq, Const::ParamSet(crate::ir::ParamId(0))),
     ] {
         let mut occ = occurrence(0, 0, &[(0, X), (2, B)]);
@@ -510,7 +510,7 @@ fn pointwise_law_rejects_distinct_rows_with_equal_complete_keys() {
         ),
     ] {
         let schema = pointwise_schema(element);
-        let work = crate::api::db::test_operation().expect("work");
+        let work = crate::api::db::test_operation();
         let mut equal_keys = MapState::new();
         equal_keys.insert(
             RelationId(0),

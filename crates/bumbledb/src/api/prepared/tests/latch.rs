@@ -43,7 +43,8 @@ fn literal_bytes_survive_trim_and_switches_between_resident_and_fallback() {
         alpha.force_cursor_fallback(fallback);
         let out = fix.execute(&mut alpha, &[] as &[BindValue]).expect("alpha");
         assert_eq!(amounts(&out), vec![10], "fallback={fallback}");
-        alpha.trim();
+        alpha.release_memory();
+        fix.db.clear_cache();
         let out = fix.execute(&mut beta, &[] as &[BindValue]).expect("beta");
         assert_eq!(amounts(&out), vec![20]);
         let out = fix
@@ -114,7 +115,7 @@ fn an_unmatched_literal_latches_finally_and_matches_later_rows() {
     );
     let (empty, report) = fix
         .db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
+        .read(crate::api::db::test_operation(), |instance| {
             prepared.introspect(instance, &[])
         })
         .expect("introspect");

@@ -7,8 +7,8 @@
 //! this snapshot; a second transaction is never opened for it.
 //!
 //! [`ReadFrame`] borrows snapshot and metadata for one operation and carries that
-//! operation's explicit [`WorkContext`]. Snapshot age does not donate a
-//! deadline or work budget.
+//! operation's explicit [`WorkContext`]. Snapshot age does not cancel later
+//! operations or impose an execution deadline.
 //!
 //! ```compile_fail
 //! fn require_sync<T: Sync>() {}
@@ -55,7 +55,7 @@ pub struct OwnedRead<S> {
 }
 
 /// Short borrowed per-operation frame over snapshot and metadata (C4).
-/// Fresh work is passed here; it is not the snapshot's lifetime deadline.
+/// Cancellation belongs to this operation, not to the snapshot's age.
 pub struct ReadFrame<'read, S> {
     pub(super) schema: &'read Arc<Schema>,
     pub(super) closed: &'read ClosedRows,
@@ -85,7 +85,7 @@ impl<S> OwnedRead<S> {
         self.snapshot.generation()
     }
 
-    /// Open one operation frame. Fresh work is the operation's budget.
+    /// Open one operation frame with its own cancellation context.
     #[must_use]
     pub fn frame<'read>(&'read self, work: &'read WorkContext) -> ReadFrame<'read, S> {
         ReadFrame {
@@ -353,12 +353,12 @@ impl<S> ReadFrame<'_, S> {
 }
 
 impl<S> PreparedQuery<S> {
-    /// Execute against an owned pin. Work is the operation budget; the
+    /// Execute against an owned pin. Work controls cancellation; the
     /// pin is not a `ReadInstance` Send wrapper.
     ///
     /// # Errors
     /// Binding or snapshot-identity mismatch, query execution failure, or
-    /// exhaustion of the supplied operation budget.
+    /// cancellation of the supplied operation.
     pub fn execute_collect_owned<'p, P: BindArgs<'p>>(
         &mut self,
         owned: &OwnedRead<S>,

@@ -41,26 +41,21 @@ use bumbledb_theory::schema::{IntervalElement, ValueType};
 /// two words; canonical rows carry both fixed-interval bounds).
 fn const_words(
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     work: &crate::work::WorkContext,
     value: &Const,
     params: &[Const],
-    out: &mut Vec<u64>,
+    out: &mut crate::image::view::ResolvedWords,
 ) -> Result<()> {
+    work.checkpoint()
+        .map_err(crate::api::prepared::source::work_error)?;
     match value {
-        Const::Word(scalar) => out.push(*scalar),
-        Const::Byte(byte) => out.push(u64::from(*byte)),
-        Const::Words(words) => out.extend_from_slice(words),
-        Const::Interval { start, end } => out.extend([*start, *end]),
+        Const::Word(scalar) => out.words.push(*scalar),
+        Const::Text(text) => out.push_text(text.clone()),
+        Const::Byte(byte) => out.words.push(u64::from(*byte)),
+        Const::Words(words) => out.words.extend_from_slice(words),
+        Const::Interval { start, end } => out.words.extend([*start, *end]),
         Const::Param(param) => {
-            return const_words(
-                interner,
-                store,
-                work,
-                &params[usize::from(param.0)],
-                params,
-                out,
-            );
+            return const_words(interner, work, &params[usize::from(param.0)], params, out);
         }
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a set binding never reaches the key-probe path")
@@ -68,9 +63,7 @@ fn const_words(
         Const::PendingIntern { bytes } => {
             let text = std::str::from_utf8(bytes)
                 .expect("IR string literals are UTF-8 by construction (Value::String)");
-            out.push(crate::api::prepared::intern_admitted(
-                interner, store, text, work,
-            )?);
+            out.push_text(interner.intern(text)?);
         }
     }
     Ok(())
@@ -80,13 +73,8 @@ fn const_words(
 /// canonical-bytes reconstruction. Exact inverses of the walker's word
 /// conventions; a probe word that cannot embed refuses as a mismatch.
 /// Resolver failures are operational errors, never successful nonmatches.
-fn value_of_words(
-    interner: &InternerHandle<'_>,
-    store: Option<&mut crate::image::NonresidentTextStore>,
-    ty: &ValueType,
-    words: &[u64],
-) -> Result<Option<Value>> {
-    Ok(match ty {
+fn value_of_words(interner: &InternerHandle<'_>, ty: &ValueType, words: &[u64]) -> Option<Value> {
+    match ty {
         ValueType::Bool => Some(Value::Bool(words[0] != 0)),
         ValueType::U64 => Some(Value::U64(words[0])),
         ValueType::I64 => Some(Value::I64((words[0] ^ (1 << 63)).cast_signed())),
@@ -94,7 +82,7 @@ fn value_of_words(
             .ok()
             .map(Value::F64),
         ValueType::String => {
-            crate::api::prepared::owned_text(interner, store, words[0])?.map(Value::String)
+            crate::api::prepared::owned_text(interner, words[0]).map(Value::String)
         }
         ValueType::Uuid => {
             let mut bytes = [0u8; 16];
@@ -135,7 +123,7 @@ fn value_of_words(
             .zip(bumbledb_theory::F64::from_order_key(words[1]).ok())
             .and_then(|(start, end)| bumbledb_theory::Interval::new(start, end))
             .map(Value::IntervalF64),
-    })
+    }
 }
 
 /// Residual-filter operands over one decoded row's words.
@@ -191,19 +179,14 @@ impl Operands for ProbeRow<'_> {
 /// words (text interned) in `row`.
 /// # Errors
 /// Storage failure, stopped work, or corrupt stored bytes.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
-)]
 pub(crate) fn key_probe_row(
     plan: &KeyProbePlan,
     source: &QuerySource<'_>,
     schema: &Schema,
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     params: &[Const],
     row: &mut RowWords,
-    scratch: &mut Vec<u64>,
+    scratch: &mut crate::image::view::ResolvedWords,
 ) -> Result<bool> {
     let relation = schema.relation(plan.relation);
     let fields = relation.fields();
@@ -212,13 +195,15 @@ pub(crate) fn key_probe_row(
     let key_words = plan.kind.key();
     scratch.clear();
     for part in key_words {
-        const_words(interner, store, source.work(), &part.value, params, scratch)?;
+        const_words(interner, source.work(), &part.value, params, scratch)?;
         debug_assert_eq!(
-            scratch.len(),
+            scratch.words.len(),
             usize::from(part.end),
             "validated key word width"
         );
     }
+
+    let scratch = &mut scratch.words;
 
     let hit = match &plan.kind {
         super::KeyProbeKind::Membership { .. } => {
@@ -229,9 +214,7 @@ pub(crate) fn key_probe_row(
             let mut ok = true;
             for part in key_words {
                 let ty = &fields[usize::from(part.field.0)].value_type;
-                if let Some(value) =
-                    value_of_words(interner, store.as_mut(), ty, &scratch[part.words()])?
-                {
+                if let Some(value) = value_of_words(interner, ty, &scratch[part.words()]) {
                     values.push(value);
                 } else {
                     ok = false;
@@ -251,7 +234,6 @@ pub(crate) fn key_probe_row(
                         fields,
                         encoded.as_bytes(),
                         interner,
-                        store,
                         source.work(),
                         true,
                     )?;
@@ -272,7 +254,6 @@ pub(crate) fn key_probe_row(
                     key_words,
                     scratch,
                     interner,
-                    store,
                     row,
                 )?,
                 QuerySource::Heap { .. } => None,
@@ -283,7 +264,7 @@ pub(crate) fn key_probe_row(
                 // determinant table does not carry): the bounded reference
                 // walk — the exact oracle for the indexed path.
                 None => probe_uniqueness_scan(
-                    plan, source, schema, fields, key_words, scratch, interner, store, row,
+                    plan, source, schema, fields, key_words, scratch, interner, row,
                 )?,
             }
         }
@@ -293,7 +274,7 @@ pub(crate) fn key_probe_row(
     }
 
     let ops = ProbeRow { row, interner };
-    let eq = interner.text_eq(store.as_ref());
+    let eq = interner.text_eq();
     for filter in &plan.remaining_filters {
         if !holds(filter, &ops, params, eq)?.unwrap_or(false) {
             return Ok(false);
@@ -308,11 +289,6 @@ pub(crate) fn key_probe_row(
 /// compiled determinant table does not carry the statement (defensive —
 /// classification only emits sealed keys of ordinary relations) and the
 /// caller must fall back to the reference walk.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one probe's borrowed working set, threaded rather than \
-              re-bundled into a transient struct"
-)]
 fn probe_uniqueness_indexed(
     source: &QuerySource<'_>,
     projection: crate::schema::ProjectionId,
@@ -320,7 +296,6 @@ fn probe_uniqueness_indexed(
     key_words: &[KeyProbePart],
     scratch: &[u64],
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     row: &mut RowWords,
 ) -> Result<Option<bool>> {
     use crate::api::prepared::source::store_error;
@@ -350,7 +325,7 @@ fn probe_uniqueness_indexed(
             for &position in &key.scalar_positions {
                 let part = &key_words[position];
                 let ty = &fields[usize::from(part.field.0)].value_type;
-                match value_of_words(interner, store.as_mut(), ty, &scratch[part.words()])? {
+                match value_of_words(interner, ty, &scratch[part.words()]) {
                     Some(value) => determinant.push(value),
                     None => return Ok(Some(false)),
                 }
@@ -368,16 +343,16 @@ fn probe_uniqueness_indexed(
             if visit_err.is_some() || hit {
                 return Ok(false);
             }
-            work.step(1)
+            work.checkpoint()
                 .map_err(crate::storage::store::StoreError::Work)?;
             source.note_visits(1);
             if let Err(error) =
-                crate::api::prepared::decode_row(row, fields, bytes, interner, store, work, false)
+                crate::api::prepared::decode_row(row, fields, bytes, interner, work, false)
             {
                 visit_err = Some(error);
                 return Ok(false);
             }
-            let matches = match key_spans_match(interner, store, key_words, row, scratch) {
+            let matches = match key_spans_match(interner, key_words, row, scratch) {
                 Ok(matched) => matched,
                 Err(error) => {
                     visit_err = Some(error);
@@ -386,9 +361,8 @@ fn probe_uniqueness_indexed(
             };
             if matches {
                 if has_text
-                    && let Err(error) = crate::api::prepared::decode_row(
-                        row, fields, bytes, interner, store, work, true,
-                    )
+                    && let Err(error) =
+                        crate::api::prepared::decode_row(row, fields, bytes, interner, work, true)
                 {
                     visit_err = Some(error);
                     return Ok(false);
@@ -475,7 +449,6 @@ fn probe_uniqueness_scan(
     key_words: &[KeyProbePart],
     scratch: &[u64],
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     row: &mut RowWords,
 ) -> Result<bool> {
     let mut found = false;
@@ -501,16 +474,8 @@ fn probe_uniqueness_scan(
         &fields_owned,
         &words,
         &mut |bytes| {
-            crate::api::prepared::decode_row(
-                row,
-                fields,
-                bytes,
-                interner,
-                store,
-                source.work(),
-                false,
-            )?;
-            let matches = key_spans_match(interner, store, key_words, row, scratch)?;
+            crate::api::prepared::decode_row(row, fields, bytes, interner, source.work(), false)?;
+            let matches = key_spans_match(interner, key_words, row, scratch)?;
             if matches {
                 if has_text {
                     crate::api::prepared::decode_row(
@@ -518,7 +483,6 @@ fn probe_uniqueness_scan(
                         fields,
                         bytes,
                         interner,
-                        store,
                         source.work(),
                         true,
                     )?;
@@ -539,12 +503,11 @@ fn probe_uniqueness_scan(
 
 fn key_spans_match(
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     key_words: &[KeyProbePart],
     probe: &RowWords,
     scratch: &[u64],
 ) -> Result<bool> {
-    let eq = interner.text_eq(store.as_ref());
+    let eq = interner.text_eq();
     for part in key_words {
         let left = probe.span_words(part.field);
         let right = &scratch[part.words()];

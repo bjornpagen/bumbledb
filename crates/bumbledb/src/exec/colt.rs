@@ -305,19 +305,14 @@ pub struct Colt {
     /// 56–62: a token that crosses a [`Colt::reset`] is refused loudly
     epoch: u8,
 
-    /// Execution ledger used to reserve pool growth before resize.
+    /// Cancellation context for construction and cold pool growth.
     work: Option<crate::work::WorkContext>,
-    /// Retained working-byte charges for reusable pool capacity (C2).
-    charges: Vec<crate::work::ByteReservation>,
 }
 
 impl Colt {
     /// The trie's retained pool footprint in bytes — O(1) over the pools'
-    /// capacities. The executor's bounded-quantum ledger poll charges this
-    /// growth to working bytes, so the bounded-restart
-    /// trigger can fire from join growth. The `Arc`'d image is excluded:
-    /// the image build charged its slabs; the view's survivor positions
-    /// (this colt's owned copy) are included.
+    /// capacities. The shared image is excluded; this trie's owned survivor
+    /// positions are included. This is not process heap or resident memory.
     #[cfg(test)]
     #[must_use]
     pub fn retained_bytes(&self) -> usize {
@@ -341,22 +336,12 @@ impl Colt {
             + self.scratch.capacity() * size_of::<u64>()
             + self.stage_keys.capacity() * size_of::<u64>()
             + self.stage_positions.capacity() * size_of::<u32>()
-            + self.charges.capacity() * size_of::<crate::work::ByteReservation>()
     }
 
-    /// Install this operation's ledger. Retained pool charges stay with
-    /// their reservations; a cancelled prior context cannot refuse the next
-    /// execution after rebind.
+    /// Install this operation's cancellation context. A cancelled prior
+    /// context cannot refuse the next execution after rebind.
     pub fn bind(&mut self, work: Option<&crate::work::WorkContext>) {
         self.work = work.cloned();
-    }
-
-    #[cfg(test)]
-    pub(crate) fn charged_bytes(&self) -> u64 {
-        self.charges
-            .iter()
-            .map(crate::work::ByteReservation::bytes)
-            .sum()
     }
 
     fn poll_force_batch(&self, units: usize) -> Result<(), crate::work::WorkError> {
@@ -365,7 +350,7 @@ impl Colt {
         };
         work.checkpoint()?;
         if units > 0 {
-            work.step(units as u64)?;
+            work.checkpoint()?;
         }
         Ok(())
     }
@@ -387,55 +372,23 @@ impl Colt {
     }
 }
 
-/// Admit and allocate one geometric pool growth together. A failed later
-/// pool cannot leave a charge for an allocation we never made. Successful
-/// capacity survives truncation/reset, so its reservation does too.
+/// Grow one pool geometrically; ordinary resets retain this capacity.
+/// Cancellation is checked before cold growth. Capacity overflow or a
+/// fallible reserve failure leaves the vector's existing contents intact.
 fn reserve_pool<T>(
     needed: usize,
     vec: &mut Vec<T>,
     work: Option<&crate::work::WorkContext>,
-    charges: &mut Vec<crate::work::ByteReservation>,
 ) -> Result<(), crate::work::WorkError> {
-    use crate::work::{ByteKind, ByteReservation, Resource, WorkError};
-
     if needed <= vec.capacity() {
         return Ok(());
     }
-    let capacity = needed.max(vec.capacity().saturating_mul(2)).max(8);
-    let bytes = capacity
-        .saturating_sub(vec.capacity())
-        .saturating_mul(std::mem::size_of::<T>()) as u64;
-    let refusal = || WorkError::Exhausted {
-        resource: Resource::WorkingBytes,
-        used: work.map_or(0, |work| work.used(Resource::WorkingBytes)),
-        requested: bytes,
-        limit: work.map_or(u64::MAX, |work| work.limit(Resource::WorkingBytes)),
-    };
-    let charge = work
-        .map(|work| work.reserve(ByteKind::Working, bytes))
-        .transpose()?;
     if let Some(work) = work {
-        // Pay for the reservation directory as well as the pools. The
-        // new directory holds its own charge and the pending pool charge.
-        if charges.len() == charges.capacity() {
-            let capacity = charges
-                .len()
-                .saturating_add(2)
-                .max(charges.capacity().saturating_mul(2));
-            let bytes = (capacity - charges.capacity()) * std::mem::size_of::<ByteReservation>();
-            let directory = work.reserve(ByteKind::Working, bytes as u64)?;
-            charges
-                .try_reserve_exact(capacity - charges.len())
-                .map_err(|_| refusal())?;
-            charges.push(directory);
-        }
+        work.checkpoint()?;
     }
+    let capacity = needed.max(vec.capacity().saturating_mul(2)).max(8);
     vec.try_reserve_exact(capacity - vec.len())
-        .map_err(|_| refusal())?;
-    if let Some(charge) = charge {
-        charges.push(charge);
-    }
-    Ok(())
+        .map_err(|_| crate::work::WorkError::Allocation)
 }
 
 mod append_child;

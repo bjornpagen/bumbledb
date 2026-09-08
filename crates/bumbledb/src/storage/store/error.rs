@@ -100,7 +100,7 @@ pub enum StoreError {
     UndefinedDuration {
         statement: bumbledb_theory::schema::StatementId,
     },
-    /// Work budget, deadline or cancellation stopped the operation.
+    /// Cancellation or unavailable allocation capacity stopped the operation.
     Work(WorkError),
     /// A fallible in-memory allocation was refused by the host.
     Allocation,

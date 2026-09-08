@@ -45,7 +45,7 @@ function readRecord(file: string): Record<string, unknown> {
 	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
 		return {}
 	}
-	return parsed
+	return parsed as Record<string, unknown>
 }
 
 /** Persist the ref BEFORE dispatch; the recovery coordinate survives us. */

@@ -3,10 +3,7 @@
 //! bounded decision epoch probe (C07 grammar; STORE-05/06 shapes).
 //! Verification: `NotRun` (F1 authors, does not execute).
 
-use std::time::Duration;
-
-use bumbledb::work::Resource;
-use bumbledb::{ExecutionPolicy, WorkContext};
+use bumbledb::WorkContext;
 use bumbledb_log::store::mem::{Behavior, MemStore, Op};
 use bumbledb_log::store::{
     ConditionalStore as _, ObjectError, ObjectKind, ObjectRef, ReceiveLimits, ReceivingStore,
@@ -14,17 +11,7 @@ use bumbledb_log::store::{
 };
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 0,
-        working_bytes: 1 << 20,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 0,
-        work_units: 1_024,
-        timeout: Duration::from_secs(5),
-    }
-    .start()
-    .expect("work")
+    WorkContext::new()
 }
 
 fn transport(work: &WorkContext) -> TransportContext<'_> {
@@ -42,7 +29,7 @@ fn put_verified_resolves_ambiguity_by_content_and_refuses_conflicts() {
     assert_eq!(
         get_verified(&store, "t", &reference, transport(&ctx))
             .expect("get")
-            .as_bytes(),
+            .as_slice(),
         b"bytes"
     );
     // Dropped-and-unacknowledged: the read-back finds nothing — unresolved,
@@ -78,7 +65,7 @@ fn get_verified_checks_length_and_domain_separated_digest_before_returning() {
     assert_eq!(
         get_verified(&store, "t", &reference, transport(&ctx))
             .expect("verified")
-            .as_bytes(),
+            .as_slice(),
         b"manifest bytes"
     );
     // Corrupted content: digest refusal.
@@ -118,7 +105,7 @@ fn fetch_decision_uses_one_authenticated_locator_without_epoch_probing() {
     store.put_object(&key, body).expect("stored");
     let ctx = work();
     let bytes = fetch_decision_ref(&store, "t", &reference, transport(&ctx)).expect("found");
-    assert_eq!(bytes.as_bytes(), body);
+    assert_eq!(bytes.as_slice(), body);
     let ghost = ObjectRef {
         epoch: 4,
         ..reference
@@ -172,20 +159,25 @@ fn receive_reports_missing_and_cap_without_manufactured_success() {
 }
 
 #[test]
-fn get_verified_keeps_the_receive_charge_until_the_owner_drops() {
+fn get_verified_retains_only_its_received_buffer_until_the_owner_drops() {
     let store = MemStore::new();
     let ctx = work();
-    let baseline = ctx.used(Resource::WorkingBytes);
     let reference =
-        put_verified(&store, "t", 1, ObjectKind::Chunk, b"charged-payload").expect("stored");
+        put_verified(&store, "t", 1, ObjectKind::Chunk, b"owned-payload").expect("stored");
     let body = get_verified(&store, "t", &reference, transport(&ctx)).expect("verified");
-    assert!(
-        ctx.used(Resource::WorkingBytes) > baseline,
-        "get_verified must not refund the reservation before the caller consumes the bytes"
-    );
-    assert_eq!(body.as_bytes(), b"charged-payload");
+    #[cfg(feature = "alloc-counter")]
+    let before_drop = bumbledb::alloc_counter::snapshot().absolute.live_bytes;
+    #[cfg(feature = "alloc-counter")]
+    let capacity = body.capacity() as u64;
+    ctx.cancel();
+    assert_eq!(body.as_slice(), b"owned-payload");
     drop(body);
-    assert_eq!(ctx.used(Resource::WorkingBytes), baseline);
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(
+        bumbledb::alloc_counter::snapshot().absolute.live_bytes,
+        before_drop - capacity,
+        "drop releases the full capacity; the adapter's request log is independent"
+    );
 }
 
 #[test]
@@ -213,11 +205,17 @@ fn get_verified_honors_a_tighter_caller_cap_and_returns_no_body() {
 }
 
 #[test]
-fn get_verified_refuses_without_work_context() {
+fn get_verified_without_cancellation_still_verifies_the_complete_object() {
     let store = MemStore::new();
     let reference = put_verified(&store, "t", 1, ObjectKind::Chunk, b"bytes").expect("stored");
-    assert!(
-        get_verified(&store, "t", &reference, TransportContext::limited(64)).is_err(),
-        "an uncharged receive is not an admitted owner"
+    assert_eq!(
+        get_verified(&store, "t", &reference, TransportContext::limited(64)).unwrap(),
+        b"bytes"
     );
+    let mut wrong = reference;
+    wrong.length += 1;
+    assert!(matches!(
+        get_verified(&store, "t", &wrong, TransportContext::limited(64)),
+        Err(ObjectError::WrongLength { .. })
+    ));
 }

@@ -1926,16 +1926,6 @@ mod tests {
     }
 
     fn work() -> crate::WorkContext {
-        crate::work::ExecutionPolicy {
-            input_bytes: 1_000_000,
-            working_bytes: 1_000_000,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 1000,
-            work_units: 1_000_000,
-            timeout: std::time::Duration::from_secs(60),
-        }
-        .start()
-        .expect("work")
+        crate::work::WorkContext::new()
     }
 }

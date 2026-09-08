@@ -12,10 +12,24 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
 import { Effect, Exit } from "effect"
+import { DbError } from "@bjornpagen/bumbledb"
 import { incrementUnits, incrementUnitsAsF64 } from "../../consumers/core-ts/consumer.ts"
 import { incrementUnitsIntent, knownInvalidMixRefuses, parsedIdentityIsBounded } from "../../consumers/log-ts/consumer.ts"
 import { bindingFor } from "../src/db/bindings.ts"
 import { loadGeneratedMigrations } from "../src/db/generated.ts"
+import { exitResponse } from "../src/http.ts"
+
+test("runtime layer acquisition failures become redacted HTTP responses", async () => {
+	const response = exitResponse(Exit.fail(new DbError({
+		operation: "TenantCache.make",
+		reason: { _tag: "QueueFull" }
+	})))
+	assert.equal(response.status, 429)
+	assert.deepEqual(await response.json(), { error: "QueueFull", operation: "TenantCache.make" })
+	const alreadyMapped = Response.json({ error: "Denied" }, { status: 403 })
+	assert.equal(exitResponse(Exit.fail(alreadyMapped)), alreadyMapped)
+	assert.equal(exitResponse(Exit.die(new Error("private details"))).status, 500)
+})
 
 test("D27: consumer field-arithmetic convert authors unresolved", () => {
 	assert.equal(incrementUnits.kind, "add")

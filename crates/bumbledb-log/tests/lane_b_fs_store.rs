@@ -7,13 +7,12 @@
 
 use std::path::PathBuf;
 
-use bumbledb::{ExecutionPolicy, WorkContext};
+use bumbledb::WorkContext;
 use bumbledb_log::store::fs::{FsStore, Inject, Phase, content_version};
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore as _, PutOutcome, ReceiveLimits, ReceivedHead,
     ReceivingStore, TransportContext, TransportObservation,
 };
-use std::time::Duration;
 
 fn fresh_root(name: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -61,14 +60,14 @@ fn a_fault_at_every_phase_leaves_old_or_new_complete_bytes_never_torn() {
             ReceivedHead::Present { body, version } => {
                 if expect_new {
                     assert_eq!(
-                        body.as_bytes(),
+                        body.as_slice(),
                         b"new-complete",
                         "{phase:?}: the rename landed"
                     );
                     assert_eq!(version, content_version(b"new-complete"));
                 } else {
                     assert_eq!(
-                        body.as_bytes(),
+                        body.as_slice(),
                         b"old-complete",
                         "{phase:?}: nothing landed"
                     );
@@ -108,7 +107,7 @@ fn indeterminate_at_publish_is_resolved_by_reading_never_assumed() {
         .receive_head("t/HEAD", TransportContext::limited(64))
         .expect("read")
     {
-        ReceivedHead::Present { body, .. } => assert_eq!(body.as_bytes(), b"two"),
+        ReceivedHead::Present { body, .. } => assert_eq!(body.as_slice(), b"two"),
         ReceivedHead::Absent => panic!("head exists"),
     }
     // The stale token cannot win afterwards.
@@ -167,7 +166,7 @@ fn immutable_puts_verify_identity_and_conflicts_never_overwrite() {
     let body = store
         .receive_object("t/objects/1/chunk/aa", TransportContext::limited(64))
         .expect("get");
-    assert_eq!(body.as_bytes(), b"bytes");
+    assert_eq!(body.as_slice(), b"bytes");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -186,22 +185,8 @@ fn delete_is_idempotent_and_never_reaches_outside_the_key_namespace() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-fn work(timeout: Duration) -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 0,
-        work_units: 1_024,
-        timeout,
-    }
-    .start()
-    .expect("work")
-}
-
 #[test]
-fn receive_caps_changing_length_and_deadline_before_full_buffering() {
+fn receive_checks_input_length_and_cancellation_before_full_buffering() {
     let root = fresh_root("receive");
     let store = FsStore::new(&root);
     store
@@ -217,12 +202,15 @@ fn receive_caps_changing_length_and_deadline_before_full_buffering() {
         )
         .expect_err("cap");
     assert_eq!(error.observation, TransportObservation::Capped);
-    let ctx = work(Duration::from_millis(1));
-    std::thread::sleep(Duration::from_millis(3));
+    let ctx = WorkContext::new();
+    ctx.cancel();
     let late = store.receive_head(
         "t/HEAD",
         TransportContext::new(&ctx, ReceiveLimits::capped(64)),
     );
-    assert!(late.is_err(), "stalled HEAD receive observes the deadline");
+    assert!(
+        late.is_err(),
+        "HEAD receive observes cancellation, not false absence"
+    );
     let _ = std::fs::remove_dir_all(&root);
 }

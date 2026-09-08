@@ -369,22 +369,11 @@ mod tests {
     use crate::storage::store::map::MapPolicy;
     use crate::storage::store::staging::UnreadyStore;
     use crate::storage::store::store_env::Store;
-    use crate::work::ExecutionPolicy;
+    use crate::work::WorkContext;
     use crate::{ChangeSet, Value};
-    use std::time::Duration;
 
     fn work() -> crate::WorkContext {
-        ExecutionPolicy {
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 0,
-            rows: 1 << 16,
-            work_units: 1 << 20,
-            timeout: Duration::from_secs(30),
-        }
-        .start()
-        .expect("work")
+        WorkContext::new()
     }
 
     fn keyed_email() -> Schema {
@@ -525,8 +514,7 @@ mod tests {
         determinant: &[Value],
         expected: &[(u64, Vec<Value>)],
     ) {
-        use crate::work::Resource;
-        let before = view.work.used(Resource::WorkingBytes);
+        let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut outer = 0;
         view.visit_ranked_compiled_group(compiled, determinant, &mut |rank, row| {
             let retained = row.to_vec();
@@ -546,10 +534,13 @@ mod tests {
         })
         .unwrap();
         assert_eq!(outer, expected.len());
-        assert_eq!(view.work.used(Resource::WorkingBytes), before);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        let _ = before;
 
         let cancelled = work();
         let cancel_view = CandidateView::new(view.state, view.schema, &cancelled);
+        let before_cancel = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut calls = 0;
         let result = cancel_view.visit_ranked_compiled_group(compiled, determinant, &mut |_, _| {
             calls += 1;
@@ -558,7 +549,12 @@ mod tests {
         });
         assert_eq!(result, Err(StoreError::Work(crate::WorkError::Cancelled)));
         assert_eq!(calls, 1, "reused decode cannot bypass cancellation");
-        assert_eq!(cancelled.used(Resource::WorkingBytes), 0);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(
+            crate::alloc_counter::snapshot().absolute.live_bytes,
+            before_cancel
+        );
+        let _ = before_cancel;
     }
 
     fn assert_ranked_visit_stopping(
@@ -567,6 +563,7 @@ mod tests {
         determinant: &[Value],
         first_rank: u64,
     ) {
+        let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut stopped = 0;
         view.visit_ranked_compiled_group(compiled, determinant, &mut |rank, _| {
             assert_eq!(rank, first_rank);
@@ -591,6 +588,9 @@ mod tests {
             view.visit_ranked_compiled_group(compiled, determinant, &mut |_, _| Err(error.clone())),
             Err(error)
         );
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        let _ = before;
     }
 
     struct StreamDecodeJudge<'a> {
@@ -605,7 +605,6 @@ mod tests {
             candidate: &super::CandidateState<'_, '_>,
             _: &crate::WorkContext,
         ) -> Result<Judgment<()>, StoreError> {
-            use crate::work::Resource;
             let context = work();
             let view = CandidateView::new(candidate, self.schema, &context);
             let mut seen = Vec::new();
@@ -627,7 +626,6 @@ mod tests {
                 Ok(true)
             })?;
             assert_eq!(seen.as_slice(), self.added);
-            assert_eq!(context.used(Resource::WorkingBytes), 0);
             let mut removed = 0;
             view.visit_removed_rows(RelationId(0), &mut |row| {
                 assert_eq!(row, self.old);
@@ -656,7 +654,6 @@ mod tests {
             })?;
             assert_eq!(complete.len(), seen.len());
             assert!(complete.iter().all(|row| seen.contains(row)));
-            assert_eq!(context.used(Resource::WorkingBytes), 0);
 
             assert_delta_visit_exits(&view, &context)?;
             Ok(Judgment::Rejected(())) // The test candidate is never published.
@@ -667,19 +664,21 @@ mod tests {
         view: &CandidateView<'_, '_, '_>,
         context: &crate::WorkContext,
     ) -> Result<(), StoreError> {
-        use crate::work::Resource;
+        let before = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut stopped = 0;
         view.visit_added_rows(RelationId(0), &mut |_| {
             stopped += 1;
             Ok(false)
         })?;
         assert_eq!(stopped, 1);
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
         assert_eq!(
             view.visit_added_rows(RelationId(0), &mut |_| Err(StoreError::ForeignSchema)),
             Err(StoreError::ForeignSchema)
         );
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
         let mut cancelled = 0;
         let result = view.visit_added_rows(RelationId(0), &mut |_| {
             cancelled += 1;
@@ -696,7 +695,9 @@ mod tests {
             cancelled, 1,
             "reused capacity must still check before the next callback"
         );
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().absolute.live_bytes, before);
+        let _ = before;
         Ok(())
     }
 

@@ -129,8 +129,8 @@ from_error!(Hydration, crate::recovery::RecoveryError);
 impl From<LogError> for MigrationError {
     fn from(error: LogError) -> Self {
         match error {
-            // Bounded work/deadline/cancellation is ONE typed resource
-            // refusal no matter which layer charged it: the SDK maps
+            // Cancellation is one typed operational refusal regardless
+            // of which layer observes it: the SDK maps
             // `MigrationError::Work` to the exact core reason, while a
             // nested `Log(Work)` would be respelled as migration drift.
             LogError::Work(work) => Self::Work(work),

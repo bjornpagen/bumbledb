@@ -1,10 +1,6 @@
-//! F3 bounded-execution regressions (audit-core #2/#4/#5): the bounded
-//! restart fires from JOIN growth, interior stage sinks spill under
-//! genuine pressure and agree bit-exactly with the resident run, and
-//! result construction charges as it grows — a tiny result budget refuses
-//! before whole-set materialization and a beyond-allowance result streams
-//! through the scratch backing. Gate anchors: Q-BUDGET, Q-DISK, Q-ATOMIC,
-//! QRY-002/003, chapter 12 §5/§7.
+//! Ordinary allocation, explicit cancellation, and completed-result ownership.
+//! Cursor execution is a representation alternative. Completed-result paging
+//! does not make execution streaming.
 use super::*;
 use crate::ir::FoldOp;
 
@@ -12,8 +8,7 @@ use bumbledb_theory::schema::ValueType as TheoryValueType;
 
 const METRIC: RelationId = RelationId(0);
 
-/// A text-free relation so the resident image slab charge is exact and
-/// the fallback interns nothing.
+/// Text-free input isolates join and result ownership.
 fn metric_descriptor() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![RelationDescriptor {
@@ -53,22 +48,7 @@ fn metric_store(name: &'static str, rows: u64) -> StoreFix {
     fix
 }
 
-fn bounded_policy(working_bytes: u64, result_bytes: u64) -> crate::work::ExecutionPolicy {
-    crate::work::ExecutionPolicy {
-        input_bytes: u64::MAX,
-        working_bytes,
-        scratch_bytes: u64::MAX,
-        result_bytes,
-        rows: u64::MAX,
-        work_units: u64::MAX,
-        timeout: std::time::Duration::from_secs(3600),
-    }
-}
-
-/// The two-atom self-join on `id`: the sibling occurrence forces a level
-/// map over every id key, so the executor's COLT pools dwarf the (smaller,
-/// transient) image slab charge — the working refusal comes from JOIN
-/// growth, not the build.
+/// A self-join on id forces a sibling level map over every key.
 fn self_join() -> Query {
     Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
@@ -108,61 +88,33 @@ fn bucket_amounts(answers: &Answers) -> Vec<(u64, i64)> {
     rows
 }
 
-/// Audit-core #2 (end to end): a working budget above the transient image
-/// slab but below the join's COLT footprint refuses DURING the join, and
-/// the one bounded restart through the cursor fallback delivers the exact
-/// resident answers on the same pinned snapshot.
+/// Both representations preserve answers and can be reused after release.
 #[test]
-fn a_tiny_working_budget_restarts_once_from_join_growth() {
-    // 640 rows: slab = 640 × 3 words × 8 B = 15 KiB (transient, fits);
-    // the forced id map alone owns ≥ 32 KiB of pool capacity (crosses).
-    let fix = metric_store("budget-join-restart", 640);
+fn resident_and_cursor_self_joins_preserve_answers_after_memory_release() {
+    let fix = metric_store("ordinary-self-join", 640);
     let query = self_join();
-
-    let mut resident = fix.prepare(&query).expect("prepare");
-    let expected = bucket_amounts(
-        &fix.execute(&mut resident, &[] as &[BindValue])
-            .expect("resident"),
-    );
-    assert_eq!(expected.len(), 640, "one (bucket, amount) pair per id");
-
-    let mut restarted = fix.prepare(&query).expect("prepare");
-    fix.db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
-            let work = bounded_policy(24 << 10, u64::MAX)
-                .start()
-                .expect("bounded ledger");
-            let source =
-                crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
-            let mut out = Answers::new();
-            restarted.execute_source(&source, &[] as &[BindValue], &mut out)?;
-            assert_eq!(
-                bucket_amounts(&out),
-                expected,
-                "the restarted path is the query"
-            );
-            drop(restarted);
-            assert_eq!(
-                work.used(crate::work::Resource::WorkingBytes),
-                0,
-                "dropping the prepared owner refunds all reusable growth reservations"
-            );
-            Ok(())
-        })
-        .expect("restarted execute");
+    let mut expected: Vec<_> = (0..640i64)
+        .map(|id| (u64::try_from(id).unwrap() % 3, id - 64))
+        .collect();
+    expected.sort_unstable();
+    for fallback in [false, true] {
+        let mut prepared = fix.prepare(&query).unwrap();
+        prepared.force_cursor_fallback(fallback);
+        for _ in 0..3 {
+            let out = fix.execute(&mut prepared, &[] as &[BindValue]).unwrap();
+            prepared.release_memory();
+            assert_eq!(bucket_amounts(&out), expected, "fallback={fallback}");
+        }
+    }
 }
 
 fn interior_amounts(answers: &Answers) -> Vec<(u64, i64)> {
     bucket_amounts(answers)
 }
 
-/// Audit-core #4: interior stage sinks now run under the per-execution
-/// allowance — under forced pressure (zero RAM allowance) the stage's
-/// dedup state continues in scratch and the sealed stage agrees bit-exactly
-/// with the resident run; small stages under the default allowance never
-/// spill (the threshold governs).
+/// Projection interiors preserve exact deduplication in both executors.
 #[test]
-fn a_projection_interior_under_pressure_spills_and_agrees_bit_exactly() {
+fn projection_interior_matches_cursor_execution_and_reuse() {
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),
         (2, 3, "b", 10),
@@ -215,27 +167,25 @@ fn a_projection_interior_under_pressure_spills_and_agrees_bit_exactly() {
     );
     assert_eq!(expected.len(), 4, "distinct (account, amount) pairs");
 
-    let mut spilled = fix.prepare(&query).expect("prepare");
-    spilled.set_sink_ram(0);
+    let mut cursor = fix.prepare(&query).expect("prepare");
+    cursor.force_cursor_fallback(true);
     let got = interior_amounts(
-        &fix.execute(&mut spilled, &[] as &[BindValue])
-            .expect("spilled"),
+        &fix.execute(&mut cursor, &[] as &[BindValue])
+            .expect("cursor"),
     );
-    assert_eq!(got, expected, "the spilled interior stage is the stage");
+    assert_eq!(got, expected, "the cursor interior stage is the stage");
 
-    // Success → success reuse on the same spilled plan (clean reset).
+    // Success → success reuse on the same cursor plan (clean reset).
     let again = interior_amounts(
-        &fix.execute(&mut spilled, &[] as &[BindValue])
+        &fix.execute(&mut cursor, &[] as &[BindValue])
             .expect("re-execute"),
     );
     assert_eq!(again, expected);
 }
 
-/// Audit-core #4 (aggregate stage half): an aggregate interior's dedup and
-/// group state judged against a zero allowance continues in scratch and
-/// finalizes into the identical sealed stage.
+/// Aggregate interiors preserve exact folding in both executors.
 #[test]
-fn an_aggregate_interior_under_pressure_spills_and_agrees_bit_exactly() {
+fn aggregate_interior_matches_cursor_execution() {
     let rows: &[(u64, u64, &str, i64)] = &[
         (1, 3, "a", 10),
         (2, 3, "b", 25),
@@ -294,146 +244,88 @@ fn an_aggregate_interior_under_pressure_spills_and_agrees_bit_exactly() {
         "per-account sums"
     );
 
-    let mut spilled = fix.prepare(&query).expect("prepare");
-    spilled.set_sink_ram(0);
+    let mut cursor = fix.prepare(&query).expect("prepare");
+    cursor.force_cursor_fallback(true);
     let got = interior_amounts(
-        &fix.execute(&mut spilled, &[] as &[BindValue])
-            .expect("spilled"),
+        &fix.execute(&mut cursor, &[] as &[BindValue])
+            .expect("cursor"),
     );
-    assert_eq!(got, expected, "the spilled aggregate stage is the stage");
+    assert_eq!(got, expected, "the cursor aggregate stage is the stage");
 }
 
-/// Audit-core #5: result bytes charge DURING construction — a tiny result
-/// budget refuses while the set is still being built (never after a full
-/// RAM materialization), the refusal leaves no partial answer (Q-ATOMIC),
-/// and a beyond-allowance result streams into the scratch backing as rows
-/// land, sealing bit-exactly.
+/// Borrowed result visits allocate no second Answers carrier. Cancellation
+/// stops the visitor immediately, does not mutate the sealed owner, and does
+/// not poison a fresh delivery context or a reused preparation.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "one end-to-end charged-construction scenario: refusal + streaming"
-)]
-fn a_result_budget_refuses_before_whole_set_materialization() {
-    let fix = metric_store("budget-result-charge", 4096);
-    let query = Query::single(Rule {
-        finds: vec![FindTerm::Var(VarId(1)), FindTerm::Var(VarId(2))],
-        atoms: vec![Atom {
-            source: crate::ir::AtomSource::Edb(METRIC),
-            bindings: vec![
-                (FieldId(0), Term::Var(VarId(0))),
-                (FieldId(1), Term::Var(VarId(1))),
-                (FieldId(2), Term::Var(VarId(2))),
-            ],
-        }],
-        negated: vec![],
-        conditions: vec![],
-    });
+fn completed_results_support_cancellable_borrowed_delivery_without_copying() {
+    use crate::work::{WorkContext, WorkError};
+    let fix = metric_store("borrowed-result-delivery", 4096);
+    let query = self_join();
+    let mut prepared = fix.prepare(&query).unwrap();
+    let complete = fix
+        .db
+        .read(WorkContext::new(), |instance| {
+            prepared.execute_complete(instance, &[] as &[BindValue])
+        })
+        .unwrap();
+    assert_eq!(complete.len(), 4096);
+    prepared.release_memory();
 
-    let mut resident = fix.prepare(&query).expect("prepare");
-    let expected = bucket_amounts(
-        &fix.execute(&mut resident, &[] as &[BindValue])
-            .expect("resident"),
-    );
-    assert_eq!(expected.len(), 4096);
-
-    // (a) A 2 KiB result budget: the bounded-quantum charge inside
-    // finalize refuses long before 4096 rows exist; the construction path
-    // itself errors (never a post-hoc seal refusal over an already-built
-    // set) and the carrier holds nothing.
-    let mut refused = fix.prepare(&query).expect("prepare");
-    fix.db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
-            let work = bounded_policy(u64::MAX, 2 << 10)
-                .start()
-                .expect("bounded ledger");
-            let source =
-                crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
-            let mut charge = crate::api::prepared::result::ResultCharge::new(
-                &work,
-                crate::api::prepared::result::RESULT_RAM_BYTES,
-            );
-            let mut out = Answers::new();
-            let result = refused.execute_source_charged(
-                &source,
-                &[] as &[BindValue],
-                &mut out,
-                Some(&mut charge),
-            );
-            assert!(
-                matches!(
-                    &result,
-                    Err(Error::Store(store)) if matches!(
-                        &**store,
-                        crate::storage::store::StoreError::Work(
-                            crate::work::WorkError::Exhausted {
-                                resource: crate::work::Resource::ResultBytes,
-                                ..
-                            }
-                        )
-                    )
-                ),
-                "typed result-byte exhaustion during construction, got {result:?}"
-            );
-            assert_eq!(out.len(), 0, "no partial answer survives (Q-ATOMIC)");
-            assert!(
-                !charge.spilled(),
-                "the refusal came from the budget, not the allowance"
-            );
+    let cancelled = WorkContext::new();
+    let mut visits = 0;
+    let error = complete
+        .visit_rows(&cancelled, |_| {
+            visits += 1;
+            if visits == 257 {
+                cancelled.cancel();
+            }
             Ok(())
         })
-        .expect("refused execute");
+        .unwrap_err();
+    assert!(matches!(error, Error::Store(error)
+        if matches!(*error, crate::storage::store::StoreError::Work(WorkError::Cancelled))));
+    assert_eq!(visits, 257);
+    assert_eq!(complete.len(), 4096);
 
-    // (b) A 1 KiB RAM allowance under an unbounded budget: rows route into
-    // the scratch backing DURING construction (spilled before any seal),
-    // and the sealed beyond-allowance result is the exact answer set.
-    let mut streamed = fix.prepare(&query).expect("prepare");
-    let work = bounded_policy(u64::MAX, u64::MAX).start().expect("ledger");
-    let sealed = fix
-        .db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
-            let source =
-                crate::api::prepared::source::QuerySource::store(instance.snapshot(), &work);
-            let mut charge = crate::api::prepared::result::ResultCharge::new(&work, 1 << 10);
-            let mut out = Answers::new();
-            streamed.execute_source_charged(
-                &source,
-                &[] as &[BindValue],
-                &mut out,
-                Some(&mut charge),
-            )?;
-            assert!(
-                charge.spilled(),
-                "past the allowance the construction streams into scratch"
-            );
-            assert!(
-                out.len() < crate::exec::sink::STEP_QUANTUM as usize,
-                "streamed rows retain at most one bounded batch before seal"
-            );
-            let identity = crate::api::prepared::result::ResultIdentity {
-                source: crate::api::prepared::source::PinnedSource::Store(
-                    instance.snapshot().identity(),
-                ),
-                generation: Some(instance.snapshot().generation()),
+    let work = WorkContext::new();
+    let mut seen = vec![false; 4096];
+    let before = crate::alloc_counter::snapshot().window;
+    complete
+        .visit_rows(&work, |row| {
+            let mut values = row.values();
+            let Some(AnswerValue::U64(bucket)) = values.next() else {
+                panic!("bucket")
             };
-            charge.seal(out, identity)
+            let Some(AnswerValue::I64(amount)) = values.next() else {
+                panic!("amount")
+            };
+            assert!(values.next().is_none());
+            let id = usize::try_from(amount + 64).unwrap();
+            assert_eq!(bucket, id as u64 % 3);
+            assert!(!seen[id]);
+            seen[id] = true;
+            Ok(())
         })
-        .expect("streamed execute");
-    assert_eq!(sealed.len(), 4096, "the complete set sealed");
-    assert!(
-        sealed.byte_len() > 0,
-        "the sealed rows hold their result-byte charge"
-    );
-    let mut sealed = sealed;
-    let collected = sealed
-        .collect_with_work(
-            u64::MAX,
-            &crate::api::db::test_operation().unwrap(),
-            16 << 20,
-        )
-        .expect("collect");
+        .unwrap();
+    let after = crate::alloc_counter::snapshot().window;
+    assert!(seen.into_iter().all(|visited| visited));
+    #[cfg(feature = "alloc-counter")]
     assert_eq!(
-        bucket_amounts(&collected),
-        expected,
-        "the streamed backing is the answer set, bit-exactly"
+        after.allocs, before.allocs,
+        "borrowed delivery allocates no result copy"
+    );
+    let _ = (before, after);
+    let before_move = crate::alloc_counter::snapshot().window;
+    let answers = complete.into_answers();
+    let after_move = crate::alloc_counter::snapshot().window;
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(
+        after_move.allocs, before_move.allocs,
+        "consuming the owner only moves storage"
+    );
+    let _ = (before_move, after_move);
+    assert_eq!(
+        bucket_amounts(&answers),
+        bucket_amounts(&fix.execute(&mut prepared, &[] as &[BindValue]).unwrap())
     );
 }

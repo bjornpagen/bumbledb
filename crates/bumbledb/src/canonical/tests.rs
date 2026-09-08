@@ -1,29 +1,10 @@
 use super::*;
 use crate::Interval;
 use crate::schema::{FixedIntervalElement, IntervalElement};
-use crate::work::{ExecutionPolicy, Resource};
-use std::time::Duration;
+use crate::work::WorkContext;
 
 fn work() -> WorkContext {
-    work_with_units(1_000_000)
-}
-
-fn work_with_units(work_units: u64) -> WorkContext {
-    work_with_limits(1_000_000, work_units)
-}
-
-fn work_with_limits(working_bytes: u64, work_units: u64) -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 1000,
-        work_units,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap()
+    WorkContext::new()
 }
 
 fn fields(types: &[ValueType]) -> Vec<FieldDescriptor> {
@@ -109,7 +90,7 @@ fn scalar_routes_borrow_payloads_and_preserve_nonleading_and_composite_order() {
     ];
     for selected in cases {
         let projection = exact_projection(&fields, selected);
-        let context = work_with_limits(0, 1_000_000);
+        let context = work();
         let mut route = [0; crate::schema::MAX_EXACT_SCALAR_BYTES];
         let mut expected = [0; crate::schema::MAX_EXACT_SCALAR_BYTES];
         assert_eq!(
@@ -117,13 +98,8 @@ fn scalar_routes_borrow_payloads_and_preserve_nonleading_and_composite_order() {
             projection.encode_scalar_row(&values, &mut expected),
             "projection {selected:?}"
         );
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
-        let validation = work_with_limits(0, 1_000_000);
+        let validation = work();
         validate(&fields, &row, &validation).unwrap();
-        assert_eq!(
-            context.used(Resource::WorkUnits),
-            validation.used(Resource::WorkUnits)
-        );
     }
 }
 
@@ -138,7 +114,7 @@ fn scalar_route_validates_every_field_and_all_row_framing() {
         &donor,
     )
     .unwrap();
-    let context = work_with_limits(0, 1_000_000);
+    let context = work();
     let mut route = [0; crate::schema::MAX_EXACT_SCALAR_BYTES];
     for end in 0..row.len() {
         assert_eq!(
@@ -189,7 +165,7 @@ fn scalar_route_float_order_and_noncanonical_unselected_values() {
     ] {
         let values = [Value::Bool(true), Value::F64(value)];
         let row = CanonicalRow::encode(&fields, &values, &donor).unwrap();
-        let context = work_with_limits(0, 1_000_000);
+        let context = work();
         let mut route = [0; crate::schema::MAX_EXACT_SCALAR_BYTES];
         let actual = exact_scalar_projection(&fields, &row, &projection, &context, &mut route)
             .unwrap()
@@ -275,69 +251,29 @@ fn scalar_route_rejects_unselected_interval_and_fixed_bytes_malformed_values() {
 }
 
 #[test]
-fn scalar_route_polls_text_and_field_boundaries_without_payload_reservations() {
-    let narrow_fields = fields(&[ValueType::U64, ValueType::String]);
-    let projection = exact_projection(&narrow_fields, &[0]);
-    let donor = work();
+fn scalar_route_checks_cancellation_including_empty_projections() {
+    let fields = fields(&[ValueType::U64, ValueType::String]);
+    let projection = exact_projection(&fields, &[0]);
     let row = CanonicalRow::encode(
-        &narrow_fields,
+        &fields,
         &[
             Value::U64(7),
             Value::String("x".repeat(COPY_QUANTUM + 1).into()),
         ],
-        &donor,
+        &work(),
     )
     .unwrap();
+    let context = work();
     let mut route = [0; crate::schema::MAX_EXACT_SCALAR_BYTES];
-    let limit = (narrow_fields.len() + COPY_QUANTUM) as u64;
-    let context = work_with_limits(0, limit);
-    assert!(matches!(
-        exact_scalar_projection(&narrow_fields, &row, &projection, &context, &mut route),
-        Err(RowError::Work(WorkError::Exhausted {
-            resource: Resource::WorkUnits,
-            requested: 1,
-            ..
-        }))
-    ));
-    assert_eq!(context.used(Resource::WorkUnits), limit);
-    assert_eq!(context.used(Resource::WorkingBytes), 0);
-    let context = work_with_limits(0, limit + 1);
     assert_eq!(
-        exact_scalar_projection(&narrow_fields, &row, &projection, &context, &mut route).unwrap(),
+        exact_scalar_projection(&fields, &row, &projection, &context, &mut route).unwrap(),
         Some(7u64.to_be_bytes().as_slice())
     );
     context.cancel();
     assert_eq!(
-        exact_scalar_projection(&narrow_fields, &row, &projection, &context, &mut route),
+        exact_scalar_projection(&fields, &row, &projection, &context, &mut route),
         Err(RowError::Work(WorkError::Cancelled))
     );
-
-    let wide_fields = fields(&[ValueType::Bool; FIELD_QUANTUM + 1]);
-    let wide_projection = exact_projection(&wide_fields, &[0]);
-    let wide_row = CanonicalRow::encode(
-        &wide_fields,
-        &vec![Value::Bool(true); FIELD_QUANTUM + 1],
-        &donor,
-    )
-    .unwrap();
-    let context = work_with_limits(0, FIELD_QUANTUM as u64);
-    assert!(matches!(
-        exact_scalar_projection(
-            &wide_fields,
-            &wide_row,
-            &wide_projection,
-            &context,
-            &mut route
-        ),
-        Err(RowError::Work(WorkError::Exhausted {
-            resource: Resource::WorkUnits,
-            requested: 1,
-            ..
-        }))
-    ));
-    assert_eq!(context.used(Resource::WorkUnits), FIELD_QUANTUM as u64);
-    let context = work();
-    context.cancel();
     let empty_projection = exact_projection(&[], &[]);
     assert_eq!(
         exact_scalar_projection(&[], &[0, 0], &empty_projection, &context, &mut route),
@@ -346,8 +282,7 @@ fn scalar_route_polls_text_and_field_boundaries_without_payload_reservations() {
 }
 
 #[test]
-fn decode_scratch_reuses_capacity_and_releases_payload_charge_after_each_visit() {
-    let donor = work();
+fn decode_scratch_reuses_capacity_and_drops_payloads_after_each_visit() {
     let fields = fields(&[
         ValueType::U64,
         ValueType::String,
@@ -358,123 +293,106 @@ fn decode_scratch_reuses_capacity_and_releases_payload_charge_after_each_visit()
         Value::String("payload".into()),
         Value::FixedBytes(Box::new([3; 64])),
     ];
-    let encoded = CanonicalRow::encode(&fields, &values, &donor).unwrap();
     let context = work();
+    let encoded = CanonicalRow::encode(&fields, &values, &context).unwrap();
     let mut scratch = DecodeScratch::new(&context);
+    let mut allocation = None;
     for _ in 0..3 {
         scratch
             .with_decoded(&fields, &encoded, |actual| {
                 assert_eq!(actual, values);
-                assert!(
-                    context.used(Resource::WorkingBytes)
-                        >= DecodeScratch::footprint(actual.len(), encoded.len()).unwrap()
-                );
                 Ok::<_, RowError>(())
             })
             .unwrap();
-        assert!(scratch.values.is_empty());
-        assert_eq!(
-            context.used(Resource::WorkingBytes),
-            DecodeScratch::footprint(scratch.values.capacity(), 0).unwrap()
+        assert!(
+            scratch.values.is_empty(),
+            "visitor payloads drop before returning"
         );
+        let current = (scratch.values.as_ptr(), scratch.values.capacity());
+        if let Some(previous) = allocation {
+            assert_eq!(current, previous, "equal-width rows reuse the same vector");
+        }
+        allocation = Some(current);
     }
-    let pointer = scratch.values.as_ptr();
-    let narrow = CanonicalRow::encode(&fields[..1], &values[..1], &donor).unwrap();
+    let narrow = CanonicalRow::encode(&fields[..1], &values[..1], &context).unwrap();
     scratch
         .with_decoded(&fields[..1], &narrow, |actual| {
             assert_eq!(actual, &values[..1]);
             Ok::<_, RowError>(())
         })
         .unwrap();
+    assert!(scratch.values.is_empty());
     assert_eq!(
-        pointer,
-        scratch.values.as_ptr(),
-        "narrow rows retain the same allocation"
+        allocation,
+        Some((scratch.values.as_ptr(), scratch.values.capacity()))
     );
-    assert_eq!(
-        context.used(Resource::WorkingBytes),
-        DecodeScratch::footprint(scratch.values.capacity(), 0).unwrap()
-    );
-    drop(scratch);
-    assert_eq!(context.used(Resource::WorkingBytes), 0);
 }
 
 #[test]
-fn decode_scratch_refuses_growth_before_allocation_and_remains_reusable() {
-    let donor = work();
-    let small_fields = fields(&[ValueType::U64]);
-    let small = CanonicalRow::encode(&small_fields, &[Value::U64(1)], &donor).unwrap();
-    let context = work_with_limits(64, 1_000_000);
+fn decode_scratch_cancellation_prevents_growth_or_visit() {
+    let context = work();
     let mut scratch = DecodeScratch::new(&context);
-    scratch
-        .with_decoded(&small_fields, &small, |_| Ok::<_, RowError>(()))
-        .unwrap();
-    let pointer = scratch.values.as_ptr();
-    let retained = context.used(Resource::WorkingBytes);
-    let wide_fields = fields(&[ValueType::U64; 8]);
-    let wide = CanonicalRow::encode(&wide_fields, &vec![Value::U64(0); 8], &donor).unwrap();
-    assert!(matches!(
-        scratch.with_decoded(&wide_fields, &wide, |_| -> Result<(), RowError> {
-            panic!("refused growth cannot reach the visitor")
+    scratch.prepare(1).unwrap();
+    let allocation = (scratch.values.as_ptr(), scratch.values.capacity());
+    let fields = fields(&[ValueType::U64; 8]);
+    let wide = CanonicalRow::encode(&fields, &vec![Value::U64(0); 8], &work()).unwrap();
+    context.cancel();
+    assert_eq!(
+        scratch.with_decoded(&fields, &wide, |_| -> Result<(), RowError> {
+            panic!("cancelled decode cannot reach the visitor")
         }),
-        Err(RowError::Work(WorkError::Exhausted {
-            resource: Resource::WorkingBytes,
-            ..
-        }))
-    ));
-    assert_eq!(pointer, scratch.values.as_ptr());
-    assert_eq!(context.used(Resource::WorkingBytes), retained);
-    scratch
-        .with_decoded(&small_fields, &small, |_| Ok::<_, RowError>(()))
-        .unwrap();
+        Err(RowError::Work(WorkError::Cancelled))
+    );
+    assert!(scratch.values.is_empty());
+    assert_eq!(
+        (scratch.values.as_ptr(), scratch.values.capacity()),
+        allocation
+    );
 }
 
 #[test]
-fn decode_scratch_allocation_failure_refunds_growth_but_keeps_existing_capacity() {
-    let context = work_with_limits(u64::MAX, 1_000_000);
+fn decode_scratch_capacity_overflow_preserves_existing_allocation() {
+    let context = work();
     let mut scratch = DecodeScratch::new(&context);
-    scratch.prepare(1, 0).unwrap();
-    let pointer = scratch.values.as_ptr();
-    let retained = context.used(Resource::WorkingBytes);
-    // A vector's allocation must fit isize::MAX even when the logical
-    // allowance is larger. This deterministically refuses without OOM.
+    scratch.prepare(1).unwrap();
+    let allocation = (scratch.values.as_ptr(), scratch.values.capacity());
+    // Deterministic capacity overflow, not an attempt to exhaust host memory.
     let impossible = usize::try_from(isize::MAX).unwrap() / std::mem::size_of::<Value>() + 1;
-    assert_eq!(scratch.prepare(impossible, 0), Err(RowError::Allocation));
-    assert_eq!(pointer, scratch.values.as_ptr());
-    assert_eq!(context.used(Resource::WorkingBytes), retained);
-    drop(scratch);
-    assert_eq!(context.used(Resource::WorkingBytes), 0);
+    assert_eq!(scratch.prepare(impossible), Err(RowError::Allocation));
+    assert_eq!(
+        (scratch.values.as_ptr(), scratch.values.capacity()),
+        allocation
+    );
+    scratch.prepare(1).unwrap();
+    assert!(scratch.values.is_empty());
 }
 
 #[test]
 fn decode_scratch_clears_partial_values_on_decode_visitor_and_cancellation_errors() {
-    let donor = work();
     let fields = fields(&[ValueType::String, ValueType::U64]);
+    let context = work();
     let encoded = CanonicalRow::encode(
         &fields,
         &[Value::String("x".repeat(5000).into()), Value::U64(3)],
-        &donor,
+        &context,
     )
     .unwrap();
-    let context = work();
     let mut scratch = DecodeScratch::new(&context);
     assert_eq!(
         scratch.with_decoded(
             &fields,
             &encoded[..encoded.len() - 1],
-            |_| -> Result<(), RowError> { panic!("late malformed field cannot reach visitor") }
+            |_| -> Result<(), RowError> { panic!("malformed row cannot reach visitor") }
         ),
         Err(RowError::Truncated)
     );
-    let retained = DecodeScratch::footprint(scratch.values.capacity(), 0).unwrap();
     assert!(scratch.values.is_empty());
-    assert_eq!(context.used(Resource::WorkingBytes), retained);
+    let allocation = (scratch.values.as_ptr(), scratch.values.capacity());
     assert_eq!(
         scratch.with_decoded(&fields, &encoded, |_| Err::<(), _>(RowError::Allocation)),
         Err(RowError::Allocation)
     );
     assert!(scratch.values.is_empty());
-    assert_eq!(context.used(Resource::WorkingBytes), retained);
     assert_eq!(
         scratch.with_decoded(&fields, &encoded, |_| {
             context.cancel();
@@ -483,49 +401,42 @@ fn decode_scratch_clears_partial_values_on_decode_visitor_and_cancellation_error
         Err(RowError::Work(WorkError::Cancelled))
     );
     assert!(scratch.values.is_empty());
-    assert_eq!(context.used(Resource::WorkingBytes), retained);
     assert_eq!(
         scratch.with_decoded(&fields, &encoded, |_| -> Result<(), RowError> {
             panic!("cancelled workspace cannot visit")
         }),
         Err(RowError::Work(WorkError::Cancelled))
     );
-    drop(scratch);
-    assert_eq!(context.used(Resource::WorkingBytes), 0);
+    assert_eq!(
+        (scratch.values.as_ptr(), scratch.values.capacity()),
+        allocation
+    );
 }
 
 #[test]
-fn decode_scratch_panic_retains_payload_charge_until_cleanup() {
-    let donor = work();
+fn decode_scratch_remains_reusable_after_visitor_unwinds() {
     let fields = fields(&[ValueType::String]);
-    let encoded =
-        CanonicalRow::encode(&fields, &[Value::String("retained payload".into())], &donor).unwrap();
     let context = work();
+    let encoded =
+        CanonicalRow::encode(&fields, &[Value::String("payload".into())], &context).unwrap();
     let mut scratch = DecodeScratch::new(&context);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let _: Result<(), RowError> =
             scratch.with_decoded(&fields, &encoded, |_| panic!("visitor"));
     }));
     assert!(panic.is_err());
-    assert_eq!(scratch.values.len(), 1);
-    assert_eq!(
-        context.used(Resource::WorkingBytes),
-        DecodeScratch::footprint(scratch.values.capacity(), encoded.len()).unwrap()
-    );
+    assert_eq!(scratch.values, [Value::String("payload".into())]);
     scratch
-        .with_decoded(&fields, &encoded, |_| Ok::<_, RowError>(()))
+        .with_decoded(&fields, &encoded, |actual| {
+            assert_eq!(actual, &[Value::String("payload".into())]);
+            Ok::<_, RowError>(())
+        })
         .unwrap();
     assert!(scratch.values.is_empty());
-    assert_eq!(
-        context.used(Resource::WorkingBytes),
-        DecodeScratch::footprint(scratch.values.capacity(), 0).unwrap()
-    );
-    drop(scratch);
-    assert_eq!(context.used(Resource::WorkingBytes), 0);
 }
 
 #[test]
-fn field_batches_preserve_successful_accounting_and_wire_roundtrips() {
+fn field_batches_preserve_wire_roundtrips() {
     for width in [
         0,
         1,
@@ -538,25 +449,18 @@ fn field_batches_preserve_successful_accounting_and_wire_roundtrips() {
         let values: Vec<_> = (0..width).map(|value| Value::U64(value as u64)).collect();
         let ctx = work();
         let row = CanonicalRow::encode(&fields, &values, &ctx).unwrap();
-        assert_eq!(ctx.used(Resource::WorkUnits), 2 * width as u64);
         let ctx = work();
         let parsed = CanonicalRow::parse(&fields, row.as_bytes(), &ctx).unwrap();
         assert_eq!(parsed.as_bytes(), row.as_bytes());
-        assert_eq!(
-            ctx.used(Resource::WorkUnits),
-            (width + row.as_bytes().len()) as u64
-        );
         let ctx = work();
         let decoded = decode(&fields, row.as_bytes(), &ctx).unwrap();
         assert_eq!(decoded.values(), values);
-        assert_eq!(ctx.used(Resource::WorkUnits), width as u64);
         drop(decoded);
-        assert_eq!(ctx.used(Resource::WorkingBytes), 0);
     }
 }
 
 #[test]
-fn field_batches_keep_variable_width_polling_and_accounting() {
+fn field_batches_keep_variable_width_roundtrips() {
     let mut types = vec![ValueType::U64; FIELD_QUANTUM];
     types.push(ValueType::String);
     let fields = fields(&types);
@@ -564,21 +468,13 @@ fn field_batches_keep_variable_width_polling_and_accounting() {
     values.push(Value::String("x".repeat(COPY_QUANTUM + 1).into_boxed_str()));
     let ctx = work();
     let row = CanonicalRow::encode(&fields, &values, &ctx).unwrap();
-    assert_eq!(
-        ctx.used(Resource::WorkUnits),
-        (2 * fields.len() + COPY_QUANTUM + 1) as u64
-    );
     let ctx = work();
     let decoded = decode(&fields, row.as_bytes(), &ctx).unwrap();
     assert_eq!(decoded.values(), values);
-    assert_eq!(
-        ctx.used(Resource::WorkUnits),
-        (fields.len() + COPY_QUANTUM + 1) as u64
-    );
 }
 
 #[test]
-fn field_batches_refuse_before_next_chunk_and_preserve_global_error_indices() {
+fn field_batches_preserve_global_error_indices_and_cancellation() {
     let fields = fields(&vec![ValueType::U64; FIELD_QUANTUM + 1]);
     let mut values = vec![Value::U64(1); fields.len()];
     let row = CanonicalRow::encode(&fields, &values, &work()).unwrap();
@@ -590,29 +486,12 @@ fn field_batches_refuse_before_next_chunk_and_preserve_global_error_indices() {
             field: FIELD_QUANTUM
         })
     );
-    let ctx = work_with_units(FIELD_QUANTUM as u64);
     assert!(matches!(
-        decode(&fields, &malformed, &ctx),
-        Err(RowError::Work(WorkError::Exhausted {
-            resource: Resource::WorkUnits,
-            ..
-        }))
+        decode(&fields, &malformed, &work()),
+        Err(RowError::InvalidTag {
+            field: FIELD_QUANTUM
+        })
     ));
-    assert_eq!(ctx.used(Resource::WorkUnits), FIELD_QUANTUM as u64);
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
-
-    // The size pass succeeds, but there is insufficient allowance to
-    // start the first encoding chunk after acquiring the output buffer.
-    let ctx = work_with_units((2 * FIELD_QUANTUM) as u64);
-    assert!(matches!(
-        CanonicalRow::encode(&fields, &values, &ctx),
-        Err(RowError::Work(WorkError::Exhausted {
-            resource: Resource::WorkUnits,
-            ..
-        }))
-    ));
-    assert_eq!(ctx.used(Resource::WorkUnits), fields.len() as u64);
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
     values[FIELD_QUANTUM] = Value::Bool(true);
     assert!(matches!(
         CanonicalRow::encode(&fields, &values, &work()),
@@ -620,17 +499,28 @@ fn field_batches_refuse_before_next_chunk_and_preserve_global_error_indices() {
             field: FIELD_QUANTUM
         })
     ));
-    let ctx = work();
-    ctx.cancel();
+    let context = work();
+    context.cancel();
     assert!(matches!(
-        CanonicalRow::encode(&fields, &values, &ctx),
+        CanonicalRow::encode(&fields, &values, &context),
         Err(RowError::Work(WorkError::Cancelled))
     ));
     assert!(matches!(
-        CanonicalRow::encode(&[], &[], &ctx),
+        CanonicalRow::encode(&[], &[], &context),
         Err(RowError::Work(WorkError::Cancelled))
     ));
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
+    assert!(matches!(
+        CanonicalRow::parse(&[], &[0, 0], &context),
+        Err(RowError::Work(WorkError::Cancelled))
+    ));
+    assert_eq!(
+        decode(&[], &[0, 0], &context),
+        Err(RowError::Work(WorkError::Cancelled))
+    );
+    assert_eq!(
+        validate(&[], &[0, 0], &context),
+        Err(RowError::Work(WorkError::Cancelled))
+    );
 }
 
 #[test]
@@ -674,10 +564,6 @@ fn independent_all_scalar_golden_and_every_truncation() {
     let decoded = decode(&fields, expected, &ctx).unwrap();
     assert_eq!(decoded.values(), values);
     drop(decoded);
-    assert_eq!(
-        ctx.used(Resource::WorkingBytes),
-        (2 * expected.len()) as u64
-    );
     for end in 0..expected.len() {
         assert!(
             CanonicalRow::parse(&fields, &expected[..end], &ctx).is_err(),
@@ -686,7 +572,6 @@ fn independent_all_scalar_golden_and_every_truncation() {
     }
     drop(parsed);
     drop(row);
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
     let mut trailing = expected.to_vec();
     trailing.push(0);
     assert!(matches!(
@@ -827,7 +712,6 @@ fn malformed_bool_float_interval_width_and_utf8_refuse() {
         ),
         Err(RowError::Type { field: 0 })
     ));
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
 }
 
 #[test]
@@ -849,41 +733,23 @@ fn utf8_crossing_poll_boundaries_is_checked_without_full_copy() {
 }
 
 #[test]
-fn shape_and_budget_errors_leave_no_owned_bytes() {
+fn shape_errors_refuse_and_zero_field_rows_roundtrip() {
     let fields = fields(&[ValueType::U64]);
-    let ctx = work();
+    let context = work();
     assert!(matches!(
-        CanonicalRow::encode(&fields, &[], &ctx),
+        CanonicalRow::encode(&fields, &[], &context),
         Err(RowError::Arity)
     ));
     assert!(matches!(
-        CanonicalRow::encode(&fields, &[Value::Bool(false)], &ctx),
+        CanonicalRow::encode(&fields, &[Value::Bool(false)], &context),
         Err(RowError::Type { field: 0 })
     ));
-    assert_eq!(ctx.used(Resource::WorkingBytes), 0);
-    let tiny = ExecutionPolicy {
-        input_bytes: 100,
-        working_bytes: 10,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 1,
-        work_units: 100,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap();
-    assert!(matches!(
-        CanonicalRow::encode(&fields, &[Value::U64(0)], &tiny),
-        Err(RowError::Work(WorkError::Exhausted {
-            resource: Resource::WorkingBytes,
-            ..
-        }))
-    ));
-    assert_eq!(tiny.used(Resource::WorkingBytes), 0);
-    let row = CanonicalRow::encode(&[], &[], &ctx).unwrap();
+    let row = CanonicalRow::encode(&[], &[], &context).unwrap();
     assert_eq!(row.as_bytes(), &[0, 0]);
     assert_eq!(
-        CanonicalRow::parse(&[], &[0, 0], &ctx).unwrap().as_bytes(),
+        CanonicalRow::parse(&[], &[0, 0], &context)
+            .unwrap()
+            .as_bytes(),
         &[0, 0]
     );
 }
@@ -907,7 +773,14 @@ fn image_walker_and_strict_decode_agree_on_interval_laws() {
     let interner = TextInterner::default();
     let mut text = TextWords::Lookup(&interner);
     let mut words = Vec::new();
-    row_words(&fields, healthy.as_bytes(), &mut text, &mut words).expect("image walk");
+    row_words(
+        &fields,
+        healthy.as_bytes(),
+        &mut text,
+        &mut words,
+        &mut Vec::new(),
+    )
+    .expect("image walk");
     assert_eq!(words, [3, 5]);
 
     // Wrong fixed width: strict decode and image walk both refuse.
@@ -927,5 +800,5 @@ fn image_walker_and_strict_decode_agree_on_interval_laws() {
         Err(RowError::Type { field: 0 })
     ));
     let mut words = Vec::new();
-    assert!(row_words(&fields, &bad, &mut text, &mut words).is_err());
+    assert!(row_words(&fields, &bad, &mut text, &mut words, &mut Vec::new()).is_err());
 }

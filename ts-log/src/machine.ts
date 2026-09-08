@@ -8,14 +8,7 @@
  * wire and the core integration seam so authored tests can drive the layer
  * deterministically; production binds the real addon in `#production.ts`.
  */
-import type {
-	AnySchema,
-	DbError,
-	ExecutionPolicy,
-	ExecutionSession,
-	NativeRuntime,
-	SchemaId
-} from "@bjornpagen/bumbledb"
+import type { AnySchema, DbError, NativeRuntime, SchemaId } from "@bjornpagen/bumbledb"
 import { Uuid } from "@bjornpagen/bumbledb"
 import type {
 	Capability,
@@ -25,7 +18,6 @@ import type {
 	RuntimeHandle,
 	SnapshotHandle
 } from "@bjornpagen/bumbledb/internal/log"
-import { policyWire } from "@bjornpagen/bumbledb/internal/log"
 import type { Scope } from "effect"
 import { Effect, Result } from "effect"
 import type { CancelVerb } from "#bridge.ts"
@@ -96,7 +88,6 @@ import type {
 	HostedOpenOptions,
 	LocalBinding,
 	LocalCreateOptions,
-	LocalOpenOptions,
 	ReadOptions,
 	SubmitOptions,
 	TenantCacheOptions
@@ -142,7 +133,7 @@ export interface PublishedReadCapability<S extends AnySchema> {
 	readonly get: QueryReader<S>["get"]
 	/** Core QueryReader.execute — yields the CompleteResult owner. */
 	readonly execute: QueryReader<S>["execute"]
-	readonly session: (work: ExecutionPolicy) => Effect.Effect<ExecutionSession<S>, DbError, Scope.Scope>
+	readonly prepare: QueryReader<S>["prepare"]
 }
 
 /** Published execute result: the core CompleteResult, not a copied page. */
@@ -291,7 +282,7 @@ function inspectionOf(wire: HistoryInspectionWire): HistoryInspection {
 		roots: { count: wire.rootCount, capacity: wire.rootCapacity },
 		gc: wire.gc,
 		lastMaintenanceError: wire.lastMaintenanceError,
-		accounted: { diskBytes: wire.diskBytes, workingBytes: wire.workingBytes },
+		storage: wire.storage,
 		operations: { queued: wire.queued, active: wire.active }
 	}
 }
@@ -300,13 +291,12 @@ function cacheInspectionOf(wire: CacheInspectionWire): CacheInspection {
 	return {
 		openCount: wire.openCount,
 		opening: wire.opening,
-		budget: { bytes: wire.budgetBytes, maxOpen: wire.maxOpen },
+		maxOpen: wire.maxOpen,
 		evictions: wire.evictions,
 		slots: wire.slots.map((slot) => ({
 			binding: slot.binding,
 			state: slot.state,
-			borrows: slot.borrows,
-			diskBytes: slot.diskBytes
+			borrows: slot.borrows
 		}))
 	}
 }
@@ -524,23 +514,19 @@ interface CommandEntry {
 
 export interface LogMachine {
 	readonly LocalHistory: {
-		open<S extends AnySchema>(binding: LocalBinding, schema: S, options: LocalOpenOptions): OpenEffect<S>
+		open<S extends AnySchema>(binding: LocalBinding, schema: S): OpenEffect<S>
 		create<S extends AnySchema>(binding: LocalBinding, schema: S, options: LocalCreateOptions): OpenEffect<S>
 	}
 	readonly HostedHistory: {
-		open<S extends AnySchema>(binding: HostedBinding, schema: S, options: HostedOpenOptions): OpenEffect<S>
+		open<S extends AnySchema>(binding: HostedBinding, schema: S, options?: HostedOpenOptions): OpenEffect<S>
 		create<S extends AnySchema>(binding: HostedBinding, schema: S, options: HostedCreateOptions): OpenEffect<S>
 	}
 	readonly Command: {
-		seal<S extends AnySchema>(
-			input: CommandInput<S>,
-			work: ExecutionPolicy
-		): Effect.Effect<Command<S>, LogError, Scope.Scope>
-		encode<S extends AnySchema>(command: Command<S>, work: ExecutionPolicy): Effect.Effect<Uint8Array, LogError>
+		seal<S extends AnySchema>(input: CommandInput<S>): Effect.Effect<Command<S>, LogError, Scope.Scope>
+		encode<S extends AnySchema>(command: Command<S>): Effect.Effect<Uint8Array, LogError>
 		decode<S extends AnySchema>(
 			bytes: Uint8Array,
-			schema: S,
-			work: ExecutionPolicy
+			schema: S
 		): Effect.Effect<Command<S>, LogError, NativeRuntimeService | Scope.Scope>
 	}
 	readonly TenantCache: {
@@ -584,7 +570,7 @@ export interface MigrationTargetOptions extends TenantOpenOptions {
  */
 export type MigrationPlansInput = GeneratedMigrations
 
-export interface AdminIdentityOptions extends ExecutionPolicy, TenantOpenOptions {
+export interface AdminIdentityOptions extends TenantOpenOptions {
 	readonly operationId: OperationId
 }
 
@@ -619,7 +605,7 @@ export interface AdminOperations {
 	): Effect.Effect<AdminOutcome<BackupReport>, never, NativeRuntimeService>
 	verifyBackup(
 		destination: BackupDestination,
-		options: ExecutionPolicy & { readonly backup?: OperationId }
+		options: { readonly backup?: OperationId }
 	): Effect.Effect<BackupVerification, LogError, NativeRuntimeService>
 	restore(
 		source: BackupDestination,
@@ -646,7 +632,7 @@ export interface MigrationOperations {
 	migrationStatus(
 		binding: HistoryBinding,
 		plans: MigrationPlansInput,
-		work: ExecutionPolicy & TenantOpenOptions
+		options: TenantOpenOptions
 	): Effect.Effect<MigrationStatus, LogError, NativeRuntimeService>
 	initialize(
 		binding: HistoryBinding,
@@ -660,11 +646,11 @@ export interface MigrationOperations {
 	): Effect.Effect<AdminOutcome<MigrateValue>, never, NativeRuntimeService>
 	activateMigration(
 		ref: ActivationRef,
-		options: ExecutionPolicy & MigrationTargetOptions
+		options: MigrationTargetOptions
 	): Effect.Effect<AdminOutcome<ActivationReport>, never, NativeRuntimeService>
 	abortMigration(
 		ref: MigrationRef,
-		options: ExecutionPolicy & MigrationTargetOptions
+		options: MigrationTargetOptions
 	): Effect.Effect<AdminOutcome<AbortReport>, never, NativeRuntimeService>
 }
 
@@ -699,7 +685,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			freshness: freshnessOf(provenance.freshness),
 			get: capability.get,
 			execute: capability.execute,
-			session: capability.session,
+			prepare: capability.prepare,
 			close: () => drainClose("PublishedSnapshot.close", (callback) => wire.runtimeSnapshotClose(snapshot, callback))
 		}
 	}
@@ -709,8 +695,8 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		readonly receiptEpoch: ReceiptEpoch
 		snapshot(options: ReadOptions): Effect.Effect<PublishedSnapshot<S>, LogError, Scope.Scope>
 		submit(command: Command<S>, options: SubmitOptions): Effect.Effect<SubmitOutcome>
-		resolve(ref: CommandRef, work: ExecutionPolicy): Effect.Effect<ResolveOutcome, LogError>
-		inspect(work: ExecutionPolicy): Effect.Effect<HistoryInspection, LogError>
+		resolve(ref: CommandRef): Effect.Effect<ResolveOutcome, LogError>
+		inspect(): Effect.Effect<HistoryInspection, LogError>
 	}
 
 	function decodeSubmit(operation: string, ref: CommandRef, result: HistoryResultWire): SubmitOutcome {
@@ -770,7 +756,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 
 		function call<A>(
 			operation: string,
-			work: ExecutionPolicy,
 			request: HistoryRequestWire,
 			accept: (result: HistoryResultWire) => A
 		): Effect.Effect<A, LogError> {
@@ -781,7 +766,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return logOperation(
 					operation,
 					cancel,
-					(callback) => wire.logHistoryCall(capability, policyWire(work, operation), request, callback),
+					(callback) => wire.logHistoryCall(capability, request, callback),
 					wire.logHistoryResult,
 					accept
 				)
@@ -800,7 +785,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					} catch (cause) {
 						return Effect.fail(logFailure(operation, cause))
 					}
-					return call(operation, options, request, (result) => {
+					return call(operation, request, (result) => {
 						if (result.verb !== "snapshot") {
 							throw invalidInput(operation)
 						}
@@ -836,7 +821,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 						(callback) =>
 							wire.logHistoryCall(
 								capability,
-								policyWire(options, operation),
 								{
 									verb: "submit",
 									command: entry.handle,
@@ -863,7 +847,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					)
 				})
 			},
-			resolve(ref: CommandRef, work: ExecutionPolicy) {
+			resolve(ref: CommandRef) {
 				const operation = "History.resolve"
 				return Effect.suspend(() => {
 					let wireRef: CommandRefWire
@@ -872,12 +856,12 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					} catch (cause) {
 						return Effect.fail(logFailure(operation, cause))
 					}
-					return call(operation, work, { verb: "resolve", ref: wireRef }, (result) => decodeResolve(operation, result))
+					return call(operation, { verb: "resolve", ref: wireRef }, (result) => decodeResolve(operation, result))
 				})
 			},
-			inspect(work: ExecutionPolicy) {
+			inspect() {
 				const operation = "History.inspect"
-				return call(operation, work, { verb: "inspect" }, (result) => {
+				return call(operation, { verb: "inspect" }, (result) => {
 					if (result.verb !== "inspect") {
 						throw invalidInput(operation)
 					}
@@ -919,7 +903,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		mode: "open" | "create",
 		binding: HistoryBinding,
 		schema: S,
-		options: (LocalOpenOptions | HostedOpenOptions) & { readonly creation?: CreationOptions }
+		options: HostedOpenOptions & { readonly creation?: CreationOptions }
 	): OpenEffect<S> {
 		return Effect.gen(function* () {
 			const runtime = yield* core.runtime()
@@ -936,7 +920,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					(callback) =>
 						wire.logHistoryOpen(
 							runtime,
-							policyWire(options, operation),
 							{
 								mode,
 								binding: bindingWire(operation, binding),
@@ -956,19 +939,20 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 	}
 
 	const LocalHistory: LogMachine["LocalHistory"] = {
-		open: (binding, schema, options) => openHistory("LocalHistory.open", "local", "open", binding, schema, options),
+		open: (binding, schema) => openHistory("LocalHistory.open", "local", "open", binding, schema, {}),
 		create: (binding, schema, options) =>
 			openHistory("LocalHistory.create", "local", "create", binding, schema, options)
 	}
 
 	const HostedHistory: LogMachine["HostedHistory"] = {
-		open: (binding, schema, options) => openHistory("HostedHistory.open", "hosted", "open", binding, schema, options),
+		open: (binding, schema, options = {}) =>
+			openHistory("HostedHistory.open", "hosted", "open", binding, schema, options),
 		create: (binding, schema, options) =>
 			openHistory("HostedHistory.create", "hosted", "create", binding, schema, options)
 	}
 
 	const CommandNamespace: LogMachine["Command"] = {
-		seal<S extends AnySchema>(input: CommandInput<S>, work: ExecutionPolicy) {
+		seal<S extends AnySchema>(input: CommandInput<S>) {
 			const operation = "Command.seal"
 			const acquire = Effect.suspend(() => {
 				// The exact core registry accessor: a foreign dynamic object
@@ -1000,14 +984,14 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return logOperation(
 					operation,
 					cancel,
-					(callback) => wire.logCommandSeal(internal.handle, policyWire(work, operation), request, callback),
+					(callback) => wire.logCommandSeal(internal.handle, request, callback),
 					wire.logCommandTake,
 					(cw) => makeCommand<S>(cw)
 				)
 			})
 			return scopedResource(operation, acquire, (command) => command.close())
 		},
-		encode<S extends AnySchema>(command: Command<S>, work: ExecutionPolicy) {
+		encode<S extends AnySchema>(command: Command<S>) {
 			const operation = "Command.encode"
 			return Effect.suspend(() => {
 				const entry = commandEntries.get(command)
@@ -1020,13 +1004,13 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return logOperation(
 					operation,
 					cancel,
-					(callback) => wire.logCommandEncode(entry.handle, policyWire(work, operation), callback),
+					(callback) => wire.logCommandEncode(entry.handle, callback),
 					wire.logBytesTake,
 					(bytes) => bytes
 				)
 			})
 		},
-		decode<S extends AnySchema>(bytes: Uint8Array, schema: S, work: ExecutionPolicy) {
+		decode<S extends AnySchema>(bytes: Uint8Array, schema: S) {
 			const operation = "Command.decode"
 			return Effect.gen(function* () {
 				const runtime = yield* core.runtime()
@@ -1037,8 +1021,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return logOperation(
 						operation,
 						cancel,
-						(callback) =>
-							wire.logCommandDecode(runtime, policyWire(work, operation), bytes, core.schemaSpec(schema), callback),
+						(callback) => wire.logCommandDecode(runtime, bytes, core.schemaSpec(schema), callback),
 						wire.logCommandTake,
 						(cw) => makeCommand<S>(cw)
 					)
@@ -1056,12 +1039,8 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				const acquire = Effect.suspend(() => {
 					let request: CacheMakeWire
 					try {
-						if (typeof options.budgetBytes !== "bigint" || options.budgetBytes < 0n) {
-							throw invalidInput(operation)
-						}
 						request = {
 							maxOpen: checkedCount(operation, options.maxOpen, 0xffffffff),
-							budgetBytes: options.budgetBytes,
 							expected:
 								options.expected === undefined
 									? null
@@ -1077,9 +1056,9 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return logOperation(
 						operation,
 						cancel,
-						(callback) => wire.logCacheMake(runtime, policyWire(options.maintenance, operation), request, callback),
+						(callback) => wire.logCacheMake(runtime, request, callback),
 						wire.logCacheTake,
-						(cache) => makeCache(schema, cache, options)
+						(cache) => makeCache(schema, cache)
 					)
 				})
 				return yield* scopedResource(operation, acquire, (cache) => cache.close())
@@ -1087,10 +1066,10 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		}
 	}
 
-	function makeCache<S extends AnySchema>(schema: S, cache: CacheHandle, options: TenantCacheOptions): TenantCache<S> {
+	function makeCache<S extends AnySchema>(schema: S, cache: CacheHandle): TenantCache<S> {
 		const state = { closed: false }
 		return {
-			acquire(binding: HistoryBinding, work: ExecutionPolicy) {
+			acquire(binding: HistoryBinding) {
 				const operation = "TenantCache.acquire"
 				const acquire = Effect.suspend(() => {
 					if (state.closed) {
@@ -1105,14 +1084,14 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return logOperation(
 						operation,
 						cancel,
-						(callback) => wire.logCacheAcquire(cache, policyWire(work, operation), { binding: wireBinding }, callback),
+						(callback) => wire.logCacheAcquire(cache, { binding: wireBinding }, callback),
 						wire.logBorrowTake,
 						(handle) => makeBorrow(schema, handle)
 					)
 				})
 				return scopedResource(operation, acquire, (borrow) => borrow.release())
 			},
-			inspect(work: ExecutionPolicy) {
+			inspect() {
 				const operation = "TenantCache.inspect"
 				return Effect.suspend(() => {
 					if (state.closed) {
@@ -1121,7 +1100,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return logOperation(
 						operation,
 						cancel,
-						(callback) => wire.logCacheInspect(cache, policyWire(work, operation), callback),
+						(callback) => wire.logCacheInspect(cache, callback),
 						wire.logCacheInspectTake,
 						cacheInspectionOf
 					)
@@ -1142,8 +1121,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return logOperation(
 						operation,
 						cancel,
-						(callback) =>
-							wire.logCacheEvict(cache, policyWire(options.maintenance, operation), { binding: wireBinding }, callback),
+						(callback) => wire.logCacheEvict(cache, { binding: wireBinding }, callback),
 						wire.logCacheEvictTake,
 						(report) => closeReportOf(operation, report)
 					)
@@ -1196,7 +1174,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 	function adminMutation<Value>(
 		operation: string,
 		ref: OperationRef,
-		work: ExecutionPolicy,
 		request: () => AdminRequestWire,
 		decode: (value: AdminValueWire) => Value
 	): Effect.Effect<AdminOutcome<Value>, never, NativeRuntimeService> {
@@ -1216,7 +1193,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return yield* certaintyOperation(
 				operation,
 				cancel,
-				(callback) => wire.logAdmin(runtime.success, policyWire(work, operation), request(), callback),
+				(callback) => wire.logAdmin(runtime.success, request(), callback),
 				wire.logAdminTake,
 				(result) => decodeAdmin(operation, ref, result, decode),
 				(error): AdminOutcome<Value> => ({ kind: "not-started", ref, error, phase: "prepared" }),
@@ -1232,7 +1209,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 
 	function adminQuery<Value>(
 		operation: string,
-		work: ExecutionPolicy,
 		request: () => AdminRequestWire,
 		decode: (value: AdminValueWire) => Value
 	): Effect.Effect<Value, LogError, NativeRuntimeService> {
@@ -1241,7 +1217,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return yield* logOperation(
 				operation,
 				cancel,
-				(callback) => wire.logAdmin(runtime, policyWire(work, operation), request(), callback),
+				(callback) => wire.logAdmin(runtime, request(), callback),
 				wire.logAdminTake,
 				(result) => {
 					if (result.certainty !== "report") {
@@ -1417,7 +1393,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "checkpoint",
 					binding: bindingWire(operation, binding),
@@ -1439,7 +1414,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "pin-root",
 					binding: bindingWire(operation, binding),
@@ -1462,7 +1436,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "release-root",
 					binding: bindingWire(operation, binding),
@@ -1484,7 +1457,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "rotate-receipt-epoch",
 					binding: bindingWire(operation, binding),
@@ -1502,7 +1474,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => {
 					if (typeof options.through !== "bigint" || options.through < 0n) {
 						throw invalidInput(operation)
@@ -1526,7 +1497,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "collect-garbage",
 					binding: bindingWire(operation, binding),
@@ -1548,7 +1518,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "backup",
 					binding: bindingWire(operation, binding),
@@ -1571,7 +1540,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			const operation = "admin.verifyBackup"
 			return adminQuery(
 				operation,
-				options,
 				() => ({
 					verb: "verify-backup",
 					destination: destinationWire(operation, destination),
@@ -1595,7 +1563,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(target, options.operationId),
-				options,
 				() => ({
 					verb: "restore",
 					source: destinationWire(operation, source),
@@ -1619,7 +1586,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "erase",
 					binding: bindingWire(operation, binding),
@@ -1640,15 +1606,14 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 	}
 
 	const migrations: MigrationOperations = {
-		migrationStatus(binding, plans, work) {
+		migrationStatus(binding, plans, options) {
 			const operation = "migrations.status"
 			return adminQuery(
 				operation,
-				work,
 				() => ({
 					verb: "migration-status",
 					binding: bindingWire(operation, binding),
-					...schemaField(work.schema),
+					...schemaField(options.schema),
 					plans: plansWire(operation, plans)
 				}),
 				(value) => {
@@ -1662,7 +1627,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "migration-initialize",
 					binding: bindingWire(operation, binding),
@@ -1681,7 +1645,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				operationRef(binding, options.operationId),
-				options,
 				() => ({
 					verb: "migration-migrate",
 					binding: bindingWire(operation, binding),
@@ -1701,7 +1664,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				{ identity: ref.target, operation: ref.operation },
-				options,
 				() => ({
 					verb: "migration-activate",
 					ref: activationRefWire(operation, ref),
@@ -1723,7 +1685,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			return adminMutation(
 				operation,
 				ref.operation,
-				options,
 				() => ({
 					verb: "migration-abort",
 					ref: migrationRefWire(operation, ref),

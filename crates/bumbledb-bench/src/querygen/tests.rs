@@ -620,7 +620,7 @@ bumbledb::schema! {
 }
 
 #[test]
-fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
+fn a_chain_of_66k_edges_completes_beyond_the_former_round_limit() {
     use bumbledb::Fact;
     use bumbledb::ir::{
         Atom, AtomSource, FindTerm, HeadTerm, InteriorId, NonEmpty, Query, Rec, RecRule, RecStep,
@@ -629,7 +629,7 @@ fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
     use bumbledb::schema::FieldId;
 
     const CHAIN: u64 = 66_000;
-    let dir = crate::fixture::TempDir::new("querygen-rounds-budget");
+    let dir = crate::fixture::TempDir::new("querygen-unrestricted-rounds");
     let db = bumbledb::Db::create(dir.path(), BudgetChain, crate::harness::bench_work())
         .expect("create")
         .expect("accepted");
@@ -682,17 +682,18 @@ fn a_chain_of_66k_edges_trips_the_default_rounds_budget() {
     let mut prepared = db
         .prepare(&query, crate::harness::bench_work())
         .expect("prepare");
-    let error = db
+    let answers = db
         .read(crate::harness::bench_work(), |snap| {
             snap.execute_collect(&mut prepared, &[] as &[bumbledb::BindValue])
-                .map(|_| ())
         })
-        .expect_err("66k hops exceed the default 2^16-round budget");
-    assert!(
-        matches!(
-            error,
-            bumbledb::Error::DerivedBudgetExceeded { rounds, .. } if rounds > 0
-        ),
-        "expected DerivedBudgetExceeded with rounds > 0, got {error}"
-    );
+        .expect("finite closure is not refused at the former 2^16-round limit");
+    let mut reached: Vec<_> = answers
+        .answers()
+        .map(|row| match row.get(0) {
+            bumbledb::AnswerValue::U64(value) => value,
+            value => panic!("expected a chain endpoint, got {value:?}"),
+        })
+        .collect();
+    reached.sort_unstable();
+    assert!(reached.into_iter().eq(1..=CHAIN));
 }

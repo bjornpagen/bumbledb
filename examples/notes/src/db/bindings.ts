@@ -138,8 +138,8 @@ export function saveTenantBinding(
 	const stat = fs.statSync(file, { throwIfNoEntry: false })
 	const current =
 		stat === undefined ? { tenants: {} } : decodeRegistrySync(JSON.parse(fs.readFileSync(file, "utf8")))
-	current.tenants = { ...current.tenants, [tenantId]: record }
+	const updated = { ...current, tenants: { ...current.tenants, [tenantId]: record } }
 	const staged = `${file}.tmp-${randomUUID()}`
-	fs.writeFileSync(staged, `${JSON.stringify(current, null, "\t")}\n`)
+	fs.writeFileSync(staged, `${JSON.stringify(updated, null, "\t")}\n`)
 	fs.renameSync(staged, file)
 }

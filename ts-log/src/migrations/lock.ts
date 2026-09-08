@@ -8,7 +8,7 @@
  * (`joinPendingIo`) and then the L16 hook `RepositoryLock.release`
  * (`logRepositoryLockRelease`) runs from Scope. No public lock API.
  */
-import type { ExecutionPolicy, NativeRuntime } from "@bjornpagen/bumbledb"
+import type { NativeRuntime } from "@bjornpagen/bumbledb"
 import type { RepositoryLock } from "@bjornpagen/bumbledb/internal/log"
 import { internalAcquireRepositoryLock } from "@bjornpagen/bumbledb/internal/log"
 import type { Scope } from "effect"
@@ -22,8 +22,7 @@ export type HeldRepositoryLock = RepositoryLock
 export interface RepositoryExclusion {
 	readonly acquire: (
 		operation: string,
-		directory: string,
-		work: ExecutionPolicy
+		directory: string
 	) => Effect.Effect<RepositoryLock, LogError, NativeRuntime | Scope.Scope>
 }
 
@@ -33,8 +32,8 @@ export interface RepositoryExclusion {
  * the joined close inside that acquire; do not open a `Db`.
  */
 export const productionExclusion: RepositoryExclusion = {
-	acquire(operation, directory, work) {
-		return internalAcquireRepositoryLock(operation, directory, work).pipe(
+	acquire(operation, directory) {
+		return internalAcquireRepositoryLock(operation, directory).pipe(
 			Effect.mapError((error) => logFailure(operation, error))
 		)
 	}

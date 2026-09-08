@@ -5,7 +5,6 @@ use super::RelationImage;
 use super::epoch::ViewEpoch;
 use crate::api::prepared::source::QuerySource;
 use crate::error::Result;
-use crate::image::ResidentAdmit;
 use crate::image::cache::{ImageCache, RelationSlot};
 use crate::image::intern::InternerHandle;
 use crate::schema::Schema;
@@ -14,14 +13,8 @@ use bumbledb_theory::schema::RelationId;
 
 pub(crate) trait ImageBind {
     fn epoch(&self, schema: &Schema, relation: RelationId) -> Result<ViewEpoch>;
-    /// Resident image or [`ResidentAdmit::BeyondMemory`]. L05 execute
-    /// must match and open scratch via
-    /// [`crate::image::ResidentTextExhausted::open_nonresident`].
-    fn image(
-        &self,
-        schema: &Schema,
-        relation: RelationId,
-    ) -> Result<ResidentAdmit<Arc<RelationImage>>>;
+    /// Build or reuse an image in this execution's resolver generation.
+    fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>>;
     fn peek(&self, schema: &Schema, relation: RelationId) -> Result<Option<Arc<RelationImage>>>;
     /// A query-local superset of the selected rows, or None when no supported
     /// index is bound. Never publish this image as a full relation.
@@ -30,8 +23,8 @@ pub(crate) trait ImageBind {
         schema: &Schema,
         relation: RelationId,
         selections: &[crate::plan::fj::Selection],
-        keys: &[Vec<u64>],
-    ) -> Result<Option<ResidentAdmit<Arc<RelationImage>>>>;
+        keys: &[crate::image::view::ResolvedWords],
+    ) -> Result<Option<Arc<RelationImage>>>;
 }
 
 /// One execution's image access: the prepared query's cache bound to the
@@ -84,11 +77,7 @@ impl ImageBind for SourceImages<'_> {
         }
     }
 
-    fn image(
-        &self,
-        schema: &Schema,
-        relation: RelationId,
-    ) -> Result<ResidentAdmit<Arc<RelationImage>>> {
+    fn image(&self, schema: &Schema, relation: RelationId) -> Result<Arc<RelationImage>> {
         let epoch = self.epoch(schema, relation)?;
         self.cache
             .get_or_build_with(self.source, schema, relation, epoch, &self.generation)
@@ -104,8 +93,8 @@ impl ImageBind for SourceImages<'_> {
         schema: &Schema,
         relation: RelationId,
         selections: &[crate::plan::fj::Selection],
-        keys: &[Vec<u64>],
-    ) -> Result<Option<ResidentAdmit<Arc<RelationImage>>>> {
+        keys: &[crate::image::view::ResolvedWords],
+    ) -> Result<Option<Arc<RelationImage>>> {
         super::selection::build(self, schema, relation, selections, keys)
     }
 }

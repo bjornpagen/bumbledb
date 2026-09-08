@@ -10,14 +10,7 @@ fn view_apply(
     params: &[Const],
     buf: Vec<u32>,
 ) -> View {
-    apply(
-        image,
-        predicates,
-        params,
-        buf,
-        image.generation().text_eq(None),
-    )
-    .expect("apply")
+    apply(image, predicates, params, buf, image.generation().text_eq()).expect("apply")
 }
 use crate::image::testsupport::TestSource;
 use crate::ir::ParamId;
@@ -161,7 +154,7 @@ fn numeric_set_membership_does_not_interpret_high_bits_as_text_tokens() {
     let predicate = FilterPredicate::Compare {
         field: FieldId(2).into(),
         op: WordCmp::Eq,
-        value: Const::WordSet(words.to_vec()),
+        value: Const::WordSet(words.to_vec().into()),
     };
     let view = view_apply(&image, &[predicate], &[], Vec::new());
     assert_eq!(
@@ -342,13 +335,13 @@ fn any_point_in_matches_any_element_of_the_bound_set() {
         dense: false,
     }];
 
-    let params = [Const::WordSet(vec![w(-4), w(10)])];
+    let params = [Const::WordSet(vec![w(-4), w(10)].into())];
     assert_eq!(
         sorted_ids(&view_apply(&image, &predicates, &params, Vec::new())),
         [2, 3]
     );
 
-    let empty = [Const::WordSet(Vec::new())];
+    let empty = [Const::WordSet(Vec::new().into())];
     assert!(view_apply(&image, &predicates, &empty, Vec::new()).is_empty());
 }
 
@@ -455,7 +448,7 @@ fn param_set_eq_matches_any_element_over_a_scalar_column() {
         op: WordCmp::Eq,
         value: Const::ParamSet(ParamId(0)),
     }];
-    let params = [Const::WordSet(vec![1u64, 3])];
+    let params = [Const::WordSet(vec![1u64, 3].into())];
     assert_eq!(
         sorted_ids(&view_apply(&image, &predicates, &params, Vec::new())),
         [1, 3]

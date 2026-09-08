@@ -7,9 +7,10 @@
  *
  * Verification: NotRun until packed-consumer qualification.
  */
-import { ChangeSet, type ExecutionPolicy, Uuid, Scalar } from "@bjornpagen/bumbledb"
+import { ChangeSet, Uuid, Scalar } from "@bjornpagen/bumbledb"
 import * as fs from "node:fs"
 import * as path from "node:path"
+import { randomUUID } from "node:crypto"
 import {
 	backup,
 	Command,
@@ -47,8 +48,6 @@ import {
 	makeConsumerRuntime,
 	newAttempt,
 	readAttempts,
-	runtimePolicy,
-	work
 } from "../core-ts/consumer.ts"
 
 export { incrementUnits, makeConsumerRuntime }
@@ -60,9 +59,9 @@ export interface Intent {
 }
 
 export const mintIntent = Effect.gen(function* () {
-	const studentId = yield* Effect.sync(() => crypto.randomUUID())
-	const attemptId = yield* Effect.sync(() => crypto.randomUUID())
-	const requestSource = yield* Effect.sync(() => crypto.randomUUID())
+	const studentId = yield* Effect.sync(() => randomUUID())
+	const attemptId = yield* Effect.sync(() => randomUUID())
+	const requestSource = yield* Effect.sync(() => randomUUID())
 	const requestId = yield* Effect.fromResult(RequestId.from(requestSource))
 	const receiptEpoch = yield* Effect.fromResult(ReceiptEpoch.from(1n))
 	return { studentId, attemptId, commandId: { receiptEpoch, requestId } } satisfies Intent
@@ -75,7 +74,6 @@ export interface RequestState {
 }
 
 export const submitOptions: SubmitOptions = {
-	...work,
 	attempts: 4,
 	backoff: { baseMillis: 50, capMillis: 2_000 }
 }
@@ -84,16 +82,15 @@ export const submitOptions: SubmitOptions = {
 export const submitAttempt = (
 	binding: HostedBinding | LocalBinding,
 	intent: Intent,
-	state: RequestState,
-	options: ExecutionPolicy
+	state: RequestState
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const history =
 				binding.kind === "hosted"
-					? yield* HostedHistory.open(binding, Learning, options)
-					: yield* LocalHistory.open(binding, Learning, options)
-			const changes = yield* newAttempt(intent.studentId, intent.attemptId, work)
+					? yield* HostedHistory.open(binding, Learning)
+					: yield* LocalHistory.open(binding, Learning)
+			const changes = yield* newAttempt(intent.studentId, intent.attemptId)
 			const command = yield* Command.seal(
 				{
 					scope: history.identity,
@@ -102,7 +99,6 @@ export const submitAttempt = (
 					precondition: { kind: "blind" },
 					result: { attempt: intent.attemptId }
 				},
-				work
 			)
 			yield* state.rememberCommandRef(command.ref)
 			const outcome = yield* history.submit(command, submitOptions)
@@ -116,13 +112,12 @@ export const retrySameId = submitAttempt
 
 export const resolveAfterInterrupt = (
 	binding: LocalBinding,
-	ref: CommandRef,
-	options: ExecutionPolicy
+	ref: CommandRef
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const history = yield* LocalHistory.open(binding, Learning, options)
-			const resolved = yield* history.resolve(ref, options)
+			const history = yield* LocalHistory.open(binding, Learning)
+			const resolved = yield* history.resolve(ref)
 			const closed = yield* history.close()
 			return { resolved, closed }
 		})
@@ -133,23 +128,22 @@ export class AttemptMissing extends Schema.TaggedError<AttemptMissing>()("Attemp
 export const correctAttempt = (
 	binding: LocalBinding,
 	intent: Intent & { readonly correctionCommandId: Intent["commandId"] },
-	state: RequestState,
-	options: ExecutionPolicy
+	state: RequestState
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
-			const history = yield* LocalHistory.open(binding, Learning, options)
+			const history = yield* LocalHistory.open(binding, Learning)
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
-					const snapshot = yield* history.snapshot({ ...work, consistency: { kind: "latest" } })
-					const previous = yield* snapshot.get(Attempt, { id: intent.attemptId }, work)
+					const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
+					const previous = yield* snapshot.get(Attempt, { id: intent.attemptId })
 					if (Option.isNone(previous)) {
 						return yield* new AttemptMissing({})
 					}
 					return { previous: previous.value, at: snapshot.stateStamp }
 				})
 			)
-			const draft = yield* ChangeSet.builder(Learning, work)
+			const draft = yield* ChangeSet.builder(Learning)
 			yield* draft.delete(Attempt, [observed.previous])
 			yield* draft.insert(Attempt, [{ ...observed.previous, score: 0.95 }])
 			const changes = yield* draft.finish()
@@ -161,7 +155,6 @@ export const correctAttempt = (
 					precondition: { kind: "exact-state", at: observed.at },
 					result: { attempt: intent.attemptId }
 				},
-				work
 			)
 			yield* state.rememberCommandRef(command.ref)
 			const outcome = yield* history.submit(command, submitOptions)
@@ -173,20 +166,17 @@ export const correctAttempt = (
 export const readPublished = (
 	binding: HistoryBinding,
 	student: Uuid,
-	options: ExecutionPolicy,
 	expected: RuntimeExpectation
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const cache = yield* TenantCache.make(Learning, {
 				maxOpen: 8,
-				budgetBytes: 256_000_000n,
-				maintenance: work,
 				expected
 			})
-			const borrow = yield* cache.acquire(binding, options)
-			const snapshot = yield* borrow.snapshot({ ...work, consistency: { kind: "cached" } })
-			const rows = yield* readAttempts(snapshot, student, work)
+			const borrow = yield* cache.acquire(binding)
+			const snapshot = yield* borrow.snapshot({ consistency: { kind: "cached" } })
+			const rows = yield* readAttempts(snapshot, student)
 			const released = yield* borrow.release()
 			const closed = yield* cache.close()
 			return { rows, released, closed }
@@ -214,14 +204,13 @@ export function loadGeneratedMigrations(directory: string): GeneratedMigrations 
 	return decoded.value
 }
 
-export const generateIncrementUnits = (repository: { readonly directory: string }, admin: ExecutionPolicy) =>
+export const generateIncrementUnits = (repository: { readonly directory: string }) =>
 	Effect.gen(function* () {
 		const report = yield* generateMigrations({
 			schema: Learning,
 			intent: incrementUnitsIntent,
 			label: "increment-units",
 			repository,
-			work: admin
 		})
 		return { report, generated: loadGeneratedMigrations(repository.directory) }
 	})
@@ -229,7 +218,7 @@ export const generateIncrementUnits = (repository: { readonly directory: string 
 export const initializeLearning = (
 	binding: HistoryBinding,
 	plans: GeneratedMigrations,
-	options: ExecutionPolicy & { readonly operationId: OperationId },
+	options: { readonly operationId: OperationId },
 	state: RequestState
 ) =>
 	Effect.gen(function* () {
@@ -241,7 +230,7 @@ export const initializeLearning = (
 export const migrateLearning = (
 	binding: HistoryBinding,
 	plans: GeneratedMigrations,
-	options: ExecutionPolicy & { readonly operationId: OperationId },
+	options: { readonly operationId: OperationId },
 	state: RequestState
 ) =>
 	Effect.gen(function* () {
@@ -254,7 +243,7 @@ export const backupAndRestore = (
 	source: HistoryBinding,
 	destination: { readonly kind: "filesystem"; readonly directory: string },
 	target: HistoryBinding,
-	options: ExecutionPolicy & { readonly operationId: OperationId },
+	options: { readonly operationId: OperationId },
 	state: RequestState
 ) =>
 	Effect.gen(function* () {
@@ -263,7 +252,7 @@ export const backupAndRestore = (
 		if (backed.kind !== "completed") {
 			return { backed, verified: null, restored: null }
 		}
-		const verified = yield* verifyBackup(destination, options)
+		const verified = yield* verifyBackup(destination, {})
 		const restored = yield* restore(destination, target, options)
 		yield* state.rememberAdminRef(restored)
 		return { backed, verified, restored }

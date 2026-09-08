@@ -11,14 +11,8 @@
  *
  * The error-code roster is checked against the native `logErrorCodes()`.
  */
-import type { Violation } from "@bjornpagen/bumbledb"
-import type {
-	CloseWire,
-	OperationHandle,
-	PolicyWire,
-	RuntimeHandle,
-	SnapshotHandle
-} from "@bjornpagen/bumbledb/internal/log"
+import type { StorageInspection, Violation } from "@bjornpagen/bumbledb"
+import type { CloseWire, OperationHandle, RuntimeHandle, SnapshotHandle } from "@bjornpagen/bumbledb/internal/log"
 import { runtimeNative } from "@bjornpagen/bumbledb/internal/log"
 
 // ── Handles ────────────────────────────────────────────────────────────────
@@ -170,8 +164,7 @@ export interface HistoryInspectionWire {
 	readonly rootCapacity: number
 	readonly gc: "idle" | "marking" | "sweeping"
 	readonly lastMaintenanceError: string | null
-	readonly diskBytes: bigint
-	readonly workingBytes: bigint
+	readonly storage: StorageInspection
 	readonly queued: bigint
 	readonly active: bigint
 }
@@ -232,7 +225,6 @@ export interface CommandWire {
 
 export interface CacheMakeWire {
 	readonly maxOpen: number
-	readonly budgetBytes: bigint
 	readonly expected: { readonly schemaId: string; readonly appliedPrefixDigest: string } | null
 	/** The lowered core `SchemaSpec` shared by every slot of this cache. */
 	readonly schema: unknown
@@ -241,14 +233,12 @@ export interface CacheMakeWire {
 export interface CacheInspectionWire {
 	readonly openCount: number
 	readonly opening: number
-	readonly budgetBytes: bigint
 	readonly maxOpen: number
 	readonly evictions: bigint
 	readonly slots: readonly {
 		readonly binding: string
 		readonly state: "opening" | "ready" | "closing" | "faulted"
 		readonly borrows: number
-		readonly diskBytes: bigint
 	}[]
 }
 
@@ -516,19 +506,9 @@ export interface LogNative {
 
 	logErrorCodes(): readonly string[]
 
-	logHistoryOpen(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		request: HistoryOpenWire,
-		callback: () => void
-	): OperationHandle
+	logHistoryOpen(runtime: RuntimeHandle, request: HistoryOpenWire, callback: () => void): OperationHandle
 	logHistoryTake(operation: OperationHandle): HistoryHandleWire
-	logHistoryCall(
-		history: HistoryCapability,
-		policy: PolicyWire,
-		request: HistoryRequestWire,
-		callback: () => void
-	): OperationHandle
+	logHistoryCall(history: HistoryCapability, request: HistoryRequestWire, callback: () => void): OperationHandle
 	logHistoryResult(operation: OperationHandle): HistoryResultWire
 	logHistoryClose(history: HistoryCapability, callback: (report: CloseWire) => void): void
 	runtimeSnapshotClose(snapshot: SnapshotHandle, callback: (report: CloseWire) => void): void
@@ -540,46 +520,25 @@ export interface LogNative {
 	 * change's captured runtime, never loads a second one"; R has no
 	 * NativeRuntime).
 	 */
-	logCommandSeal(change: unknown, policy: PolicyWire, request: SealRequestWire, callback: () => void): OperationHandle
-	logCommandDecode(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		bytes: Uint8Array,
-		schema: unknown,
-		callback: () => void
-	): OperationHandle
+	logCommandSeal(change: unknown, request: SealRequestWire, callback: () => void): OperationHandle
+	logCommandDecode(runtime: RuntimeHandle, bytes: Uint8Array, schema: unknown, callback: () => void): OperationHandle
 	logCommandTake(operation: OperationHandle): CommandWire
-	logCommandEncode(command: CommandHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	logCommandEncode(command: CommandHandle, callback: () => void): OperationHandle
 	logBytesTake(operation: OperationHandle): Uint8Array
 	logCommandClose(command: CommandHandle, callback: (report: CloseWire) => void): void
 
-	logCacheMake(
-		runtime: RuntimeHandle,
-		policy: PolicyWire,
-		request: CacheMakeWire,
-		callback: () => void
-	): OperationHandle
+	logCacheMake(runtime: RuntimeHandle, request: CacheMakeWire, callback: () => void): OperationHandle
 	logCacheTake(operation: OperationHandle): CacheHandle
-	logCacheAcquire(
-		cache: CacheHandle,
-		policy: PolicyWire,
-		request: { readonly binding: BindingWire },
-		callback: () => void
-	): OperationHandle
+	logCacheAcquire(cache: CacheHandle, request: { readonly binding: BindingWire }, callback: () => void): OperationHandle
 	logBorrowTake(operation: OperationHandle): HistoryHandleWire
-	logCacheInspect(cache: CacheHandle, policy: PolicyWire, callback: () => void): OperationHandle
+	logCacheInspect(cache: CacheHandle, callback: () => void): OperationHandle
 	logCacheInspectTake(operation: OperationHandle): CacheInspectionWire
-	logCacheEvict(
-		cache: CacheHandle,
-		policy: PolicyWire,
-		request: { readonly binding: BindingWire },
-		callback: () => void
-	): OperationHandle
+	logCacheEvict(cache: CacheHandle, request: { readonly binding: BindingWire }, callback: () => void): OperationHandle
 	logCacheEvictTake(operation: OperationHandle): CloseWire
 	logBorrowRelease(borrow: HistoryCapability, callback: (report: CloseWire) => void): void
 	logCacheClose(cache: CacheHandle, callback: (report: CloseWire) => void): void
 
-	logAdmin(runtime: RuntimeHandle, policy: PolicyWire, request: AdminRequestWire, callback: () => void): OperationHandle
+	logAdmin(runtime: RuntimeHandle, request: AdminRequestWire, callback: () => void): OperationHandle
 	logAdminTake(operation: OperationHandle): AdminResultWire
 }
 

@@ -12,8 +12,7 @@
  *   later mutation of the caller's array cannot change the accepted facts;
  * - getter/iterator throws become typed input failures that SPEND the
  *   draft and start tracked drain — never an untracked partial draft;
- * - ingestion charges the draft's CUMULATIVE aggregate budget (chunks and
- *   calls never reset it);
+ * - batching does not impose a per-cell or cumulative quota;
  * - finish consumes the draft: later ingestion and a second finish refuse
  *   through the spent capability state.
  */
@@ -24,10 +23,10 @@ import { ChangeSet } from "#changes.ts"
 import { Db } from "#db.ts"
 import { bytes, str } from "#fields.ts"
 import type { Fact } from "#relation.ts"
-import { assertHostCellFits, cellOf, hostCellCharge } from "#rows.ts"
+import { cellOf, hostCellCharge } from "#rows.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
-import { Attempt, Learning, runtimeOptions, Student, storeDir, work } from "#test/fixtures/learning.ts"
+import { Attempt, Learning, runtimeOptions, Student, storeDir } from "#test/fixtures/learning.ts"
 import type { Uuid } from "#uuid.ts"
 
 function runtime() {
@@ -48,7 +47,7 @@ test("insert effects are lazy and rerunnable: each run reads the THEN-CURRENT ar
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const draft = yield* ChangeSet.builder(Learning)
 					const rows: Array<Fact<typeof Student>> = []
 					const insert = draft.insert(Student, rows)
 					// CONSTRUCTION read nothing: the array was empty then and
@@ -61,12 +60,12 @@ test("insert effects are lazy and rerunnable: each run reads the THEN-CURRENT ar
 					yield* insert
 					const changes = yield* draft.finish()
 
-					const db = yield* Db.create(storeDir("lazy-rerun"), Learning, work)
-					const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+					const db = yield* Db.create(storeDir("lazy-rerun"), Learning)
+					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 					assert.equal(outcome.kind, "accepted")
-					const snapshot = yield* db.snapshot(work)
-					const ada = yield* snapshot.get(Student, { id: first }, work)
-					const bo = yield* snapshot.get(Student, { id: second }, work)
+					const snapshot = yield* db.snapshot()
+					const ada = yield* snapshot.get(Student, { id: first })
+					const bo = yield* snapshot.get(Student, { id: second })
 					assert.ok(Option.isSome(ada), "the first run's fact is in the final set")
 					assert.ok(Option.isSome(bo), "the rerun's fact is in the final set")
 				})
@@ -84,7 +83,7 @@ test("a one-shot iterator is consumed, never replayed: the second run ingests no
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const draft = yield* ChangeSet.builder(Learning)
 					function* once() {
 						yield studentRow(only, "Once")
 					}
@@ -95,8 +94,8 @@ test("a one-shot iterator is consumed, never replayed: the second run ingests no
 					// zero rows — the SDK never rewinds or replays user input.
 					yield* insert
 					const changes = yield* draft.finish()
-					const db = yield* Db.create(storeDir("exhausted-iterator"), Learning, work)
-					const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+					const db = yield* Db.create(storeDir("exhausted-iterator"), Learning)
+					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 					assert.equal(outcome.kind, "accepted")
 				})
 			)
@@ -114,7 +113,7 @@ test("mutation AFTER successful ingestion cannot change the accepted native fact
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const draft = yield* ChangeSet.builder(Learning)
 					const row = { id: kept, name: "Kept", budget: 10n }
 					const rows = [row]
 					yield* draft.insert(Student, rows)
@@ -123,13 +122,13 @@ test("mutation AFTER successful ingestion cannot change the accepted native fact
 					rows[0] = studentRow(impostor, "Impostor")
 					;(row as { name: string }).name = "Mutated"
 					const changes = yield* draft.finish()
-					const db = yield* Db.create(storeDir("accepted-independent"), Learning, work)
-					yield* db.apply(changes, { ...work, expected: { kind: "any" } })
-					const snapshot = yield* db.snapshot(work)
-					const stored = yield* snapshot.get(Student, { id: kept }, work)
+					const db = yield* Db.create(storeDir("accepted-independent"), Learning)
+					yield* db.apply(changes, { expected: { kind: "any" } })
+					const snapshot = yield* db.snapshot()
+					const stored = yield* snapshot.get(Student, { id: kept })
 					assert.ok(Option.isSome(stored))
 					assert.equal(stored.value.name, "Kept")
-					const forged = yield* snapshot.get(Student, { id: impostor }, work)
+					const forged = yield* snapshot.get(Student, { id: impostor })
 					assert.ok(Option.isNone(forged))
 				})
 			)
@@ -146,7 +145,7 @@ test("a throwing getter is a typed input failure that spends and drains the draf
 		const exit = await rt.runPromiseExit(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const draft = yield* ChangeSet.builder(Learning)
 					const hostile = {
 						id: good,
 						get name(): string {
@@ -154,7 +153,18 @@ test("a throwing getter is a typed input failure that spends and drains the draf
 						},
 						budget: 10n
 					}
-					const failed = yield* Effect.exit(draft.insert(Student, [hostile]))
+					let closed = 0
+					function* source() {
+						try {
+							yield studentRow(good, "prefix")
+							yield hostile
+							assert.fail("failure must not pull another row")
+						} finally {
+							closed++
+						}
+					}
+					const failed = yield* Effect.exit(draft.insert(Student, source()))
+					assert.equal(closed, 1, "failed ingestion closes the caller's iterator")
 					assert.equal(failed._tag, "Failure", "the getter throw is a typed input failure")
 					// The failure SPENT the draft: every later use refuses.
 					const late = yield* Effect.exit(draft.insert(Student, [studentRow(good, "Late")]))
@@ -171,33 +181,22 @@ test("a throwing getter is a typed input failure that spends and drains the draf
 	}
 })
 
-test("ingestion charges input once per operation and cumulatively across calls", async function cumulativeBudget() {
+test("draft ingestion has no cumulative quota and accepts larger single rows", async () => {
 	const rt = runtime()
 	try {
-		// Native charge: UUID 24 + string (8 + UTF-8 length) + i64 16.
-		const row = studentRow(await newId(), "x".repeat(2048))
-		const tight = { ...work, inputBytes: 2096n }
+		const row = studentRow(await newId(), "x".repeat(70_000))
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const draft = yield* ChangeSet.builder(Learning, tight)
-					// Exactly one row fits. A duplicate native charge between
-					// JS extraction and worker ingestion would refuse this call.
-					yield* draft.insert(Student, [row])
-					const exit = yield* Effect.exit(draft.insert(Student, [row]))
-					assert.equal(exit._tag, "Failure")
-					if (exit._tag === "Failure") {
-						const failure = exit.cause.reasons.find(Cause.isFailReason)
-						assert.ok(failure?.error instanceof DbError)
-						assert.deepEqual(failure.error.reason, {
-							_tag: "ResourceLimit",
-							dimension: "inputBytes",
-							used: 2096n,
-							requested: 2096n,
-							limit: 2096n
-						})
-					}
-					assert.equal((yield* Effect.exit(draft.finish()))._tag, "Failure", "a refused draft is spent")
+					const draft = yield* ChangeSet.builder(Learning)
+					for (let index = 0; index < 4; index++) yield* draft.insert(Student, [row])
+					const changes = yield* draft.finish()
+					const db = yield* Db.create(storeDir("large-draft"), Learning)
+					assert.equal((yield* db.apply(changes, { expected: { kind: "any" } })).kind, "accepted")
+					const snapshot = yield* db.snapshot()
+					const stored = yield* snapshot.get(Student, { id: row.id })
+					assert.ok(Option.isSome(stored))
+					assert.deepEqual(stored.value, row)
 				})
 			)
 		)
@@ -213,7 +212,7 @@ test("finish consumes the draft: use-after-finish and a second finish refuse as 
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const draft = yield* ChangeSet.builder(Learning)
 					yield* draft.insert(Student, [studentRow(only, "Only")])
 					const changes = yield* draft.finish()
 					assert.ok(typeof changes.schemaId === "string")
@@ -246,11 +245,11 @@ test("same-command normalization: exact same-fact add wins over remove, independ
 		await rt.runPromise(
 			Effect.scoped(
 				Effect.gen(function* () {
-					const db = yield* Db.create(storeDir("add-wins"), Learning, work)
-					const seed = yield* ChangeSet.builder(Learning, work)
+					const db = yield* Db.create(storeDir("add-wins"), Learning)
+					const seed = yield* ChangeSet.builder(Learning)
 					yield* seed.insert(Student, [studentRow(studentId, "Ada")])
 					const seeded = yield* seed.finish()
-					yield* db.apply(seeded, { ...work, expected: { kind: "any" } })
+					yield* db.apply(seeded, { expected: { kind: "any" } })
 
 					// One command that both deletes and inserts the identical
 					// attempt fact: add wins WITHIN the command.
@@ -261,14 +260,14 @@ test("same-command normalization: exact same-fact add wins over remove, independ
 						units: 1n,
 						active: { start: 0n, end: 1n }
 					}
-					const draft = yield* ChangeSet.builder(Learning, work)
+					const draft = yield* ChangeSet.builder(Learning)
 					yield* draft.delete(Attempt, [fact])
 					yield* draft.insert(Attempt, [fact])
 					const changes = yield* draft.finish()
-					const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 					assert.equal(outcome.kind, "accepted")
-					const snapshot = yield* db.snapshot(work)
-					const stored = yield* snapshot.get(Attempt, { id: attemptId }, work)
+					const snapshot = yield* db.snapshot()
+					const stored = yield* snapshot.get(Attempt, { id: attemptId })
 					assert.ok(Option.isSome(stored), "the identical fact's add won the one-command normalization")
 				})
 			)
@@ -283,9 +282,9 @@ test("SharedArrayBuffer-backed cells refuse before any copy (pure projector wall
 	assert.throws(() => cellOf("test", bytes(4), shared), /SharedArrayBuffer-backed views are refused/)
 })
 
-test("host string length is judged before isWellFormed / copy (TS-004)", function hostLengthBeforeScan() {
+test("batch sizing does not impose a per-cell limit; malformed text still refuses", function hostLengthBeforeScan() {
 	const oversize = "x".repeat(40_000)
 	assert.ok(hostCellCharge(oversize) > 65536n)
-	assert.throws(() => cellOf("test", str, oversize), /exceeds the 65536-byte converter bound/)
-	assert.throws(() => assertHostCellFits("test", oversize, 65536n), /refuse before copy or scan/)
+	assert.equal(cellOf("test", str, oversize), oversize)
+	assert.throws(() => cellOf("test", str, "\ud800"), /well-formed string/)
 })

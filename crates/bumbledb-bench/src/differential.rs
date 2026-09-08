@@ -53,8 +53,6 @@ pub enum Answers {
     /// A computed head refused (type mismatch, integer overflow, division
     /// by zero, inexact cast) — the whole answer is withheld, chapter 12.
     Scalar,
-
-    DerivedBudget,
 }
 
 #[derive(Debug)]
@@ -279,7 +277,6 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
                 .collect(),
         ),
         Err(Error::Overflow { .. }) => Answers::Overflow,
-        Err(Error::DerivedBudgetExceeded { .. }) => Answers::DerivedBudget,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }
 }

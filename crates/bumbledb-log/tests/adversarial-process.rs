@@ -112,7 +112,7 @@ fn park() -> ! {
 fn try_verified(
     store: &FsStore,
     reference: &ObjectRef,
-) -> Result<bumbledb::work::ChargedBytes, bumbledb_log::store::ObjectError> {
+) -> Result<bumbledb_log::store::ReceivedBody, bumbledb_log::store::ObjectError> {
     get_verified(
         store,
         "t",
@@ -599,8 +599,7 @@ fn a_kill_mid_sweep_resumes_to_a_converged_collection() {
     let checkpoint = recovery.checkpoint.expect("checkpoint object reference");
     drop(
         try_verified(&store, &checkpoint)
-            .expect("the protected checkpoint manifest survives byte-exact")
-            .into_owner(),
+            .expect("the protected checkpoint manifest survives byte-exact"),
     );
     // The orphan was staged under the closed epoch and never referenced:
     // no listing of the objects namespace may still contain its bytes.
@@ -790,9 +789,9 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
         .checkpoint
         .expect("pinned checkpoint reference");
     let charged = try_verified(&store, &pinned_manifest).expect("pinned manifest reads");
-    let pinned = bumbledb_log::codec::decode_manifest(charged.as_bytes(), ckpt_policy().stream)
+    let pinned = bumbledb_log::codec::decode_manifest(charged.as_slice(), ckpt_policy().stream)
         .expect("pinned manifest decodes");
-    drop(charged.into_owner());
+    drop(charged);
     assert!(
         !pinned.chunks.is_empty(),
         "the pinned closure has chunk objects to revoke"
@@ -831,15 +830,10 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
     assert!(protected.finished);
     drop(
         try_verified(&store, &pinned_manifest)
-            .expect("the held manifest survives a full collection")
-            .into_owner(),
+            .expect("the held manifest survives a full collection"),
     );
     for chunk in &pinned.chunks {
-        drop(
-            try_verified(&store, chunk)
-                .expect("every held chunk survives a full collection")
-                .into_owner(),
-        );
+        drop(try_verified(&store, chunk).expect("every held chunk survives a full collection"));
     }
 
     // The revocation: release the hold (the report names the exact lost
@@ -879,11 +873,7 @@ fn a_hold_revoked_mid_hydrate_refuses_whole_and_variants_converge() {
         .expect("current recovery root")
         .checkpoint
         .expect("current checkpoint");
-    drop(
-        try_verified(&store, &current)
-            .expect("the current checkpoint is retained")
-            .into_owner(),
-    );
+    drop(try_verified(&store, &current).expect("the current checkpoint is retained"));
 
     // Killed variant: real death while frozen mid-hydrate. Nothing was
     // adopted; the successor hydrates the CURRENT complete closure.

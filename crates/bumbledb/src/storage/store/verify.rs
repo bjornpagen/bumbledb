@@ -149,8 +149,7 @@ pub(crate) fn sweep(
         std::collections::BTreeMap::new();
     let mut max_row_id = 0u64;
     let mut judgment_safe = true;
-    let mut ordinals =
-        crate::exec::scratch::ScratchRelation::new(work, crate::exec::scratch::DEFAULT_RAM_BYTES);
+    let mut ordinals = crate::exec::scratch::ScratchRelation::new(work);
     let inner = snapshot.store_inner();
     let txn = snapshot.read_txn();
 
@@ -163,7 +162,7 @@ pub(crate) fn sweep(
             .prefix_iter(txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, row_bytes) = entry.map_err(StoreError::from_heed)?;
             let Ok((relation, locator)) = inner.keys.decode_row(key) else {
                 judgment_safe = false;
@@ -281,7 +280,7 @@ pub(crate) fn sweep(
             .prefix_iter(txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, value) = entry.map_err(StoreError::from_heed)?;
             let Ok((relation, fp, row)) = inner.keys.decode_membership(key) else {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
@@ -328,7 +327,7 @@ pub(crate) fn sweep(
             .prefix_iter(txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, home) = entry.map_err(StoreError::from_heed)?;
             let Ok((projection, stored_payload, row)) = inner.keys.decode_determinant(key) else {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
@@ -487,7 +486,7 @@ pub(crate) fn sweep(
             .prefix_iter(txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, value) = entry.map_err(StoreError::from_heed)?;
             if key.len() != 5 {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
@@ -535,7 +534,7 @@ pub(crate) fn sweep(
             .prefix_iter(txn, version_prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, value) = entry.map_err(StoreError::from_heed)?;
             if key.len() != 5 {
                 findings.push(corrupt(VerifyCorruption::MalformedKey {
@@ -555,7 +554,7 @@ pub(crate) fn sweep(
             .prefix_iter(txn, host_prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, _) = entry.map_err(StoreError::from_heed)?;
             let host_key_len = key.len().saturating_sub(1);
             if host_key_len > keys::HOST_KEY_MAX {

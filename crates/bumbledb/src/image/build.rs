@@ -8,14 +8,14 @@ use crate::api::prepared::source::QuerySource;
 use crate::error::{CorruptionError, Error, Result};
 use crate::image::canon::{TextWords, row_words};
 use crate::schema::{Relation, Schema};
-use crate::work::{ByteKind, ChargedImage, GenerationHandle};
+use crate::work::GenerationHandle;
 use bumbledb_theory::schema::RelationId;
 use bumbledb_theory::schema::ValueType;
 
 use super::decode::{decode_fact, decode_plan};
 use super::{
-    Column, ColumnSpan, ColumnWidth, LINE, PAD_MIN_STRIDE, RelationImage, SET_STRIDE, SlabCharge,
-    StridePadder, column_spans,
+    Column, ColumnSpan, ColumnWidth, LINE, PAD_MIN_STRIDE, RelationImage, SET_STRIDE, StridePadder,
+    column_spans,
 };
 
 /// The `S` value is data: overflow in any size computation is typed Corruption
@@ -51,6 +51,7 @@ struct Frame {
     words: Vec<u64>,
     bytes: Vec<u8>,
     strings: Box<[bool]>,
+    texts: super::TextOwners,
 }
 
 fn allocate(field_types: &[ValueType], row_count: usize) -> Result<Frame> {
@@ -113,15 +114,11 @@ fn allocate_with(
             .iter()
             .map(|ty| matches!(ty, ValueType::String))
             .collect(),
+        texts: super::TextOwners::default(),
     })
 }
 
-fn seal(
-    row_count: usize,
-    frame: Frame,
-    generation: GenerationHandle,
-    charge: Option<SlabCharge>,
-) -> Arc<RelationImage> {
+fn seal(row_count: usize, frame: Frame, generation: GenerationHandle) -> Arc<RelationImage> {
     Arc::new(RelationImage {
         row_count,
         distincts: (0..frame.columns.len())
@@ -132,13 +129,13 @@ fn seal(
         words: frame.words,
         bytes: frame.bytes,
         generation,
-        _charge: charge,
         strings: frame.strings,
+        texts: frame.texts,
     })
 }
 
-/// Bytes the image slabs will retain after allocate. Admission uses this
-/// before growth so a cache refusal never leaves an uncharged allocation.
+/// Bytes the image slabs will retain after allocation, excluding text and metadata.
+#[cfg(test)]
 pub(crate) fn estimated_slab_bytes(field_types: &[ValueType], row_count: usize) -> Result<usize> {
     let spans = column_spans(field_types);
     let byte_cols = spans
@@ -170,21 +167,19 @@ pub(super) fn image_with_tolerance(
         StridePadder::with_tolerance(tolerance),
     )
     .expect("falsifier row counts sit far below the checked slab ceiling");
-    seal(row_count, frame, test_generation(), None)
+    seal(row_count, frame, test_generation())
 }
 
 #[cfg(test)]
 pub(crate) fn test_generation() -> GenerationHandle {
     GenerationHandle::new(crate::work::GenerationState::new(
         crate::image::CacheGeneration::initial(),
-        crate::work::CacheLedger::unbounded(),
     ))
 }
 
 /// Build one relation's full image from a committed source: one sequential
 /// canonical-row scan, decoded through the one walker ([`row_words`]) with
-/// the generation's resolver minting text tokens. Cache admission happens
-/// **before** slab allocate; the charge lives inside the sealed image.
+/// the generation's resolver minting text tokens.
 /// # Errors
 /// A scan yielding a different number of rows than the source's committed
 /// count is corruption; malformed stored bytes refuse; stopped work and
@@ -198,7 +193,7 @@ pub(crate) fn build_from_source(
     schema: &Schema,
     generation: &GenerationHandle,
     rel: RelationId,
-) -> Result<crate::image::ResidentAdmit<Arc<RelationImage>>> {
+) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     debug_assert!(
         relation.body().closed_rows().is_none(),
@@ -220,37 +215,29 @@ pub(super) fn build_from_scan(
     claimed: u64,
     work: &crate::work::WorkContext,
     scan: impl FnOnce(&mut dyn FnMut(&[u8]) -> Result<()>) -> Result<()>,
-) -> Result<crate::image::ResidentAdmit<Arc<RelationImage>>> {
+) -> Result<Arc<RelationImage>> {
     let relation = schema.relation(rel);
     let row_count = usize::try_from(claimed).expect("64-bit usize");
 
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
     let fields = relation.fields();
-    let estimated = estimated_slab_bytes(&field_types, row_count)?;
-    let Ok(charge) = ChargedImage::admit(generation.ledger(), estimated) else {
-        return Ok(crate::image::ResidentAdmit::BeyondMemory(
-            crate::image::ResidentTextExhausted::new(generation.clone()),
-        ));
-    };
+    work.checkpoint()
+        .map_err(crate::api::prepared::source::work_error)?;
 
     let spans = column_spans(&field_types);
     let column_count = spans
         .last()
         .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
-    let _work_charge = work
-        .reserve(ByteKind::Working, estimated as u64)
-        .map_err(crate::api::prepared::source::work_error)?;
 
     let mut frame = allocate(&field_types, row_count)?;
     let mut interner = generation.lock_resolver();
     let mut text = TextWords::Intern {
         interner: &mut interner,
         work,
-        generation,
+        texts: &mut frame.texts,
     };
     let mut scratch: Vec<u64> = Vec::with_capacity(column_count);
     let mut position = 0usize;
-    let mut spilled = None;
     {
         let columns = &frame.columns;
         let words = &mut frame.words;
@@ -263,15 +250,7 @@ pub(super) fn build_from_scan(
                 }));
             }
             scratch.clear();
-            match row_words(fields, row, &mut text, &mut scratch)? {
-                crate::image::ResidentAdmit::Ready(()) => {}
-                crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
-                    spilled = Some(exhausted);
-                    return Err(Error::from_store(
-                        crate::storage::store::StoreError::Allocation,
-                    ));
-                }
-            }
+            row_words(fields, row, &mut text, &mut scratch, &mut Vec::new())?;
             debug_assert_eq!(scratch.len(), columns.len(), "one word per column");
             for (column, &word) in columns.iter().zip(&scratch) {
                 match *column {
@@ -284,9 +263,6 @@ pub(super) fn build_from_scan(
             position += 1;
             Ok(())
         });
-        if let Some(exhausted) = spilled {
-            return Ok(crate::image::ResidentAdmit::BeyondMemory(exhausted));
-        }
         scan?;
     }
     drop(interner);
@@ -297,16 +273,11 @@ pub(super) fn build_from_scan(
         }));
     }
 
-    Ok(crate::image::ResidentAdmit::Ready(seal(
-        row_count,
-        frame,
-        generation.clone(),
-        Some(SlabCharge::Cache { _owner: charge }),
-    )))
+    Ok(seal(row_count, frame, generation.clone()))
 }
 
 /// Reusable columnar storage for derived relations. A published image
-/// retains both its resolver generation and its working-byte charge;
+/// retains its resolver generation and the text owners behind its tokens;
 /// only uniquely owned images can be refilled in place.
 #[derive(Debug, Default)]
 pub enum TransientImage {
@@ -353,17 +324,15 @@ impl TransientImage {
                 Ok(())
             },
         )
-        .expect("uncharged RAM drains are infallible")
+        .expect("valid in-memory rows have live text owners")
     }
 
     /// Refill from a fallible drain (the spill-aware seen-set path):
-    /// `drain(0, write)` must feed all `row_count` rows in order. A
-    /// `Some` work context reserves the slab bytes BEFORE any allocation
-    /// (Q-BUDGET: growth is admitted, never discovered) — a transient
-    /// admission charge, matching `build_from_source`.
+    /// `drain(0, write)` must feed all `row_count` rows in order.
+    /// The optional context provides cooperative cancellation; column
+    /// capacity is allocated or reused before the drain begins.
     /// # Errors
-    /// The drain's failure (scratch read, stopped work), or the slab
-    /// reservation's typed refusal.
+    /// The drain's failure, invalid text ownership, or allocation failure.
     /// # Panics
     /// As [`Self::refill`]: programmer-invariant violations only.
     pub fn refill_drained(
@@ -384,7 +353,7 @@ impl TransientImage {
         )
     }
 
-    /// Finalize at most `row_bound` rows directly into admitted columns.
+    /// Finalize at most `row_bound` rows directly into reserved columns.
     /// Pack may coalesce several claims into one row; its input count is
     /// an allocation bound, not the published relation's cardinality.
     pub(crate) fn refill_bounded(
@@ -414,6 +383,10 @@ impl TransientImage {
         policy: CapacityPolicy,
         drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
     ) -> crate::error::Result<Arc<RelationImage>> {
+        if let Some(work) = work {
+            work.checkpoint()
+                .map_err(crate::api::prepared::source::work_error)?;
+        }
         let reusable = match self {
             Self::Occupied { image, capacity } if row_count <= *capacity => {
                 Arc::get_mut(image).is_some()
@@ -422,35 +395,10 @@ impl TransientImage {
         };
         if !reusable {
             let capacity = row_count;
-            let slab_charge = match work {
-                Some(work) => {
-                    let spans = column_spans(field_types);
-                    let byte_cols = spans
-                        .iter()
-                        .filter(|s| s.width == ColumnWidth::Byte)
-                        .count();
-                    let column_count = spans
-                        .last()
-                        .map_or(0, |s| usize::from(s.first_column + s.width.column_count()));
-                    let (word_len, byte_len) =
-                        slab_lengths(capacity, column_count - byte_cols, byte_cols)?;
-                    Some(
-                        work.reserve(ByteKind::Working, (word_len as u64) * 8 + byte_len as u64)
-                            .map_err(crate::api::prepared::source::work_error)?,
-                    )
-                }
-                None => None,
-            };
-            let frame = allocate(field_types, capacity)
-                .expect("seen-set row counts sit far below the checked slab ceiling");
+            let frame = allocate(field_types, capacity)?;
 
             *self = Self::Occupied {
-                image: seal(
-                    row_count,
-                    frame,
-                    generation.clone(),
-                    slab_charge.map(|charge| SlabCharge::Working { _owner: charge }),
-                ),
+                image: seal(row_count, frame, generation.clone()),
                 capacity,
             };
         }
@@ -459,13 +407,28 @@ impl TransientImage {
         };
         let image_mut =
             Arc::get_mut(image).expect("a non-reusable slot was just replaced by a unique Arc");
+        if !image_mut.generation.ptr_eq(generation) {
+            // Numeric token bits may be reused by a different namespace.
+            image_mut.texts.0.clear();
+        }
         image_mut.generation = generation.clone();
         // Invalidate before any write, including a drain that fails partway.
         for count in &mut image_mut.distincts {
             count.take();
         }
         image_mut.row_count = row_count;
-        let filled_to = drain_encoded_rows(image_mut, drain)?;
+        image_mut.texts.begin_refill();
+        let filled_to = match drain_encoded_rows(image_mut, drain) {
+            Ok(filled) => filled,
+            Err(error) => {
+                // A failed drain cannot leave a reusable image naming
+                // partially replaced rows or keep their text owners alive.
+                image_mut.row_count = 0;
+                image_mut.texts.0.clear();
+                return Err(error);
+            }
+        };
+        image_mut.texts.finish_refill();
         match policy {
             CapacityPolicy::UpperBound => image_mut.row_count = filled_to,
             CapacityPolicy::Exact => {
@@ -487,13 +450,19 @@ fn drain_encoded_rows(
     drain: impl FnOnce(usize, &mut dyn FnMut(&[u64])) -> crate::error::Result<()>,
 ) -> crate::error::Result<usize> {
     let row_bound = image.row_count;
+    let has_text = image.strings.iter().any(|string| *string);
     let RelationImage {
         columns,
         words,
         bytes,
+        spans,
+        strings,
+        texts,
+        generation,
         ..
     } = image;
     let mut position = 0;
+    let mut text_error = None;
     drain(0, &mut |row| {
         assert!(
             position < row_bound,
@@ -504,6 +473,17 @@ fn drain_encoded_rows(
             columns.len(),
             "seen-set rows carry one word per image column"
         );
+        if has_text && text_error.is_none() {
+            for (span, string) in spans.iter().zip(strings.iter()) {
+                if *string {
+                    let word = row[usize::from(span.first_column)];
+                    if let Err(error) = texts.pin(word, || generation.resolver().owned_text(word)) {
+                        text_error = Some(error);
+                        break;
+                    }
+                }
+            }
+        }
         for (column, &word) in columns.iter().zip(row) {
             match *column {
                 Column::Words { start } => words[start + position] = word,
@@ -512,6 +492,9 @@ fn drain_encoded_rows(
         }
         position += 1;
     })?;
+    if let Some(error) = text_error {
+        return Err(error);
+    }
     Ok(position)
 }
 
@@ -519,14 +502,14 @@ fn drain_encoded_rows(
 /// canonical fact bytes use the same decoding and stride-padded columns as
 /// stored rows, including the leading implicit `id` column (`0..rows`).
 /// # Errors
-/// Cache admission refusal is [`crate::image::ResidentAdmit::BeyondMemory`].
+/// A slab length that cannot be represented.
 /// # Panics
 /// Only if `relation` is ordinary or its sealed rows violate the validated schema.
 pub fn synthesize_closed(
     rel: RelationId,
     relation: &Relation,
     generation: GenerationHandle,
-) -> Result<crate::image::ResidentAdmit<Arc<RelationImage>>> {
+) -> Result<Arc<RelationImage>> {
     let extension = relation
         .body()
         .closed_rows()
@@ -534,14 +517,7 @@ pub fn synthesize_closed(
     let layout = relation.layout();
     let row_count = extension.len();
     let field_types: Vec<ValueType> = relation.fields().iter().map(|f| f.value_type).collect();
-    let estimated = estimated_slab_bytes(&field_types, row_count)?;
-    let Ok(charge) = ChargedImage::admit(generation.ledger(), estimated) else {
-        return Ok(crate::image::ResidentAdmit::BeyondMemory(
-            crate::image::ResidentTextExhausted::new(generation),
-        ));
-    };
-    let mut frame = allocate(&field_types, row_count)
-        .expect("the extension-row cap keeps every slab size computation in range");
+    let mut frame = allocate(&field_types, row_count)?;
     let plan = decode_plan(&field_types, &frame.spans, &frame.columns, layout);
     for (position, row) in extension.iter().enumerate() {
         decode_fact(
@@ -555,12 +531,7 @@ pub fn synthesize_closed(
         )
         .expect("sealed rows hold canonical fact bytes, encoded at validate");
     }
-    Ok(crate::image::ResidentAdmit::Ready(seal(
-        row_count,
-        frame,
-        generation,
-        Some(SlabCharge::Cache { _owner: charge }),
-    )))
+    Ok(seal(row_count, frame, generation))
 }
 
 #[cfg(test)]

@@ -14,15 +14,13 @@
 //!   BOTH ways — verdicts, complete violation sets, and canonical evidence
 //!   bytes equal, across adds, deletes, replaces and multi-statement
 //!   rejections (forced-collision variant under `collision-probe`);
-//! - work-count regression: a one-row mutation against a large indexed
-//!   relation judges in work proportional to the delta's groups, not the
-//!   relation — a flat structural ceiling on the deterministic work ledger,
-//!   never timing.
+//! - allocation regression: a one-row mutation's allocation requests do not
+//!   scale with the parent relation. Run with `alloc-counter` under nextest;
+//!   these counts are not physical-read counters. Core no-scan doubles
+//!   independently exercise the indexed access contract.
 //!
 //! Gate families: E-ADMIT (incremental half), G15/PERF-001 (structural
 //! judge work), Q-COLLISION (exact verdicts under forced collisions).
-
-use std::time::Duration;
 
 use bumbledb::schema::judge::{
     CandidateFacts, JudgeBudget, JudgedViolation, Judgment as SchemaJudgment, judge_final_state,
@@ -35,7 +33,7 @@ use bumbledb::store::{
     CandidateJudge, CandidateState, Judgment, MapPolicy, Prepared, SchemaJudge, Store, StoreResult,
     UnindexedRows,
 };
-use bumbledb::work::{ExecutionPolicy, Resource, WorkContext};
+use bumbledb::work::WorkContext;
 use bumbledb::{ChangeSet, Interval, Value};
 
 mod common;
@@ -45,17 +43,7 @@ const BOOKING: RelationId = RelationId(1);
 const ROOM: RelationId = RelationId(2);
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 24,
-        work_units: 1 << 40,
-        timeout: Duration::from_secs(120),
-    }
-    .start()
-    .expect("work context")
+    WorkContext::new()
 }
 
 /// `User(id)`, `User(email)`, pointwise `Booking(room, span)`, `Room(id)`,
@@ -455,24 +443,16 @@ fn measured_one_row_judgment(db: &bumbledb::Db<SchemaDescriptor>, id: u64) -> u6
     );
     let context = work();
     let mut session = db.integration_writer(&context).expect("writer");
-    let before = context.used(Resource::WorkUnits);
+    let before = bumbledb::alloc_counter::count();
     let prepared = session.prepare(&changes).expect("prepare");
     assert!(matches!(prepared, bumbledb::Admission::Accepted(_)));
-    assert_eq!(
-        context.used(Resource::ScratchBytes),
-        0,
-        "one indexed group needs no spill"
-    );
-    context.used(Resource::WorkUnits) - before
+    bumbledb::alloc_counter::count() - before
 }
 
-/// STRUCTURAL (never timing): judging a one-row mutation against a large
-/// indexed relation costs work proportional to the delta's determinant
-/// groups — a flat ceiling that does not grow when the relation grows 8×,
-/// with untouched containment/capacity relations never entering the
-/// judgment.
+/// Allocation requests for one-row admission stay flat as the relation grows
+/// 8×. This observes allocation behavior, not visited pages or elapsed time.
 #[test]
-fn one_row_judge_work_is_flat_across_relation_growth() {
+fn one_row_judge_allocations_are_flat_across_relation_growth() {
     let dir = common::TempDir::new("gate-inc-judge-work");
     let db = bumbledb::Db::create(dir.path(), theory_descriptor(), work())
         .expect("create")
@@ -505,12 +485,12 @@ fn one_row_judge_work_is_flat_across_relation_growth() {
 
     assert!(
         small < 256,
-        "one-row judgment against 512 rows must be delta-shaped: {small} work units"
+        "one-row judgment against 512 rows must be delta-shaped: {small} allocation requests"
     );
     assert!(
         large < 256,
         "one-row judgment against 4096 rows (+192 bookings/rooms) must stay \
-         delta-shaped: {large} work units"
+         delta-shaped: {large} allocation requests"
     );
     assert!(
         large <= small + 32,

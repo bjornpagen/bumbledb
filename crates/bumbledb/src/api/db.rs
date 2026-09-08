@@ -19,10 +19,11 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::image::cache::ImageCache;
 use crate::schema::Schema;
-use crate::work::{ExecutionPolicy, WorkContext};
+#[cfg(test)]
+use crate::work::WorkContext;
 use bumbledb_theory::schema::{RelationId, StatementId};
 
 mod builder;
@@ -115,6 +116,13 @@ pub struct Db<S> {
 }
 
 impl<S> Db<S> {
+    /// Clear cached query images and text. Live readers, prepared queries and
+    /// results keep any storage they still own and remain valid. Later queries
+    /// rebuild cache entries as needed; this does not change durable data.
+    pub fn clear_cache(&self) {
+        self.cache.clear();
+    }
+
     #[must_use]
     pub fn schema(&self) -> &Schema {
         self.schema.as_ref()
@@ -133,26 +141,9 @@ impl<S> Db<S> {
     }
 }
 
-/// Admit one operation under an explicit finite allowance. Zero means none.
-/// # Errors
-/// Invalid timeout or other [`crate::work::WorkError`].
-pub fn start_operation(policy: ExecutionPolicy) -> Result<WorkContext> {
-    policy
-        .start()
-        .map_err(|error| Error::from_store(crate::storage::store::StoreError::Work(error)))
-}
-
 #[cfg(test)]
-pub(crate) fn test_operation() -> Result<WorkContext> {
-    start_operation(ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 30,
-        work_units: 1 << 30,
-        timeout: std::time::Duration::from_secs(3600),
-    })
+pub(crate) fn test_operation() -> WorkContext {
+    WorkContext::new()
 }
 
 #[cfg(test)]

@@ -18,24 +18,14 @@ pub fn execute_key_probe<S: Sink, C: crate::exec::run::Counters>(
     source: &QuerySource<'_>,
     schema: &Schema,
     interner: &InternerHandle<'_>,
-    store: &mut Option<crate::image::NonresidentTextStore>,
     params: &[Const],
     row: &mut RowWords,
-    key_scratch: &mut Vec<u64>,
+    key_scratch: &mut crate::image::view::ResolvedWords,
     bindings: &mut Bindings,
     sink: &mut S,
     counters: &mut C,
 ) -> Result<()> {
-    if !key_probe_row(
-        plan,
-        source,
-        schema,
-        interner,
-        store,
-        params,
-        row,
-        key_scratch,
-    )? {
+    if !key_probe_row(plan, source, schema, interner, params, row, key_scratch)? {
         return Ok(());
     }
 

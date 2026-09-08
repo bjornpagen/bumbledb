@@ -42,6 +42,14 @@ const HINT_CAP: usize = 1 << 21;
 const LOAD_DEN: usize = 3;
 
 impl<V: Copy> WordMap<V> {
+    /// Distinct entries before another growth would exceed the u32 slot index.
+    /// This is a representation bound, not an execution or memory allowance.
+    pub(crate) fn remaining_rows(&self) -> usize {
+        let maximum = usize::try_from((u64::from(u32::MAX) + 1) / LOAD_DEN as u64)
+            .expect("u32 slot cardinality fits supported targets");
+        maximum - self.len
+    }
+
     #[must_use]
     pub(crate) const fn arity(&self) -> usize {
         self.arity

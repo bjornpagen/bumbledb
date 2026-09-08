@@ -103,7 +103,7 @@ fn fetch_verified(
     store: &MemStore,
     prefix: &str,
     reference: &bumbledb_log::store::ObjectRef,
-) -> bumbledb::work::ChargedBytes {
+) -> bumbledb_log::store::ReceivedBody {
     get_verified(
         store,
         prefix,
@@ -209,6 +209,97 @@ fn cold_hydration_builds_checkpoint_plus_exact_tail_and_resolves_receipts() {
         staging.is_empty(),
         "no staging scratch survives a completed hydration"
     );
+}
+
+#[test]
+fn cold_hydration_releases_each_chunk_before_fetching_the_next() {
+    use bumbledb_log::history::Condition;
+    use bumbledb_log::store::mem::Op;
+    use std::sync::Mutex;
+
+    let store = MemStore::new();
+    let mut mirror = Mirror::create("rec-chunk-lifetimes", &store, "t");
+    let command = lane_support::command(
+        mirror.db(),
+        mirror.identity,
+        1,
+        Condition::Unconditional,
+        |draft| {
+            for id in 0..16_384 {
+                draft
+                    .insert(RelationId(0), &[bumbledb::Value::U64(id)])
+                    .unwrap();
+            }
+        },
+    );
+    mirror.submit(&command);
+    let mut policy = ckpt_policy();
+    // Small records and a 4-KiB import window separate active-batch storage
+    // from retained checkpoint chunks in the allocation discriminator.
+    policy.stream.record_bytes = 4096;
+    publish_checkpoint(
+        mirror.db(),
+        &store,
+        "t",
+        LIMITS,
+        CheckpointKind::Ordinary,
+        &policy,
+        &work(),
+    )
+    .expect("checkpoint");
+    let recovery_work = work();
+    let observations = Arc::new(Mutex::new(Vec::with_capacity(256)));
+    let observed = Arc::clone(&observations);
+    store.set_gate(move |op, key| {
+        if op == Op::GetObject && key.contains("/chunk/") {
+            #[cfg(feature = "alloc-counter")]
+            let live = Some(bumbledb::alloc_counter::snapshot().absolute.live_bytes);
+            #[cfg(not(feature = "alloc-counter"))]
+            let live: Option<u64> = None;
+            observed.lock().unwrap().push(live);
+        }
+        None
+    });
+    let dir = temp_dir("rec-chunk-lifetimes-target");
+    let recovered = open_hosted(
+        &dir,
+        theory(),
+        &store,
+        "mem",
+        "t",
+        LIMITS,
+        policy.stream,
+        HEAD_CAP,
+        &recovery_work,
+    )
+    .expect("cold hydration");
+    assert_eq!(count_users(&recovered.db), 16_384);
+    assert_eq!(
+        recovered.db.catalog_digest(work()).unwrap(),
+        mirror.db().catalog_digest(work()).unwrap(),
+    );
+    let observations = observations.lock().unwrap();
+    assert!(
+        observations.len() > 64,
+        "exercise many independently fetched chunks"
+    );
+    #[cfg(feature = "alloc-counter")]
+    {
+        let first = observations[0].unwrap();
+        let maximum = observations.iter().flatten().copied().max().unwrap();
+        eprintln!(
+            "chunk-lifetime allocation window: {} fetches; first={first}; peak-before-fetch={maximum}; growth={}",
+            observations.len(),
+            maximum.saturating_sub(first)
+        );
+        // This fixture has >384 KiB of chunks. Its 4-KiB import window,
+        // decoder carry, row vectors and store bookkeeping fit in 64 KiB
+        // of additional live allocations. An eager chunk collect cannot.
+        assert!(
+            maximum.saturating_sub(first) < 64 * 1024,
+            "checkpoint payload accumulated between fetches: first={first}, maximum={maximum}"
+        );
+    }
 }
 
 #[test]
@@ -346,7 +437,7 @@ fn corrupt_authoritative_chunk_stops_hydration_with_evidence_never_empty() {
         .expect("checkpoint");
     let manifest_bytes = fetch_verified(&store, "t", &reference);
     let manifest =
-        bumbledb_log::codec::decode_manifest(manifest_bytes.as_bytes(), ckpt_policy().stream)
+        bumbledb_log::codec::decode_manifest(manifest_bytes.as_slice(), ckpt_policy().stream)
             .expect("decodes");
     let chunk_key = manifest.chunks[0].key("t");
     assert!(store.corrupt_object(&chunk_key, |bytes| bytes[10] ^= 0xff));
@@ -539,7 +630,7 @@ fn d06_failed_hydrate_leaves_destination_absent() {
         nonempty_required(),
         binding.identity,
         genesis,
-        std::iter::empty::<Result<bumbledb::work::ChargedBytes, RecoveryError>>(),
+        std::iter::empty::<Result<bumbledb_log::store::ReceivedBody, RecoveryError>>(),
         genesis,
         IncarnationId::from_core(Uuid::from_bytes([0xc3; 16])),
         op(0x26),
@@ -592,7 +683,7 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
             &theory().validate().expect("theory validates"),
         ),
     };
-    let empty = || std::iter::empty::<Result<bumbledb::work::ChargedBytes, RecoveryError>>();
+    let empty = || std::iter::empty::<Result<bumbledb_log::store::ReceivedBody, RecoveryError>>();
     let later = DecisionStamp {
         seq: 7,
         hash: DecisionDigest::from_bytes([0x77; 32]),
@@ -701,7 +792,7 @@ fn d18_receipt_cleanup_stays_bounded_wrong_tip_absent() {
         theory(),
         source,
         genesis,
-        std::iter::empty::<Result<bumbledb::work::ChargedBytes, RecoveryError>>(),
+        std::iter::empty::<Result<bumbledb_log::store::ReceivedBody, RecoveryError>>(),
         DecisionStamp {
             seq: 7,
             hash: DecisionDigest::from_bytes([0x77; 32]),

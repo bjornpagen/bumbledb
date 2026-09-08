@@ -15,7 +15,7 @@
  * discipline as the native chain pass, with different (fake) bytes.
  */
 
-import type { ExecutionPolicy, SchemaSpec } from "@bjornpagen/bumbledb"
+import type { SchemaSpec } from "@bjornpagen/bumbledb"
 import { NativeRuntime } from "@bjornpagen/bumbledb"
 import { Effect } from "effect"
 import type { JsonValue } from "#migrations/canonical.ts"
@@ -165,20 +165,8 @@ export function withStubRuntime<A, E>(effect: Effect.Effect<A, E, NativeRuntime>
 	})
 }
 
-/** The fixed generation policy used across the migration tests. */
-export const WORK: ExecutionPolicy = {
-	inputBytes: 16n * 1024n * 1024n,
-	workingBytes: 16n * 1024n * 1024n,
-	scratchBytes: 16n * 1024n * 1024n,
-	resultBytes: 4n * 1024n * 1024n,
-	rows: 100_000n,
-	workUnits: 1_000_000n,
-	timeout: 60000
-}
-
 export function scriptedCodec(log?: CodecLog): MigrationCodec {
-	function schemaIdentity(spec: SchemaSpec, work: ExecutionPolicy) {
-		void work
+	function schemaIdentity(spec: SchemaSpec) {
 		return Effect.sync(() => {
 			if (log !== undefined) {
 				log.schemaCalls += 1
@@ -189,8 +177,7 @@ export function scriptedCodec(log?: CodecLog): MigrationCodec {
 		})
 	}
 
-	function verifyChain(request: ChainRequest, work: ExecutionPolicy) {
-		void work
+	function verifyChain(request: ChainRequest) {
 		return Effect.suspend((): Effect.Effect<ChainPayload, ReturnType<typeof drift>> => {
 			if (log !== undefined) {
 				log.chainCalls += 1
@@ -321,7 +308,7 @@ const scriptedHeld = new Map<string, HeldRepositoryLock>()
 
 export function scriptedExclusion(): RepositoryExclusion {
 	return {
-		acquire(operation, directory, _work) {
+		acquire(operation, directory) {
 			return Effect.gen(function* () {
 				const key = directory.endsWith("/") ? directory.slice(0, -1) : directory
 				if (scriptedHeld.has(key)) {

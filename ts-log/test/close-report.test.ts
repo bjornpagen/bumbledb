@@ -25,8 +25,7 @@ import {
 	receiptWire,
 	refWire,
 	registerChange,
-	submitOptions,
-	work
+	submitOptions
 } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
@@ -38,11 +37,7 @@ const outstanding = {
 	retained: 1n,
 	owners: 1n,
 	databases: 1n,
-	natives: 1n,
-	inputBytes: 0n,
-	workingBytes: 64n,
-	scratchBytes: 0n,
-	resultBytes: 0n
+	natives: 1n
 }
 
 for (const certainty of [false, true]) {
@@ -108,7 +103,7 @@ function plannedSeal(double: ReturnType<typeof makeWireDouble>, machine: ReturnT
 		precondition: { kind: "blind" as const },
 		result: {}
 	} as unknown as CommandInput<typeof schema>
-	return machine.Command.seal(input, work)
+	return machine.Command.seal(input)
 }
 
 describe("known receipt, then finalizer defect", function suite() {
@@ -125,7 +120,7 @@ describe("known receipt, then finalizer defect", function suite() {
 				Effect.scoped(
 					Effect.gen(function* () {
 						double.plan("logHistoryOpen", { result: handleWire() })
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						const command = yield* plannedSeal(double, machine)
 						double.plan("logHistoryCall", {
 							result: {
@@ -175,7 +170,7 @@ describe("known receipt, then finalizer defect", function suite() {
 				Effect.scoped(
 					Effect.gen(function* () {
 						double.plan("logHistoryOpen", { result: handleWire() })
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						const first = yield* history.close()
 						assert.equal(first.kind, "incomplete")
 						const second = yield* history.close()
@@ -202,7 +197,7 @@ describe("known receipt, then finalizer defect", function suite() {
 				Effect.scoped(
 					Effect.gen(function* () {
 						double.plan("logHistoryOpen", { result: handleWire() })
-						const history = yield* machine.LocalHistory.open(localBinding, schema, work)
+						const history = yield* machine.LocalHistory.open(localBinding, schema)
 						double.plan("logHistoryCall", {
 							result: {
 								verb: "snapshot",
@@ -215,7 +210,7 @@ describe("known receipt, then finalizer defect", function suite() {
 								}
 							}
 						})
-						const snapshot = yield* history.snapshot({ ...work, consistency: { kind: "latest" } })
+						const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
 						assert.equal(snapshot.freshness.kind, "latest")
 						assert.equal(snapshot.decisionStamp.seq, 7n)
 						return snapshot.stateStamp

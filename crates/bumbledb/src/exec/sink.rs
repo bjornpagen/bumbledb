@@ -83,18 +83,6 @@ enum SinkSpec {
     Pack { slot: usize },
 }
 
-/// One execution's sink allowance: the operation ledger plus the RAM
-/// allowance a sink's distinct-state may occupy before it must continue in
-/// the one temporary-LMDB scratch map. Installed per
-/// execution by the prepared query on the main sink AND interior stage
-/// sinks (the derived-tuples budget still judges stage row counts at
-/// seal); a sink without a budget (bare executor harnesses) stays in RAM.
-#[derive(Debug, Clone)]
-pub(crate) struct SinkBudget {
-    pub(crate) work: crate::work::WorkContext,
-    pub(crate) ram_bytes: usize,
-}
-
 /// Crate-internal sink reply L05 consumes after emit or finalize.
 /// Work/scratch refusals are Stop; cardinality and corruption are Error.
 /// Finalize is Q-ATOMIC: no group publishes after a recorded failure.
@@ -104,7 +92,7 @@ pub(crate) enum SinkProgress {
     Continue,
     /// Finalize emitted every group/answer; the execution is complete.
     Finish,
-    /// Work, deadline, or cancellation stopped the sink. Sticky: later
+    /// Cancellation stopped the sink. Sticky: later
     /// emits drop and finalize refuses (Q-ATOMIC).
     Stop,
     /// Scratch, cardinality, or corruption failure. Sticky: later emits
@@ -117,11 +105,7 @@ pub(in crate::exec::sink) fn classify_progress(error: &crate::error::Error) -> S
         crate::error::Error::Store(store)
             if matches!(
                 store.as_ref(),
-                crate::storage::store::StoreError::Work(
-                    crate::work::WorkError::Cancelled
-                        | crate::work::WorkError::DeadlineExceeded
-                        | crate::work::WorkError::Exhausted { .. }
-                )
+                crate::storage::store::StoreError::Work(crate::work::WorkError::Cancelled)
             ) =>
         {
             SinkProgress::Stop
@@ -131,8 +115,8 @@ pub(in crate::exec::sink) fn classify_progress(error: &crate::error::Error) -> S
 }
 
 /// A distinct-tuple set that starts as the measured RAM word table and
-/// continues in the one scratch relation when its owner's allowance is
-/// crossed — exact full-key semantics in both tiers, insertion order on
+/// continues in scratch only when the map's dense indices cannot grow —
+/// exact full-key semantics in both representations, insertion order on
 /// [`ScratchMapId::OrderLog`] of that same env when `ordered`. Errors are
 /// sticky: the executor's sink interface is infallible, so a scratch
 /// failure records itself, subsequent inserts drop, and finalize surfaces
@@ -142,16 +126,16 @@ pub(in crate::exec::sink) struct SpillSet {
     ordered: bool,
     ram: WordMap<()>,
     /// Some only under an exact singleton-head uniqueness proof. The RAM
-    /// tier is a dense insertion-order log; the existing scratch protocol,
-    /// budget, work quantum and sticky failures remain shared.
+    /// tier is a dense insertion-order log with the same cancellation
+    /// quantum and sticky failure handling.
     unique_rows: Option<UniqueRows>,
     spilled: Option<SpilledSet>,
-    budget: Option<SinkBudget>,
+    work: Option<crate::work::WorkContext>,
     error: Option<crate::error::Error>,
     key_bytes: Vec<u8>,
-    /// Work is charged in bounded quanta, not per emitted row — the warm
+    /// Cancellation is polled in bounded quanta — the warm
     /// path pays one branch and one counter increment per insert; the
-    /// ledger (deadline/cancellation included) is polled every
+    /// context is polled every
     /// [`STEP_QUANTUM`] rows, the published maximum unpolled quantum.
     pending_steps: u32,
 }
@@ -224,15 +208,15 @@ impl SpillSet {
             ram: WordMap::with_capacity_hint(arity, hint),
             unique_rows: None,
             spilled: None,
-            budget: None,
+            work: None,
             error: None,
             key_bytes: Vec::new(),
             pending_steps: 0,
         }
     }
 
-    pub(in crate::exec::sink) fn begin(&mut self, budget: Option<SinkBudget>) {
-        self.budget = budget;
+    pub(in crate::exec::sink) fn begin(&mut self, work: Option<crate::work::WorkContext>) {
+        self.work = work;
     }
 
     fn elide_output_hashing(&mut self, _: crate::plan::fj::ProjectionDistinctWitness) {
@@ -275,6 +259,18 @@ impl SpillSet {
         self.pending_steps = 0;
     }
 
+    fn release_memory(&mut self) {
+        self.ram = WordMap::new(self.ram.arity());
+        if let Some(rows) = &mut self.unique_rows {
+            *rows = UniqueRows::default();
+        }
+        self.spilled = None;
+        self.work = None;
+        self.error = None;
+        self.key_bytes = Vec::new();
+        self.pending_steps = 0;
+    }
+
     pub(in crate::exec::sink) fn take_error(&mut self) -> Option<crate::error::Error> {
         self.error.take()
     }
@@ -309,20 +305,17 @@ impl SpillSet {
         if self.spilled.is_some() {
             return self.insert_scratch(key);
         }
-        if let Some(budget) = &self.budget {
-            let resident = if UNIQUE {
-                self.unique_rows.as_ref().expect("proved projection").len
-            } else {
-                self.ram.len()
-            };
-            let bytes = (resident + 1) * (key.len() * 8 + 16);
-            if bytes > budget.ram_bytes {
-                return self.insert_scratch(key);
-            }
+        if self.work.is_some() {
             self.pending_steps += 1;
             if self.pending_steps >= STEP_QUANTUM && !self.poll_steps() {
                 return false;
             }
+        }
+        if !UNIQUE && self.ram.remaining_rows() == 0 {
+            if self.ram.contains_key(key) {
+                return false;
+            }
+            return self.insert_scratch(key);
         }
         if UNIQUE {
             let rows = self.unique_rows.as_mut().expect("proved projection");
@@ -345,7 +338,7 @@ impl SpillSet {
     /// resident bookkeeping only inside a prefix that cannot reach a
     /// spill or poll boundary, even if every row adds a new key. Duplicates
     /// may make the next prefix longer; boundary rows retain the ordinary
-    /// conservative pre-probe spill and polling behavior.
+    /// exact duplicate lookup and polling behavior.
     fn insert_hashed_rows(&mut self, mut words: &[u64]) {
         let arity = self.ram.arity();
         debug_assert!(self.unique_rows.is_none() && arity != 0);
@@ -357,22 +350,20 @@ impl SpillSet {
                 }
                 return;
             }
-            let mut count = words.len() / arity;
-            if let Some(budget) = &self.budget {
-                let admitted = (budget.ram_bytes / (arity * 8 + 16)).saturating_sub(self.ram.len());
+            let mut count = (words.len() / arity).min(self.ram.remaining_rows());
+            if self.work.is_some() {
                 let before_poll = usize::try_from(STEP_QUANTUM - 1 - self.pending_steps)
                     .expect("less than a work quantum");
-                count = count.min(admitted).min(before_poll);
+                count = count.min(before_poll);
             }
             if count == 0 {
                 self.insert_inner::<false>(&words[..arity]);
                 words = &words[arity..];
             } else {
                 let width = count * arity;
-                // Dispatch width once; retain growth before duplicate
-                // lookup and each row's ordinary allocation behavior.
+                // Dispatch width once; duplicate lookup still precedes growth.
                 self.ram.insert_rows(&words[..width]);
-                if self.budget.is_some() {
+                if self.work.is_some() {
                     self.pending_steps += u32::try_from(count).expect("less than a work quantum");
                 }
                 words = &words[width..];
@@ -410,13 +401,12 @@ impl SpillSet {
             } else {
                 (len - offset).min(spare)
             };
-            if let Some(budget) = &self.budget {
-                let admitted = (budget.ram_bytes / (arity * 8 + 16)).saturating_sub(rows.len);
+            if self.work.is_some() {
                 // The polling row itself must use insert: append its
                 // preceding prefix BEFORE checking the work ledger.
                 let before_poll = usize::try_from(STEP_QUANTUM - 1 - self.pending_steps)
                     .expect("less than a work quantum");
-                count = count.min(admitted).min(before_poll);
+                count = count.min(before_poll);
             }
             if count == 0 {
                 // SAFETY: u64 and MaybeUninit<u64> have identical layout.
@@ -436,7 +426,7 @@ impl SpillSet {
                 // valid and no partially generated row is published.
                 unsafe { rows.words.set_len(base + width) };
                 rows.len += count;
-                if self.budget.is_some() {
+                if self.work.is_some() {
                     self.pending_steps += u32::try_from(count).expect("less than a work quantum");
                 }
                 offset += count;
@@ -450,10 +440,9 @@ impl SpillSet {
     #[cold]
     #[inline(never)]
     fn poll_steps(&mut self) -> bool {
-        let pending = u64::from(self.pending_steps);
         self.pending_steps = 0;
-        let budget = self.budget.as_ref().expect("only budgeted inserts poll");
-        match budget.work.step(pending) {
+        let work = self.work.as_ref().expect("only cancellable inserts poll");
+        match work.checkpoint() {
             Ok(()) => true,
             Err(error) => {
                 self.error = Some(crate::api::prepared::source::work_error(error));
@@ -506,11 +495,8 @@ impl SpillSet {
     #[cold]
     #[inline(never)]
     fn spill(&mut self) -> crate::error::Result<()> {
-        let budget = self
-            .budget
-            .as_ref()
-            .expect("spill is reached only under a budget");
-        let mut set = crate::exec::scratch::ScratchRelation::new(&budget.work, 0);
+        let work = self.work.clone().unwrap_or_default();
+        let mut set = crate::exec::scratch::ScratchRelation::new(&work);
         set.force_spill()?;
         let mut entries: u64 = 0;
         let mut key_bytes = Vec::new();
@@ -746,10 +732,28 @@ impl GroupTable {
         match self {
             Self::Hashed(map) => map.clear(),
             Self::Dense {
-                table, ordinals, ..
+                radixes,
+                table,
+                ordinals,
             } => {
+                if table.is_empty() {
+                    let size = radixes.iter().map(|&radix| usize::from(radix)).product();
+                    *table = vec![0; size].into_boxed_slice();
+                }
                 table.fill(0);
                 ordinals.clear();
+            }
+        }
+    }
+
+    fn release_memory(&mut self) {
+        match self {
+            Self::Hashed(map) => *map = WordMap::new(map.arity()),
+            Self::Dense {
+                table, ordinals, ..
+            } => {
+                *table = Box::default();
+                *ordinals = Vec::new();
             }
         }
     }
@@ -813,12 +817,11 @@ pub struct AggregateSink {
     share_float_inputs: bool,
     group_counts: Vec<u64>,
     cardinality_overflow: bool,
-    /// This execution's allowance: installed by `begin`, consulted by the
-    /// group-state pressure check (`maybe_spill_groups`). `None` = derived
-    /// stage sink (RAM-only; the derived-tuples budget bounds it at seal).
-    budget: Option<SinkBudget>,
+    /// Cancellation shared with scratch and deduplication; absent only in
+    /// standalone kernel callers that have no operation context.
+    work: Option<crate::work::WorkContext>,
     /// The spilled group-state partition store, once the RAM group tables
-    /// crossed the allowance ([`aggregate::spill::GroupSpill`]).
+    /// reach their index limit ([`aggregate::spill::GroupSpill`]).
     spill: Option<Box<aggregate::spill::GroupSpill>>,
     /// Sticky spill/scratch failure recorded by the infallible fold paths;
     /// finalize refuses before any group publishes (Q-ATOMIC).
@@ -827,8 +830,6 @@ pub struct AggregateSink {
     finished: bool,
     /// Stop/Error latched across [`Self::take_error`] until reset.
     terminal: SinkProgress,
-    /// Tracked Pack-claim bytes (the claims grow per row, not per group).
-    pack_bytes: usize,
     union_scratch: Vec<u64>,
     key_scratch: Vec<u64>,
     binding_scratch: Vec<u64>,

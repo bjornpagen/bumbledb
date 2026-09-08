@@ -162,7 +162,7 @@ impl DeterminantTable {
     ) -> StoreResult<()> {
         for id in self.theory.projections_of_relation(relation) {
             let projection = self.theory.projection(*id).expect("indexed id");
-            work.step(1)?;
+            work.checkpoint()?;
             let mut exact = [0; MAX_EXACT_SCALAR_BYTES];
             let fingerprinted;
             let projected = match projection.encoding {
@@ -261,26 +261,11 @@ mod tests {
     use crate::schema::{
         IntervalElement, RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _, ValueType,
     };
-    use crate::work::ExecutionPolicy;
+    use crate::work::WorkContext;
     use bumbledb_theory::schema::FieldId;
-    use std::time::Duration;
 
     fn work() -> WorkContext {
-        work_with_limit(1_000_000)
-    }
-
-    fn work_with_limit(working_bytes: u64) -> WorkContext {
-        ExecutionPolicy {
-            input_bytes: 1_000_000,
-            working_bytes,
-            scratch_bytes: 0,
-            result_bytes: 0,
-            rows: 1000,
-            work_units: 1_000_000,
-            timeout: Duration::from_secs(60),
-        }
-        .start()
-        .expect("work")
+        WorkContext::new()
     }
 
     fn projection(fields: Vec<FieldDescriptor>, encoding: KeyEncoding) -> CompiledProjection {
@@ -300,16 +285,23 @@ mod tests {
 
     #[test]
     fn exact_projection_owner_is_inline_and_checks_its_compiled_width() {
-        let context = work_with_limit(0);
+        let context = work();
         let mut projection = projection(
             vec![field("uuid", ValueType::Uuid)],
             KeyEncoding::ExactBounded { scalar_width: 16 },
         );
         let uuid = crate::Uuid::from_bytes([0xAB; 16]);
+        let before = crate::alloc_counter::snapshot().window;
         let owner = determinant_bytes(&projection, &[Value::Uuid(uuid)], &context).unwrap();
+        let after = crate::alloc_counter::snapshot().window;
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(
+            after.allocs, before.allocs,
+            "fixed-width determinant stays inline"
+        );
+        let _ = (before, after);
         assert!(matches!(owner, DeterminantBytes::Exact { .. }));
         assert_eq!(owner.as_slice(), uuid.as_bytes());
-        assert_eq!(context.used(crate::work::Resource::WorkingBytes), 0);
         projection.encoding = KeyEncoding::ExactBounded { scalar_width: 8 };
         assert_eq!(
             determinant_bytes(&projection, &[Value::Uuid(uuid)], &context).unwrap_err(),
@@ -325,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_projection_keeps_original_bytes_and_charge_across_moves() {
+    fn canonical_projection_moves_storage_and_releases_it_with_its_owner() {
         let projection = projection(
             vec![field("text", ValueType::String)],
             KeyEncoding::FingerprintBucket,
@@ -339,10 +331,10 @@ mod tests {
         let owner = determinant_bytes(&projection, &values, &context).unwrap();
         assert!(matches!(owner, DeterminantBytes::Canonical(_)));
         assert_eq!(owner.as_slice(), expected.as_bytes());
-        let charge = owner.len() as u64;
-        assert_eq!(context.used(crate::work::Resource::WorkingBytes), charge);
+        let bytes = owner.len() as u64;
+        let address = owner.as_slice().as_ptr();
         let moved = owner;
-        assert_eq!(context.used(crate::work::Resource::WorkingBytes), charge);
+        assert_eq!(moved.as_slice().as_ptr(), address);
         assert_eq!(moved.as_slice(), expected.as_bytes());
         assert_eq!(
             fingerprint_routing(super::super::Fingerprinter::Blake3, projection.id, &moved),
@@ -352,43 +344,41 @@ mod tests {
                 &expected
             )
         );
+        let before = crate::alloc_counter::snapshot().window;
         drop(moved);
-        assert_eq!(context.used(crate::work::Resource::WorkingBytes), 0);
+        let after = crate::alloc_counter::snapshot().window;
+        #[cfg(feature = "alloc-counter")]
+        assert!(after.dealloc_bytes - before.dealloc_bytes >= bytes);
+        let _ = (bytes, before, after);
     }
 
     #[test]
-    fn canonical_projection_refuses_overlapping_budget_then_refunds_and_honors_cancel() {
+    fn canonical_projection_owners_are_independent_and_honor_cancellation() {
         use crate::canonical::RowError;
-        use crate::work::{Resource, WorkError};
-
+        use crate::work::WorkError;
         let projection = projection(
             vec![field("text", ValueType::String)],
             KeyEncoding::FingerprintBucket,
         );
         let values = [Value::String("hello".into())];
-        let size = 16;
-        let context = work_with_limit(size);
+        let context = work();
         let first = determinant_bytes(&projection, &values, &context).unwrap();
-        assert_eq!(context.used(Resource::WorkingBytes), size);
-        assert_eq!(
-            determinant_bytes(&projection, &values, &context).unwrap_err(),
-            StoreError::from(RowError::Work(WorkError::Exhausted {
-                resource: Resource::WorkingBytes,
-                used: size,
-                requested: size,
-                limit: size,
-            }))
-        );
-        assert_eq!(context.used(Resource::WorkingBytes), size);
+        let second = determinant_bytes(&projection, &values, &context).unwrap();
+        assert_eq!(first.as_slice(), second.as_slice());
+        assert_ne!(first.as_slice().as_ptr(), second.as_slice().as_ptr());
+        let bytes = first.as_slice().to_vec();
         drop(first);
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
-        drop(determinant_bytes(&projection, &values, &context).unwrap());
+        assert_eq!(second.as_slice(), bytes);
         context.cancel();
         assert_eq!(
             determinant_bytes(&projection, &values, &context).unwrap_err(),
             StoreError::from(RowError::Work(WorkError::Cancelled))
         );
-        assert_eq!(context.used(Resource::WorkingBytes), 0);
+        assert_eq!(
+            second.as_slice(),
+            bytes,
+            "cancellation does not invalidate existing owners"
+        );
     }
 
     fn table(schema: &Schema) -> DeterminantTable {
@@ -531,6 +521,7 @@ mod tests {
         .unwrap();
         let det = table(&schema);
         let context = work();
+        let baseline = crate::alloc_counter::snapshot().absolute.live_bytes;
         let mut scratch = crate::canonical::DecodeScratch::new(&context);
         assert_eq!(
             det.emit_row(RelationId(0), &row, &mut scratch, &mut |_, bytes| {
@@ -539,10 +530,11 @@ mod tests {
             }),
             Err(StoreError::ForeignSchema)
         );
-        let retained = context.used(crate::work::Resource::WorkingBytes);
+        let retained = crate::alloc_counter::snapshot().absolute.live_bytes - baseline;
+        #[cfg(feature = "alloc-counter")]
         assert!(
             retained > 0 && retained < 1000,
-            "only the small value vector stays charged after the rejected sink"
+            "only the small decode vector remains after the rejected sink"
         );
         let mut visits = 0;
         det.emit_row(RelationId(0), &row, &mut scratch, &mut |_, bytes| {
@@ -552,9 +544,18 @@ mod tests {
         })
         .unwrap();
         assert_eq!(visits, 1);
-        assert_eq!(context.used(crate::work::Resource::WorkingBytes), retained);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(
+            crate::alloc_counter::snapshot().absolute.live_bytes,
+            baseline + retained
+        );
         drop(scratch);
-        assert_eq!(context.used(crate::work::Resource::WorkingBytes), 0);
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(
+            crate::alloc_counter::snapshot().absolute.live_bytes,
+            baseline
+        );
+        let _ = retained;
     }
 
     #[test]
@@ -584,7 +585,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(visits, 1);
-        assert_eq!(context.used(crate::work::Resource::WorkUnits), 1);
         for row in [vec![], vec![Value::Bool(true)]] {
             let error = det
                 .emit_decoded(RelationId(0), &row, &context, &mut |_, _| {
@@ -593,20 +593,12 @@ mod tests {
                 .unwrap_err();
             assert_eq!(error, StoreError::ForeignSchema);
         }
-        context
-            .step(
-                context.limit(crate::work::Resource::WorkUnits)
-                    - context.used(crate::work::Resource::WorkUnits),
-            )
-            .unwrap();
+        context.cancel();
         assert!(matches!(
             det.emit_decoded(RelationId(0), &[Value::U64(42)], &context, &mut |_, _| {
-                panic!("exhausted work must not reach sink")
+                panic!("cancelled work must not reach sink")
             }),
-            Err(StoreError::Work(crate::WorkError::Exhausted {
-                resource: crate::work::Resource::WorkUnits,
-                ..
-            }))
+            Err(StoreError::Work(crate::WorkError::Cancelled))
         ));
     }
 

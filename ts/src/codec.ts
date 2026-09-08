@@ -7,8 +7,7 @@ import { lower } from "#lower.ts"
 import type { AnyRelation, Fact } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
 import { factOfCells, flatRowsOf } from "#rows.ts"
-import type { ExecutionPolicy } from "#runtime.ts"
-import { nativeOperationWith, policyWire, runtimeHandle } from "#runtime.ts"
+import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
 import type { Rel } from "#shape.ts"
@@ -22,7 +21,7 @@ import { Uuid } from "#uuid.ts"
  * Two layers:
  *
  * 1. The CANONICAL native row codec: `encodeRows`/`decodeRows` run the
- *    same charged native implementation the engine, log and migrations
+ *    same native implementation the engine, log and migrations
  *    share (owned bytes in, owned typed rows out; untrusted input cannot
  *    inject native capabilities). Effect-only, `NativeRuntime` required.
  * 2. The schema-tagged JSON VALUE form for HTTP/export boundaries
@@ -312,7 +311,7 @@ function rowSchema<R extends AnyRelation>(relation: R) {
 }
 
 /**
- * The charged CANONICAL native row codec (chapter 35 roster): owned bytes
+ * The canonical native row codec (chapter 35 roster): owned bytes
  * out, owned typed rows back in — the same implementation log sealing and
  * migrations use. Binding parameters is ingestion: input must stay stable
  * through execution, and no native work starts before the checked owned
@@ -320,8 +319,7 @@ function rowSchema<R extends AnyRelation>(relation: R) {
  */
 const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	shape: RowShape<R>,
-	rows: Iterable<Fact<R>>,
-	work: ExecutionPolicy
+	rows: Iterable<Fact<R>>
 ) {
 	const runtime = yield* runtimeHandle()
 	const tables = schemaTables(shape.schema)
@@ -336,26 +334,13 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	const spec = lower(shape.schema)
 	return yield* nativeOperationWith(
 		"encodeRows",
-		(callback) =>
-			dbNative.runtimeEncodeRows(
-				runtime,
-				policyWire(work, "encodeRows"),
-				spec,
-				relationId,
-				flat.rows,
-				flat.cells,
-				callback
-			),
+		(callback) => dbNative.runtimeEncodeRows(runtime, spec, relationId, flat.rows, flat.cells, callback),
 		dbNative.runtimeBytesTake,
 		(bytes) => bytes
 	)
 })
 
-const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(
-	shape: RowShape<R>,
-	input: Uint8Array,
-	work: ExecutionPolicy
-) {
+const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(shape: RowShape<R>, input: Uint8Array) {
 	const runtime = yield* runtimeHandle()
 	const tables = schemaTables(shape.schema)
 	const relationId = tables.relationIds.get(shape.relation.name)
@@ -368,8 +353,7 @@ const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(
 	const spec = lower(shape.schema)
 	return yield* nativeOperationWith(
 		"decodeRows",
-		(callback) =>
-			dbNative.runtimeDecodeRows(runtime, policyWire(work, "decodeRows"), spec, relationId, input, callback),
+		(callback) => dbNative.runtimeDecodeRows(runtime, spec, relationId, input, callback),
 		dbNative.runtimeRowsTake,
 		(rows) => Object.freeze(rows.map((row) => factOfCells(shape.relation, row as readonly CellValue[])))
 	)

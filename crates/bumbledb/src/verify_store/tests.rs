@@ -8,8 +8,6 @@
 //! crate-private handles — the exact desync each finding names, never a
 //! second key-derivation implementation.
 
-use std::time::Duration;
-
 use bumbledb_theory::schema::{
     FieldDescriptor, RelationId, SchemaDescriptor, StatementDescriptor, ValueType,
 };
@@ -19,7 +17,7 @@ use crate::storage::store::{
     CandidateJudge, CandidateState, Judgment as StoreJudgment, StoreResult, UnindexedRows,
 };
 use crate::testutil::TempDir;
-use crate::work::{ExecutionPolicy, WorkContext};
+use crate::work::WorkContext;
 use crate::{Db, StoreVerdict, Theory, Value};
 
 const ENTRY: RelationId = RelationId(0);
@@ -57,17 +55,7 @@ fn row(name: &str, amount: i64) -> Vec<Value> {
 }
 
 fn create(dir: &TempDir) -> Db<Ledger> {
-    let work = ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 30,
-        work_units: 1 << 30,
-        timeout: Duration::from_secs(3600),
-    }
-    .start()
-    .expect("work");
+    let work = WorkContext::new();
     Db::create(dir.path(), Ledger, work)
         .expect("create")
         .expect("empty theory admits")
@@ -77,13 +65,13 @@ fn create(dir: &TempDir) -> Db<Ledger> {
 fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
     let dir = TempDir::new("verify-coherent");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+    db.write(crate::api::db::test_operation(), |tx| {
         tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)])?;
         Ok(())
     })
     .expect("write")
     .unwrap();
-    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+    db.write(crate::api::db::test_operation(), |tx| {
         tx.delete_dyn(ENTRY, [row("a", 1)])?;
         tx.insert_dyn(ENTRY, [row("c", 3)])?;
         Ok(())
@@ -99,7 +87,7 @@ fn a_lawful_store_sweeps_coherent_after_mixed_commits() {
 fn a_dangling_membership_entry_is_a_typed_finding() {
     let dir = TempDir::new("verify-dangling-membership");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+    db.write(crate::api::db::test_operation(), |tx| {
         tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ())
     })
     .expect("write")
@@ -109,7 +97,7 @@ fn a_dangling_membership_entry_is_a_typed_finding() {
     {
         let inner = &store.inner;
         let mut wtxn = store
-            .gated_write_txn(&crate::api::db::test_operation().unwrap())
+            .gated_write_txn(&crate::api::db::test_operation())
             .expect("fixture txn");
         let fake = inner
             .keys
@@ -140,7 +128,7 @@ fn a_dangling_membership_entry_is_a_typed_finding() {
 fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
     let dir = TempDir::new("verify-membership-shape");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+    db.write(crate::api::db::test_operation(), |tx| {
         tx.insert_dyn(ENTRY, [row("a", 1)]).map(|_| ())
     })
     .expect("write")
@@ -165,7 +153,7 @@ fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
             (row_id, fp)
         };
         let mut wtxn = store
-            .gated_write_txn(&crate::api::db::test_operation().unwrap())
+            .gated_write_txn(&crate::api::db::test_operation())
             .expect("fixture txn");
         let real = inner.keys.membership_key(ENTRY, &fp, row_id).expect("key");
         inner
@@ -208,7 +196,7 @@ fn a_row_without_membership_and_a_wrong_bucket_are_distinct_findings() {
 fn a_stale_row_count_and_a_behind_ratchet_are_convicted() {
     let dir = TempDir::new("verify-counters");
     let db = create(&dir);
-    db.write(crate::api::db::test_operation().unwrap(), |tx| {
+    db.write(crate::api::db::test_operation(), |tx| {
         tx.insert_dyn(ENTRY, [row("a", 1), row("b", 2)]).map(|_| ())
     })
     .expect("write")
@@ -217,7 +205,7 @@ fn a_stale_row_count_and_a_behind_ratchet_are_convicted() {
     {
         let inner = &store.inner;
         let mut wtxn = store
-            .gated_write_txn(&crate::api::db::test_operation().unwrap())
+            .gated_write_txn(&crate::api::db::test_operation())
             .expect("fixture txn");
         // Stored count lies.
         inner
@@ -278,17 +266,7 @@ impl CandidateJudge for AdmitAll {
 }
 
 fn lawful_work() -> WorkContext {
-    crate::work::ExecutionPolicy {
-        input_bytes: 1 << 30,
-        working_bytes: 1 << 30,
-        scratch_bytes: 1 << 30,
-        result_bytes: 1 << 30,
-        rows: 1 << 24,
-        work_units: 1 << 40,
-        timeout: std::time::Duration::from_secs(120),
-    }
-    .start()
-    .expect("work")
+    crate::work::WorkContext::new()
 }
 
 #[test]

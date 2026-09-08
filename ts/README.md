@@ -33,6 +33,9 @@ correctness CI is distinct from the Apple Silicon performance measurements.
 
 ## Install
 
+This guide follows the development checkout. For an npm installation, use
+the guide from its matching Git tag.
+
 ```sh
 pnpm add @bjornpagen/bumbledb@1.0.1 effect@4.0.0-rc.112
 ```
@@ -68,7 +71,6 @@ import {
 	weigh,
 	within
 } from "@bjornpagen/bumbledb"
-import type { ExecutionPolicy, NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 
 // Relations describe stored records. Identity fields are ordinary
 // application-owned Uuid values — the database issues no identity.
@@ -93,9 +95,6 @@ const Learning = schema("Learning", { Student, Attempt }, [
 	})
 ])
 
-// Measured policies are inputs — the library invents no limits.
-declare const runtimePolicy: NativeRuntimeOptions
-declare const work: ExecutionPolicy
 declare const localPath: string
 
 // Queries are reusable typed values: reusing a v(R) variable is the join,
@@ -111,35 +110,35 @@ const attemptsFor = query(Learning).rule((r) => {
 const program = Effect.scoped(
 	Effect.gen(function* () {
 		// First use: create explicitly. Use Db.open for an existing store.
-		const db = yield* Db.create(localPath, Learning, work)
+		const db = yield* Db.create(localPath, Learning)
 		const studentId = yield* Effect.sync(() => crypto.randomUUID())
 		const attemptId = yield* Effect.sync(() => crypto.randomUUID())
 
-		const draft = yield* ChangeSet.builder(Learning, work)
+		const draft = yield* ChangeSet.builder(Learning)
 		yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
 		yield* draft.insert(Attempt, [
 			{ id: attemptId, student: studentId, score: 0.9, units: 1n, active: { start: 0n, end: 60n } }
 		])
 		const changes = yield* draft.finish()
 
-		const outcome = yield* db.apply(changes, { ...work, expected: { kind: "any" } })
+		const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 		if (outcome.kind !== "accepted" && outcome.kind !== "no-change") {
 			return outcome
 		}
-		const snapshot = yield* db.snapshot(work)
-		const found = yield* snapshot.get(Student, { id: studentId }, work)
+		const snapshot = yield* db.snapshot()
+		const found = yield* snapshot.get(Student, { id: studentId })
 		if (Option.isNone(found)) {
 			return outcome
 		}
-		const result = yield* snapshot.execute(attemptsFor, { student: studentId }, work)
-		const rows = yield* result.collect({ maxBytes: work.resultBytes }, work)
+		const result = yield* snapshot.execute(attemptsFor, { student: studentId })
+		const rows = yield* result.collect()
 		return { outcome, rows }
 	})
 )
 
 // One boundary for this script; an Effect app supplies the layer in its
 // own application graph instead.
-void Effect.runPromise(program.pipe(Effect.provide(NativeRuntime.layer(runtimePolicy))))
+void Effect.runPromise(program.pipe(Effect.provide(NativeRuntime.layer())))
 ```
 
 Every `ts` fence in this README is extracted and type-checked against the
@@ -166,20 +165,21 @@ and query representations.
   measurement range, and `weigh` chooses a numeric field or interval
   duration. Harmless equivalent window spellings lower to one canonical
   law; genuinely different meanings still refuse.
-- `NativeRuntime.layer(options)` owns the one bounded native runtime;
+- `NativeRuntime.layer()` owns the shared native runtime with sensible defaults;
   provide it once in the app graph. `Db.create` and `Db.open` are scoped
   Effects over that runtime; `open` never creates and `create` refuses
-  existing authority. `db.apply(changes, { ...work, expected })` judges one
+  existing authority. `db.apply(changes, { expected })` judges one
   immutable final-state change: `accepted`, `no-change`,
   `invariant-rejected` (complete statement diagnostics), or `moved`.
-- `ChangeSet.builder(schema, work)` acquires a scoped database-free draft;
+- `ChangeSet.builder(schema)` acquires a scoped database-free draft;
   `insert`/`delete` are lazy bounded ingestion effects, `finish()` seals the
   immutable `ChangeSet`. Snapshots satisfy the shared `QueryReader`: typed
   `get` returns `Option`, `execute` returns a sealed `CompleteResult` whose
-  `collect({ maxBytes }, work)` is capped materialization and whose
-  `pages({ pageBytes }, work)` is a one-shot consuming `Stream` of owned page
-  arrays after complete evaluation. Delivery work is fresh: it does not
-  inherit the snapshot or execution deadline.
+  `collect()` explicitly materializes all rows and whose
+  `pages()` is a one-shot consuming `Stream` of owned page
+  arrays after complete evaluation. Each page contains up to 256 rows; this
+  bounds delivery rather than streaming execution. Effect scope closes the
+  cursor on completion, failure, or interruption.
 - `query(S).rule(...)` builds typed queries. Reusing a variable created by
   `v(R)` joins records through that value. The builder supports named result
   rows, typed parameters, negation, comparisons, boolean conditions, set

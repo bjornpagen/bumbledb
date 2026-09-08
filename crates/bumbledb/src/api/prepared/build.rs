@@ -38,10 +38,9 @@ pub(crate) fn prepare_on<S>(
 impl<S> PreparedQuery<S> {
     /// As [`ReadInstance::prepare`], under the CALLER's work context
     /// instead of the lease's embedded one — the native runtime threads
-    /// each wire operation's bounded `WorkContext` (deadline, cancellation
-    /// and byte/step budgets) through here so prepare-time statistics
-    /// reads and image/interner admission observe the operation's own
-    /// policy, not the long-lived session lease's unbounded ledger.
+    /// each wire operation's `WorkContext` through here so preparation,
+    /// statistics reads and image construction observe that operation's
+    /// cancellation, not the long-lived session lease's context.
     /// # Errors
     /// As [`prepare_on`].
     ///
@@ -289,7 +288,6 @@ fn prepare_witnessed<S>(
             interiors,
             driver,
             main: rules,
-            rounds_budget: super::reach::DEFAULT_REACH_ROUNDS,
             rec_id,
             derived_count,
         },
@@ -301,9 +299,8 @@ fn prepare_witnessed<S>(
         cache,
         heap_tick: 0,
         forced_fallback: false,
-        sink_ram: crate::exec::scratch::DEFAULT_RAM_BYTES,
+        execution_texts: crate::image::TextOwners::default(),
         pipeline,
-        tuples_budget: super::reach::DEFAULT_DERIVED_TUPLES,
         derived: super::reach::DerivedImages::default(),
         signature,
         params,
@@ -315,15 +312,12 @@ fn prepare_witnessed<S>(
         bindings,
         answer_scratch: Vec::new(),
         resolve_memo: ResolveMemo::new(),
-        key_scratch: Vec::new(),
+        key_scratch: crate::image::view::ResolvedWords::default(),
         numeric_outputs,
         no_text_probe,
         rendered,
-        nonresident: None,
         #[cfg(test)]
         last_visits: 0,
-        #[cfg(test)]
-        used_nonresident_text: false,
         marker: std::marker::PhantomData,
     })
 }
@@ -645,12 +639,11 @@ fn stamp_rec_bind(
 }
 
 fn prepare_key_rule(
-    images: &SourceImages<'_>,
     schema: &Schema,
     rule: &RuleWitness<'_>,
     plan: crate::exec::dispatch::KeyProbePlan,
     distinct_witness: Option<crate::plan::fj::DistinctWitness>,
-) -> Result<KeyProbeRule> {
+) -> KeyProbeRule {
     let finds = find_specs(rule, &plan);
     let field_types: Vec<_> = schema
         .relation(plan.relation)
@@ -658,16 +651,14 @@ fn prepare_key_rule(
         .iter()
         .map(|field| field.value_type)
         .collect();
-    let (row, row_charge) =
-        crate::image::canon::RowWords::prepared(&field_types, images.source().work())?;
-    Ok(KeyProbeRule {
+    let row = crate::image::canon::RowWords::prepared(&field_types);
+    KeyProbeRule {
         plan,
         row,
-        _row_charge: row_charge,
         distinct_witness,
         finds,
         dedup_spans: Box::default(),
-    })
+    }
 }
 
 fn prepare_rule(
@@ -681,8 +672,12 @@ fn prepare_rule(
 
     let classified = { classify(normalized, schema) };
     if let Some(plan) = classified {
-        return prepare_key_rule(images, schema, rule, plan, distinct_witness)
-            .map(PreparedRule::KeyProbe);
+        return Ok(PreparedRule::KeyProbe(prepare_key_rule(
+            schema,
+            rule,
+            plan,
+            distinct_witness,
+        )));
     }
 
     let mut stats = Vec::with_capacity(normalized.occurrences.len());

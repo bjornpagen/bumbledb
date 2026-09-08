@@ -39,17 +39,7 @@ bumbledb::schema! {
 /// canonical row codec — never a hand-rolled second writer of the format.
 fn canonical_fact(relation: bumbledb::schema::RelationId, values: &[bumbledb::Value]) -> Vec<u8> {
     let schema = world_schema();
-    let work = bumbledb::ExecutionPolicy {
-        input_bytes: 1 << 20,
-        working_bytes: 1 << 20,
-        scratch_bytes: 1 << 20,
-        result_bytes: 1 << 20,
-        rows: 1 << 10,
-        work_units: 1 << 20,
-        timeout: std::time::Duration::from_secs(60),
-    }
-    .start()
-    .expect("fixture work budget");
+    let work = bumbledb::WorkContext::new();
     bumbledb::canonical::CanonicalRow::encode(schema.relation(relation).fields(), values, &work)
         .expect("the fixture row encodes")
         .as_bytes()

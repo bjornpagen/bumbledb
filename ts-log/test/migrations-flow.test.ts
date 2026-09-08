@@ -5,7 +5,7 @@
  * reruns writing nothing, deterministic byte-identical output across
  * repositories, ambiguous/destructive refusal with zero writes, the complete
  * staged example history handed to P13, seed lowering through the CORE cell
- * codec, one-shot seed iterables, budget refusal, and history replay — the
+ * codec, one-shot seed iterables, interruption, and history replay — the
  * generated data decodes back to exactly the `GeneratedMigrations` value the
  * `migrate()` runner consumes. Native digests/execution are P09 + F3 lanes.
  */
@@ -15,13 +15,13 @@ import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
 import type { NativeRuntime } from "@bjornpagen/bumbledb"
-import { Effect, Exit } from "effect"
+import { Effect, Exit, Fiber } from "effect"
 import { ProtocolError } from "#errors.ts"
 import { decodeGeneratedMigrations } from "#migrations/decode.ts"
 import { makeGenerator } from "#migrations/generate.ts"
 import { migrationIntent, seed } from "#migrations/intent.ts"
 import type { GeneratedMigrations, MigrationPlan } from "#migrations/types.ts"
-import { scriptedCodec, scriptedExclusion, WORK, withStubRuntime } from "#test/migrations-double.ts"
+import { scriptedCodec, scriptedExclusion, withStubRuntime } from "#test/migrations-double.ts"
 import { App0, App1, App2, App3, evolution1, evolution2, evolution3 } from "#test/migrations-example.ts"
 
 const gen = makeGenerator(scriptedCodec(), scriptedExclusion())
@@ -90,7 +90,7 @@ function expectIntentRequired(
 describe("generate / check flow", function suite() {
 	test("initial generation from the empty base records the whole chain commit", async function initial() {
 		const directory = await repoDir()
-		const report = await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		const report = await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
 		assert.equal(report.status, "generated")
 		assert.equal(report.planId, "0000-initialize")
 		assert.deepEqual(report.files, [
@@ -129,14 +129,14 @@ describe("generate / check flow", function suite() {
 
 	test("rerun is unchanged and writes nothing; check is clean and writes nothing", async function rerun() {
 		const directory = await repoDir()
-		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
 		const before = await repoFiles(directory)
-		const again = await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		const again = await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
 		assert.equal(again.status, "unchanged")
 		assert.equal(again.planId, null)
 		assert.deepEqual(again.files, [])
 		assert.deepEqual(again.removed, [])
-		const check = await run(gen.checkMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		const check = await run(gen.checkMigrations({ schema: App0, repository: { directory } }))
 		assert.equal(check.status, "clean")
 		const after = await repoFiles(directory)
 		assert.deepEqual([...after.entries()], [...before.entries()], "unchanged/check must not modify the repository")
@@ -145,18 +145,18 @@ describe("generate / check flow", function suite() {
 	test("output is deterministic: two fresh repositories agree byte for byte", async function deterministic() {
 		const a = await repoDir()
 		const b = await repoDir()
-		await run(gen.generateMigrations({ schema: App0, repository: { directory: a }, work: WORK }))
-		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory: a }, work: WORK }))
-		await run(gen.generateMigrations({ schema: App0, repository: { directory: b }, work: WORK }))
-		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory: b }, work: WORK }))
+		await run(gen.generateMigrations({ schema: App0, repository: { directory: a } }))
+		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory: a } }))
+		await run(gen.generateMigrations({ schema: App0, repository: { directory: b } }))
+		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory: b } }))
 		assert.deepEqual([...(await repoFiles(a)).entries()], [...(await repoFiles(b)).entries()])
 	})
 
 	test("a new required field refuses without typed intent, writing nothing", async function ambiguous() {
 		const directory = await repoDir()
-		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
 		const before = await repoFiles(directory)
-		const exit = await runExit(gen.generateMigrations({ schema: App1, repository: { directory }, work: WORK }))
+		const exit = await runExit(gen.generateMigrations({ schema: App1, repository: { directory } }))
 		const requirements = expectIntentRequired(exit)
 		assert.deepEqual(
 			requirements.map((entry) => ({ code: entry.code, relation: entry.relation, field: entry.field })),
@@ -165,24 +165,18 @@ describe("generate / check flow", function suite() {
 		const after = await repoFiles(directory)
 		assert.deepEqual([...after.entries()], [...before.entries()], "a refusal must not write")
 		// check refuses identically — same computation, no files.
-		const checkExit = await runExit(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK }))
+		const checkExit = await runExit(gen.checkMigrations({ schema: App1, repository: { directory } }))
 		expectIntentRequired(checkExit)
 	})
 
 	test("the complete staged example history generates end to end (P13 handoff)", async function example() {
 		const directory = await repoDir()
-		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
-		const one = await run(
-			gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK })
-		)
+		await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
+		const one = await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory } }))
 		assert.equal(one.planId, "0001-note")
-		const two = await run(
-			gen.generateMigrations({ schema: App2, intent: evolution2, repository: { directory }, work: WORK })
-		)
+		const two = await run(gen.generateMigrations({ schema: App2, intent: evolution2, repository: { directory } }))
 		assert.equal(two.planId, "0002-create-tag-seed-tag")
-		const three = await run(
-			gen.generateMigrations({ schema: App3, intent: evolution3, repository: { directory }, work: WORK })
-		)
+		const three = await run(gen.generateMigrations({ schema: App3, intent: evolution3, repository: { directory } }))
 		assert.equal(three.planId, "0003-note")
 		const generated = await loadGenerated(directory)
 		const decoded = decodeGeneratedMigrations(generated)
@@ -227,49 +221,48 @@ describe("generate / check flow", function suite() {
 		])
 		assert.deepEqual(plans[3]?.destructive, [])
 		// History replay: the whole recorded chain re-verifies cleanly.
-		const check = await run(gen.checkMigrations({ schema: App3, repository: { directory }, work: WORK }))
+		const check = await run(gen.checkMigrations({ schema: App3, repository: { directory } }))
 		assert.equal(check.status, "clean")
 		assert.equal(check.contract.steps, "4")
 	})
 
-	test("seed ingestion is budgeted and reads the caller iterable exactly once", async function seeds() {
+	test("seed ingestion has no row quota and reads the caller iterable exactly once", async function seeds() {
 		// Fresh repo initialized at the App1 stage; the seed stage lands next.
 		const dir2 = await repoDir()
-		await run(gen.generateMigrations({ schema: App1, repository: { directory: dir2 }, work: WORK }))
-		// Budget refusal: two seed rows against a one-row budget.
-		const tight = { ...WORK, rows: 1n }
-		const exit = await runExit(
-			gen.generateMigrations({ schema: App2, intent: evolution2, repository: { directory: dir2 }, work: tight })
-		)
-		assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit))
-		const failure = Exit.findErrorOption(exit)
-		assert.ok(failure._tag === "Some")
-		const error = failure.value as { reason?: { _tag?: string } }
-		assert.equal(error.reason?._tag, "ResourceLimit", "seed budgets use the core resource reason")
+		await run(gen.generateMigrations({ schema: App1, repository: { directory: dir2 } }))
 		// One-shot iterables are read once and never replayed by the SDK.
 		let pulls = 0
+		let closes = 0
 		function* once(): Generator<{ id: bigint; name: string }> {
-			pulls += 1
-			yield { id: 7n, name: "solo" }
+			try {
+				for (let id = 0; id < 1025; id += 1) {
+					pulls += 1
+					yield { id: BigInt(id), name: `seed-${id}` }
+				}
+			} finally {
+				closes += 1
+			}
 		}
 		const oneShot = migrationIntent(App2, [seed(App2.relations.Tag, once())])
 		assert.equal(pulls, 0, "constructing intent must not consume the iterable")
-		const report = await run(
-			gen.generateMigrations({ schema: App2, intent: oneShot, repository: { directory: dir2 }, work: WORK })
-		)
+		const report = await run(gen.generateMigrations({ schema: App2, intent: oneShot, repository: { directory: dir2 } }))
 		assert.equal(report.status, "generated")
-		assert.equal(pulls, 1)
+		assert.equal(pulls, 1025, "three processing steps without replay or truncation")
+		assert.equal(closes, 1)
 		const generated = await loadGenerated(dir2)
 		const decoded = decodeGeneratedMigrations(generated)
 		assert.ok(decoded.ok)
 		const seeded = decoded.value.plans[decoded.value.plans.length - 1]?.operations.find((op) => op.kind === "seed")
 		assert.ok(seeded !== undefined && seeded.kind === "seed")
-		assert.deepEqual(seeded.rows, [[{ u64: "7" }, { string: "solo" }]])
+		assert.deepEqual(
+			seeded.rows,
+			Array.from({ length: 1025 }, (_, id) => [{ u64: String(id) }, { string: `seed-${id}` }])
+		)
 	})
 
 	test("a throwing seed iterator is a typed input failure, never a partial artifact", async function hostile() {
 		const directory = await repoDir()
-		await run(gen.generateMigrations({ schema: App1, repository: { directory }, work: WORK }))
+		await run(gen.generateMigrations({ schema: App1, repository: { directory } }))
 		function* poison(): Generator<{ id: bigint; name: string }> {
 			yield { id: 1n, name: "ok" }
 			throw new Error("hostile iterator")
@@ -279,25 +272,84 @@ describe("generate / check flow", function suite() {
 			gen.generateMigrations({
 				schema: App2,
 				intent: migrationIntent(App2, [seed(App2.relations.Tag, poison())]),
-				repository: { directory },
-				work: WORK
+				repository: { directory }
 			})
 		)
 		assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit))
 		assert.deepEqual([...(await repoFiles(directory)).entries()], [...before.entries()])
 	})
 
+	test("seed interruption closes the iterator after a bounded step and writes nothing", async function interruptSeeds() {
+		const directory = await repoDir()
+		await run(gen.generateMigrations({ schema: App1, repository: { directory } }))
+		const before = await repoFiles(directory)
+		const started = Promise.withResolvers<void>()
+		let pulls = 0
+		let closed = 0
+		function* source(): Generator<{ id: bigint; name: string }> {
+			try {
+				for (let id = 0; id < 20_000; id += 1) {
+					pulls += 1
+					started.resolve()
+					yield { id: BigInt(id), name: `seed-${id}` }
+				}
+			} finally {
+				closed += 1
+			}
+		}
+		const fiber = Effect.runFork(
+			withStubRuntime(
+				gen.generateMigrations({
+					schema: App2,
+					intent: migrationIntent(App2, [seed(App2.relations.Tag, source())]),
+					repository: { directory }
+				})
+			)
+		)
+		await started.promise
+		await Effect.runPromise(Fiber.interrupt(fiber))
+		assert.ok(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber))))
+		assert.equal(pulls, 512, "only the active processing step is pulled before interruption")
+		assert.equal(closed, 1)
+		assert.deepEqual([...(await repoFiles(directory)).entries()], [...before.entries()])
+		assert.equal((await run(gen.checkMigrations({ schema: App1, repository: { directory } }))).status, "clean")
+	})
+
+	test("invalid seed cells close a suspended iterator without publishing its valid prefix", async function invalidSeed() {
+		const directory = await repoDir()
+		await run(gen.generateMigrations({ schema: App1, repository: { directory } }))
+		const before = await repoFiles(directory)
+		let closed = 0
+		function* source(): Generator<{ id: bigint; name: string }> {
+			try {
+				for (let id = 0; id < 20_000; id += 1) {
+					yield { id: BigInt(id), name: id === 513 ? "\ud800" : `seed-${id}` }
+				}
+			} finally {
+				closed += 1
+			}
+		}
+		const exit = await runExit(
+			gen.generateMigrations({
+				schema: App2,
+				intent: migrationIntent(App2, [seed(App2.relations.Tag, source())]),
+				repository: { directory }
+			})
+		)
+		assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit))
+		assert.equal(closed, 1)
+		assert.deepEqual([...(await repoFiles(directory)).entries()], [...before.entries()])
+	})
+
 	test("an interrupted-generation leftover is rewritten deterministically, not drift", async function leftovers() {
 		const directory = await repoDir()
-		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
 		// Simulate a crash between plan write and manifest write: an unrecorded
 		// next-sequence plan under a DIFFERENT derived label.
 		await writeFile(path.join(directory, "0001-abandoned.plan.json"), "{}\n", "utf8")
-		const check = await run(gen.checkMigrations({ schema: App0, repository: { directory }, work: WORK }))
+		const check = await run(gen.checkMigrations({ schema: App0, repository: { directory } }))
 		assert.equal(check.status, "generation-required")
-		const report = await run(
-			gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK })
-		)
+		const report = await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory } }))
 		assert.equal(report.status, "generated")
 		assert.deepEqual(report.removed, ["0001-abandoned.plan.json"])
 		const files = await repoFiles(directory)
@@ -305,17 +357,15 @@ describe("generate / check flow", function suite() {
 		assert.ok(files.has("0001-note.plan.json"))
 		// Recorded intent is consumed intent: the later check runs WITHOUT it
 		// (a leftover intent matching no change is a stale-intent refusal).
-		const clean = await run(gen.checkMigrations({ schema: App1, repository: { directory }, work: WORK }))
+		const clean = await run(gen.checkMigrations({ schema: App1, repository: { directory } }))
 		assert.equal(clean.status, "clean")
 	})
 
 	test("already-recorded intent is stale on the next run, never silently ignored", async function consumed() {
 		const directory = await repoDir()
-		await run(gen.generateMigrations({ schema: App0, repository: { directory }, work: WORK }))
-		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK }))
-		const exit = await runExit(
-			gen.checkMigrations({ schema: App1, intent: evolution1, repository: { directory }, work: WORK })
-		)
+		await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
+		await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory } }))
+		const exit = await runExit(gen.checkMigrations({ schema: App1, intent: evolution1, repository: { directory } }))
 		const requirements = expectIntentRequired(exit)
 		assert.deepEqual(
 			requirements.map((entry) => entry.code),
@@ -325,9 +375,7 @@ describe("generate / check flow", function suite() {
 
 	test("intent declared for a different schema value refuses before any work", async function foreignIntent() {
 		const directory = await repoDir()
-		const exit = await runExit(
-			gen.generateMigrations({ schema: App0, intent: evolution1, repository: { directory }, work: WORK })
-		)
+		const exit = await runExit(gen.generateMigrations({ schema: App0, intent: evolution1, repository: { directory } }))
 		assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit))
 		assert.deepEqual([...(await repoFiles(directory)).entries()], [], "nothing is written")
 	})

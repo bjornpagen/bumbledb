@@ -1,7 +1,7 @@
 //! Native operation ownership. No database semantics or JavaScript objects live here.
 //!
-//! Admission conservatively reserves an operation's complete byte allowance.
-//! Reservations survive completion until acknowledgement (or actual reclamation).
+//! Admission bounds outstanding jobs and native handles, not hypothetical
+//! allocation allowances. Payloads stay owned until taken or reclaimed.
 //! A separate supervisor delivers finite drain reports even when every worker is busy.
 //!
 //! Each configured worker owns a resource table as ordinary event-loop state.
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 static NEXT_RUNTIME: AtomicU64 = AtomicU64::new(1);
 
-use bumbledb::work::{ByteReservation, ExecutionPolicy, WorkContext, WorkError};
+use bumbledb::work::{WorkContext, WorkError};
 
 pub mod lanes;
 pub mod owners;
@@ -27,49 +27,44 @@ pub mod session;
 pub mod table;
 
 use registry::NativeRegistry;
-pub use registry::registry_draft::DraftLedger;
 pub use registry::{Capability, NativeKind};
 pub use session::PublicationSink;
 
-/// Queued conversion owner (D01/C8). Charge stays with the page until JS
-/// transfer (`runtime_rows_take`) or native drain. `Output::Page` / `Rows`
-/// carry this — not a bare `Vec<Vec<ValueOut>>`.
+/// Final worker-owned rows. No mapped borrow or intermediate Answers crosses
+/// the worker/JavaScript boundary; normal Rust drop handles failed delivery.
 #[derive(Debug)]
 pub struct QueuedOutput {
     pub rows: Vec<Vec<crate::marshal::ValueOut>>,
-    pub charge: ByteReservation,
 }
 
-/// One point-read result. The reservation travels through N-API conversion,
-/// including error paths, rather than ending when the take function returns.
+/// One owned point-read result.
 #[derive(Debug)]
 pub struct QueuedRow {
     pub values: Vec<crate::marshal::ValueOut>,
-    pub charge: ByteReservation,
 }
 
-/// Byte output keeps its capacity charged until JavaScript owns the buffer.
+/// Owned bytes transferred to JavaScript without another payload copy.
 #[derive(Debug)]
 pub struct QueuedBytes {
     pub bytes: Vec<u8>,
-    pub charge: ByteReservation,
 }
 
 impl QueuedBytes {
     pub(crate) fn copy_from(work: &WorkContext, source: &[u8]) -> Result<Self, RuntimeError> {
-        let charge = work.reserve(bumbledb::work::ByteKind::Result, source.len() as u64)?;
+        work.checkpoint()?;
         let mut bytes = crate::marshal::output_vec(source.len())?;
         for chunk in source.chunks(16 * 1024) {
-            work.step(chunk.len() as u64)?;
+            work.checkpoint()?;
             bytes.extend_from_slice(chunk);
         }
-        Ok(Self { bytes, charge })
+        work.checkpoint()?;
+        Ok(Self { bytes })
     }
 
     /// Retain an already-produced response without copying its backing.
     pub(crate) fn admit(work: &WorkContext, bytes: Vec<u8>) -> Result<Self, RuntimeError> {
-        let charge = work.reserve(bumbledb::work::ByteKind::Result, bytes.capacity() as u64)?;
-        Ok(Self { bytes, charge })
+        work.checkpoint()?;
+        Ok(Self { bytes })
     }
 }
 
@@ -82,12 +77,9 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedBytes {
         env: napi::sys::napi_env,
         value: Self,
     ) -> napi::Result<napi::sys::napi_value> {
-        let Self { bytes, charge } = value;
         // SAFETY: the caller supplies the live environment; Buffer takes
-        // ownership of the vector. Retain its charge through the transfer.
-        let result = unsafe { napi::bindgen_prelude::Buffer::to_napi_value(env, bytes.into()) };
-        drop(charge);
-        result
+        // ownership of the vector.
+        unsafe { napi::bindgen_prelude::Buffer::to_napi_value(env, value.bytes.into()) }
     }
 }
 
@@ -100,12 +92,9 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedOutput {
         env: napi::sys::napi_env,
         value: Self,
     ) -> napi::Result<napi::sys::napi_value> {
-        let Self { rows, charge } = value;
         // SAFETY: the caller supplies the live environment; the vector owns
-        // every value. Keep its reservation until conversion completes.
-        let result = unsafe { Vec::to_napi_value(env, rows) };
-        drop(charge);
-        result
+        // every value, including on conversion failure.
+        unsafe { Vec::to_napi_value(env, value.rows) }
     }
 }
 
@@ -118,26 +107,9 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedRow {
         env: napi::sys::napi_env,
         value: Self,
     ) -> napi::Result<napi::sys::napi_value> {
-        let Self { values, charge } = value;
         // SAFETY: the caller supplies the live environment and the vector
-        // owns every value. The charge survives both success and refusal.
-        let result = unsafe { Vec::to_napi_value(env, values) };
-        drop(charge);
-        result
-    }
-}
-
-impl QueuedOutput {
-    #[cfg(test)]
-    pub fn admit(
-        work: &WorkContext,
-        rows: Vec<Vec<crate::marshal::ValueOut>>,
-        bytes: u64,
-    ) -> Result<Self, RuntimeError> {
-        Ok(Self {
-            rows,
-            charge: work.reserve(bumbledb::work::ByteKind::Result, bytes)?,
-        })
+        // owns every value.
+        unsafe { Vec::to_napi_value(env, value.values) }
     }
 }
 
@@ -189,9 +161,20 @@ pub struct Options {
     pub cleanup_capacity: usize,
     pub owner_capacity: usize,
     pub native_handle_capacity: usize,
-    pub aggregate_bytes: [u64; 4],
-    pub chunk_bytes: u64,
     pub cleanup_timeout: Duration,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            workers: thread::available_parallelism().map_or(1, |count| count.get().min(4)),
+            queue_capacity: 128,
+            cleanup_capacity: 128,
+            owner_capacity: 64,
+            native_handle_capacity: 1024,
+            cleanup_timeout: Duration::from_secs(5),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -210,7 +193,6 @@ pub struct Inspection {
     pub owners: usize,
     pub databases: usize,
     pub natives: usize,
-    pub reserved: [u64; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -220,14 +202,18 @@ pub enum CloseReport {
     Failed,
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "keep completed outputs inline in the operation slot, without another per-operation allocation"
+)]
 pub enum Output {
     Ready,
-    Hash([u8; 32], ByteReservation),
+    Hash([u8; 32]),
     Directory(owners::DirectoryOwner),
     Db(owners::ManagedDbOutcome),
     /// A worker-table snapshot opened over a managed database.
     Session(session::SessionOpened),
-    /// Owned engine rows crossing back from a session/pool job. Charge
+    /// Owned engine rows crossing back from a session/pool job. Ownership
     /// stays with the page until JS transfer or native drain.
     Rows(QueuedOutput),
     Row(Option<QueuedRow>),
@@ -242,10 +228,10 @@ pub enum Output {
     /// A grammar-lane payload (log command/decision framing) computed on
     /// the executor: owned bytes plus optional owned metadata.
     Log(crate::log::LogOutput),
-    /// A sealed detached schema descriptor (charged compile/admission).
+    /// A sealed detached schema descriptor.
     Descriptor(crate::marshal::DescriptorWire),
-    /// A snapshot-bound execution session sharing a pinned read session.
-    ExecSession(crate::db_wire::ExecSessionOpened),
+    /// One compiled query with its own worker route and snapshot share.
+    Prepared(session::SnapshotSession),
     /// One sealed completed query result, owned and independent.
     CompleteResult(bumbledb::CompleteResult),
     /// The one consuming cursor a spent result's backing moved into.
@@ -281,7 +267,7 @@ impl Output {
         }
     }
 
-    /// A page/rows owner whose charge and cursor consume are already
+    /// A page/rows owner whose ownership and cursor advance are already
     /// committed. Later checkpoints must not replace this slot.
     fn queued_publication(&self) -> bool {
         matches!(self, Self::Page(_) | Self::Rows(_))
@@ -294,7 +280,6 @@ pub(crate) type Report = Box<dyn FnOnce(CloseReport) + Send>;
 pub struct Operation {
     id: u64,
     context: WorkContext,
-    bytes: [u64; 4],
     owner: Option<u64>,
     database: Option<u64>,
     session: Option<u64>,
@@ -366,12 +351,10 @@ struct State {
     control: VecDeque<ControlJob>,
     operations: BTreeMap<u64, Arc<Operation>>,
     owners: BTreeMap<u64, owners::OwnerEntry>,
-    reserved: [u64; 4],
     waiters: Vec<Waiter>,
     /// Retained bridge-owned native resources (results, cursors, drafts,
     /// change sets, log capabilities): counted against
-    /// `native_handle_capacity` and byte-charged against the resultBytes
-    /// aggregate while retained.
+    /// `native_handle_capacity` while retained.
     natives: usize,
 }
 
@@ -403,27 +386,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl State {
-    /// The one aggregate byte-admission gate: reserve `bytes` against the
-    /// runtime allowance or refuse with the exact exhausted dimension.
-    fn charge(&mut self, options: &Options, bytes: [u64; 4]) -> Result<(), RuntimeError> {
-        for (index, requested) in bytes.iter().copied().enumerate() {
-            let used = self.reserved[index];
-            let limit = options.aggregate_bytes[index];
-            if used.checked_add(requested).is_none_or(|next| next > limit) {
-                return Err(RuntimeError::ResourceLimit {
-                    dimension: ["inputBytes", "workingBytes", "scratchBytes", "resultBytes"][index],
-                    used,
-                    requested,
-                    limit,
-                });
-            }
-        }
-        for (used, requested) in self.reserved.iter_mut().zip(bytes) {
-            *used += requested;
-        }
-        Ok(())
-    }
-
     fn inspection(&self) -> Inspection {
         Inspection {
             phase: self.phase,
@@ -437,14 +399,10 @@ impl State {
                 .map(|owner| owner.databases.len())
                 .sum(),
             natives: self.natives,
-            reserved: self.reserved,
         }
     }
     fn remove(&mut self, id: u64) -> Option<Result<Output, RuntimeError>> {
         if let Some(operation) = self.operations.remove(&id) {
-            for (used, bytes) in self.reserved.iter_mut().zip(operation.bytes) {
-                *used -= bytes;
-            }
             // Release owned output even if an inert JS operation wrapper is retained.
             let mut output = lock(&operation.output);
             if output.as_ref().is_some_and(Result::is_ok) {
@@ -462,7 +420,6 @@ impl Runtime {
             || options.cleanup_capacity == 0
             || options.owner_capacity == 0
             || options.native_handle_capacity == 0
-            || options.chunk_bytes == 0
             || options.cleanup_timeout.is_zero()
             || Instant::now()
                 .checked_add(options.cleanup_timeout)
@@ -488,7 +445,6 @@ impl Runtime {
                 control: VecDeque::new(),
                 operations: BTreeMap::new(),
                 owners: BTreeMap::new(),
-                reserved: [0; 4],
                 waiters: Vec::new(),
                 natives: 0,
             }),
@@ -540,7 +496,7 @@ impl Runtime {
 
     pub fn submit(
         &self,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -551,19 +507,13 @@ impl Runtime {
         &self,
         owner: Option<u64>,
         database: Option<u64>,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
         // The one core clock/counter authority starts BEFORE admission/queue wait.
-        let context = policy.start()?;
+        let context = policy;
         context.checkpoint()?;
-        let bytes = [
-            policy.input_bytes,
-            policy.working_bytes,
-            policy.scratch_bytes,
-            policy.result_bytes,
-        ];
         let mut state = lock(&self.state);
         if state.phase != Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -580,11 +530,9 @@ impl Runtime {
         }
         let id = state.next_id;
         state.next_id = id.checked_add(1).ok_or(RuntimeError::Internal)?;
-        state.charge(&self.options, bytes)?;
         let operation = Arc::new(Operation {
             id,
             context,
-            bytes,
             owner,
             database,
             session: None,
@@ -594,8 +542,8 @@ impl Runtime {
         });
         state.operations.insert(id, Arc::clone(&operation));
         drop(state);
-        // Bounded native input extraction is charged after registration, before
-        // dispatch. No worker sees or borrows a host object.
+        // Native input extraction observes cancellation after registration,
+        // before dispatch. No worker sees or borrows a host object.
         let preparation = catch_unwind(AssertUnwindSafe(|| prepare(&operation.context)));
         let mut state = lock(&self.state);
         let prepared = preparation.unwrap_or_else(|_| {
@@ -794,7 +742,7 @@ impl Runtime {
     /// Deliver one session job's terminal outcome: publish the output,
     /// wake waiters and fire the completion callback exactly once. The
     /// session thread is not a pool worker, so `active` is untouched;
-    /// the operation stays retained (reservation held) until taken or
+    /// the operation keeps its outstanding-job slot until taken or
     /// reclaimed, exactly like pool work.
     pub(crate) fn complete_operation(
         &self,
@@ -979,43 +927,40 @@ impl Runtime {
             self.complete_operation(operation, Err(RuntimeError::ClosedHandle));
             return;
         }
-        let close_after = table::WorkerContext::with(|ctx| {
-            let (payload, _) = match ctx.table.borrow_mut(cap) {
-                Ok(borrowed) => borrowed,
-                Err(error) => {
-                    self.registry.end_job(cap);
-                    self.complete_operation(operation, Err(error));
-                    return false;
-                }
-            };
-            let table::TablePayload::Snapshot(resource) = payload else {
-                ctx.table.mark_live(cap);
-                self.registry.end_job(cap);
-                self.complete_operation(operation, Err(RuntimeError::InvalidArgument));
-                return false;
-            };
-            let mut access = session::SnapshotAccess {
-                owned: &resource.owned,
-                sealed: resource.sealed.as_ref(),
-                job: operation.id,
-                prepared: &mut resource.prepared,
-            };
-            self.run_snapshot_job(operation, work, &mut access);
-            ctx.table.mark_live(cap);
-            self.registry.end_job(cap);
-            matches!(
-                self.registry.state(cap),
-                Ok(registry::ResourceState::Closing)
-            )
-        });
-        match close_after {
-            Ok(true) => self.drop_closing_entry(cap),
-            Ok(false) => {}
+        let checked_out = table::WorkerContext::with(|ctx| ctx.table.checkout(cap))
+            .and_then(std::convert::identity);
+        let mut payload = match checked_out {
+            Ok(payload) => payload,
             Err(error) => {
                 self.registry.end_job(cap);
                 self.complete_operation(operation, Err(error));
+                return;
             }
+        };
+        let outcome = if let table::TablePayload::Snapshot(resource) = &mut payload {
+            let mut access = session::SnapshotAccess {
+                owned: &resource.data.owned,
+                prepared: resource.prepared.as_deref_mut(),
+                data: &resource.data,
+            };
+            self.run_snapshot_job(operation, work, &mut access)
+        } else {
+            Err(RuntimeError::InvalidArgument)
+        };
+        let restored = table::WorkerContext::with(|ctx| ctx.table.checkin(cap, payload))
+            .and_then(std::convert::identity);
+        self.registry.end_job(cap);
+        if restored.is_err() {
+            self.begin_close();
         }
+        if matches!(
+            self.registry.state(cap),
+            Ok(registry::ResourceState::Closing)
+        ) {
+            self.drop_closing_entry(cap);
+        }
+        // Publish only after the plan is back in its reusable worker slot.
+        self.complete_operation(operation, restored.and(outcome));
     }
 
     /// One delivery acceptance boundary for live tickets and collections.
@@ -1154,8 +1099,8 @@ impl Runtime {
         let taken = table::WorkerContext::with(|ctx| ctx.table.take(cap));
         match taken {
             Ok(Some((_, table::TablePayload::Snapshot(resource)))) => {
-                let owner = resource.owner;
-                let database = resource.database;
+                let owner = resource.data.owner;
+                let database = resource.data.database;
                 drop(resource);
                 self.release_snapshot_route(owner, database, cap);
             }
@@ -1168,7 +1113,7 @@ impl Runtime {
                 // never arrived. Snapshot slots still need the owner map
                 // cleared; native routes just drop. Both releases are
                 // idempotent if the row is already gone.
-                if cap.kind == NativeKind::Snapshot
+                if matches!(cap.kind, NativeKind::Snapshot | NativeKind::Prepared)
                     && let Some((owner, database)) = self.snapshot_route_owner(cap)
                 {
                     self.release_snapshot_route(owner, database, cap);
@@ -1185,7 +1130,7 @@ impl Runtime {
     pub(crate) fn submit_db(
         self: &Arc<Self>,
         db: &owners::ManagedDb,
-        policy: ExecutionPolicy,
+        policy: WorkContext,
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<Work, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
@@ -1196,14 +1141,9 @@ impl Runtime {
         self.submit_at(Some(owner), Some(database), policy, notify, prepare)
     }
 
-    /// Admits one retained bridge-owned native resource: counted against
-    /// `native_handle_capacity`, its payload bytes charged against the
-    /// resultBytes aggregate until the returned guard drops. Never a
-    /// silent admission: capacity and byte refusals are typed.
-    pub(crate) fn retain_native(
-        self: &Arc<Self>,
-        bytes: u64,
-    ) -> Result<RetainedNative, RuntimeError> {
+    /// Admits one retained bridge-owned native resource. The returned guard
+    /// holds its native-handle slot until the resource is actually released.
+    pub(crate) fn retain_native(self: &Arc<Self>) -> Result<RetainedNative, RuntimeError> {
         let mut state = lock(&self.state);
         if state.phase != Phase::Open {
             return Err(RuntimeError::ClosedHandle);
@@ -1216,22 +1156,10 @@ impl Runtime {
                 limit: self.options.native_handle_capacity as u64,
             });
         }
-        let used = state.reserved[3];
-        let limit = self.options.aggregate_bytes[3];
-        if used.checked_add(bytes).is_none_or(|next| next > limit) {
-            return Err(RuntimeError::ResourceLimit {
-                dimension: "resultBytes",
-                used,
-                requested: bytes,
-                limit,
-            });
-        }
-        state.reserved[3] += bytes;
         state.natives += 1;
         drop(state);
         Ok(RetainedNative {
             runtime: Arc::clone(self),
-            bytes,
         })
     }
 
@@ -1337,18 +1265,16 @@ impl Runtime {
     }
 }
 
-/// The retained-native accounting guard: releases its handle-count slot and
-/// resultBytes charge when the resource actually leaves the registry —
+/// The retained-native guard: releases its handle-count slot
+/// when the resource actually leaves the registry —
 /// however it leaves (explicit close, take failure, or GC of the wrapper).
 pub(crate) struct RetainedNative {
     runtime: Arc<Runtime>,
-    bytes: u64,
 }
 
 impl Drop for RetainedNative {
     fn drop(&mut self) {
         let mut state = lock(&self.runtime.state);
-        state.reserved[3] = state.reserved[3].saturating_sub(self.bytes);
         state.natives = state.natives.saturating_sub(1);
         drop(state);
         self.runtime.changed.notify_all();

@@ -18,7 +18,7 @@
 //!
 //! Small fixed-size frames (receipt rows, authority control, genesis)
 //! marshal synchronously; command/decision lanes embed whole canonical
-//! change payloads and charged hashing, so they run on the ONE bounded
+//! change payloads and cancellable hashing, so they run on the ONE bounded
 //! executor (`runtime_log_*` verbs + `runtime_log_take`).
 
 use std::sync::Arc;
@@ -50,8 +50,8 @@ use napi_derive::napi;
 use crate::marshal;
 use crate::runtime::{Output, RuntimeError};
 use crate::runtime_wire::{
-    OperationHandle, PolicyWire, RuntimeHandle, notification, operation_handle, owner, take_output,
-    thrown, unshared_input,
+    OperationHandle, RuntimeHandle, notification, operation_handle, owner, take_output, thrown,
+    unshared_input,
 };
 
 // ---------------------------------------------------------------------------
@@ -1125,8 +1125,8 @@ pub fn log_blank_digests() -> BlankDigests {
 
 // ---------------------------------------------------------------------------
 // Executor lanes: command seal/parse and decision encode/decode/verify.
-// These embed whole canonical change payloads and charged hashing, so they
-// are bounded operations on the one executor, never synchronous JS work.
+// These embed whole canonical change payloads and cancellable hashing, so they
+// run on the bounded executor, never synchronously on the JS thread.
 // ---------------------------------------------------------------------------
 
 /// An owned command reference crossing back from an executor job.
@@ -1244,7 +1244,6 @@ pub fn runtime_log_command_seal(
     env: Env,
     handle: &External<RuntimeHandle>,
     schema: &External<LogSchemaHandle>,
-    policy: PolicyWire,
     metadata: Object,
     changes: Unknown,
     result: Option<Unknown>,
@@ -1255,25 +1254,18 @@ pub fn runtime_log_command_seal(
     let schema = Arc::clone(&schema.schema);
     let metadata = metadata_in(&metadata, "command metadata")?;
     let limits = limits_in(&limits)?;
-    let changes = unshared_input(env, changes, runtime.options.chunk_bytes)?;
-    let result = result
-        .map(|value| unshared_input(env, value, runtime.options.chunk_bytes))
-        .transpose()?;
+    let changes = unshared_input(env, changes)?;
+    let result = result.map(|value| unshared_input(env, value)).transpose()?;
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            |context| {
-                let total = changes.len() as u64 + result.as_ref().map_or(0, |r| r.len() as u64);
-                context.input(total)?;
-                let changes = changes.to_vec();
-                let result = result.map(|bytes| bytes.to_vec()).unwrap_or_default();
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    seal_command(&schema, metadata, &changes, result, limits, context)
-                }))
-            },
-        )
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            context.checkpoint()?;
+            let changes = changes.to_vec();
+            let result = result.map(|bytes| bytes.to_vec()).unwrap_or_default();
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                seal_command(&schema, metadata, &changes, result, limits, context)
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -1288,7 +1280,6 @@ pub fn runtime_log_command_parse(
     env: Env,
     handle: &External<RuntimeHandle>,
     schema: &External<LogSchemaHandle>,
-    policy: PolicyWire,
     bytes: Unknown,
     limits: Object,
     callback: Function<(), ()>,
@@ -1296,40 +1287,33 @@ pub fn runtime_log_command_parse(
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
     let schema = Arc::clone(&schema.schema);
     let limits = limits_in(&limits)?;
-    let bytes = unshared_input(env, bytes, runtime.options.chunk_bytes)?;
+    let bytes = unshared_input(env, bytes)?;
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            |context| {
-                context.input(bytes.len() as u64)?;
-                let bytes = bytes.to_vec();
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    let command = match Command::parse(&schema, &bytes, limits, context) {
-                        Ok(command) => command,
-                        Err(CommandError::Work(error)) => return Err(RuntimeError::Work(error)),
-                        Err(error) => {
-                            let kind = command_kind(&error)?;
-                            return refused(
-                                kind,
-                                format!("bumbledb-log command refusal: {error:?}"),
-                            );
-                        }
-                    };
-                    let metadata = command.metadata();
-                    Ok(Output::Log(LogOutput::Command(Box::new(OwnedCommand {
-                        metadata_identity: metadata.identity,
-                        epoch: metadata.id.receipt_epoch.get(),
-                        request: metadata.id.request_id.as_core(),
-                        condition: metadata.condition,
-                        changes: command.changes().as_bytes().to_vec(),
-                        result: command.result().as_bytes().to_vec(),
-                        reference: OwnedRef::of(command.command_ref()),
-                    }))))
-                }))
-            },
-        )
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            context.checkpoint()?;
+            let bytes = bytes.to_vec();
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                let command = match Command::parse(&schema, &bytes, limits, context) {
+                    Ok(command) => command,
+                    Err(CommandError::Work(error)) => return Err(RuntimeError::Work(error)),
+                    Err(error) => {
+                        let kind = command_kind(&error)?;
+                        return refused(kind, format!("bumbledb-log command refusal: {error:?}"));
+                    }
+                };
+                let metadata = command.metadata();
+                Ok(Output::Log(LogOutput::Command(Box::new(OwnedCommand {
+                    metadata_identity: metadata.identity,
+                    epoch: metadata.id.receipt_epoch.get(),
+                    request: metadata.id.request_id.as_core(),
+                    condition: metadata.condition,
+                    changes: command.changes().as_bytes().to_vec(),
+                    result: command.result().as_bytes().to_vec(),
+                    reference: OwnedRef::of(command.command_ref()),
+                }))))
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -1389,7 +1373,6 @@ fn decode_owned_decision(bytes: &[u8], limits: Limits) -> Result<Output, Runtime
 pub fn runtime_log_decision_decode(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     bytes: Unknown,
     parent: Option<Object>,
     limits: Object,
@@ -1400,39 +1383,35 @@ pub fn runtime_log_decision_decode(
     let parent = parent
         .map(|stamp| stamp_in(&stamp, "chain parent"))
         .transpose()?;
-    let bytes = unshared_input(env, bytes, runtime.options.chunk_bytes)?;
+    let bytes = unshared_input(env, bytes)?;
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            |context| {
-                context.input(bytes.len() as u64)?;
-                let bytes = bytes.to_vec();
-                Ok(Box::new(move |context| {
-                    context.checkpoint()?;
-                    if let Some(parent) = parent {
-                        // Decode first (borrowed), verify, then rebuild owned.
-                        match decode_decision(&bytes, limits) {
-                            Ok(envelope) => {
-                                if let Err(error) = verify_step(parent, &envelope) {
-                                    return refused(
-                                        chain_kind(&error),
-                                        format!("bumbledb-log chain refusal: {error:?}"),
-                                    );
-                                }
-                            }
-                            Err(error) => {
+        .submit(WorkContext::new(), notification(callback)?, |context| {
+            context.checkpoint()?;
+            let bytes = bytes.to_vec();
+            Ok(Box::new(move |context| {
+                context.checkpoint()?;
+                if let Some(parent) = parent {
+                    // Decode first (borrowed), verify, then rebuild owned.
+                    match decode_decision(&bytes, limits) {
+                        Ok(envelope) => {
+                            if let Err(error) = verify_step(parent, &envelope) {
                                 return refused(
-                                    frame_kind(&error),
-                                    format!("bumbledb-log decision refusal: {error:?}"),
+                                    chain_kind(&error),
+                                    format!("bumbledb-log chain refusal: {error:?}"),
                                 );
                             }
                         }
+                        Err(error) => {
+                            return refused(
+                                frame_kind(&error),
+                                format!("bumbledb-log decision refusal: {error:?}"),
+                            );
+                        }
                     }
-                    decode_owned_decision(&bytes, limits)
-                }))
-            },
-        )
+                }
+                decode_owned_decision(&bytes, limits)
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }

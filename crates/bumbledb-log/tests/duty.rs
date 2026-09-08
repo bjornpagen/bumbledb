@@ -212,13 +212,12 @@ fn gc_roots_backup_verify_and_erase_arms_run_the_real_operations() {
     assert!(ok, "erasure never owns the backup namespace: {err}");
 }
 
-/// Restore / import / walk stay on library `get_verified(..., ctx) -> ChargedBytes`
+/// Restore / import / walk use the library's verified received-buffer owner
 /// and `ReceivingStore::{receive_object, receive_head}` (`ReceivedBody` /
 /// `ReceivedHead`). Duty's `AnyStore` is that same store — no 3-arg
-/// `get_verified`, no uncharged `Vec`, no ready-`Db` escape, no filename
-/// readiness. Verification: `NotRun`.
+/// `get_verified`, no ready-`Db` escape, no filename readiness.
 #[test]
-fn duty_has_no_restore_or_import_command_those_stay_on_charged_library_verbs() {
+fn duty_has_no_restore_or_import_command_those_stay_on_library_verbs() {
     let (ok, _, err) = duty(&["restore", "--prefix", "tenant"]);
     assert!(!ok);
     assert!(err.contains("unknown command"), "{err}");

@@ -1,0 +1,24 @@
+diff --git a/lib/State/ResourceState.d.ts b/lib/State/ResourceState.d.ts
+--- a/lib/State/ResourceState.d.ts
++++ b/lib/State/ResourceState.d.ts
+@@ -39,7 +39,7 @@ interface BaseResourceState {
+     /** Desired state (input props) of this Resource */
+     props?: Props;
+     /** The output attributes of this Resource (if it has been created) */
+-    attr?: Attr;
++    attr?: Attr | undefined;
+     /** The removal policy of the resource */
+     removalPolicy?: RemovalPolicy["Service"];
+     /**
+diff --git a/src/State/ResourceState.ts b/src/State/ResourceState.ts
+--- a/src/State/ResourceState.ts
++++ b/src/State/ResourceState.ts
+@@ -57,7 +57,7 @@ interface BaseResourceState {
+   /** Desired state (input props) of this Resource */
+   props?: Props;
+   /** The output attributes of this Resource (if it has been created) */
+-  attr?: Attr;
++  attr?: Attr | undefined;
+   /** The removal policy of the resource */
+   removalPolicy?: RemovalPolicy["Service"];
+   /**

@@ -2,11 +2,9 @@ use crate::error::Result;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId, ScratchRelation};
 use crate::exec::sink::aggregate::{parse_finds, parse_finds_into};
 use crate::exec::sink::{
-    FindSpec, ProjectionSink, ResidentRows, SinkBudget, SpillSet, StageRowVisit, encode_stage_row,
+    FindSpec, ProjectionSink, ResidentRows, SpillSet, StageRowVisit, encode_stage_row,
     extend_sources, sources_of,
 };
-#[cfg(test)]
-use crate::work::WorkContext;
 
 impl ProjectionSink {
     #[cfg(test)]
@@ -67,11 +65,8 @@ impl ProjectionSink {
     }
 
     /// RAM-tier answers (the main sink's warm finalize fill). Spilled
-    /// sinks drain through [`Self::for_each_answer`]; budgeted sinks
-    /// (main, interior stages, the reach driver) that crossed their
-    /// allowance drain through [`Self::for_each_answer`]/
-    /// [`Self::drain_since`], never this iterator — callers branch on
-    /// [`Self::spilled`] first.
+    /// sinks drain through [`Self::for_each_answer`]/[`Self::drain_since`],
+    /// never this iterator — callers branch on [`Self::spilled`] first.
     pub fn answers(
         &self,
     ) -> ResidentRows<impl Iterator<Item = &[u64]> + Clone, impl Iterator<Item = &[u64]> + Clone>
@@ -102,19 +97,12 @@ impl ProjectionSink {
         self.seen.for_each_since(since, visit)
     }
 
-    /// Admit a RAM-first dest for [`Self::stream_into_scratch`]. Does not
-    /// open a scratch environment.
-    #[must_use]
-    #[cfg(test)]
-    pub(crate) fn admit_dest(work: &WorkContext, ram_bytes: usize) -> ScratchRelation {
-        ScratchRelation::new(work, ram_bytes)
-    }
-
     /// Stream answers from `since` through one [`ScratchAppend`] on `dest`,
     /// one encoded row per append starting at `start_seq`. `dest` must be
-    /// admitted (`admit_dest` / `ScratchRelation::new`) — this method
+    /// created by the caller — this method
     /// never `force_spill`s. Tiny outputs stay on dest's RAM tier.
     /// Failure returns immediately and drops the visitor (no `finish`).
+    /// `retain` transfers any payload ownership before its row is appended.
     /// Returns the number of rows written.
     /// # Errors
     /// Sticky sink failure, stopped work, or a refused scratch append.
@@ -123,11 +111,13 @@ impl ProjectionSink {
         dest: &mut ScratchRelation,
         since: usize,
         start_seq: u64,
+        mut retain: impl FnMut(&[u64]) -> Result<()>,
     ) -> Result<u64> {
         let mut seq = start_seq;
         let mut encoded = Vec::new();
         let mut append = ScratchAppend::new(dest);
         let streamed = self.drain_since(since, &mut |row| {
+            retain(row)?;
             encode_stage_row(row, &mut encoded);
             append.append(ScratchMapId::Default, &seq.to_be_bytes(), &encoded)?;
             seq += 1;
@@ -145,14 +135,20 @@ impl ProjectionSink {
         }
     }
 
-    /// Install this execution's allowance (None = RAM-only stage sink).
-    pub(crate) fn begin(&mut self, budget: Option<SinkBudget>) {
-        self.seen.begin(budget);
+    /// Install this execution's cancellation context (None for standalone kernels).
+    pub(crate) fn begin(&mut self, work: Option<crate::work::WorkContext>) {
+        self.seen.begin(work);
     }
 
     #[must_use]
     pub(crate) fn spilled(&self) -> bool {
         self.seen.spilled()
+    }
+
+    /// Exercise the disk representation without inventing a resource policy.
+    #[cfg(test)]
+    pub(crate) fn force_spill(&mut self) -> crate::error::Result<()> {
+        self.seen.spill()
     }
 
     /// The sticky failure recorded by the infallible emit path, if any.
@@ -182,5 +178,15 @@ impl ProjectionSink {
 
     pub fn reset(&mut self) {
         self.seen.clear();
+        self.scratch.resize(self.sources.len(), 0);
+    }
+
+    pub(crate) fn release_memory(&mut self) {
+        self.seen.release_memory();
+        self.scratch = Vec::new();
+        self.batch_route = super::ProjectionRoute::default();
+        self.scan_route = super::ProjectionRoute::default();
+        self.scan_rows = Vec::new();
+        self.scan_count = 0;
     }
 }

@@ -16,7 +16,7 @@ use napi_derive::napi;
 use crate::runtime::registry::{NativeKind, RegistryAdmission};
 use crate::runtime::{Output, RuntimeError};
 use crate::runtime_wire::{
-    CloseWire, OperationHandle, PolicyWire, RuntimeHandle, notification, operation_handle,
+    CloseWire, OperationHandle, RuntimeHandle, notification, operation_handle,
     owner as runtime_owner, reporter, take_output, thrown,
 };
 
@@ -55,7 +55,6 @@ fn stamped_lock(admission: &RegistryAdmission) -> Result<crate::runtime::Capabil
 pub fn log_repository_lock_acquire(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     directory: String,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -65,10 +64,10 @@ pub fn log_repository_lock_acquire(
     }
     let operation = runtime
         .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
+            WorkContext::new(),
             notification(callback)?,
             move |context| {
-                context.input(directory.len() as u64)?;
+                context.checkpoint()?;
                 Ok(Box::new(move |context: &WorkContext| {
                     context.checkpoint()?;
                     let held = match acquire_repository_lock(std::path::Path::new(&directory)) {
@@ -159,8 +158,6 @@ mod tests {
             cleanup_capacity: 8,
             owner_capacity: 8,
             native_handle_capacity: 16,
-            aggregate_bytes: [64 << 20; 4],
-            chunk_bytes: 1 << 20,
             cleanup_timeout: Duration::from_millis(500),
         }
     }

@@ -9,6 +9,7 @@ use super::{
     EvidenceDecodeError, EvidenceError, EvidenceInterpretError, FAMILY, LAYOUT, decode,
     encode_judged, encode_violations,
 };
+use crate::Value;
 use crate::error::{CitedFact, Conflict, Direction, Violation, Violations};
 use crate::schema::judge::{JudgeBudget, JudgedViolation, Judgment, MapState, judge_final_state};
 use crate::schema::tests::{capacity_weighted, containment, fd, field, id_field, side};
@@ -16,22 +17,10 @@ use crate::schema::{
     FieldId, RelationDescriptor, RelationId, Schema, SchemaDescriptor, StatementId, StatementKind,
     StatementRef, ValidateDescriptor as _, ValueType, Weight,
 };
-use crate::work::ExecutionPolicy;
-use crate::{Value, WorkContext};
-use std::time::Duration;
+use crate::work::WorkContext;
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 100_000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(60),
-    }
-    .start()
-    .unwrap()
+    WorkContext::new()
 }
 
 /// `Student { id, budget }` / `Attempt { id, student, units }` with a key

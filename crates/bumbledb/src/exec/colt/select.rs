@@ -7,7 +7,7 @@ use crate::work::WorkError;
 impl Colt {
     /// # Errors
     /// Returns the force/growth refusal. A selection miss is `Ok(None)`.
-    pub fn select(&mut self, keys: &[Vec<u64>]) -> Result<Option<Cursor>, WorkError> {
+    pub fn select(&mut self, keys: &[impl AsRef<[u64]>]) -> Result<Option<Cursor>, WorkError> {
         debug_assert_eq!(
             keys.len(),
             self.selection_depth(),
@@ -19,6 +19,7 @@ impl Colt {
         }
         let mut cursor = Self::root();
         for (level, words) in keys.iter().enumerate() {
+            let words = words.as_ref();
             cursor = if matches!(self.selection_kinds[level], super::SelectionKind::Set) {
                 match self.select_union(cursor, level, words)? {
                     Some(hit) => hit,
@@ -58,12 +59,7 @@ impl Colt {
         hits.clear();
         let needed_hits = words.len() / arity.max(1);
         let probed = (|| -> Result<Option<Cursor>, WorkError> {
-            reserve_pool(
-                needed_hits,
-                &mut hits,
-                self.work.as_ref(),
-                &mut self.charges,
-            )?;
+            reserve_pool(needed_hits, &mut hits, self.work.as_ref())?;
             for (index, key) in words.chunks_exact(arity).enumerate() {
                 if index % super::force::FORCE_BATCH == 0 {
                     self.poll_force_batch((needed_hits - index).min(super::force::FORCE_BATCH))?;
@@ -92,12 +88,7 @@ impl Colt {
                         .expect("selection counts index the resident position arena");
                 }
             }
-            reserve_pool(
-                counted,
-                &mut positions,
-                self.work.as_ref(),
-                &mut self.charges,
-            )?;
+            reserve_pool(counted, &mut positions, self.work.as_ref())?;
             let mut pending_work = 0;
             for hit in hits {
                 self.union_positions(*hit, &mut positions, &mut pending_work)?;
@@ -120,24 +111,9 @@ impl Colt {
                     );
                     let pos_needed = self.chunk_positions.len() + all.len();
                     let chunk_needed = self.chunks.len() + all.len().div_ceil(CHUNK_LEN);
-                    reserve_pool(
-                        pos_needed,
-                        &mut self.chunk_positions,
-                        self.work.as_ref(),
-                        &mut self.charges,
-                    )?;
-                    reserve_pool(
-                        chunk_needed,
-                        &mut self.chunks,
-                        self.work.as_ref(),
-                        &mut self.charges,
-                    )?;
-                    reserve_pool(
-                        self.nodes.len() + 1,
-                        &mut self.nodes,
-                        self.work.as_ref(),
-                        &mut self.charges,
-                    )?;
+                    reserve_pool(pos_needed, &mut self.chunk_positions, self.work.as_ref())?;
+                    reserve_pool(chunk_needed, &mut self.chunks, self.work.as_ref())?;
+                    reserve_pool(self.nodes.len() + 1, &mut self.nodes, self.work.as_ref())?;
                     let first = u32::try_from(self.chunks.len()).expect("chunk count fits u32");
                     for (idx, segment) in all.chunks(CHUNK_LEN).enumerate() {
                         if idx % (super::force::FORCE_BATCH / CHUNK_LEN) == 0 {

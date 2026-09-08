@@ -146,15 +146,33 @@ done
   packed-pure-authoring.ts)
 (cd "$TMP/pure" && node packed-pure-authoring.ts)
 
-# Rust consumer lives in this packed-import path (D07 tiny collect refuses).
+# Rust consumer lives in this packed-import path (owned collection and paging).
 cargo run --manifest-path "$ROOT/examples/consumers/rust/Cargo.toml"
 
 # Run the actual Notes app against the same packed dependencies in isolation.
-# Generate the migration history before exercising its real route handlers.
+# Generate migration history, check the entire app, and build the server.
 # Keep the initial install's store: /tmp may resolve a different Linux mount.
 mkdir -p "$TMP/consumer/examples"
-git ls-files -z examples/notes examples/consumers | tar --null -T - -cf - | (cd "$TMP/consumer" && tar -xf -)
-(cd "$TMP/consumer" && pnpm add --ignore-scripts --store-dir "$STORE" next@16.1.1 react@19.2.0 react-dom@19.2.0 server-only@0.0.1 @aws-sdk/client-s3@3.955.0)
-(cd "$TMP/consumer/examples/notes" && node --conditions react-server scripts/generate-history.ts && node --conditions react-server --test test/specimens.test.ts test/routes.test.ts)
+git ls-files --cached --others --exclude-standard -z examples/notes examples/consumers | tar --null -T - -cf - | (cd "$TMP/consumer" && tar -xf -)
+node -e '
+  const fs = require("node:fs");
+  const root = process.argv[1];
+  const settings = fs.readFileSync(`${root}/examples/notes/pnpm-workspace.yaml`, "utf8")
+    .replaceAll("patches/", "examples/notes/patches/");
+  fs.appendFileSync(`${root}/pnpm-workspace.yaml`, `\n${settings}`);
+' "$TMP/consumer"
+NOTES_DEPS="$(node -e '
+  const p = require(process.argv[1]);
+  const dependencies = { ...p.dependencies, ...p.devDependencies };
+  console.log(Object.entries(dependencies)
+    .filter(([name]) => !name.startsWith("@bjornpagen/") && name !== "effect")
+    .map(([name, version]) => `${name}@${version}`).join(" "));
+' "$ROOT/examples/notes/package.json")"
+(cd "$TMP/consumer" && pnpm add --ignore-scripts --store-dir "$STORE" $NOTES_DEPS)
+(cd "$TMP/consumer/examples/notes" && \
+  node --conditions react-server scripts/generate-history.ts && \
+  ../../node_modules/.bin/tsc --noEmit && \
+  node --conditions react-server --test test/specimens.test.ts test/routes.test.ts && \
+  NEXT_TELEMETRY_DISABLED=1 ../../node_modules/.bin/next build --webpack)
 
-echo "packed-import: OK — platforms: $PLATFORMS; ManagedRuntime consumer; D07 tiny collect refuses; D27 addon-unavailable authoring; Rust + Notes fail-closed at $V (not PKG-07B)"
+echo "packed-import: OK — platforms: $PLATFORMS; ManagedRuntime consumer; owned collection and one-shot paging; D27 addon-unavailable authoring; Rust + Notes typecheck/build/routes at $V (not PKG-07B)"

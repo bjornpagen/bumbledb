@@ -5,7 +5,7 @@
 //! unready owner, and final admission. Genesis, origin binding, and
 //! small host seals write through [`StageWriter::put_host`]. Receipt
 //! cleanup uses [`UnreadyStore::delete_host_batch`] / [`StageWriter::delete_host_batch`]
-//! in charged windows — never a full receipt-key vector and never a ready
+//! in bounded windows — never a full receipt-key vector and never a ready
 //! [`crate::Db`]. There is no ordinary [`Store`] / [`crate::Db`] accessor
 //! and no disarm-to-`(Store, PathBuf)` escape. Readiness is owning
 //! [`AdmittedStore`] after [`UnreadyStore::admit`] (`judge_complete`), not
@@ -47,7 +47,7 @@ use super::store_env::{
 };
 use crate::ChangeSet;
 use crate::schema::Schema;
-use crate::work::{ByteKind, ByteReservation, WorkContext};
+use crate::work::WorkContext;
 
 /// Exact staging identity owned for cleanup. Dropping an unpublished owner
 /// removes only this sibling, never an unrelated destination or a path
@@ -208,7 +208,7 @@ impl UnreadyStore {
     }
 
     /// Bounded inspect of the unready owner. Dest stays unpublished (not
-    /// a readiness name). Use [`StageReader::host_scan_batch`] for charged
+    /// a readiness name). Use [`StageReader::host_scan_batch`] for bounded
     /// receipt windows; full [`StageReader::host_scan`] already streams
     /// but has no resume or byte cap. [`StageReader::snapshot`] is the
     /// same export / `visit_projection` grammar, without a ready [`crate::Db`].
@@ -237,7 +237,7 @@ impl UnreadyStore {
         &self.dest
     }
 
-    /// Delete one charged host window under `prefix`, exclusive after
+    /// Delete one bounded host window under `prefix`, exclusive after
     /// `after`. Peak holds this window's keys only. [`StageWriter::put_host`]
     /// still requires a complete [`HostChanges`] slice — do not pass every
     /// receipt delete there.
@@ -323,10 +323,10 @@ impl StageWriter<'_> {
         owner.prepare_unchanged()?.seal(host)?.commit()
     }
 
-    /// Delete one charged host window under `prefix`, exclusive after
+    /// Delete one bounded host window under `prefix`, exclusive after
     /// `after`. At least one record is taken if any remain, even when that
-    /// record exceeds `byte_cap`. Peak holds this window's keys (Working
-    /// reserved per key), never the full prefix.
+    /// record exceeds `byte_cap`. Peak holds this window's keys, never the
+    /// full prefix. Keys must remain owned after releasing the read snapshot.
     ///
     /// # Errors
     /// Host-key grammar, growth refusals, storage failure, or stopped work.
@@ -338,15 +338,14 @@ impl StageWriter<'_> {
         byte_cap: u64,
     ) -> StoreResult<HostWindow> {
         let snapshot = self.store.snapshot(work)?;
-        let mut held: Vec<(Vec<u8>, ByteReservation)> = Vec::new();
+        let mut held: Vec<Vec<u8>> = Vec::new();
         let window = snapshot.host_scan_batch(
             prefix,
             after,
             work,
             byte_cap,
             &mut |key, _value| -> StoreResult<()> {
-                let charge = work.reserve(ByteKind::Working, key.len() as u64)?;
-                held.push((key.to_vec(), charge));
+                held.push(key.to_vec());
                 Ok(())
             },
         )?;
@@ -357,7 +356,7 @@ impl StageWriter<'_> {
         {
             let records: Vec<HostRecordChange<'_>> = held
                 .iter()
-                .map(|(key, _)| HostRecordChange::Delete { key })
+                .map(|key| HostRecordChange::Delete { key })
                 .collect();
             self.put_host(
                 HostChanges {
@@ -416,7 +415,7 @@ impl StageReader<'_> {
         self.snapshot.host_scan(prefix, work, visit)
     }
 
-    /// One charged host window under `prefix`, exclusive after `after`.
+    /// One bounded host window under `prefix`, exclusive after `after`.
     /// Peak is the visitor plus one resume key.
     ///
     /// # Errors

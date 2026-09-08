@@ -11,7 +11,7 @@
  *    set effect); `scripts/dispatch-outbox.ts` performs and retires it.
  */
 import { createHash } from "node:crypto"
-import { ChangeSet, type ExecutionPolicy, Uuid } from "@bjornpagen/bumbledb"
+import { ChangeSet, Uuid } from "@bjornpagen/bumbledb"
 import type { CommandRef, History, HistoryBorrow, SubmitOptions, SubmitOutcome } from "@bjornpagen/bumbledb-log"
 import { Command, RequestId } from "@bjornpagen/bumbledb-log"
 import { Effect } from "effect"
@@ -22,8 +22,7 @@ type Writer =
 	| Pick<History<typeof App>, "identity" | "receiptEpoch" | "submit" | "resolve">
 	| HistoryBorrow<typeof App>
 
-export const submitOptionsOf = (work: ExecutionPolicy): SubmitOptions => ({
-	...work,
+export const submitOptionsOf = (): SubmitOptions => ({
 	attempts: 4,
 	backoff: { baseMillis: 50, capMillis: 2_000 }
 })
@@ -56,8 +55,7 @@ const sealAndSubmit = Effect.fn("commands.sealAndSubmit")(
 		tenantId: string,
 		requestKey: Uuid,
 		changes: ChangeSet<typeof App>,
-		resultMeta: Readonly<Record<string, Uuid>>,
-		work: ExecutionPolicy
+		resultMeta: Readonly<Record<string, Uuid>>
 	) {
 		const requestId = yield* requestIdOf(requestKey)
 		const command = yield* Command.seal(
@@ -67,11 +65,10 @@ const sealAndSubmit = Effect.fn("commands.sealAndSubmit")(
 				changes,
 				precondition: { kind: "blind" },
 				result: resultMeta
-			},
-			work
+			}
 		)
 		yield* rememberCommandRef(tenantId, requestKey, command.ref)
-		const outcome: SubmitOutcome = yield* writer.submit(command, submitOptionsOf(work))
+		const outcome: SubmitOutcome = yield* writer.submit(command, submitOptionsOf())
 		yield* rememberSubmitOutcome(tenantId, requestKey, outcome)
 		return outcome
 	}
@@ -83,12 +80,12 @@ const sealAndSubmit = Effect.fn("commands.sealAndSubmit")(
  * note does.
  */
 export const createNote = Effect.fn("commands.createNote")(
-	function* (writer: Writer, tenantId: string, noteId: Uuid, text: string, work: ExecutionPolicy) {
-		const draft = yield* ChangeSet.builder(App, work)
+	function* (writer: Writer, tenantId: string, noteId: Uuid, text: string) {
+		const draft = yield* ChangeSet.builder(App)
 		yield* draft.insert(Note, [{ id: noteId, text, pinned: false }])
 		yield* draft.insert(Outbox, [{ id: derivedId(noteId, "outbox:note-created"), note: noteId, kind: "note-created" }])
 		const changes = yield* draft.finish()
-		return yield* sealAndSubmit(writer, tenantId, noteId, changes, { note: noteId }, work)
+		return yield* sealAndSubmit(writer, tenantId, noteId, changes, { note: noteId })
 	},
 	Effect.scoped
 )
@@ -105,20 +102,19 @@ export const setPinned = Effect.fn("commands.setPinned")(
 		tenantId: string,
 		requestKey: Uuid,
 		noteId: Uuid,
-		pinned: boolean,
-		work: ExecutionPolicy
+		pinned: boolean
 	) {
 		const observed = yield* Effect.scoped(
 			Effect.gen(function* () {
-				const snapshot = yield* writer.snapshot({ ...work, consistency: { kind: "latest" } })
-				const previous = yield* snapshot.get(Note, { id: noteId }, work)
+				const snapshot = yield* writer.snapshot({ consistency: { kind: "latest" } })
+				const previous = yield* snapshot.get(Note, { id: noteId })
 				return { previous, at: snapshot.stateStamp }
 			})
 		)
 		if (observed.previous._tag === "None") {
 			return { kind: "missing" } as const
 		}
-		const draft = yield* ChangeSet.builder(App, work)
+		const draft = yield* ChangeSet.builder(App)
 		yield* draft.delete(Note, [observed.previous.value])
 		yield* draft.insert(Note, [{ ...observed.previous.value, pinned }])
 		const changes = yield* draft.finish()
@@ -130,11 +126,10 @@ export const setPinned = Effect.fn("commands.setPinned")(
 				changes,
 				precondition: { kind: "exact-state", at: observed.at },
 				result: { note: noteId }
-			},
-			work
+			}
 		)
 		yield* rememberCommandRef(tenantId, requestKey, command.ref)
-		const outcome: SubmitOutcome = yield* writer.submit(command, submitOptionsOf(work))
+		const outcome: SubmitOutcome = yield* writer.submit(command, submitOptionsOf())
 		yield* rememberSubmitOutcome(tenantId, requestKey, outcome)
 		return { kind: "submitted", outcome } as const
 	},
@@ -152,14 +147,13 @@ export const addAttachment = Effect.fn("commands.addAttachment")(
 		writer: Writer,
 		tenantId: string,
 		noteId: Uuid,
-		blob: { readonly key: string; readonly bytes: bigint },
-		work: ExecutionPolicy
+		blob: { readonly key: string; readonly bytes: bigint }
 	) {
 		const attachmentId = derivedId(noteId, `attachment:${blob.key}`)
-		const draft = yield* ChangeSet.builder(App, work)
+		const draft = yield* ChangeSet.builder(App)
 		yield* draft.insert(Attachment, [{ id: attachmentId, note: noteId, key: blob.key, bytes: blob.bytes }])
 		const changes = yield* draft.finish()
-		return yield* sealAndSubmit(writer, tenantId, attachmentId, changes, { attachment: attachmentId, note: noteId }, work)
+		return yield* sealAndSubmit(writer, tenantId, attachmentId, changes, { attachment: attachmentId, note: noteId })
 	},
 	Effect.scoped
 )
@@ -169,8 +163,8 @@ export const addAttachment = Effect.fn("commands.addAttachment")(
  * proved loss — the original identity is the only recovery coordinate.
  */
 export const resolveCommand = Effect.fn("commands.resolveCommand")(
-	function* (writer: Writer, ref: CommandRef, work: ExecutionPolicy) {
-		return yield* writer.resolve(ref, work)
+	function* (writer: Writer, ref: CommandRef) {
+		return yield* writer.resolve(ref)
 	}
 )
 
@@ -184,13 +178,12 @@ export const retireOutbox = Effect.fn("commands.retireOutbox")(
 	function* (
 		writer: Writer,
 		tenantId: string,
-		row: { readonly id: Uuid; readonly note: Uuid; readonly kind: string },
-		work: ExecutionPolicy
+		row: { readonly id: Uuid; readonly note: Uuid; readonly kind: string }
 	) {
-		const draft = yield* ChangeSet.builder(App, work)
+		const draft = yield* ChangeSet.builder(App)
 		yield* draft.delete(Outbox, [row])
 		const changes = yield* draft.finish()
-		return yield* sealAndSubmit(writer, tenantId, derivedId(row.id, "outbox:retire"), changes, { outbox: row.id }, work)
+		return yield* sealAndSubmit(writer, tenantId, derivedId(row.id, "outbox:retire"), changes, { outbox: row.id })
 	},
 	Effect.scoped
 )

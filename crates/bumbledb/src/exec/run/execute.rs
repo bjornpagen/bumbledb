@@ -205,10 +205,6 @@ impl Executor {
     /// # Panics
     /// Only on a programmer-invariant violation: a zero batch size.
     #[must_use]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the linear table or protocol is clearer kept together"
-    )]
     pub fn with_batch_size(plan: &ValidatedPlan, batch: usize) -> Self {
         assert!(
             batch > 0,
@@ -264,13 +260,45 @@ impl Executor {
         } else {
             Drive::Leaf
         };
-        let scratch = plan
-            .nodes()
+        let scratch = Self::make_scratch(plan, batch, &slot_map, &precompute, &drive);
+        let leaf = LeafPrecompute::of(plan, &precompute, &var_widths, &slot_map);
+        Self {
+            batch,
+            physical_distinct: None,
+            cursors: Vec::new(),
+            slot_map,
+            precompute,
+            point_probed,
+            var_widths,
+            scratch,
+            leaf,
+            scan_filter: Vec::new(),
+            drive,
+            ledger: None,
+            cancelled: Vec::new(),
+            cancel_epoch: 0,
+            next_origin: 0,
+            drive_state: super::DriveState::Running,
+            overlap: crate::interval::overlap::OverlapCache::default(),
+            overlap_hits: Vec::new(),
+            overlap_key: Vec::new(),
+        }
+    }
+
+    /// Recreate only execution buffers; compiled tables stay on the executor.
+    fn make_scratch(
+        plan: &ValidatedPlan,
+        batch: usize,
+        slot_map: &[Vec<Vec<usize>>],
+        precompute: &[NodePrecompute],
+        drive: &Drive,
+    ) -> Vec<NodeScratch> {
+        plan.nodes()
             .iter()
             .enumerate()
-            .zip(&precompute)
+            .zip(precompute)
             .map(|((node_idx, node), pre)| {
-                let next_carried = match &drive {
+                let next_carried = match drive {
                     Drive::Pipeline(tables) => tables
                         .carried
                         .get(node_idx + 1)
@@ -329,28 +357,21 @@ impl Executor {
                     element_origins: Vec::with_capacity(batch),
                 }
             })
-            .collect();
-        let leaf = LeafPrecompute::of(plan, &precompute, &var_widths, &slot_map);
-        Self {
-            batch,
-            physical_distinct: None,
-            cursors: Vec::new(),
-            slot_map,
-            precompute,
-            point_probed,
-            var_widths,
-            scratch,
-            leaf,
-            scan_filter: Vec::new(),
-            drive,
-            ledger: None,
-            cancelled: Vec::new(),
-            cancel_epoch: 0,
-            next_origin: 0,
-            drive_state: super::DriveState::Running,
-            overlap: crate::interval::overlap::OverlapCache::default(),
-            overlap_hits: Vec::new(),
-            overlap_key: Vec::new(),
+            .collect()
+    }
+
+    pub(crate) fn release_memory(&mut self) {
+        self.scratch = Vec::new();
+        self.cursors = Vec::new();
+        self.scan_filter = Vec::new();
+        self.cancelled = Vec::new();
+        self.overlap = crate::interval::overlap::OverlapCache::default();
+        self.overlap_hits = Vec::new();
+        self.overlap_key = Vec::new();
+        self.ledger = None;
+        self.drive_state = super::DriveState::Running;
+        if let LeafPrecompute::Fast { row, .. } = &mut self.leaf {
+            *row = Vec::new();
         }
     }
 
@@ -384,6 +405,23 @@ impl Executor {
         counters: &mut C,
     ) -> crate::error::Result<()> {
         assert_eq!(colts.len(), plan.occurrences().len());
+        if self.scratch.is_empty() {
+            self.scratch = Self::make_scratch(
+                plan,
+                self.batch,
+                &self.slot_map,
+                &self.precompute,
+                &self.drive,
+            );
+            if let LeafPrecompute::Fast { row, .. } = &mut self.leaf {
+                row.resize(
+                    self.slot_map.last().expect("validated node")[0]
+                        .len()
+                        .max(1),
+                    0,
+                );
+            }
+        }
         debug_assert_eq!(plan.nodes().len(), self.scratch.len(), "same plan shape");
         bindings.reset();
         self.drive_state = super::DriveState::Running;

@@ -40,22 +40,15 @@ const MARK_KIND: u8 = 1;
 pub struct GcPolicy {
     pub head_cap: usize,
     pub stream: StreamLimits,
-    /// Mark-set budget in encoded bytes, charged before growth. Exceeding it
-    /// is a typed refusal without deletion, never silent truncation.
-    pub mark_budget_bytes: u64,
     /// Bounded CAS attempts for each durable progress transition.
     pub cas_attempts: u32,
-    /// Bounded decision-walk budget per protected root.
-    pub walk_budget: u64,
 }
 
 impl GcPolicy {
     pub const DEFAULT: Self = Self {
         head_cap: 1024 * 1024,
         stream: StreamLimits::DEFAULT,
-        mark_budget_bytes: 256 * 1024 * 1024,
         cas_attempts: 16,
-        walk_budget: 1_048_576,
     };
 }
 
@@ -73,8 +66,6 @@ pub enum GcError {
     /// A required protected dependency is malformed/missing: GC stops
     /// without deletion; the tenant needs repair evidence, not a sweep.
     Corruption(&'static str),
-    /// The bounded mark budget was exhausted; no deletion certificate exists.
-    MarkBudget,
     /// One eligible deletion failed. Durable progress was NOT advanced past
     /// it; resume retries the same key.
     DeleteFailed {
@@ -235,15 +226,12 @@ where
 /// nested references; a malformed/missing required dependency stops GC
 /// without deletion. Chunk leaves are named by a verified manifest and are
 /// marked without a body download (they carry no nested references).
-#[expect(clippy::too_many_arguments, reason = "one bounded mark walk")]
 fn mark_root<B: ReceivingStore>(
     backend: &B,
     prefix: &str,
     root: &RecoveryRoot,
-    _cutoff: u64,
     limits: Limits,
     policy: &GcPolicy,
-    budget: &mut u64,
     marks: &mut BTreeSet<String>,
     work: &WorkContext,
 ) -> Result<(), GcError>
@@ -252,10 +240,8 @@ where
 {
     struct MarkVisitor<'a> {
         prefix: &'a str,
-        budget: &'a mut u64,
         marks: &'a mut BTreeSet<String>,
         work: &'a WorkContext,
-        charge: &'a dyn Fn(&String, &mut u64) -> Result<(), GcError>,
     }
     impl ChainVisitor for MarkVisitor<'_> {
         type Error = GcError;
@@ -267,21 +253,12 @@ where
         ) -> Result<bool, GcError> {
             self.work.checkpoint()?;
             let key = reference.key(self.prefix);
-            (self.charge)(&key, self.budget)?;
             self.marks.insert(key);
             Ok(true)
         }
     }
-    let charge = |key: &String, budget: &mut u64| -> Result<(), GcError> {
-        let cost = key.len() as u64 + 16;
-        if *budget < cost {
-            return Err(GcError::MarkBudget);
-        }
-        *budget -= cost;
-        Ok(())
-    };
     if let Some(checkpoint) = &root.checkpoint {
-        let charged = get_verified(
+        let received = get_verified(
             backend,
             prefix,
             checkpoint,
@@ -290,28 +267,28 @@ where
                 locator::receive_limits_for_object(checkpoint, policy.stream.manifest_bytes),
             ),
         )
-        .map_err(|_| GcError::Corruption("protected checkpoint manifest unavailable"))?;
-        let manifest = decode_manifest(charged.as_bytes(), policy.stream)?;
+        .map_err(|_| match work.checkpoint() {
+            Err(error) => GcError::Work(error),
+            Ok(()) => GcError::Corruption("protected checkpoint manifest unavailable"),
+        })?;
+        let manifest = decode_manifest(received.as_slice(), policy.stream)?;
         let key = checkpoint.key(prefix);
-        charge(&key, budget)?;
         marks.insert(key);
         for chunk in &manifest.chunks {
-            work.step(1)?;
+            work.checkpoint()?;
             let key = chunk.key(prefix);
-            charge(&key, budget)?;
             marks.insert(key);
         }
-        drop(charged.into_owner());
+        drop(received);
     }
     // Decisions of exactly the tail (base, tip]. The shared walker stops at
-    // the captured base and never epoch-probes.
-    let mut walk_budget = policy.walk_budget;
+    // the captured base and never epoch-probes. The exact sequence distance
+    // validates this closure; no unrelated work or mark-memory quota applies.
+    let mut remaining = root.tail_count();
     let mut visitor = MarkVisitor {
         prefix,
-        budget,
         marks,
         work,
-        charge: &charge,
     };
     locator::walk_decision_chain(
         backend,
@@ -320,20 +297,24 @@ where
         root.base,
         root.tip_object,
         limits,
-        &mut walk_budget,
+        &mut remaining,
         work,
         &mut visitor,
     )
-    .map_err(|error| match error {
-        GcError::Object(ObjectError::WalkBudgetExhausted) => GcError::MarkBudget,
-        GcError::Object(ObjectError::Missing { .. }) => {
-            GcError::Corruption("parent locator missing before recovery base")
+    .map_err(|error| {
+        if let Err(error) = work.checkpoint() {
+            return GcError::Work(error);
         }
-        GcError::Object(ObjectError::WrongDigest { .. }) => {
-            GcError::Corruption("protected tail digest mismatch")
+        match error {
+            GcError::Object(ObjectError::Missing { .. }) => {
+                GcError::Corruption("parent locator missing before recovery base")
+            }
+            GcError::Object(ObjectError::WrongDigest { .. }) => {
+                GcError::Corruption("protected tail digest mismatch")
+            }
+            GcError::Object(_) => GcError::Corruption("protected tail decision unavailable"),
+            other => other,
         }
-        GcError::Object(_) => GcError::Corruption("protected tail decision unavailable"),
-        other => other,
     })?;
     Ok(())
 }
@@ -411,19 +392,8 @@ where
         GcPhase::Idle => return Err(GcError::AlreadyFinished),
     };
     let mut marks = BTreeSet::new();
-    let mut budget = policy.mark_budget_bytes;
     for root in &barrier.protected {
-        mark_root(
-            backend,
-            prefix,
-            root,
-            barrier.cutoff_epoch,
-            limits,
-            policy,
-            &mut budget,
-            &mut marks,
-            work,
-        )?;
+        mark_root(backend, prefix, root, limits, policy, &mut marks, work)?;
     }
     // New mark-work objects live in the current (open) epoch, outside the
     // collection cutoff, so a concurrent collector cannot collect them.
@@ -525,7 +495,7 @@ where
         GcPhase::Marking { .. } => return Err(GcError::CollectionMoved),
         GcPhase::Idle => return Err(GcError::AlreadyFinished),
     };
-    let charged = get_verified(
+    let received = get_verified(
         backend,
         prefix,
         &marks_ref,
@@ -535,8 +505,12 @@ where
         ),
     )
     .map_err(|_| GcError::Corruption("mark manifest unavailable"))?;
-    let marks = decode_marks(charged.as_bytes(), barrier.id, policy.stream.manifest_bytes)?;
-    drop(charged.into_owner());
+    let marks = decode_marks(
+        received.as_slice(),
+        barrier.id,
+        policy.stream.manifest_bytes,
+    )?;
+    drop(received);
     let mut report = SweepReport::default();
     let listing_prefix = objects_prefix(prefix);
     loop {
@@ -548,7 +522,7 @@ where
         report.pages += 1;
         let mut last_processed: Option<String> = None;
         for key in &page.keys {
-            work.step(1)?;
+            work.checkpoint()?;
             match parse_object_key(prefix, key) {
                 None => {
                     // Never delete an unknown or unparseable namespace.

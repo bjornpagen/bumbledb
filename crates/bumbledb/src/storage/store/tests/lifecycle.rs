@@ -305,7 +305,7 @@ fn close_reports_live_snapshots_and_refuses_new_admission() {
     let (_dir, path) = store_dir("store-close");
     let store = create_default(&path);
     let pinned = store.snapshot(&work()).expect("pinned snapshot");
-    match store.close(&short_work(std::time::Duration::from_millis(50))) {
+    match store.close(&cancel_after(std::time::Duration::from_millis(50))) {
         CloseReport::Incomplete {
             live_transactions, ..
         } => assert_eq!(live_transactions, 1),

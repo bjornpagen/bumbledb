@@ -45,15 +45,13 @@ use crate::marshal;
 use crate::runtime::owners::DbLease;
 use crate::runtime::{Output, Runtime, RuntimeError};
 use crate::runtime_wire::{
-    OperationHandle, PolicyWire, RuntimeHandle, notification, operation_handle,
-    owner as runtime_owner, thrown,
+    OperationHandle, RuntimeHandle, notification, operation_handle, owner as runtime_owner, thrown,
 };
 
 use super::{
     BackendSpec, CredentialsSpec, LIMITS, LogFail, MachineOutput, MachineResult, binding_spec_in,
     fail_of_log, frame_object, hex32, identity_in, identity_wire, optional_object, optional_string,
-    protocol, publication_phase_tag, s3_store, stamp_wire, state_wire, stream_limits, targets_root,
-    uuid_text,
+    protocol, publication_phase_tag, s3_store, stamp_wire, state_wire, targets_root, uuid_text,
 };
 
 // ---------------------------------------------------------------------------
@@ -336,7 +334,7 @@ impl PlansSpec {
             ));
         }
         for (index, plan) in plans.iter().enumerate() {
-            context.step(1).map_err(RuntimeError::from)?;
+            context.checkpoint().map_err(RuntimeError::from)?;
             bumbledb_log::migration::compile::compile(
                 plan,
                 &descriptors[index],
@@ -733,7 +731,6 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
 pub(crate) fn admin_verb(
     env: Env,
     handle: &External<RuntimeHandle>,
-    policy: PolicyWire,
     request: &Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
@@ -741,23 +738,19 @@ pub(crate) fn admin_verb(
     let verb = admin_verb_in(env, request)?;
     let shared = Arc::clone(runtime);
     let operation = runtime
-        .submit(
-            policy.parse().map_err(|error| thrown(env, error))?,
-            notification(callback)?,
-            move |_| {
-                Ok(Box::new(move |context| {
-                    let owned = match run_admin(&shared, verb, context) {
-                        Ok(owned) => owned,
-                        Err(LogFail::Core(core)) => return Err(core),
-                        Err(fail) => AdminOwned::Failed {
-                            fail,
-                            phase: PublicationPhase::Prepared,
-                        },
-                    };
-                    Ok(Output::Machine(MachineOutput::Admin(owned)))
-                }))
-            },
-        )
+        .submit(WorkContext::new(), notification(callback)?, move |_| {
+            Ok(Box::new(move |context| {
+                let owned = match run_admin(&shared, verb, context) {
+                    Ok(owned) => owned,
+                    Err(LogFail::Core(core)) => return Err(core),
+                    Err(fail) => AdminOwned::Failed {
+                        fail,
+                        phase: PublicationPhase::Prepared,
+                    },
+                };
+                Ok(Output::Machine(MachineOutput::Admin(owned)))
+            }))
+        })
         .map_err(|error| thrown(env, error))?;
     Ok(operation_handle(runtime, operation))
 }
@@ -1350,7 +1343,7 @@ fn run_admin(
                     root,
                     operation,
                     LIMITS,
-                    stream_limits(context),
+                    bumbledb_log::codec::StreamLimits::DEFAULT,
                     context,
                 )
                 .map_err(|error| LogFail::Protocol {
@@ -1391,7 +1384,7 @@ fn run_admin(
                     &dest_prefix,
                     backup,
                     LIMITS,
-                    stream_limits(context),
+                    bumbledb_log::codec::StreamLimits::DEFAULT,
                     context,
                 )
                 .map_err(|error| LogFail::Protocol {
@@ -1754,7 +1747,7 @@ fn fail_of_migration(error: bumbledb_log::migration::executor::MigrationError) -
             protocol("MigrationOutputMismatch", format!("{error:?}"))
         }
         MigrationError::Log(log) => fail_of_log(log.clone()),
-        // Bounded work/deadline/cancellation stays the exact core reason —
+        // Cancellation/allocation failure stays the exact core reason —
         // never respelled as drift.
         MigrationError::Work(work) => LogFail::Core(RuntimeError::Work(*work)),
         _ => protocol("MigrationDrift", format!("{error:?}")),
@@ -2146,14 +2139,14 @@ fn finish_initialize(
     ))
 }
 
-/// One charged checkpoint chunk at a time. Restore borrows via `AsRef<[u8]>`
+/// One owned checkpoint chunk at a time. Restore borrows via `AsRef<[u8]>`
 /// and drops the owner as it consumes the iterator.
 pub(crate) fn verified_checkpoint_chunks<'a, B>(
     store: &'a B,
     prefix: &'a str,
     checkpoint: &'a bumbledb_log::codec::CheckpointManifest,
     context: &'a WorkContext,
-) -> impl Iterator<Item = Result<bumbledb::work::ChargedBytes, RecoveryError>> + 'a
+) -> impl Iterator<Item = Result<bumbledb_log::store::ReceivedBody, RecoveryError>> + 'a
 where
     B: bumbledb_log::store::ReceivingStore,
     B::Error: bumbledb_log::store::BackendError + bumbledb_log::store::ObservedError,
@@ -2264,7 +2257,7 @@ fn run_restore(
                  C08 boundary",
             ));
         };
-        let checkpoint_charged = get_verified(
+        let checkpoint_bytes = get_verified(
             store,
             &dest_prefix,
             &checkpoint_ref,
@@ -2278,12 +2271,12 @@ fn run_restore(
             detail: format!("{error:?}"),
         })?;
         let checkpoint =
-            bumbledb_log::codec::decode_manifest(checkpoint_charged.as_bytes(), stream_limits(context))
+            bumbledb_log::codec::decode_manifest(&checkpoint_bytes, bumbledb_log::codec::StreamLimits::DEFAULT)
                 .map_err(|error| LogFail::Protocol {
                     code: "Corruption",
                     detail: format!("{error:?}"),
                 })?;
-        drop(checkpoint_charged.into_owner());
+        drop(checkpoint_bytes);
         let chunks = verified_checkpoint_chunks(store, &dest_prefix, &checkpoint, context);
         let tail = bumbledb_log::backup::relocated_tail(
             store,

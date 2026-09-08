@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { Result } from "effect"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { ScriptError } from "./errors.ts"
+import { installNativeArtifact } from "./native-artifact.ts"
 import { assertEffectPin } from "./pin.ts"
 import {
 	deriveDevTwinManifest,
@@ -59,7 +60,7 @@ function build(): void {
 	const targetDir = process.env.CARGO_TARGET_DIR ?? path.join(packageRoot, "crate", "target")
 	const artifact = path.join(targetDir, "release", nativeArtifactName(process.platform))
 	const nodeBinary = path.join(localPackageDir, "bumbledb.node")
-	fs.copyFileSync(artifact, nodeBinary)
+	installNativeArtifact(artifact, nodeBinary)
 
 	linkPlatformPackage(packageRoot, localPackageDir)
 	smokeLoad(packageRoot, version)

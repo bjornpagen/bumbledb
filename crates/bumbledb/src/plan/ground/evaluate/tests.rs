@@ -10,7 +10,7 @@ use crate::ir::{CmpOp, WordCmp};
 use crate::plan::ground::{ground, with_grounding_disabled};
 use crate::schema::Schema;
 use crate::schema::ValidateDescriptor as _;
-use crate::work::{CacheLedger, GenerationHandle, GenerationState};
+use crate::work::{GenerationHandle, GenerationState};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::{
     FieldDescriptor, IntervalElement, RelationDescriptor, Row, SchemaDescriptor, Side,
@@ -160,7 +160,7 @@ fn attached_sets(normalized: &NormalizedQuery, idx: usize) -> Vec<Vec<u64>> {
                 op: WordCmp::Eq,
                 value: Const::WordSet(words),
                 ..
-            } => Some(words.clone()),
+            } => Some(words.words.clone()),
             _ => None,
         })
         .collect()
@@ -357,7 +357,7 @@ fn assert_wide_compares_parse() {
         &FilterPredicate::Compare {
             field: f.into(),
             op: WordCmp::Eq,
-            value: Const::WordSet(vec![1, 2]),
+            value: Const::WordSet(vec![1, 2].into()),
         },
         true,
     );
@@ -413,7 +413,7 @@ fn assert_compare_refusals() {
         FilterPredicate::Compare {
             field: f.into(),
             op: WordCmp::Ne,
-            value: Const::WordSet(vec![1, 2]),
+            value: Const::WordSet(vec![1, 2].into()),
         },
         FilterPredicate::Compare {
             field: f.into(),
@@ -507,7 +507,7 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
             vec![FilterPredicate::Compare {
                 field: FieldId(0).into(),
                 op: WordCmp::Eq,
-                value: Const::WordSet(vec![0, 3]),
+                value: Const::WordSet(vec![0, 3].into()),
             }],
             vec![0, 3],
         ),
@@ -536,17 +536,10 @@ fn parsed_evaluator_agrees_with_the_pinned_extension_id_sets() {
                 .iter()
                 .all(crate::image::view::is_prepare_resolvable)
         );
-        let generation = GenerationHandle::new(GenerationState::new(
-            CacheGeneration::initial(),
-            CacheLedger::unbounded(),
-        ));
+        let generation = GenerationHandle::new(GenerationState::new(CacheGeneration::initial()));
         assert_eq!(
-            surviving_ids(
-                schema.relation(relation),
-                &original,
-                generation.text_eq(None),
-            )
-            .expect("numeric closed rows do not consult TextEq"),
+            surviving_ids(schema.relation(relation), &original, generation.text_eq(),)
+                .expect("numeric closed rows do not consult TextEq"),
             expected
         );
     }
@@ -866,7 +859,11 @@ fn the_folded_picture_prints_handles_at_the_id_position() {
         "Kind{id == Kind(9?)}"
     );
     assert_eq!(
-        folded_picture(&schema, relation, &[eq_id(Const::WordSet(vec![0, 2]))]),
+        folded_picture(
+            &schema,
+            relation,
+            &[eq_id(Const::WordSet(vec![0, 2].into()))]
+        ),
         "Kind{id ∈ {A, C}}"
     );
 

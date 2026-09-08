@@ -123,7 +123,7 @@ pub fn scorecard() -> Vec<Cell> {
             Regime::ColdOpen,
             Gate::AppFast,
             "same verified results as warm",
-            &["open work_units", "bytes decoded", "peak RSS"],
+            &["open allocations", "bytes decoded", "peak RSS"],
             "activation plus first read is counted; a per-user database is not \
              evaluated only after all users are warm",
         ),

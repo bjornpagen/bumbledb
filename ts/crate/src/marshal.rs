@@ -11,11 +11,10 @@ use bumbledb::schema::{
     StatementDescriptor, ValueType, Weight,
 };
 use bumbledb::{
-    AllenMask, AnswerValue, Answers, Atom, AtomSource, CmpOp, Comparison, ConditionTree, F64,
-    FieldId, FindTerm, FixedIntervalElement, FoldOp, HeadOp, HeadTerm, Interior, InteriorId,
-    Interval, Manifest, NonEmpty, ParamId, Query, Rec, RecRule, RecStep, RelationId,
-    RenderedViolation, Rule, ScalarExpr, SchemaDescriptor, SchemaSpec, StatementId, StatementKind,
-    Term, Uuid, Value, VarId,
+    AllenMask, AnswerValue, Atom, AtomSource, CmpOp, Comparison, ConditionTree, F64, FieldId,
+    FindTerm, FixedIntervalElement, FoldOp, HeadOp, HeadTerm, Interior, InteriorId, Interval,
+    Manifest, NonEmpty, ParamId, Query, Rec, RecRule, RecStep, RelationId, RenderedViolation, Rule,
+    ScalarExpr, SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Uuid, Value, VarId,
 };
 use napi::bindgen_prelude::{
     Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
@@ -23,6 +22,26 @@ use napi::bindgen_prelude::{
 use napi::{Unknown, ValueType as JsType, sys};
 
 use crate::tags;
+
+/// LMDB/file measurements, not process heap or mapped-page residency.
+pub(crate) fn storage_report<'env>(
+    env: &'env Env,
+    report: &bumbledb::store::MapReport,
+) -> napi::Result<Object<'env>> {
+    let mut wire = Object::new(env)?;
+    wire.set("virtualMapBytes", BigInt::from(report.virtual_map_bytes))?;
+    wire.set(
+        "populatedFileBytes",
+        BigInt::from(report.populated_file_bytes),
+    )?;
+    wire.set("nonFreePageBytes", BigInt::from(report.non_free_page_bytes))?;
+    // An unavailable disk-block count is unknown, never a file-length proxy.
+    wire.set(
+        "allocatedDiskBytes",
+        report.allocated_disk_bytes.map(BigInt::from),
+    )?;
+    Ok(wire)
+}
 
 pub(crate) fn err(message: String) -> napi::Error {
     napi::Error::from_reason(message)
@@ -1325,36 +1344,22 @@ fn allocation_error(_: std::collections::TryReserveError) -> crate::runtime::Run
     }
 }
 
-/// Called only after the destination's complete capacity has been admitted.
+/// Reserve the final destination once; no result-sized staging owner.
 pub(crate) fn output_vec<T>(len: usize) -> Result<Vec<T>, crate::runtime::RuntimeError> {
     let mut values = Vec::new();
     values.try_reserve_exact(len).map_err(allocation_error)?;
     Ok(values)
 }
 
-fn value_out_from_answer(value: AnswerValue<'_>) -> Result<ValueOut, crate::runtime::RuntimeError> {
-    Ok(match value {
+fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
+    match value {
         AnswerValue::Bool(v) => ValueOut::Bool(v),
         AnswerValue::U64(v) => ValueOut::U64(v),
         AnswerValue::I64(v) => ValueOut::I64(v),
         AnswerValue::F64(v) => ValueOut::F64(v),
-        AnswerValue::String(v) => {
-            let mut text = String::new();
-            text.try_reserve_exact(v.len()).map_err(allocation_error)?;
-            text.push_str(v);
-            ValueOut::Text(text)
-        }
-        AnswerValue::Uuid(v) => {
-            let mut text = String::new();
-            text.try_reserve_exact(36).map_err(allocation_error)?;
-            text.push_str(v.hyphenated().encode_lower(&mut Uuid::encode_buffer()));
-            ValueOut::Uuid(text)
-        }
-        AnswerValue::FixedBytes(v) => {
-            let mut bytes = output_vec(v.len())?;
-            bytes.extend_from_slice(v);
-            ValueOut::Bytes(bytes)
-        }
+        AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
+        AnswerValue::Uuid(v) => ValueOut::Uuid(uuid_text(v)),
+        AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_owned()),
         AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
             start: v.start(),
             end: v.end(),
@@ -1367,7 +1372,7 @@ fn value_out_from_answer(value: AnswerValue<'_>) -> Result<ValueOut, crate::runt
             start: v.start(),
             end: v.end(),
         },
-    })
+    }
 }
 
 fn borrowed_value(value: &Value) -> AnswerValue<'_> {
@@ -1385,91 +1390,74 @@ fn borrowed_value(value: &Value) -> AnswerValue<'_> {
     }
 }
 
-fn cell_allocation_bytes(value: AnswerValue<'_>) -> u64 {
-    size_of::<ValueOut>() as u64
-        + match value {
-            AnswerValue::String(text) => text.len() as u64,
-            AnswerValue::FixedBytes(bytes) => bytes.len() as u64,
-            AnswerValue::Uuid(_) => 36,
-            _ => 0,
-        }
-}
-
-pub(crate) fn row_out_charged(
+pub(crate) fn queued_row(
     work: &bumbledb::work::WorkContext,
     row: &bumbledb::canonical::DecodedRow,
 ) -> Result<crate::runtime::QueuedRow, crate::runtime::RuntimeError> {
-    let mut charge = work.reserve(bumbledb::work::ByteKind::Result, 0)?;
-    let values = row_out(work, row, &mut charge)?;
-    Ok(crate::runtime::QueuedRow { values, charge })
+    Ok(crate::runtime::QueuedRow {
+        values: row_out(work, row)?,
+    })
 }
 
-/// Grow the destination reservation before allocating; the borrowed decoded
-/// row stays charged until this one-copy conversion is complete.
+/// Convert each borrowed cell directly into its final native owner.
 pub(crate) fn row_out(
     work: &bumbledb::work::WorkContext,
     row: &bumbledb::canonical::DecodedRow,
-    charge: &mut bumbledb::work::ByteReservation,
 ) -> Result<Vec<ValueOut>, crate::runtime::RuntimeError> {
-    let mut bytes = charge.bytes();
-    for value in row {
-        work.step(1)?;
-        bytes = bytes
-            .checked_add(cell_allocation_bytes(borrowed_value(value)))
-            .ok_or_else(|| {
-                crate::runtime::session::engine_error(&bumbledb::Error::ResultBytesOverflow)
-            })?;
-    }
-    charge.grow_to(bytes)?;
+    work.checkpoint()?;
     let mut values = output_vec(row.len())?;
     for value in row {
-        work.step(1)?;
-        values.push(value_out_from_answer(borrowed_value(value))?);
+        work.checkpoint()?;
+        values.push(value_out_from_answer(borrowed_value(value)));
     }
+    work.checkpoint()?;
     Ok(values)
 }
 
-/// Bound every cell's string/byte work, then report the page charge.
-pub(crate) fn answers_out_bytes(
-    work: &bumbledb::work::WorkContext,
-    answers: &Answers,
-) -> Result<u64, bumbledb::work::WorkError> {
-    let mut bytes = (answers.len() as u64).saturating_mul(size_of::<Vec<ValueOut>>() as u64);
-    for row in 0..answers.len() {
-        for column in 0..answers.arity() {
-            work.step(1)?;
-            let cell = answers.get(row, column);
-            let size = cell_allocation_bytes(cell);
-            match cell {
-                AnswerValue::String(text) => work.input(text.len() as u64)?,
-                AnswerValue::FixedBytes(payload) => work.input(payload.len() as u64)?,
-                _ => {}
-            }
-            bytes = bytes.saturating_add(size);
-        }
-    }
-    Ok(bytes)
+fn result_work_error(error: bumbledb::work::WorkError) -> bumbledb::Error {
+    bumbledb::Error::Store(Box::new(bumbledb::store::StoreError::Work(error)))
 }
 
-/// Reserve overlapping result charge, then copy. Never convert first.
-pub(crate) fn answers_out_charged(
+fn result_allocation_error(_: std::collections::TryReserveError) -> bumbledb::Error {
+    result_work_error(bumbledb::work::WorkError::Allocation)
+}
+
+/// Collection reserves its known row count. Page delivery grows only its
+/// bounded batch; neither path materializes another Answers.
+pub(crate) fn result_rows(
     work: &bumbledb::work::WorkContext,
-    answers: &Answers,
-) -> Result<(Vec<Vec<ValueOut>>, bumbledb::work::ByteReservation), crate::runtime::RuntimeError> {
-    let bytes = answers_out_bytes(work, answers).map_err(crate::runtime::RuntimeError::from)?;
-    let charge = work
-        .reserve(bumbledb::work::ByteKind::Result, bytes)
-        .map_err(crate::runtime::RuntimeError::from)?;
-    let mut rows = output_vec(answers.len())?;
-    for row in 0..answers.len() {
-        let mut values = output_vec(answers.arity())?;
-        for column in 0..answers.arity() {
-            work.step(1)?;
-            values.push(value_out_from_answer(answers.get(row, column))?);
-        }
-        rows.push(values);
+    capacity: usize,
+) -> Result<crate::runtime::QueuedOutput, bumbledb::Error> {
+    work.checkpoint().map_err(result_work_error)?;
+    let mut rows = Vec::new();
+    rows.try_reserve_exact(capacity)
+        .map_err(result_allocation_error)?;
+    Ok(crate::runtime::QueuedOutput { rows })
+}
+
+/// One pass through borrowed values into final worker-to-JavaScript output.
+/// Text/blob copies are required by the JS ownership boundary, not sizing.
+pub(crate) fn push_result_row(
+    work: &bumbledb::work::WorkContext,
+    output: &mut crate::runtime::QueuedOutput,
+    row: &bumbledb::ResultRow<'_>,
+) -> Result<(), bumbledb::Error> {
+    work.checkpoint().map_err(result_work_error)?;
+    output
+        .rows
+        .try_reserve(1)
+        .map_err(result_allocation_error)?;
+    let mut values = Vec::new();
+    values
+        .try_reserve_exact(row.arity())
+        .map_err(result_allocation_error)?;
+    for value in row.values() {
+        work.checkpoint().map_err(result_work_error)?;
+        values.push(value_out_from_answer(value));
     }
-    Ok((rows, charge))
+    work.checkpoint().map_err(result_work_error)?;
+    output.rows.push(values);
+    Ok(())
 }
 
 fn statement_kind_out(kind: StatementKind) -> &'static str {

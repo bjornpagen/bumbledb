@@ -179,7 +179,7 @@ fn compact_attempt(dest: &Store, source: &OwnedSnapshot, work: &WorkContext) -> 
     {
         let (key, value) = entry.map_err(StoreError::from_heed)?;
         if key.first() == Some(&keys::TAG_ROW) {
-            work.rows(1)?;
+            work.checkpoint()?;
         }
         append_entry(*inner.data, &mut gated.txn, key, value, work)?;
     }
@@ -217,11 +217,11 @@ fn append_entry<C>(
     work: &WorkContext,
 ) -> StoreResult<()> {
     use std::io::Write as _;
-    work.step(1)?;
-    work.input(key.len() as u64)?;
-    work.input(value.len() as u64)?;
+    work.checkpoint()?;
+    work.checkpoint()?;
+    work.checkpoint()?;
     if value.len() <= rows::BYTE_QUANTUM {
-        work.step(value.len() as u64)?;
+        work.checkpoint()?;
         return db
             .put_with_flags(txn, PutFlags::APPEND, key, value)
             .map_err(super::store_env::map_txn_error);
@@ -230,11 +230,13 @@ fn append_entry<C>(
     let result =
         db.get_or_put_reserved_with_flags(txn, PutFlags::APPEND, key, value.len(), |space| {
             for chunk in value.chunks(rows::BYTE_QUANTUM) {
-                work.step(chunk.len() as u64).map_err(|error| {
+                work.checkpoint().map_err(|error| {
                     stopped = Some(error);
                     std::io::Error::from(std::io::ErrorKind::Interrupted)
                 })?;
                 space.write_all(chunk)?;
+                #[cfg(test)]
+                cancellation_test::copied_overflow_chunk(work);
             }
             Ok(())
         });
@@ -268,7 +270,7 @@ fn copy_attempt(
             .prefix_iter(source_txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, row) = entry.map_err(StoreError::from_heed)?;
             let (relation, locator) = source.store_inner().keys.decode_row(key)?;
             if locator.home().len() != source.store_inner().det.home_width(relation) {
@@ -289,16 +291,16 @@ fn copy_attempt(
             .prefix_iter(source_txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, value) = entry.map_err(StoreError::from_heed)?;
-            work.input(value.len() as u64)?;
+            work.checkpoint()?;
             inner
                 .meta
                 .put(&mut gated.txn, key, value)
                 .map_err(super::store_env::map_txn_error)?;
         }
         if let Some(attachment) = source.attachment()? {
-            work.input(attachment.len() as u64)?;
+            work.checkpoint()?;
             inner
                 .meta
                 .put(&mut gated.txn, K_ATTACHMENT, attachment)
@@ -314,7 +316,7 @@ fn copy_attempt(
             .prefix_iter(source_txn, prefix.as_slice())
             .map_err(StoreError::from_heed)?;
         for entry in range {
-            work.step(1)?;
+            work.checkpoint()?;
             let (key, value) = entry.map_err(StoreError::from_heed)?;
             inner
                 .meta
@@ -411,4 +413,52 @@ fn refuse_relation_versions(txn: &RoTxn<'_, heed::AnyTls>, dest: &Store) -> Stor
         });
     }
     Ok(())
+}
+
+/// Deterministic interruption of the real reserved-copy path. No policy or
+/// branch is added to non-test builds, and the guard resets even on panic.
+#[cfg(test)]
+pub(super) mod cancellation_test {
+    use std::cell::Cell;
+
+    std::thread_local! {
+        static LEFT: Cell<Option<usize>> = const { Cell::new(None) };
+        static COPIED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub struct Guard;
+
+    pub fn after_overflow_chunks(chunks: usize) -> Guard {
+        assert!(chunks > 0);
+        LEFT.with(|left| assert!(left.replace(Some(chunks)).is_none()));
+        COPIED.set(0);
+        Guard
+    }
+
+    impl Guard {
+        pub fn copied() -> usize {
+            COPIED.get()
+        }
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            LEFT.set(None);
+            COPIED.set(0);
+        }
+    }
+
+    pub(super) fn copied_overflow_chunk(work: &crate::work::WorkContext) {
+        LEFT.with(|left| {
+            if let Some(remaining) = left.get() {
+                COPIED.set(COPIED.get() + 1);
+                if remaining == 1 {
+                    left.set(None);
+                    work.cancel();
+                } else {
+                    left.set(Some(remaining - 1));
+                }
+            }
+        });
+    }
 }

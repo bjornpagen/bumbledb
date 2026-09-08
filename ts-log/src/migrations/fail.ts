@@ -1,9 +1,7 @@
 /**
  * Migration failures use the shared `DbError | ProtocolError` vocabulary.
  * Reasons carry bounded structured detail; consumers never parse messages.
- * Resource-budget refusals use the core `DbError` `ResourceLimit` reason.
  */
-import { DbError } from "@bjornpagen/bumbledb"
 import { ProtocolError } from "#errors.ts"
 
 /** One actionable generation refusal: what is required, about which subject. */
@@ -71,13 +69,5 @@ export function repository(operation: string, path: string, detail: string): Pro
 	return new ProtocolError({
 		operation,
 		reason: { _tag: "MigrationRepository", path: boundedDetail(path), detail: boundedDetail(detail) }
-	})
-}
-
-/** A generation/seed budget refusal on the core resource reason. */
-export function budget(operation: string, dimension: string, used: bigint, requested: bigint, limit: bigint): DbError {
-	return new DbError({
-		operation,
-		reason: { _tag: "ResourceLimit", dimension, used, requested, limit }
 	})
 }

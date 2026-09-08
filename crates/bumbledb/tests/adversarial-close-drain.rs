@@ -4,8 +4,6 @@
 //! RUN-04/RUN-05 shape, E-SNAPSHOT/E-DURABILITY, G11/G12). The Node-side
 //! twins live in `ts/test/adversarial-boundary.test.ts`; this file proves
 //! the underlying Rust ownership truth those wrappers report.
-//!
-//! Verification: `NotRun` (F2 authors, does not execute).
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -14,7 +12,7 @@ use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, RelationId, SchemaDescriptor, ValueType,
 };
 use bumbledb::store::CloseReport;
-use bumbledb::{Db, Error, ExecutionPolicy, Value, WorkContext};
+use bumbledb::{Db, Error, Value, WorkContext};
 
 mod common;
 
@@ -33,17 +31,7 @@ fn theory() -> SchemaDescriptor {
 }
 
 fn work() -> WorkContext {
-    ExecutionPolicy {
-        input_bytes: 100_000_000,
-        working_bytes: 100_000_000,
-        scratch_bytes: 100_000_000,
-        result_bytes: 100_000_000,
-        rows: 10_000_000,
-        work_units: 1_000_000_000,
-        timeout: Duration::from_secs(600),
-    }
-    .start()
-    .expect("work budget starts")
+    WorkContext::new()
 }
 
 fn scan_ids(db: &Db<SchemaDescriptor>) -> Vec<u64> {
@@ -120,17 +108,10 @@ fn close_under_load_reports_reality_then_drains_and_releases() {
         entered_rx
             .recv_timeout(Duration::from_secs(30))
             .expect("reader entered");
-        let close_work = ExecutionPolicy {
-            timeout: Duration::from_millis(20),
-            input_bytes: 1 << 20,
-            working_bytes: 1 << 20,
-            scratch_bytes: 1 << 20,
-            result_bytes: 1 << 20,
-            rows: 1 << 20,
-            work_units: 1 << 20,
-        }
-        .start()
-        .expect("close deadline");
+        let close_work = WorkContext::new();
+        // Ask close to stop waiting while the reader is deliberately held.
+        // There is no hidden deadline in an ordinary WorkContext.
+        close_work.cancel();
         match db.integration_store().close(&close_work) {
             CloseReport::Incomplete {
                 live_transactions, ..

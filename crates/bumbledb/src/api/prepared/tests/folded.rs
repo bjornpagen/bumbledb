@@ -150,7 +150,7 @@ fn introspection_reports_the_fold_with_its_filters_and_handles() {
     let mut prepared = store.prepare(&fold_query(20)).expect("prepare");
     let (_, report) = store
         .db
-        .read(crate::api::db::test_operation().unwrap(), |instance| {
+        .read(crate::api::db::test_operation(), |instance| {
             prepared.introspect(instance, &[])
         })
         .expect("introspect");

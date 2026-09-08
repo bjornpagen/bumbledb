@@ -21,14 +21,13 @@ pub(super) fn run_join<S, C, I>(
     executor: &mut Executor,
     bindings: &mut Bindings,
     resolved_filters: &[Vec<FilterPredicate>],
-    resolved_selections: &[Vec<Vec<u64>>],
+    resolved_selections: &[Vec<crate::image::view::ResolvedWords>],
     memo: &mut ViewMemo,
     derived_images: &super::reach::OccImages,
     derived_retired: &mut Vec<Vec<u32>>,
-    nonresident: &mut Option<crate::image::NonresidentTextStore>,
     sink: &mut S,
     counters: &mut C,
-) -> Result<bool>
+) -> Result<()>
 where
     S: crate::exec::run::Sink,
     C: crate::exec::run::Counters,
@@ -77,7 +76,7 @@ where
             {
                 buffer = pooled;
             }
-            let eq = image.generation().text_eq(nonresident.as_ref());
+            let eq = image.generation().text_eq();
             let view = apply(image, &resolved_filters[occ_idx], &[], buffer, eq)?;
             let old = memo.colts[occ_idx].reset(view);
             *memo.spare_mut(occ_idx) = old.recycle();
@@ -127,8 +126,8 @@ where
         // Prefer an already shared full image. Otherwise an indexed bucket
         // can feed the same COLT, but its coverage belongs to this query's
         // selection-keyed memo, never the relation cache or source dedup.
-        let (admitted, selected) = if let Some(image) = images.peek(schema, relation)? {
-            (crate::image::ResidentAdmit::Ready(image), false)
+        let (image, selected) = if let Some(image) = images.peek(schema, relation)? {
+            (image, false)
         } else if memo.partial_capacity_exhausted(occ_idx, epoch) {
             (images.image(schema, relation)?, false)
         } else if let Some(image) = images.selection_image(
@@ -141,15 +140,8 @@ where
         } else {
             (images.image(schema, relation)?, false)
         };
-        let image = match admitted {
-            crate::image::ResidentAdmit::Ready(image) => image,
-            crate::image::ResidentAdmit::BeyondMemory(exhausted) => {
-                super::text::install(nonresident, &exhausted, work)?;
-                return Ok(false);
-            }
-        };
         let buffer = std::mem::take(memo.spare_mut(occ_idx));
-        let eq = image.generation().text_eq(nonresident.as_ref());
+        let eq = image.generation().text_eq();
         let view = apply(&image, &resolved_filters[occ_idx], &[], buffer, eq)?;
         let old = memo.colts[occ_idx].reset(view);
         *memo.spare_mut(occ_idx) = old.recycle();
@@ -176,14 +168,14 @@ where
             .map_err(crate::api::prepared::source::work_error)?;
         let hit = selected.is_some();
         if !hit {
-            return Ok(true);
+            return Ok(());
         }
     }
     flush_join_work(work, &mut pending_steps)?;
 
     executor.execute(plan, &mut memo.colts, bindings, sink, counters)?;
     flush_join_work(work, &mut pending_steps)?;
-    Ok(true)
+    Ok(())
 }
 
 fn checkpoint_join_work(
@@ -201,7 +193,7 @@ fn flush_join_work(work: &crate::work::WorkContext, pending: &mut u32) -> crate:
     if *pending == 0 {
         return Ok(());
     }
-    work.step(u64::from(*pending))
+    work.checkpoint()
         .map_err(crate::api::prepared::source::work_error)?;
     *pending = 0;
     Ok(())

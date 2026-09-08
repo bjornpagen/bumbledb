@@ -11,10 +11,10 @@ Do not treat this example as a qualified one-command hosted deployment.
 
 ## Local setup
 
-The example pins matching `1.0.1` packages and Effect `4.0.0-rc.112`.
-Registry installation requires the npm publication step; the GitHub release
-also carries the exact staged tarballs. The repository's packed-consumer
-check installs those package shapes in isolation before publication.
+This example follows the development SDKs and pins Effect `4.0.0-rc.112`.
+Use matching locally staged SDK packages; the published packages may expose
+an earlier API. The repository's packed-consumer check installs the current
+packages in isolation without publishing anything.
 
 After installing the matching packages, from this directory:
 
@@ -33,8 +33,9 @@ Start the development server with `SESSION_SECRET` set to a secret of at
 least 32 characters. Authentication uses the signed bearer-token format in
 `src/auth.ts`; wire a trusted authentication service to that boundary.
 Tenant bindings come from the verified registry, never arbitrary request
-paths. The policies in `src/db/runtime-policy.ts` are example budgets to size
-for your deployment, not measured universal defaults.
+paths. `src/db/runtime-policy.ts` sets process-wide scheduling overrides
+and the open-tenant limit. Database allocation is unrestricted; request
+aborts cancel the Effect scope through the framework boundary.
 
 ## Code map
 
@@ -54,8 +55,12 @@ for your deployment, not measured universal defaults.
 
 `scripts/packed-import.sh --host-only` from the repository root creates a
 temporary installed-package copy, generates its migration chain, and runs
-`test/routes.test.ts` and `test/specimens.test.ts`. These cover local retries,
-tenant isolation, witnessed updates, generated input, and public API use.
+the complete TypeScript check, `test/routes.test.ts`, `test/specimens.test.ts`,
+and the Next.js production build. These cover local retries, tenant isolation,
+witnessed updates, generated input, runtime error responses, and public API use.
+Dependency declarations remain checked. The pinned Alchemy patch corrects an
+optional-attribute declaration to admit its existing deleting-state variant;
+it changes no runtime code.
 
 `test/deployed.test.ts` requires `DEPLOYED_URL` and `DEPLOYED_TOKEN`.
 Missing credentials are not successful deployment evidence. A green local

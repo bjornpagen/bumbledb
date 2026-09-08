@@ -1026,11 +1026,6 @@ impl fmt::Display for Error {
                  bound is [s, ∞), which has no finite measure; the commit refuses whole",
                 statement.0
             ),
-            Self::DerivedBudgetExceeded { rounds, tuples } => write!(
-                f,
-                "derived-tuples budget exceeded: {rounds} rec rounds and \
-                 {tuples} derived tuples — bound the closure"
-            ),
             Self::Overflow(super::OverflowKind::Aggregate { find }) => {
                 write!(f, "find {find}: aggregate result exceeds its type")
             }

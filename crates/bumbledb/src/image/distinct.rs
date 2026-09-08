@@ -5,7 +5,7 @@ use super::{ColumnView, RelationImage};
 use crate::api::prepared::source::work_error;
 use crate::error::{Error, Result};
 use crate::exec::sink::STEP_QUANTUM;
-use crate::work::{ByteKind, ByteReservation, WorkContext};
+use crate::work::WorkContext;
 
 impl RelationImage {
     /// Compute once on demand. Concurrent callers may compute independently:
@@ -16,7 +16,7 @@ impl RelationImage {
         if let Some(&count) = cached.get() {
             return Ok(count);
         }
-        let mut budget = CountWork { work, pending: 0 };
+        let mut budget = CountWork::new(work);
         let count = match self.column(column) {
             ColumnView::Words([]) => 0,
             ColumnView::Words(words) => {
@@ -31,7 +31,7 @@ impl RelationImage {
             ColumnView::Bytes(bytes) => {
                 let mut mask = [0u64; 4];
                 for chunk in bytes.chunks(STEP_QUANTUM as usize) {
-                    work.step(chunk.len() as u64).map_err(work_error)?;
+                    work.checkpoint().map_err(work_error)?;
                     for &byte in chunk {
                         mask[usize::from(byte >> 6)] |= 1 << (byte & 63);
                     }
@@ -50,13 +50,31 @@ impl RelationImage {
 struct CountWork<'a> {
     work: &'a WorkContext,
     pending: u32,
+    #[cfg(test)]
+    cancel_after: Option<u32>,
 }
 
-impl CountWork<'_> {
+impl<'a> CountWork<'a> {
+    fn new(work: &'a WorkContext) -> Self {
+        Self {
+            work,
+            pending: 0,
+            #[cfg(test)]
+            cancel_after: None,
+        }
+    }
+
     // Input words, rehash slots and collision probes all count, so skewed
     // values cannot hide an unbounded probe chain between checkpoints.
     #[inline]
     fn note(&mut self) -> Result<()> {
+        #[cfg(test)]
+        if let Some(remaining) = &mut self.cancel_after {
+            *remaining = remaining.saturating_sub(1);
+            if *remaining == 0 {
+                self.work.cancel();
+            }
+        }
         self.pending += 1;
         if self.pending == STEP_QUANTUM {
             self.finish()?;
@@ -65,9 +83,8 @@ impl CountWork<'_> {
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.work
-            .step(u64::from(std::mem::take(&mut self.pending)))
-            .map_err(work_error)
+        self.pending = 0;
+        self.work.checkpoint().map_err(work_error)
     }
 }
 
@@ -75,7 +92,6 @@ struct WordSet {
     slots: Vec<u64>,
     len: usize,
     zero_seen: bool,
-    _charge: ByteReservation,
 }
 
 fn allocation_error() -> Error {
@@ -84,10 +100,7 @@ fn allocation_error() -> Error {
 
 impl WordSet {
     fn allocate(capacity: usize, work: &WorkContext) -> Result<Self> {
-        let bytes = capacity.checked_mul(8).ok_or_else(allocation_error)?;
-        let charge = work
-            .reserve(ByteKind::Working, bytes as u64)
-            .map_err(work_error)?;
+        work.checkpoint().map_err(work_error)?;
         let mut slots = Vec::new();
         slots
             .try_reserve_exact(capacity)
@@ -97,7 +110,6 @@ impl WordSet {
             slots,
             len: 0,
             zero_seen: false,
-            _charge: charge,
         })
     }
 
@@ -106,11 +118,8 @@ impl WordSet {
             self.zero_seen = true;
             return Ok(());
         }
-        // The measured table stays half empty. Growing keeps both allocations
-        // charged until all old slots have been scanned and the old Vec drops.
-        if self.len + 1 > self.slots.len() / 2 {
-            self.grow(budget)?;
-        }
+        // Probe before growing: a duplicate at the load boundary needs no
+        // new slot or allocation.
         self.insert_word(word, budget)
     }
 
@@ -124,6 +133,10 @@ impl WordSet {
                 return Ok(());
             }
             if slot == 0 {
+                if self.len >= self.slots.len() / 2 {
+                    self.grow(budget)?;
+                    return self.insert_word(word, budget);
+                }
                 self.slots[index] = word;
                 self.len += 1;
                 return Ok(());
@@ -139,23 +152,25 @@ impl WordSet {
             .len()
             .checked_mul(2)
             .ok_or_else(allocation_error)?;
-        let old = std::mem::replace(self, Self::allocate(doubled, budget.work)?);
-        self.zero_seen = old.zero_seen;
-        for &word in &old.slots {
+        let mut replacement = Self::allocate(doubled, budget.work)?;
+        replacement.zero_seen = self.zero_seen;
+        for &word in &self.slots {
             budget.note()?;
             if word != 0 {
-                self.insert_word(word, budget)?;
+                replacement.insert_word(word, budget)?;
             }
         }
+        budget.finish()?;
+        *self = replacement;
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::api::prepared::source::{UNBOUNDED_POLICY, unbounded_work};
+    use crate::api::prepared::source::unbounded_work;
     use crate::image::{RelationImage, TransientImage, test_generation};
-    use crate::work::{Resource, WorkError};
+    use crate::work::WorkError;
     use bumbledb_theory::schema::ValueType;
     use std::sync::Arc;
 
@@ -178,44 +193,38 @@ mod tests {
             (0..1000).map(|i| i % 17).collect(),
         ] {
             let image = image(&words);
-            let work = unbounded_work().unwrap();
+            let work = unbounded_work();
             let expected = words.iter().collect::<std::collections::HashSet<_>>().len() as u64;
             assert!(image.distincts[0].get().is_none());
+            #[cfg(feature = "alloc-counter")]
+            let before = crate::alloc_counter::snapshot();
             assert_eq!(image.distinct_count(0, &work).unwrap(), expected);
-            assert_eq!(work.used(Resource::WorkingBytes), 0);
-            let steps = work.used(Resource::WorkUnits);
-            assert_eq!(image.distinct_count(0, &work).unwrap(), expected);
+            #[cfg(feature = "alloc-counter")]
+            {
+                let after = crate::alloc_counter::snapshot();
+                assert_eq!(
+                    after.absolute.live_bytes, before.absolute.live_bytes,
+                    "statistics retain only the scalar, not their working table"
+                );
+            }
+            #[cfg(feature = "alloc-counter")]
+            let warm = crate::alloc_counter::snapshot().window;
+            for _ in 0..32 {
+                assert_eq!(image.distinct_count(0, &work).unwrap(), expected);
+            }
+            #[cfg(feature = "alloc-counter")]
             assert_eq!(
-                work.used(Resource::WorkUnits),
-                steps,
-                "cached scalar lookup"
+                crate::alloc_counter::snapshot().window,
+                warm,
+                "cached count allocates nothing"
             );
         }
     }
 
     #[test]
-    fn failures_release_scratch_and_never_publish_counts() {
+    fn cancellation_never_publishes_counts_and_also_stops_cached_reads() {
         let image = image(&(0..1000).collect::<Vec<_>>());
-        for policy in [
-            crate::work::ExecutionPolicy {
-                working_bytes: 0,
-                ..UNBOUNDED_POLICY
-            },
-            crate::work::ExecutionPolicy {
-                work_units: 1,
-                ..UNBOUNDED_POLICY
-            },
-            crate::work::ExecutionPolicy {
-                timeout: std::time::Duration::ZERO,
-                ..UNBOUNDED_POLICY
-            },
-        ] {
-            let work = policy.start().unwrap();
-            assert!(image.distinct_count(0, &work).is_err());
-            assert_eq!(work.used(Resource::WorkingBytes), 0);
-            assert!(image.distincts[0].get().is_none());
-        }
-        let work = unbounded_work().unwrap();
+        let work = unbounded_work();
         work.cancel();
         assert!(matches!(
             image.distinct_count(0, &work),
@@ -223,10 +232,7 @@ mod tests {
                 if matches!(*error, crate::storage::store::StoreError::Work(WorkError::Cancelled))
         ));
         assert!(image.distincts[0].get().is_none());
-        assert_eq!(
-            image.distinct_count(0, &unbounded_work().unwrap()).unwrap(),
-            1000
-        );
+        assert_eq!(image.distinct_count(0, &unbounded_work()).unwrap(), 1000);
         assert!(
             image.distinct_count(0, &work).is_err(),
             "even a cache hit must stop"
@@ -234,21 +240,37 @@ mod tests {
     }
 
     #[test]
-    fn growth_admits_old_and_new_tables_together() {
-        let image = image(&(1..=9).collect::<Vec<_>>());
-        let work = crate::work::ExecutionPolicy {
-            working_bytes: 16 * 8 + 32 * 8 - 1,
-            ..UNBOUNDED_POLICY
+    fn growing_statistics_release_the_old_table_and_failed_growth_leaves_it_whole() {
+        use super::{CountWork, WordSet};
+        let work = unbounded_work();
+        let mut table = WordSet::allocate(16, &work).unwrap();
+        let mut count = CountWork::new(&work);
+        for word in 1..=8 {
+            table.insert(word, &mut count).unwrap();
         }
-        .start()
-        .unwrap();
-        assert!(matches!(image.distinct_count(0, &work),
-        Err(crate::error::Error::Store(error)) if matches!(*error,
-            crate::storage::store::StoreError::Work(WorkError::Exhausted {
-                resource: Resource::WorkingBytes, used: 128, requested: 256, ..
-            }))));
-        assert_eq!(work.used(Resource::WorkingBytes), 0);
-        assert!(image.distincts[0].get().is_none());
+        #[cfg(feature = "alloc-counter")]
+        let before = crate::alloc_counter::snapshot().window;
+        table.insert(9, &mut count).unwrap();
+        #[cfg(feature = "alloc-counter")]
+        {
+            let after = crate::alloc_counter::snapshot().window;
+            assert_eq!(after.alloc_bytes - before.alloc_bytes, 32 * 8);
+            assert_eq!(after.dealloc_bytes - before.dealloc_bytes, 16 * 8);
+        }
+        assert_eq!(table.len, 9);
+        let pointer = table.slots.as_ptr();
+        work.cancel();
+        assert!(table.grow(&mut count).is_err());
+        assert_eq!(table.slots.as_ptr(), pointer);
+        let mut words: Vec<_> = table
+            .slots
+            .iter()
+            .copied()
+            .filter(|word| *word != 0)
+            .collect();
+        words.sort_unstable();
+        assert_eq!(words, (1..=9).collect::<Vec<_>>());
+        assert!(WordSet::allocate(usize::MAX, &unbounded_work()).is_err());
     }
 
     #[test]
@@ -260,10 +282,9 @@ mod tests {
             let handles: Vec<_> = (0..4)
                 .map(|_| {
                     scope.spawn(|| {
-                        let work = unbounded_work().unwrap();
+                        let work = unbounded_work();
                         barrier.wait();
                         assert_eq!(image.distinct_count(0, &work).unwrap(), 37);
-                        assert_eq!(work.used(Resource::WorkingBytes), 0);
                     })
                 })
                 .collect();
@@ -275,7 +296,62 @@ mod tests {
     }
 
     #[test]
-    fn collision_probes_are_bounded_work_too() {
+    fn duplicate_statistics_at_half_capacity_do_not_grow_or_allocate() {
+        use super::{CountWork, WordSet};
+        let work = unbounded_work();
+        let mut table = WordSet::allocate(16, &work).unwrap();
+        let mut count = CountWork::new(&work);
+        for word in 0..=8 {
+            table.insert(word, &mut count).unwrap();
+        }
+        let pointer = table.slots.as_ptr();
+        #[cfg(feature = "alloc-counter")]
+        let before = crate::alloc_counter::snapshot().window;
+        for word in (0..=8).cycle().take(4096) {
+            table.insert(word, &mut count).unwrap();
+        }
+        #[cfg(feature = "alloc-counter")]
+        assert_eq!(crate::alloc_counter::snapshot().window, before);
+        assert_eq!(table.slots.len(), 16);
+        assert_eq!(table.slots.as_ptr(), pointer);
+        assert_eq!(table.len, 8);
+        assert!(table.zero_seen);
+    }
+
+    #[test]
+    fn cancellation_during_statistics_rehash_preserves_the_original_set() {
+        use super::{CountWork, WordSet};
+        let work = unbounded_work();
+        let mut table = WordSet::allocate(64, &work).unwrap();
+        let mut count = CountWork::new(&work);
+        for word in 0..=32 {
+            table.insert(word, &mut count).unwrap();
+        }
+        let expected = table.slots.clone();
+        let pointer = table.slots.as_ptr();
+        // Cancel after entering rehash, not at its allocation checkpoint.
+        count.pending = super::STEP_QUANTUM - 8;
+        count.cancel_after = Some(8);
+        assert!(table.grow(&mut count).is_err());
+        assert_eq!(count.cancel_after, Some(0));
+        assert_eq!(table.slots.as_ptr(), pointer);
+        assert_eq!(table.slots, expected);
+        assert_eq!(table.len, 32);
+        assert!(table.zero_seen);
+        // A fresh operation can still grow the intact set.
+        let retry = unbounded_work();
+        let mut count = CountWork::new(&retry);
+        table.insert(33, &mut count).unwrap();
+        assert_eq!(table.len, 33);
+        assert!(table.zero_seen);
+        let mut actual: Vec<_> = table.slots.iter().copied().filter(|&v| v != 0).collect();
+        actual.sort_unstable();
+        assert!(actual.into_iter().eq(1..=33));
+    }
+
+    #[test]
+    fn collision_probes_are_exact_and_observe_cancellation_within_a_quantum() {
+        use super::{CountWork, WordSet};
         let words: Vec<_> = (1..)
             .filter(|word| {
                 crate::exec::swar::hash_words(std::slice::from_ref(word)).trailing_zeros() >= 10
@@ -283,22 +359,21 @@ mod tests {
             .take(30)
             .collect();
         let image = image(&words);
-        let work = crate::work::ExecutionPolicy {
-            work_units: 256,
-            ..UNBOUNDED_POLICY
-        }
-        .start()
-        .unwrap();
-        assert!(matches!(image.distinct_count(0, &work),
-        Err(crate::error::Error::Store(error)) if matches!(*error,
-            crate::storage::store::StoreError::Work(WorkError::Exhausted {
-                resource: Resource::WorkUnits, ..
-            }))));
-        assert!(image.distincts[0].get().is_none());
-        assert_eq!(work.used(Resource::WorkingBytes), 0);
+        assert_eq!(image.distinct_count(0, &unbounded_work()).unwrap(), 30);
+
+        let work = unbounded_work();
+        let mut table = WordSet::allocate(16, &work).unwrap();
+        let mut count = CountWork::new(&work);
+        table.insert(words[0], &mut count).unwrap();
+        count.pending = super::STEP_QUANTUM - 1;
+        work.cancel();
+        let error = table.insert(words[1], &mut count).unwrap_err();
+        assert!(matches!(error, crate::Error::Store(error) if matches!(
+            error.as_ref(), crate::storage::store::StoreError::Work(WorkError::Cancelled)
+        )));
         assert_eq!(
-            image.distinct_count(0, &unbounded_work().unwrap()).unwrap(),
-            30
+            table.len, 1,
+            "a cancelled collision probe publishes no new slot"
         );
     }
 
@@ -306,7 +381,7 @@ mod tests {
     fn multiword_and_byte_counts_reset_on_reuse_growth_and_failed_drain() {
         let fields = [ValueType::Uuid, ValueType::Bool];
         let generation = test_generation();
-        let work = unbounded_work().unwrap();
+        let work = unbounded_work();
         let mut buffer = TransientImage::default();
         let rows = [[0, 1, 0], [0, 2, 1], [7, 1, 1]];
         let first = buffer.refill(&fields, 3, &generation, rows.iter().map(<[_; 3]>::as_slice));

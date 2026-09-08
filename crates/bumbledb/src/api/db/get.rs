@@ -116,7 +116,7 @@ pub(super) fn find_snapshot_row<'s>(
     let mut hit = None;
     snapshot
         .visit_projection(key.id, &projected, work, &mut |_id, bytes| {
-            work.step(1)?;
+            work.checkpoint()?;
             let decoded = crate::canonical::decode(fields, bytes, work)?;
             if projection_matches(decoded.values(), projection, key_values) {
                 hit = Some(bytes);
@@ -144,7 +144,7 @@ pub(super) fn find_snapshot_row_scan<'s>(
         .rows(relation)
         .map_err(crate::error::Error::from_store)?;
     for entry in iterator {
-        work.step(1).map_err(store_work)?;
+        work.checkpoint().map_err(store_work)?;
         let (_, row) = entry.map_err(crate::error::Error::from_store)?;
         let decoded = crate::canonical::decode(fields, row, work).map_err(super::tx::row_error)?;
         if projection_matches(decoded.values(), projection, key_values) {
@@ -175,7 +175,7 @@ pub(super) enum KeyedRowHit<'a> {
     Store(&'a [u8]),
 }
 
-/// Keyed lookup under the caller's work allowance — the native runtime
+/// Keyed lookup with the caller's cancellation context — the native runtime
 /// threads each wire operation's bounded [`WorkContext`] through here so
 /// determinant projection, bucket walks and row decode observe the
 /// operation's policy, not a long-lived session lease's embedded ledger.

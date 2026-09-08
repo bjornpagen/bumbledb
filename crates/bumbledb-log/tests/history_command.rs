@@ -1,16 +1,10 @@
 //! Actual core `ChangeSet` ownership/decoder through the successor log envelope.
 //! This is canonical command qualification, not a complete history authority.
 
-use std::time::Duration;
-
 use bumbledb::schema::{
     FieldDescriptor, RelationDescriptor, SchemaDescriptor, ValidateDescriptor as _, ValueType,
 };
-use bumbledb::work::Resource;
-use bumbledb::{
-    ChangeError, ChangeSet, ExecutionPolicy, RelationId, Schema, Uuid, Value, WorkContext,
-    WorkError,
-};
+use bumbledb::{ChangeError, ChangeSet, RelationId, Schema, Uuid, Value, WorkContext, WorkError};
 use bumbledb_log::history::command::{
     Command, CommandError, CommandMetadata, FrameError, Limits, decode_command, encode_command,
 };
@@ -42,20 +36,8 @@ fn schema(name: &str, value_type: ValueType) -> Schema {
     .unwrap()
 }
 
-fn policy() -> ExecutionPolicy {
-    ExecutionPolicy {
-        input_bytes: 1_000_000,
-        working_bytes: 1_000_000,
-        scratch_bytes: 0,
-        result_bytes: 0,
-        rows: 10_000,
-        work_units: 1_000_000,
-        timeout: Duration::from_secs(30),
-    }
-}
-
 fn work() -> WorkContext {
-    policy().start().unwrap()
+    WorkContext::new()
 }
 
 fn metadata(schema: &Schema) -> CommandMetadata {
@@ -84,40 +66,39 @@ fn numbers(schema: &Schema, context: &WorkContext, reverse: bool) -> ChangeSet {
 }
 
 #[test]
-fn sealed_command_retains_exact_core_allocation_and_live_memory_charge() {
+fn sealed_command_shares_the_core_allocation_and_frees_it_after_the_last_clone() {
     let schema = schema("Number", ValueType::U64);
+    let metadata = metadata(&schema);
     let source_work = work();
+    let seal_work = work();
+    #[cfg(feature = "alloc-counter")]
+    let baseline = bumbledb::alloc_counter::snapshot().absolute.live_bytes;
     let changes = numbers(&schema, &source_work, false);
     let native_bytes = changes.as_bytes().as_ptr();
-    let charged = source_work.used(Resource::WorkingBytes);
-    assert!(charged >= changes.as_bytes().len() as u64);
-    let seal_work = work();
-    let command = Command::seal(
-        metadata(&schema),
-        changes.clone(),
-        CommandResult::empty(),
-        LIMITS,
-        &seal_work,
-    )
-    .unwrap();
+    let result = CommandResult::empty();
+    #[cfg(feature = "alloc-counter")]
+    let before = bumbledb::alloc_counter::snapshot();
+    let command = Command::seal(metadata, changes.clone(), result, LIMITS, &seal_work).unwrap();
     assert_eq!(command.changes().as_bytes().as_ptr(), native_bytes);
-    assert_eq!(
-        source_work.used(Resource::WorkingBytes),
-        charged,
-        "no new change-body copy"
-    );
-    assert_eq!(
-        seal_work.used(Resource::WorkingBytes),
-        0,
-        "hashing needs no resident envelope clone"
-    );
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(bumbledb::alloc_counter::snapshot().window, before.window);
+    source_work.cancel();
+    seal_work.cancel();
     drop(changes);
-    assert_eq!(source_work.used(Resource::WorkingBytes), charged);
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(
+        bumbledb::alloc_counter::snapshot().absolute.live_bytes,
+        before.absolute.live_bytes
+    );
     let retry = command.clone();
     drop(command);
     assert_eq!(retry.changes().as_bytes().as_ptr(), native_bytes);
     drop(retry);
-    assert_eq!(source_work.used(Resource::WorkingBytes), 0);
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(
+        bumbledb::alloc_counter::snapshot().absolute.live_bytes,
+        baseline
+    );
 }
 
 #[test]
@@ -250,77 +231,39 @@ fn complete_schema_identity_limits_and_work_are_enforced_before_sealing() {
         ),
         Err(CommandError::Work(WorkError::Cancelled))
     ));
-    let none = ExecutionPolicy {
-        work_units: 0,
-        ..policy()
-    }
-    .start()
-    .unwrap();
+    Command::seal(
+        metadata(&schema),
+        changes,
+        CommandResult::empty(),
+        LIMITS,
+        &WorkContext::new(),
+    )
+    .expect("ordinary work has no quota");
     assert!(matches!(
-        Command::seal(
-            metadata(&schema),
-            changes,
-            CommandResult::empty(),
-            LIMITS,
-            &none
-        ),
-        Err(CommandError::Work(WorkError::Exhausted {
-            resource: Resource::WorkUnits,
-            ..
-        }))
+        Command::parse(&schema, &wire, LIMITS, &cancelled),
+        Err(CommandError::Work(WorkError::Cancelled))
     ));
-    let input = ExecutionPolicy {
-        input_bytes: 0,
-        ..policy()
-    }
-    .start()
-    .unwrap();
-    assert!(matches!(
-        Command::parse(&schema, &wire, LIMITS, &input),
-        Err(CommandError::Work(WorkError::Exhausted {
-            resource: Resource::InputBytes,
-            ..
-        }))
-    ));
+    Command::parse(&schema, &wire, LIMITS, &WorkContext::new()).unwrap();
 }
 
 #[test]
-fn large_core_payload_hash_is_charged_in_bounded_chunks_without_a_copy() {
+fn large_core_payload_hash_borrows_the_original_bytes_without_allocating() {
     let schema = schema("Text", ValueType::String);
     let mut draft = ChangeSet::builder(&schema, work());
     draft
         .insert(RelationId(0), &[Value::String("x".repeat(20_000).into())])
         .unwrap();
     let changes = draft.finish().unwrap();
-    let limited = ExecutionPolicy {
-        work_units: 12,
-        ..policy()
-    }
-    .start()
-    .unwrap();
-    assert!(matches!(
-        Command::seal(
-            metadata(&schema),
-            changes.clone(),
-            CommandResult::empty(),
-            LIMITS,
-            &limited
-        ),
-        Err(CommandError::Work(WorkError::Exhausted {
-            resource: Resource::WorkUnits,
-            ..
-        }))
-    ));
+    let pointer = changes.as_bytes().as_ptr();
     let context = work();
-    let command = Command::seal(
-        metadata(&schema),
-        changes,
-        CommandResult::empty(),
-        LIMITS,
-        &context,
-    )
-    .unwrap();
-    assert!(context.used(Resource::WorkUnits) >= 16);
+    let metadata = metadata(&schema);
+    let result = CommandResult::empty();
+    #[cfg(feature = "alloc-counter")]
+    let before = bumbledb::alloc_counter::snapshot().window;
+    let command = Command::seal(metadata, changes, result, LIMITS, &context).unwrap();
+    #[cfg(feature = "alloc-counter")]
+    assert_eq!(bumbledb::alloc_counter::snapshot().window, before);
+    assert_eq!(command.changes().as_bytes().as_ptr(), pointer);
     let bytes = encode_command(command.metadata(), command.changes().as_bytes(), LIMITS).unwrap();
     assert_eq!(
         command.command_ref(),

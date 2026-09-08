@@ -8,7 +8,7 @@ export type { ChangeDraft } from "#changes.ts"
 export { ChangeSet, internalChanges } from "#changes.ts"
 export type { CompiledSchema, SchemaId } from "#compile.ts"
 export { Schema } from "#compile.ts"
-export type { ExecutionSession, QueryReader } from "#db.ts"
+export type { PreparedQuery, QueryReader } from "#db.ts"
 export { Db, internalPublishedReader } from "#db.ts"
 export type { SnapshotHandle } from "#db-native.ts"
 export { lower } from "#lower.ts"
@@ -21,16 +21,14 @@ export {
 	nativeBindingIsLoaded
 } from "#native.ts"
 export type { CompleteResult } from "#result.ts"
-export type { ExecutionPolicy, NativeRuntimeOptions, RepositoryLock } from "#runtime.ts"
+export type { NativeRuntimeOptions, RepositoryLock } from "#runtime.ts"
 export {
-	deliveryResultBytes,
 	finalizeClose,
 	hashChunk,
 	internalAcquireRepositoryLock,
 	NativeRuntime,
 	nativeOperation,
 	nativeOperationWith,
-	policyWire,
 	runtimeHandle
 } from "#runtime.ts"
 export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
@@ -42,7 +40,6 @@ export type {
 	InspectionWire,
 	NativeKind,
 	OperationHandle,
-	PolicyWire,
 	RepositoryLockHandle,
 	RuntimeHandle
 } from "#runtime-native.ts"

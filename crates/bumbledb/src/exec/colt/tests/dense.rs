@@ -207,6 +207,34 @@ fn a_token_that_outlives_a_reset_is_refused() {
 }
 
 #[test]
+fn released_join_pools_keep_compiled_shape_but_reject_old_iteration_tokens() {
+    let schema = schema();
+    let rows: Vec<_> = (0..200).map(|i| (7, i)).collect();
+    let view = view_of(&schema, &rows);
+    let mut colt = Colt::new(all(&view), &[], vec![vec![0], vec![1]]);
+    let child = colt.get(Colt::root(), 0, &[7]).unwrap();
+    let (_, stale) = colt
+        .iter_batch(
+            child,
+            1,
+            BatchToken::default(),
+            &mut [0; 8],
+            &mut [Cursor::Row(0); 8],
+            8,
+        )
+        .unwrap();
+    let shape = colt.schema_columns.as_ptr();
+    assert!(colt.retained_bytes() > 0);
+    colt.release_memory();
+    assert_eq!(colt.retained_bytes(), 0);
+    assert_eq!(colt.schema_columns.as_ptr(), shape);
+    colt.reset(all(&view));
+    let child = colt.get(Colt::root(), 0, &[7]).unwrap();
+    assert_stale_token(&mut colt, child, stale, "outlived a reset");
+    assert_eq!(drain(&mut colt, child, 1).len(), 200);
+}
+
+#[test]
 fn row_cursor_iteration_honors_max() {
     let schema = schema();
     let view = view_of(&schema, &[(1, 5)]);

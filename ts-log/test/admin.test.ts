@@ -24,12 +24,11 @@ import {
 	makeWireDouble,
 	provideRuntime,
 	stampWire,
-	stateWire,
-	work
+	stateWire
 } from "#test/double.ts"
 
 const OPERATION = "4b4b4b4b-4b4b-4b4b-4b4b-4b4b4b4b4b4b" as OperationId
-const adminOptions = { ...work, operationId: OPERATION }
+const adminOptions = { operationId: OPERATION }
 
 const plans: GeneratedMigrations = {
 	manifest: {
@@ -155,7 +154,7 @@ describe("admin certainty", function suite() {
 		const { double, machine } = make()
 		double.plan("logAdmin", { failure: { source: "protocol", reason: { _tag: "UnsupportedArtifact" } } })
 		const exit = await Effect.runPromiseExit(
-			provideRuntime(machine.admin.verifyBackup({ kind: "filesystem", directory: "/tmp/x" }, work))
+			provideRuntime(machine.admin.verifyBackup({ kind: "filesystem", directory: "/tmp/x" }, {}))
 		)
 		assert.ok(Exit.isFailure(exit))
 		const error = Exit.findErrorOption(exit)
@@ -196,9 +195,7 @@ describe("migration wrappers", function suite() {
 				}
 			}
 		})
-		const status = await Effect.runPromise(
-			provideRuntime(machine.migrations.migrationStatus(localBinding, plans, work))
-		)
+		const status = await Effect.runPromise(provideRuntime(machine.migrations.migrationStatus(localBinding, plans, {})))
 		assert.equal(status.kind, "pending")
 		if (status.kind === "pending") {
 			assert.deepEqual(status.pending, ["0000-initialize"])
@@ -324,7 +321,7 @@ describe("migration wrappers", function suite() {
 				}
 			}
 		})
-		const activated = await Effect.runPromise(provideRuntime(machine.migrations.activateMigration(activationRef, work)))
+		const activated = await Effect.runPromise(provideRuntime(machine.migrations.activateMigration(activationRef, {})))
 		assert.equal(activated.kind, "completed")
 		if (activated.kind === "completed") {
 			assert.equal(activated.value.accessMode, "active")
@@ -347,7 +344,7 @@ describe("migration wrappers", function suite() {
 			provideRuntime(
 				machine.migrations.abortMigration(
 					abortRef as unknown as Parameters<typeof machine.migrations.abortMigration>[0],
-					work
+					{}
 				)
 			)
 		)
@@ -492,7 +489,7 @@ describe("migration wrappers", function suite() {
 			}
 		})
 		const verified = await Effect.runPromise(
-			provideRuntime(machine.admin.verifyBackup({ kind: "filesystem", directory: "/tmp/backup" }, { ...work, backup }))
+			provideRuntime(machine.admin.verifyBackup({ kind: "filesystem", directory: "/tmp/backup" }, { backup }))
 		)
 		assert.equal(verified.manifestDigest, "5a".repeat(32))
 		const verify = double.calls[1]?.request as { backup: string }
@@ -526,7 +523,7 @@ describe("migration wrappers", function suite() {
 			}
 		})
 		const outcome = await Effect.runPromise(
-			provideRuntime(machine.migrations.activateMigration(activationRef, { ...work, binding: localBinding, schema }))
+			provideRuntime(machine.migrations.activateMigration(activationRef, { binding: localBinding, schema }))
 		)
 		assert.equal(outcome.kind, "completed")
 		const request = double.calls[0]?.request as { binding: { kind: string; directory: string }; schema: unknown }
@@ -557,7 +554,7 @@ describe("migration wrappers", function suite() {
 							schemaId: identityWire.schemaId
 						}
 					} as unknown as Parameters<typeof machine.migrations.abortMigration>[0],
-					work
+					{}
 				)
 			)
 		)
