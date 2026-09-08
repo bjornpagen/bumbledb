@@ -954,7 +954,8 @@ def chart_ratio_waterfall(inputs, out):
     if srows:
         footer += " + additional workloads"
     fig.text(0.01, 0.005, footer, fontsize=8, color=DIM, family="monospace")
-    fig.tight_layout()
+    # A tall all-family panel needs room between its tick labels and footer.
+    fig.tight_layout(rect=(0, 0.02, 1, 1))
     save_chart(fig, out)
     plt.close(fig)
 

@@ -160,8 +160,8 @@ authoritative database for a local migration.
 
 ## Performance
 
-On an Apple M2 Max, the September 8, 2026 suite measured a 0.50 µs median
-point lookup, a 5.17 µs range query, and 5.47 ms to construct and deliver a
+On an Apple M2 Max, the September 8, 2026 suite measured a 0.46 µs median
+point lookup, a 5.17 µs range query, and 5.82 ms to construct and deliver a
 100,000-row native result. It covers 32 read families, 34 scenario queries,
 durable writes, constraints, storage, scaling, and native application lifecycles.
 
@@ -171,11 +171,11 @@ durable writes, constraints, storage, scaling, and native application lifecycles
 
 ![Compacted database storage](assets/bench-storage.svg)
 
-These are shared-host measurements of source `e5d4e4e3`, with up to eight
-concurrent benchmark workers and user-interactive QoS. The worker count matches
-the Mac's performance cores; macOS does not guarantee P-core-only placement.
-Concurrent workers share CPU and I/O, so the historical comparison with the
-older serial run is not a controlled speedup claim.
+These are shared-host measurements of source `548193d4`, with one benchmark
+lane at a time and verified user-interactive QoS. macOS steers toward performance
+cores but does not guarantee P-core-only placement. Both this run and the
+published baseline use serial lanes; background activity across different days
+still prevents a controlled speedup claim.
 
 The read panel has lower medians than indexed SQLite in all 32 families;
 durable writes and constraint refusals include SQLite wins. Compacted stores

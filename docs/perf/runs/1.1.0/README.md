@@ -5,15 +5,15 @@ The 13 JSON reports here are the original measurement outputs used by the
 timing boundaries, scheduling policy and SHA-256 hashes. Paths in commands
 identify the original host's inputs; report paths are relative to this directory.
 
-Measured source: `e5d4e4e3d4ba8b865a2dd1805230e2cc19b90335`.
+Measured source: `548193d46f645ff4a4f007517733deb4bd389569`.
 Frozen executable SHA-256:
-`ee3d52b4278b5dfa379e1997abeb76e83bfec5f9bc2350789fc27c40ef09018d`.
+`84b920460fe27b49181a8e8a444e6557971f559e96972fb5e5780f305d47cc74`.
 
-The M2 Max run used up to eight concurrent lane processes with
-user-interactive QoS. macOS does not guarantee hard P-core affinity.
-Results are shared-host observations, not isolated latencies or controlled
-speedups over the earlier serial suite. A capped comparison is not a completed
-timing. The report index is not a cross-platform correctness certificate.
+The M2 Max run measured one lane at a time with verified user-interactive QoS.
+macOS does not guarantee hard P-core affinity. Both this run and the published
+baseline use serial lanes. Results remain shared-host observations, not
+controlled code speedups. A capped comparison is not a completed timing.
+The report index is not a cross-platform correctness certificate.
 
 See the [measurement guide](../../measurement-plan.md) for the current runner.
 The GitHub release includes the report data, per-lane logs and checksums.
