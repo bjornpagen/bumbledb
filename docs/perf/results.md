@@ -1,43 +1,47 @@
-# Bumbledb 1.0.1 benchmark results
+# Bumbledb 1.1.0 benchmark results
 
-The complete local suite finished on **September 7, 2026, at 09:41 CDT**:
-**15 lanes, 32 read families, 34 scenario queries, and two 10,000-cycle churn
-workloads**. The pre-timing oracle passed **2,879 cases**. This page includes
+The complete local suite finished on **2026-09-08T16:32:35.700086+00:00**:
+**14 reported lanes, 32 read families, and 34 scenario queries**.
+The pre-timing oracle passed **2,879 cases**. This page includes
 every current benchmark chart, the full read/scenario tables, and the slower
 results as well as the improvements.
 
-Subsequent development experiments are recorded separately in the
-[autoresearch notes](autoresearch.md). The release measurements below remain
-unchanged.
-
 ## Measurement identity
 
-- Source: `5e83ee60c4e5d88e8ca395daa3de4d92a0c03186`, crate version **1.0.1**.
-- Run: `release-1.0.1-20260907-5e83ee60/full`; fresh isolated corpus, seed 1.
-- Frozen executable SHA-256: `f25c5bfcb2fc89bb24c4eef351c2914a89f32353f8247810499311acc1ae9bf0`.
+- Source: `e5d4e4e3d4ba8b865a2dd1805230e2cc19b90335`, crate version **1.1.0**.
+- Run: `release-1.1.0-20260908.ozXBJm/full`; fresh isolated corpus, seed 1.
+- Frozen executable SHA-256: `ee3d52b4278b5dfa379e1997abeb76e83bfec5f9bc2350789fc27c40ef09018d`.
 - Host: Apple M2 Max, 96 GiB RAM, macOS 15.7.7, AC power, 16 KiB pages.
 - Toolchain: `nightly-2026-08-15`, ordinary optimized release build.
-- Command: `scripts/bench-night.sh <fresh-output> --full --shared`, with
+- Command: `scripts/bench-night.sh <fresh-output> --full --shared --jobs auto --allow-macos-qos`, with
   `BUMBLEDB_BENCH_BIN` selecting the frozen executable and
   `BUMBLEDB_BENCH_DATA` selecting the isolated corpus.
 
-These are **shared-machine, scheduler-boosted observations**, not quiet-host
-or cross-platform guarantees. Measurements ran serially under the repository's
-measurement lock. Raw reports retain load observations, clock flags, caps,
-and the actual source identity; later documentation commits do not change
-which executable was measured. No new profiles were captured.
+These are **shared-machine observations with up to eight concurrent lane
+workers**, capped to this Mac's performance-core count. Each measured process
+set and read back user-interactive QoS. macOS steers work toward P-cores but
+provides **no hard P-core-only affinity guarantee**. Concurrent lanes contend
+for CPU, caches, memory bandwidth and disk; these are not isolated query
+latencies. The worker cap does not mean eight cores remain busy after most
+lanes finish, and it does not add parallel execution inside a query.
 
-The full manifest, raw reports, run log, source snapshot, and provenance
-are retained for the 1.0.1 release evidence archive. The [1.0.0 release](https://github.com/bjornpagen/bumbledb/releases/tag/v1.0.0)
-retains the previous published evidence and charts. Its engine source was
-`3ed3303eb226de6c98955ab75c296887eaf7704b` and its reports correctly retain
-the pre-cutover `0.20.3` version label. Nothing here relabels those old runs.
+The measurement lock excluded other repository measurements. Every lane used
+separate working data; Bumbledb and SQLite within each lane retained the same
+sample counts, draws, warmups and durable commit contracts. Raw reports and
+the [report index](runs/1.1.0/MANIFEST.json) preserve their source, scheduling
+policy, timing boundaries and hashes. Later documentation commits do not
+change the measured executable. No new profiles were captured.
+
+The 1.1.0 release evidence archive contains the report index, raw reports,
+per-lane logs and measurement provenance. The [1.0.1 release](https://github.com/bjornpagen/bumbledb/releases/tag/v1.0.1)
+retains the previous published evidence. Its measured engine source was
+`5e83ee60c4e5d88e8ca395daa3de4d92a0c03186`. Nothing here relabels old runs.
 
 ## Coverage and limits
 
 All ordinary lanes report `RUN-OK`: storage; warm, cold, large-result and
 tenant application lifecycles; hash probes; reads; scenarios; CRUD; lawful
-admission; writes; S/M/L scale and warmth curves; churn; heap; and Primer-shaped
+admission; writes; S/M/L scale and warmth curves; heap; and Primer-shaped
 work. The complete runner is used, not its compact default subset.
 
 The main read comparison reports **`all_win=true` against SQLite**, while
@@ -48,53 +52,41 @@ Scenario and scaling timeouts remain caps, never invented latency values.
 
 The manifest's external prerequisites remain `NOTRUN-PREREQ`. Real-S3/IAM,
 Graviton performance, Linux Node application timing, and a populated store
-larger than available memory were **not run**. Separate correctness CI,
-including Miri, passed on the measured revision before timing; a benchmark
-manifest does not substitute for that evidence. Hash one-shot/streaming
+larger than available memory were **not run**. Correctness and packaging CI are separate from timing; a benchmark manifest
+does not substitute for them. The current cross-platform CI link is in the
+[release notes](../release-1.1.md). Raspberry Pi memory/performance remains
+unqualified; this is not a 512 MB hardware test. Hash one-shot/streaming
 equivalence passed, but known-answer vectors were not supplied: hash KATs
 and reused-state hash timing remain **not run**.
 
 ## Compared with the last published results
 
-This is one completed run against the single run published with 1.0.0,
-on the same M2 Max with the same workload settings and scheduler-boost mode.
-It is **not** an alternating controlled experiment or a causal speedup claim.
-Read-family medians: **22 lower, 4 unchanged, 6 higher**.
-Scenario medians: **21 lower, 3 unchanged, 10 higher**.
+This is a historical comparison with the single run published with 1.0.1,
+on the same M2 Max and pinned toolchain. **1.0.1 ran serial lanes; 1.1.0 ran
+up to eight concurrent lanes.** That changes contention, so these differences
+are **not controlled code speedups or regressions**. Both retain the same
+workload settings and scheduler boost.
+Read-family medians: **10 lower, 2 unchanged, 20 higher**.
+Scenario medians: **15 lower, 3 unchanged, 16 higher**.
 Tiny differences can reflect timer granularity or ambient load.
 
-| Selected workload | 1.0.0 median | 1.0.1 median | Median change | Mean change |
+| Selected workload | 1.0.1 median | 1.1.0 median | Median change | Mean change |
 | --- | --- | --- | --- | --- |
-| Aggregate statistics | 392.167 µs | 345.792 µs | -11.8% | -11.0% |
-| Triangle join | 1863.291 µs | 1509.042 µs | -19.0% | -19.1% |
-| Slot-booking overlap | 17.542 µs | 6.042 µs | -65.6% | -30.7% |
-| Chain join | 215.375 µs | 247.208 µs | +14.8% | +1.3% |
-| Closure depth | 4.458 µs | 13.834 µs | +210.3% | -9.1% |
-| Store min/max aggregation | 0.725 ms | 0.522 ms | -28.0% | -24.4% |
-| Reciprocal-ring query | 0.412 ms | 0.482 ms | +17.0% | +92.8% |
-| Temporal overlap join | 50.265 ms | 64.865 ms | +29.0% | +34.0% |
-| Construct and deliver 100,000 rows | 69.338 ms | 63.864 ms | -7.9% | -7.4% |
-| Small-tenant activation | 0.455 ms | 0.593 ms | +30.2% | +58.0% |
+| Aggregate statistics | 345.792 µs | 359.458 µs | +4.0% | +7.3% |
+| Triangle join | 1509.042 µs | 1803.750 µs | +19.5% | +28.6% |
+| Slot-booking overlap | 6.042 µs | 10.458 µs | +73.1% | -2.5% |
+| Chain join | 247.208 µs | 251.000 µs | +1.5% | -0.3% |
+| Closure depth | 13.834 µs | 4.584 µs | -66.9% | +0.3% |
+| Store min/max aggregation | 0.522 ms | 0.510 ms | -2.2% | -7.0% |
+| Reciprocal-ring query | 0.482 ms | 0.430 ms | -11.0% | -44.4% |
+| Temporal overlap join | 64.865 ms | 38.804 ms | -40.2% | -41.7% |
+| Construct and deliver 100,000 rows | 63.864 ms | 5.471 ms | -91.4% | -91.4% |
+| Small-tenant activation | 0.593 ms | 5.818 ms | +881.8% | +758.3% |
 
-Point lookup and range-query medians are unchanged at **0.500 µs** and
-**4.833 µs**. Compacted S/M storage sizes are byte-for-byte unchanged.
-The large-result path delivers the same 1,600,000 total rows over 16 draws;
-its median is 7.9% lower than the last published full-suite result.
-The older 65–66 ms versus 796–801 ms alternating controls belonged to the
-1.0.0 development round, not a newly measured 1.0.1 comparison.
-
-There are real observations to follow up, not just wins: temporal-overlap
-mean latency rose 34%, reciprocal-ring mean latency rose 93%, and tenant
-activation mean latency rose 58%. Tail spikes also increased for several
-scenario queries, especially `p2_by_key`, `r5_reciprocal`, and
-`t2_overlap_join`. Those scenario reports lack per-cell clock diagnostics,
-so the spikes are not dismissed as clock noise. Many mutation cells carry
-clock-contamination flags in both rounds. No mechanism is established here.
-
-Medians alone can mislead on a hit/miss or differently sized draw roster:
-closure-depth's median rose about 3.1× while its mean fell 9.1%;
-closure-fanout's median fell 93.5% while its mean fell only 5.5%.
-Interpret means, tails, output work, and raw draws together.
+Means and tails accompany medians because the draw rosters mix hits, misses,
+and different amounts of result work. Clock flags are retained, not used to
+dismiss inconvenient results. Establishing a causal code improvement requires
+a separate comparison under matched scheduling and load.
 
 ## Native application lifecycle
 
@@ -105,16 +97,17 @@ All figures in this table are **microseconds**.
 
 | Workload | Median | Mean | p99 |
 | --- | --- | --- | --- |
-| Warm prepared account projection | 1.708 | 1.702 | 1.750 |
-| First query after related delete/insert | 3590.500 | 3650.721 | 4459.000 |
-| Open, prepare and query | 343.833 | 392.771 | 1007.000 |
-| Construct and deliver 100,000 rows | 63863.750 | 64230.651 | 66317.458 |
-| Small-tenant activation | 592.625 | 782.404 | 2686.792 |
+| Warm prepared account projection | 1.750 | 1.767 | 1.958 |
+| First query after related delete/insert | 3442.083 | 3463.434 | 4024.167 |
+| Open, prepare and query | 4106.209 | 3833.070 | 8583.375 |
+| Construct and deliver 100,000 rows | 5470.542 | 5508.315 | 5874.417 |
+| Small-tenant activation | 5818.250 | 6715.575 | 21033.500 |
 
-The large-result median is **63.864 ms** end to end. Its separately recorded
-execution and delivery medians are **56.018 ms** and **7.861 ms**; separate
-component medians need not sum to the end-to-end median. Tenant churn retained
-zero descriptor growth across its 64 activations.
+The large-result median is **5.471 ms** end to end. Its separately
+recorded execution and delivery medians are **1.535 ms** and
+**3.858 ms**; component medians need not sum to the total.
+This covers 1,600,000 delivered rows across 16 draws.
+Paging completed results is not streaming query execution.
 
 ## Read families
 
@@ -123,58 +116,48 @@ Clock flags describe recorded contamination, not proof of isolation when absent.
 
 | Family | Median | Mean | p99 | SQLite median | Clock flag |
 | --- | --- | --- | --- | --- | --- |
-| point | 0.500 | 0.479 | 0.542 | 1.417 | none recorded |
-| containment_walk | 2.083 | 145.496 | 857.791 | 54.416 | none recorded |
-| chain | 247.208 | 224.884 | 429.584 | 2019.416 | none recorded |
-| range | 4.833 | 4.828 | 5.000 | 148.667 | none recorded |
-| balance | 1.500 | 10.329 | 46.459 | 334.292 | none recorded |
-| stats | 345.792 | 361.961 | 578.208 | 83155.334 | none recorded |
-| string | 1.125 | 0.992 | 1.500 | 61.958 | none recorded |
-| skew | 1127.167 | 1228.819 | 1744.375 | 7741.625 | SQLite |
-| spread | 12422.208 | 12526.381 | 15411.750 | 133434.250 | none recorded |
-| triangle | 1509.042 | 1527.156 | 1920.667 | 38462.042 | none recorded |
-| entries_for_account_set | 3.416 | 171.090 | 787.959 | 10.750 | none recorded |
-| postings_without_tag | 2.000 | 161.546 | 730.958 | 49.291 | Bumbledb |
-| latest_posting_per_account | 119.000 | 123.065 | 190.250 | 20121.250 | Bumbledb |
-| mandate_at_instant | 0.583 | 0.560 | 0.666 | 8.500 | none recorded |
-| mandate_overlap | 12.166 | 11.357 | 19.125 | 433.875 | none recorded |
-| deep_chain | 445.375 | 400.905 | 757.084 | 3616.834 | none recorded |
-| busy_scan | 3.708 | 2.995 | 4.333 | 3464.583 | none recorded |
-| meets_chain | 2.167 | 20.022 | 78.375 | 19.709 | none recorded |
-| rsvp_union | 914.083 | 960.277 | 1295.709 | 18725.458 | none recorded |
-| conflict_pairs | 23.375 | 31.405 | 96.250 | 2850.667 | Bumbledb, SQLite |
-| conflict_free | 0.875 | 0.794 | 0.917 | 15.791 | none recorded |
-| free_busy | 3.833 | 12.614 | 46.208 | 326.708 | none recorded |
-| slot_scan | 12.834 | 10.392 | 23.166 | 2809.916 | none recorded |
-| slot_booking_overlap | 6.042 | 16.760 | 49.333 | 694.166 | none recorded |
-| closure_depth | 13.834 | 443.295 | 1319.834 | 47.209 | none recorded |
-| closure_fanout | 0.792 | 41.301 | 148.625 | 17.875 | none recorded |
-| disp_probe | 166000.292 | 164391.975 | 177192.875 | 948619.458 | none recorded |
-| disp_probe_d24 | 150524.375 | 153091.107 | 172197.000 | 944873.917 | Bumbledb |
-| disp_probe_d96 | 112513.125 | 122302.729 | 138570.541 | 769349.959 | none recorded |
-| disp_stream | 169.875 | 169.986 | 171.042 | 40553.791 | none recorded |
-| disp_stream_d24 | 188.458 | 193.736 | 231.000 | 40370.875 | none recorded |
-| disp_stream_d96 | 184.834 | 201.621 | 256.500 | 39384.625 | none recorded |
+| point | 0.500 | 1.296 | 20.000 | 1.500 | Bumbledb |
+| containment_walk | 2.334 | 156.854 | 954.792 | 77.042 | SQLite |
+| chain | 251.000 | 224.229 | 404.500 | 2100.083 | none recorded |
+| range | 5.167 | 5.180 | 5.459 | 147.042 | none recorded |
+| balance | 1.416 | 9.973 | 36.458 | 389.250 | none recorded |
+| stats | 359.458 | 388.453 | 812.959 | 85304.917 | none recorded |
+| string | 1.125 | 0.988 | 1.292 | 66.167 | none recorded |
+| skew | 1192.541 | 1723.255 | 6241.125 | 10053.584 | none recorded |
+| spread | 13073.250 | 14061.101 | 40365.000 | 145274.625 | none recorded |
+| triangle | 1803.750 | 1964.477 | 5992.375 | 40210.292 | Bumbledb, SQLite |
+| entries_for_account_set | 6.041 | 162.370 | 782.500 | 8.375 | none recorded |
+| postings_without_tag | 2.125 | 164.573 | 723.959 | 64.000 | none recorded |
+| latest_posting_per_account | 121.292 | 126.145 | 225.833 | 20354.375 | none recorded |
+| mandate_at_instant | 0.542 | 0.525 | 0.666 | 8.666 | none recorded |
+| mandate_overlap | 12.208 | 11.268 | 17.250 | 434.834 | none recorded |
+| deep_chain | 453.416 | 407.179 | 762.000 | 4643.250 | none recorded |
+| busy_scan | 3.833 | 3.082 | 4.417 | 3591.791 | none recorded |
+| meets_chain | 2.125 | 20.133 | 83.125 | 20.625 | none recorded |
+| rsvp_union | 931.542 | 989.443 | 1375.042 | 18978.667 | none recorded |
+| conflict_pairs | 22.042 | 29.846 | 75.125 | 3199.667 | none recorded |
+| conflict_free | 0.834 | 0.784 | 0.917 | 24.208 | none recorded |
+| free_busy | 3.792 | 12.648 | 41.917 | 332.708 | none recorded |
+| slot_scan | 13.834 | 10.662 | 14.667 | 2882.083 | none recorded |
+| slot_booking_overlap | 10.458 | 16.333 | 37.625 | 5739.792 | none recorded |
+| closure_depth | 4.584 | 444.569 | 1345.333 | 55.333 | none recorded |
+| closure_fanout | 5.000 | 44.794 | 190.417 | 39.875 | Bumbledb |
+| disp_probe | 148019.084 | 149082.430 | 171008.083 | 1122664.667 | SQLite |
+| disp_probe_d24 | 173432.167 | 185251.194 | 273375.625 | 978714.459 | none recorded |
+| disp_probe_d96 | 159330.250 | 164127.170 | 214089.333 | 1076347.000 | SQLite |
+| disp_stream | 172.375 | 175.361 | 195.416 | 40983.125 | none recorded |
+| disp_stream_d24 | 177.833 | 181.864 | 197.459 | 41872.667 | none recorded |
+| disp_stream_d96 | 184.000 | 185.684 | 201.625 | 41471.167 | none recorded |
 
 ![Median read latency against indexed SQLite; lower is better](../../assets/bench-vs-sqlite.svg)
 
-Median read latency against indexed SQLite; lower is better.
-
 ![Read-family median ratios against SQLite, not against historical Bumbledb](../../assets/bench-speedup.svg)
-
-Read-family median ratios against SQLite, not against historical Bumbledb.
 
 ![Read medians and tail latencies for both engines](../../assets/bench-tails.svg)
 
-Read medians and tail latencies for both engines.
-
 ![The p50, p90 and p99 read distributions remain visible together](../../assets/tails-fan.svg)
 
-The p50, p90 and p99 read distributions remain visible together.
-
 ![Sorted read and scenario median ratios, with capped comparisons excluded](../../assets/ratio-waterfall.svg)
-
-Sorted read and scenario median ratios, with capped comparisons excluded.
 
 ## Scenario queries
 
@@ -185,94 +168,77 @@ measurements, and these reports have no per-cell clock diagnostics.
 
 | Query | Median | Mean | p99 | SQLite median/outcome |
 | --- | --- | --- | --- | --- |
-| j1_filmography | 0.459 | 2.377 | 8.083 | 7.084 |
-| j2_costars | 1.125 | 6.615 | 23.958 | 12.500 |
-| j3_keyword_kind | 1.500 | 4.727 | 18.709 | 15.792 |
-| j4_five_way | 1133.792 | 2479.465 | 7732.333 | 5280.625 |
-| j5_country_rollup | 4365.291 | 4377.453 | 4772.500 | 32060.375 |
-| j6_keyword_neighborhood | 38.166 | 222.595 | 1212.291 | 1608.209 |
-| g1_neighbors | 0.416 | 0.733 | 1.916 | 2.875 |
-| g2_two_hop | 0.709 | 96.408 | 531.792 | 11.417 |
-| g3_three_hop_count | 1.625 | 756.108 | 4677.250 | 34.625 |
-| g4_mutual | 3038.584 | 3191.670 | 4497.167 | 30591.375 |
-| g5_triangles_from | 0.792 | 6.749 | 25.500 | 24.291 |
-| g6_weighted_hop | 0.542 | 2.638 | 9.208 | 8.875 |
-| o1_revenue_by_region | 485.917 | 511.565 | 1215.291 | 271290.875 |
-| o2_category_window | 444.166 | 364.508 | 1205.542 | 25419.375 |
-| o3_promo_split | 335.125 | 338.991 | 373.417 | 113501.542 |
-| o4_segment_category | 27773.000 | 27847.044 | 30669.375 | 408676.084 |
-| o5_store_extremes | 521.917 | 574.952 | 1565.000 | 212792.750 |
-| o6_brand_drill | 2.083 | 1.840 | 3.000 | 603.958 |
-| p1_by_id | 0.666 | 0.605 | 0.750 | 1.125 |
-| p2_by_key | 1.250 | 2.752 | 52.292 | 1.333 |
-| p3_bucket_fetch | 4.125 | 6.122 | 17.083 | 212.417 |
-| p4_size_band | 0.542 | 4.469 | 16.458 | 115.500 |
-| p5_keyed_get | 1.292 | 1.185 | 1.459 | 1.417 |
-| r1_wash_ring | 8021.167 | 6199.926 | 9593.625 | 112241.000 |
-| r2_temporal_ring | 25055.750 | 19726.765 | 28434.250 | 168169.708 |
-| r3_bomb_t1 | 2670.250 | 2670.434 | 2962.375 | 32985.583 |
-| r4_bomb_t2 | 1231286.709 | 1257622.906 | 1967980.625 | exceeded_cap |
-| r5_reciprocal | 482.500 | 619.970 | 3845.959 | 3657.917 |
-| r6_two_path_count | 12952.500 | 13924.505 | 25829.708 | 694607.417 |
-| t1_stab | 0.584 | 5.153 | 13.625 | 6.167 |
-| t2_overlap_join | 64864.917 | 67453.165 | 165184.625 | exceeded_cap |
-| t3_mixed_mask | 16.250 | 1199.048 | 5978.750 | 1199.375 |
-| t4_ray_stab | 17.875 | 14.818 | 66.292 | 4474.542 |
-| t5_pack_key | 2.458 | 26.188 | 208.542 | not reported |
+| j1_filmography | 0.500 | 2.952 | 10.458 | 7.875 |
+| j2_costars | 1.167 | 6.864 | 25.000 | 13.625 |
+| j3_keyword_kind | 1.667 | 5.748 | 19.625 | 15.291 |
+| j4_five_way | 1340.500 | 3206.863 | 11213.042 | 5401.125 |
+| j5_country_rollup | 4353.291 | 4388.418 | 5194.416 | 38395.834 |
+| j6_keyword_neighborhood | 39.583 | 291.363 | 2820.750 | 1705.792 |
+| g1_neighbors | 0.334 | 0.629 | 1.625 | 3.167 |
+| g2_two_hop | 0.875 | 115.290 | 1681.167 | 19.000 |
+| g3_three_hop_count | 1.750 | 776.319 | 3889.041 | 32.750 |
+| g4_mutual | 3423.417 | 3454.436 | 4344.792 | 30321.583 |
+| g5_triangles_from | 0.792 | 7.247 | 27.708 | 25.042 |
+| g6_weighted_hop | 0.500 | 2.580 | 9.125 | 6.750 |
+| o1_revenue_by_region | 490.584 | 561.736 | 1562.500 | 287934.958 |
+| o2_category_window | 480.000 | 413.358 | 1162.583 | 59659.959 |
+| o3_promo_split | 339.542 | 341.190 | 408.042 | 119592.042 |
+| o4_segment_category | 28535.625 | 29001.410 | 37624.833 | 433383.916 |
+| o5_store_extremes | 510.208 | 534.861 | 869.541 | 221529.958 |
+| o6_brand_drill | 1.958 | 1.771 | 2.791 | 599.833 |
+| p1_by_id | 0.666 | 0.595 | 0.833 | 1.125 |
+| p2_by_key | 1.250 | 1.169 | 1.375 | 1.417 |
+| p3_bucket_fetch | 4.042 | 5.880 | 16.625 | 218.792 |
+| p4_size_band | 0.416 | 1.505 | 5.000 | 118.334 |
+| p5_keyed_get | 1.250 | 1.130 | 1.375 | 1.500 |
+| r1_wash_ring | 9004.209 | 7261.195 | 15679.583 | 114384.500 |
+| r2_temporal_ring | 26098.500 | 20401.552 | 41869.834 | 167596.292 |
+| r3_bomb_t1 | 2650.042 | 2669.577 | 3091.250 | 32670.667 |
+| r4_bomb_t2 | 1311644.667 | 1705084.142 | 6161316.666 | exceeded_cap |
+| r5_reciprocal | 429.666 | 344.518 | 709.333 | 3404.125 |
+| r6_two_path_count | 10409.208 | 10513.190 | 12701.584 | 679207.583 |
+| t1_stab | 0.500 | 4.792 | 11.875 | 43.791 |
+| t2_overlap_join | 38804.041 | 39324.763 | 52662.208 | exceeded_cap |
+| t3_mixed_mask | 13.833 | 1002.890 | 4179.750 | 1190.458 |
+| t4_ray_stab | 18.417 | 14.018 | 22.959 | 4242.083 |
+| t5_pack_key | 2.250 | 21.463 | 83.958 | not reported |
 
-The main table shows the canonical `sqlite` lane. The additional tuned and
-hand-written comparators are retained below, in **microseconds**; `t5_pack_key`
-has only the hand-written islands SQL comparator, not a canonical SQLite lane.
+The canonical table above shows the `sqlite` lane. Additional tuned and
+hand-written SQL comparators are retained below, in **microseconds**.
 
-| Query | Additional SQLite lane | Median | Mean | p99 |
+| Query | Additional SQLite lane | Median/outcome | Mean | p99 |
 | --- | --- | --- | --- | --- |
-| r2_temporal_ring | sqlite-tuned | 116486.667 | 91273.384 | 213446.833 |
-| t2_overlap_join | sqlite-tuned | 790978.750 | 793349.937 | 925229.083 |
-| t5_pack_key | sqlite-hand | 103.375 | 908.484 | 3604.167 |
+| r2_temporal_ring | sqlite-tuned | 119299.875 | 92472.115 | 156417.417 |
+| t2_overlap_join | sqlite-tuned | 518005.333 | 522922.678 | 681601.458 |
+| t5_pack_key | sqlite-hand | 106.125 | 919.627 | 4052.334 |
 
 ![All scenario queries, including the SQLite cap annotations](../../assets/bench-scenarios.svg)
-
-All scenario queries, including the SQLite cap annotations.
 
 ### Multiway joins and country rollups
 
 ![Multiway joins and country rollups](../../assets/world-joins.svg)
 
-Multiway joins and country rollups.
-
 ### Graph traversal, reciprocal edges and triangle counting
 
 ![Graph traversal, reciprocal edges and triangle counting](../../assets/world-graph.svg)
-
-Graph traversal, reciprocal edges and triangle counting.
 
 ### Analytic sums, grouped extrema and dimension joins
 
 ![Analytic sums, grouped extrema and dimension joins](../../assets/world-olap.svg)
 
-Analytic sums, grouped extrema and dimension joins.
-
 ### Point, key and bucket access
 
 ![Point, key and bucket access](../../assets/world-points.svg)
-
-Point, key and bucket access.
 
 ### Cyclic and temporal ring workloads
 
 ![Cyclic and temporal ring workloads](../../assets/world-rings.svg)
 
-Cyclic and temporal ring workloads.
-
 ### Interval stabs, overlap joins and temporal masks
 
 ![Interval stabs, overlap joins and temporal masks](../../assets/world-temporal.svg)
 
-Interval stabs, overlap joins and temporal masks.
-
 ![Scenario comparisons where SQLite exceeded its cap; caps are not completed timings](../../assets/adversarial-dnf.svg)
-
-Scenario comparisons where SQLite exceeded its cap; caps are not completed timings.
 
 ## Durable mutation and admission
 
@@ -283,40 +249,28 @@ Times below are **milliseconds** and rates come directly from measured means.
 
 | Operation | Rows/batch | Bumbledb median | SQLite median | Bumbledb rows/s | SQLite rows/s |
 | --- | --- | --- | --- | --- | --- |
-| commit_b1 | 1 | 4.264 | 4.239 | 225.33 | 228.59 |
-| commit_b10 | 10 | 5.690 | 4.693 | 1,748.76 | 2,119.81 |
-| commit_b100 | 100 | 11.327 | 6.993 | 8,613.2 | 14,284.74 |
-| commit_b1000 | 1,000 | 25.618 | 18.313 | 37,998.57 | 54,665.07 |
-| delete_b1 | 1 | 4.170 | 4.253 | 226.84 | 222.27 |
-| delete_b10 | 10 | 5.148 | 5.169 | 1,915.18 | 1,917.34 |
-| delete_b100 | 100 | 11.969 | 8.348 | 8,717.99 | 12,164.86 |
-| delete_b1000 | 1,000 | 35.120 | 21.882 | 28,227.9 | 46,080.23 |
-| insert_stream | 200,000 | 649.533 | 738.007 | 305,175.09 | 268,927.99 |
+| commit_b1 | 1 | 8.751 | 11.570 | 108.14 | 79.18 |
+| commit_b10 | 10 | 14.779 | 27.175 | 692.5 | 349.26 |
+| commit_b100 | 100 | 19.442 | 142.842 | 4,874.39 | 544.43 |
+| commit_b1000 | 1,000 | 44.159 | 193.478 | 22,054.3 | 4,383.73 |
+| delete_b1 | 1 | 8.322 | 8.676 | 124.48 | 114.42 |
+| delete_b10 | 10 | 12.428 | 11.770 | 799.48 | 880.56 |
+| delete_b100 | 100 | 21.156 | 34.949 | 4,512.06 | 2,630.78 |
+| delete_b1000 | 1,000 | 47.786 | 73.171 | 21,172.03 | 10,649.2 |
+| insert_stream | 200,000 | 697.558 | 1342.290 | 260,249.68 | 142,111.41 |
 
-Relative to 1.0.0, single-row commit median fell 11.9%, 1,000-row commit fell
-7.4%, and the insertion-stream median fell 1.0%. The 100-row commit and
-delete medians rose 2.9% and 7.9%. These are observations from flagged
-shared-host runs, not an across-the-board write-speedup claim.
+Rates and latency reflect the concurrent lane schedule, including competing
+disk work. They are not an across-the-board write-speedup claim.
 
 ![Durable writes and first-read costs from the main comparison runner](../../assets/bench-writes.svg)
 
-Durable writes and first-read costs from the main comparison runner.
-
 ![Commit, delete and insertion rates for each supported batch size](../../assets/bench-writes-rates.svg)
-
-Commit, delete and insertion rates for each supported batch size.
 
 ![Write throughput across the measured commit and delete batch ladders](../../assets/write-throughput.svg)
 
-Write throughput across the measured commit and delete batch ladders.
-
 ![Application CRUD comparisons under matched durability contracts](../../assets/world-crud.svg)
 
-Application CRUD comparisons under matched durability contracts.
-
 ![Accepted and refused transactions under declared-law enforcement](../../assets/world-lawful.svg)
-
-Accepted and refused transactions under declared-law enforcement.
 
 CRUD and lawful-admission post-state checks both reported `ok`. Refused-law
 samples include validation and abort, not successful commits. Bumbledb emits
@@ -339,80 +293,29 @@ raw-versus-compacted growth, not the remaining page and index overhead.
 
 ![Compacted storage against indexed and table-only SQLite](../../assets/bench-storage.svg)
 
-Compacted storage against indexed and table-only SQLite.
-
-Scale curves exercise S/M/L, reaching **25,263,139 ledger facts** and
-**18,210,369 calendar facts**. Their four-family roster is narrower than the
-32-family read panel. Two SQLite triangle points reached the timing cap;
-they remain excluded-and-counted rather than fabricated results.
+Scale curves exercise S/M/L. Their four-family roster is narrower than the
+32-family read panel. SQLite caps remain excluded-and-counted rather than
+fabricated results. The raw report records fact counts for every scale.
 
 | Family | S median (µs) | M median (µs) | L median (µs) |
 | --- | --- | --- | --- |
-| triangle | 1565.125 | 21286.291 | 281021.959 |
-| point | 0.542 | 0.542 | 0.584 |
-| busy_scan | 3.709 | 36.334 | 596.875 |
-| closure_fanout | 0.542 | 3.916 | 5.416 |
+| triangle | 1752.625 | 21099.209 | not timed (gate cap) |
+| point | 0.458 | 0.500 | 0.541 |
+| busy_scan | 4.000 | 37.291 | 668.125 |
+| closure_fanout | 0.542 | 1.042 | 79.042 |
+
+The large-scale triangle comparison hit SQLite's cap during the pre-timing
+result gate, so neither engine has a timing for that point. At medium scale,
+SQLite hit its timing cap; Bumbledb's completed timing remains recorded.
 
 ![S/M/L scaling for the four registered curve families](../../assets/bench-curves.svg)
 
-S/M/L scaling for the four registered curve families.
-
 ![Reopen-cold, warm and memoized execution at the first requested scale](../../assets/bench-warmth.svg)
-
-Reopen-cold, warm and memoized execution at the first requested scale.
 
 Reopen-cold creates a new handle and prepared query in the same process with
 a warm OS page cache. Open and prepare are outside its timed first execution.
 Large populated corpora here do not establish larger-than-memory performance.
 
-## Long-lived churn
-
-Both runs finished **10,000 cycles**, with **40 observation points per lane**.
-The table shows the final observation, not a whole-run throughput average.
-SQLite maintenance remains an explicitly labeled comparison variant.
-
-| Run / lane | Final commits/s | Final file bytes | Point median (µs) | Window median (µs) |
-| --- | --- | --- | --- | --- |
-| steady / ours-durable | 55.35 | 62,898,176 | 0.500 | 5.917 |
-| steady / sqlite-bare | 50.33 | 17,383,424 | 1.125 | 547.459 |
-| steady / sqlite-maint | 47.48 | 13,185,024 | 1.167 | 549.875 |
-| delete-heavy / ours-durable | 22.52 | 97,288,192 | 0.541 | 6.042 |
-| delete-heavy / sqlite-bare | 24.35 | 17,362,944 | 1.167 | 601.666 |
-
-Engine final file sizes equal the previous run: **62,898,176 bytes** for
-steady churn and **97,288,192 bytes** for delete-heavy churn. Final observed
-engine throughput changed from 48.31 to 55.35 commits/s for steady churn and
-22.41 to 22.52 for delete-heavy; neither pair is a controlled causal estimate.
-Changing key distributions can alter balance-probe cost despite constant
-working-set size, so do not read every declining curve as an engine speedup.
-
-### Steady churn
-
-![steady probe latency over all 10,000 cycles](../../assets/churn-latency-steady.svg)
-
-steady probe latency over all 10,000 cycles.
-
-![steady retained file sizes over all 10,000 cycles](../../assets/churn-size-steady.svg)
-
-steady retained file sizes over all 10,000 cycles.
-
-![steady commit throughput, with maintenance events where recorded](../../assets/churn-throughput-steady.svg)
-
-steady commit throughput, with maintenance events where recorded.
-
-### Delete-heavy churn
-
-![delete-heavy probe latency over all 10,000 cycles](../../assets/churn-latency-delete-heavy.svg)
-
-delete-heavy probe latency over all 10,000 cycles.
-
-![delete-heavy retained file sizes over all 10,000 cycles](../../assets/churn-size-delete-heavy.svg)
-
-delete-heavy retained file sizes over all 10,000 cycles.
-
-![delete-heavy commit throughput, with maintenance events where recorded](../../assets/churn-throughput-delete-heavy.svg)
-
-delete-heavy commit throughput, with maintenance events where recorded.
 
 ## Heap and Primer-shaped workloads
 
@@ -421,27 +324,52 @@ not an alternative durability promise. Point/access medians are microseconds.
 
 | Operation | Frozen heap | LMDB |
 | --- | --- | --- |
-| get | 0.167 | 0.625 |
-| contains | 0.333 | 0.625 |
-| scan | 20.750 | 31.750 |
+| get | 0.167 | 0.583 |
+| contains | 0.208 | 0.500 |
+| scan | 16.708 | 29.042 |
 
-The four admission prefixes contain 693, 2,633, 10,392 and 41,432 facts,
-with observed admission costs of 545.33, 579.65, 646.99 and 700.05 ns/fact.
-Publication took **734.096 ms**; the 500-row join took **37.583 µs**.
-These are the lane's individual wall measurements, not percentile distributions.
+| Admission facts | Wall time (ms) | ns/fact |
+| --- | --- | --- |
+| 693 | 0.363 | 523.15 |
+| 2,633 | 1.947 | 739.52 |
+| 10,392 | 7.014 | 674.98 |
+| 41,432 | 28.675 | 692.11 |
+
+Publication took **1132.657 ms**; the 500-row join took
+**47.667 µs**. These are individual wall measurements, not percentile distributions.
 
 Primer uses **200,000 facts across 12 relations**. Its phase figures are
 single measured wall times, not medians; allocations were not instrumented.
 
 | Phase | Rows | Wall time (ms) |
 | --- | --- | --- |
-| builder_load | 200,000 | 72.833 |
-| builder_admit | 200,000 | 231.752 |
-| builder_publish | 200,000 | 522.225 |
-| delta_create | 0 | 19.507 |
-| delta_seed | 99,996 | 240.806 |
-| delta_write | 100,004 | 298.838 |
-| scan_decode | 200,000 | 23.871 |
+| builder_load | 200,000 | 62.440 |
+| builder_admit | 200,000 | 201.220 |
+| builder_publish | 200,000 | 613.544 |
+| delta_create | 0 | 181.975 |
+| delta_seed | 99,996 | 249.188 |
+| delta_write | 100,004 | 335.469 |
+| scan_decode | 200,000 | 20.969 |
+
+## Hash probes
+
+Fresh-state hashing covers 150 candidate/input combinations,
+including unaligned buffers. One-shot/streaming equivalence passed. This is
+not a change to the database's chosen hash, a cryptographic review, or a
+known-answer-vector pass. Reused-state timing and known-answer vectors were
+not run. The [raw hash report](runs/1.1.0/hash-probe/hash-probe.json) contains
+every input length, alignment, mean and tail.
+
+Selected aligned inputs, **median nanoseconds**, including state construction
+and finalization into a new output vector:
+
+| Candidate | 32 B | 1 KiB | 8 MiB |
+| --- | --- | --- | --- |
+| blake3-full-32 | 90 | 1,168 | 4,436,166 |
+| blake3-trunc-16 | 89 | 1,168 | 4,470,041 |
+| blake3-derive-key-16 | 169 | 1,251 | 4,458,375 |
+| blake3-row-prefix-rel0-16 | 131 | 1,369 | 4,508,459 |
+| aegis-128l-mac-16 | 65 | 113 | 489,584 |
 
 ## Synthetic renderer examples
 
@@ -458,7 +386,7 @@ The miniature fixture checks nested frame widths and labels.
 
 The differential fixture checks red growth, blue shrinkage and unchanged frames.
 
-All **27 measured charts and both synthetic fixtures** are embedded on this
+All **21 measured charts and both synthetic fixtures** are embedded on this
 page. See the [measurement runbook](measurement-plan.md) for reproducible
 commands and workload boundaries. Compare reports using source, protocol,
 draw mix and host—not screenshots alone.

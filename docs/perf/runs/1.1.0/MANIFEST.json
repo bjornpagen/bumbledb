@@ -1,0 +1,277 @@
+{
+  "format": 1,
+  "status": "REPORTS-VERIFIED",
+  "source_revision": "e5d4e4e3d4ba8b865a2dd1805230e2cc19b90335",
+  "binary_sha256": "ee3d52b4278b5dfa379e1997abeb76e83bfec5f9bc2350789fc27c40ef09018d",
+  "workers": 8,
+  "scheduler": {
+    "worker_limit": 8,
+    "cpu_ids": null,
+    "placement": "P-core-count cap; QoS steering, NOT CPU affinity",
+    "priority": "qos-user-interactive (relative priority 0)",
+    "hard_affinity": false
+  },
+  "shared_machine": true,
+  "finished": "2026-09-08T16:32:35.700086+00:00",
+  "lanes": {
+    "curves": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "curves",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/curves",
+        "--scales",
+        "S,M,L",
+        "--warmth",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/curves"
+      ],
+      "started": "2026-09-08T15:59:34.384799+00:00",
+      "pid": 33420,
+      "exit_code": 0,
+      "finished": "2026-09-08T16:31:03.286997+00:00",
+      "artifact": "curves/curves-report.json",
+      "sha256": "67e28b287b2a3cdb48c0078c60148868cb8261e348b4922efbb3d8190a3b3425"
+    },
+    "reads": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "bench",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/reads",
+        "--read-batch",
+        "1",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/reads"
+      ],
+      "started": "2026-09-08T15:59:34.388717+00:00",
+      "pid": 33422,
+      "exit_code": 0,
+      "finished": "2026-09-08T16:05:13.803088+00:00",
+      "artifact": "reads/report.json",
+      "sha256": "a7152dcca5ed7d82f2ad0c6557a48b882c36e5ba684eef166454548eead490c7"
+    },
+    "scenarios": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "scenarios",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/scenarios",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/scenarios"
+      ],
+      "started": "2026-09-08T15:59:34.390398+00:00",
+      "pid": 33432,
+      "exit_code": 0,
+      "finished": "2026-09-08T16:07:18.719522+00:00",
+      "artifact": "scenarios/scenarios.json",
+      "sha256": "0b9339c4492c7cd8ac2d5772e78988f7e531e194ef7e62d8587396ab0e41a72a"
+    },
+    "writes": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "writes",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/writes",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/writes"
+      ],
+      "started": "2026-09-08T15:59:34.392307+00:00",
+      "pid": 33442,
+      "exit_code": 0,
+      "finished": "2026-09-08T16:00:37.018536+00:00",
+      "artifact": "writes/writes-report.json",
+      "sha256": "4e972ee3da6d78ed8607d227d8da180220c199491d3808399684925b4d4a7169"
+    },
+    "storage": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "storage",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/storage",
+        "--scales",
+        "S,M",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/storage"
+      ],
+      "started": "2026-09-08T15:59:34.394839+00:00",
+      "pid": 33452,
+      "exit_code": 0,
+      "finished": "2026-09-08T16:01:21.509723+00:00",
+      "artifact": "storage/storage-report.json",
+      "sha256": "ec9d0bc68847e0eca2293aafe932b6e364b26c02551c9d3edb98645afb71d3dd"
+    },
+    "app-perf-warm": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/app-perf-warm",
+        "--regimes",
+        "warm",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/app-perf-warm"
+      ],
+      "started": "2026-09-08T15:59:34.397024+00:00",
+      "pid": 33473,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:35.345465+00:00",
+      "artifact": "app-perf-warm/app-perf.json",
+      "sha256": "daf8e535c1a9b88857165569af640fb52bfe7afcc357fbd0e8ff250135466de3"
+    },
+    "app-perf-cold": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/app-perf-cold",
+        "--regimes",
+        "cold-open,post-write",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/app-perf-cold"
+      ],
+      "started": "2026-09-08T15:59:34.403035+00:00",
+      "pid": 33487,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:36.785838+00:00",
+      "artifact": "app-perf-cold/app-perf.json",
+      "sha256": "68f30f5c1b242511347e477f21aacde0717bff7422af900a6a3384d7d53a1a2c"
+    },
+    "app-perf-large-result": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/app-perf-large-result",
+        "--regimes",
+        "large-result",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/app-perf-large-result"
+      ],
+      "started": "2026-09-08T15:59:35.478203+00:00",
+      "pid": 33556,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:36.644684+00:00",
+      "artifact": "app-perf-large-result/app-perf.json",
+      "sha256": "1590cc07d655cb8f47b9b4b7fa6491403f243b57ec512d414deaf52dcb85a995"
+    },
+    "app-perf-tenants": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/app-perf-tenants",
+        "--regimes",
+        "tenant-churn",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/app-perf-tenants"
+      ],
+      "started": "2026-09-08T15:59:36.781659+00:00",
+      "pid": 33585,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:40.057157+00:00",
+      "artifact": "app-perf-tenants/app-perf.json",
+      "sha256": "18b3dc446695b53622a7a9403761a03051705f698ed02057fa512a152400b049"
+    },
+    "hash-probe": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "hash-probe",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/hash-probe"
+      ],
+      "started": "2026-09-08T15:59:36.899350+00:00",
+      "pid": 33586,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:42.161726+00:00",
+      "artifact": "hash-probe/hash-probe.json",
+      "sha256": "a060e0de174e878ae2b1be0cecdb5af91414c2697c421000259fca5841382f37"
+    },
+    "crud": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "crud",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/crud",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/crud"
+      ],
+      "started": "2026-09-08T15:59:40.181433+00:00",
+      "pid": 33657,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:57.418608+00:00",
+      "artifact": "crud/crud.json",
+      "sha256": "884cc6b944be20fbcf33ac10918c8afa52a7b623503a23cd6337fd1c94e7191c"
+    },
+    "lawful": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "lawful",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/lawful",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/lawful"
+      ],
+      "started": "2026-09-08T15:59:42.295870+00:00",
+      "pid": 33713,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:46.988494+00:00",
+      "artifact": "lawful/lawful.json",
+      "sha256": "a39fbc19a30bca5999444df069c4006175be0ba01032edfc8007b7cc909ec333"
+    },
+    "heap": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "heap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/heap",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/heap"
+      ],
+      "started": "2026-09-08T15:59:47.121539+00:00",
+      "pid": 33910,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:48.717863+00:00",
+      "artifact": "heap/heap-report.json",
+      "sha256": "e08ffcc036b5f49b64adce6ec2364a52eeb420b9405799d2abb4318d3bc84869"
+    },
+    "primerlane": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/frozen/bumbledb-bench",
+        "primerlane",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.1.0-20260908.ozXBJm/primerlane",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.1.0-20260908.ozXBJm/full/primerlane"
+      ],
+      "started": "2026-09-08T15:59:48.858553+00:00",
+      "pid": 33978,
+      "exit_code": 0,
+      "finished": "2026-09-08T15:59:50.644933+00:00",
+      "artifact": "primerlane/primerlane-report.json",
+      "sha256": "9f83dd87337fc565efc382e3d453490021e171a5372fd81b02942547c6f39b3c"
+    }
+  },
+  "not_run_prerequisites": {
+    "correspondence-oracles": "cargo test -p bumbledb-bench correspondence",
+    "three-way-conformance": "cargo test -p bumbledb-bench three_way_conformance -- --ignored",
+    "hosted-decision": "real S3/IAM required",
+    "large-populated": ">40 GiB allocated blocks + cgroup memory.max required",
+    "graviton-arm64": "real Graviton Linux ARM64 performance host required",
+    "x86-node": "Linux x64 Node application timing required"
+  }
+}

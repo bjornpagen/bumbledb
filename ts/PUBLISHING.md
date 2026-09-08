@@ -43,12 +43,14 @@ addon from a different package version.
 2. Push the final candidate and require its exact-commit CI checks to pass.
    The `bumbledb-log` workflow builds the Linux artifacts in Amazon Linux
    2023 on their respective architectures.
-3. Download `bumbledb.linux-arm64.node` and `bumbledb.linux-x64.node` from
-   that run. Place them as `ts/npm/<platform>/bumbledb.node`; retain the
+3. Download `bumbledb.darwin-arm64.node`, `bumbledb.linux-arm64.node` and
+   `bumbledb.linux-x64.node` from that run. Place them as
+   `ts/npm/<platform>/bumbledb.node`; retain the
    run ID, source revision, and artifact digests. Do not substitute a macOS
    binary or an earlier candidate's artifact.
-4. Build the local Apple Silicon addon and both SDKs. Stage all platforms
-   and run the installed-consumer check. Per-host CI uses `--host-only`;
+4. Build both SDKs and verify the Apple Silicon addon against the release
+   version. Stage all platforms and run the installed-consumer check.
+   Per-host CI uses `--host-only`;
    release assembly requires all three real platform binaries.
 
 Useful checks from the repository root:
@@ -100,12 +102,13 @@ globally as part of a database install.
 
 ## Release scope
 
-The 1.0.x production scope is the embedded core and local log. Hosted generated
+The release covers the embedded core and local log. Hosted generated
 migration orchestration remains unsupported through the TypeScript/native
 bridge. Real-S3/IAM and Graviton qualification remain explicitly deferred by
-the owner, not passed. The September 7, 2026 full local benchmark measured
-1.0.1 source `5e83ee60`; the evidence retains that revision even when later
-documentation-only commits produce the final release revision. See the
+the owner, not passed. The September 8, 2026 full local benchmark measured
+1.1.0 source `e5d4e4e3`, using up to eight concurrent lane workers and macOS
+QoS steering rather than hard affinity. The evidence retains that revision even when later
+documentation and benchmark-tooling commits produce the final release revision. See the
 [full benchmark report](../docs/perf/results.md) for coverage and regressions.
 Release notes must state these limitations. A published release is not a
-claim that all 1.0 gates have been met.
+claim of universal production readiness or complete external qualification.

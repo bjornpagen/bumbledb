@@ -45,7 +45,7 @@ The gate requires all of these checks to pass:
   musl libc, and Rust's matching unwinder. The C link succeeds with that
   archive and fails without it.
 - A private C/Rust consumer exercises threads/TLS, caught panics, real LMDB
-  transactions, typed queries, exact float aggregation, budget refusal, and
+  transactions, typed queries, exact float aggregation, cancellation, and
   close/reopen persistence.
 - The consumer and duty execute in a fresh chroot with no `/lib` or
   `/usr/lib`, then in full-system QEMU running a real ARM64 Linux kernel on
@@ -97,4 +97,4 @@ is conservative and includes build/test dependencies; it is not a linked-code
 SBOM or release-license approval. The kernel and BusyBox are test fixtures,
 not Bumbledb product binaries. Any future public distribution must retain
 applicable notices and satisfy source-distribution obligations for fixtures
-if they are included. This lane does not change the published 1.0.1 assets.
+if they are included. This lane does not change existing published release assets.

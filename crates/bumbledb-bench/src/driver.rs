@@ -8,7 +8,6 @@ use crate::harness::Protocol;
 use crate::schema::Ledger;
 
 mod bench;
-mod churn_cmd;
 mod corpus;
 mod corpus_float;
 mod corpus_gen;
@@ -26,7 +25,6 @@ pub(crate) mod write_families;
 
 pub(crate) use bench::alloc_missing;
 pub use bench::cmd_bench;
-pub use churn_cmd::cmd_churn;
 pub use corpus::{corpus_paths, ensure_corpus, ensure_corpus_with};
 pub use corpus_float::cmd_corpus_float;
 pub use corpus_gen::{cmd_gen, cmd_verify};

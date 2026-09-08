@@ -11,7 +11,6 @@ use rusqlite::Connection;
 use crate::calendar::corpus_gen::CalSizes;
 use crate::cli::StorageArgs;
 use crate::corpus_gen::{GenConfig, Sizes};
-use crate::json;
 use crate::report::{self, Provenance};
 use crate::sqlmap;
 
@@ -20,7 +19,6 @@ pub struct StorageReport {
     pub provenance: Provenance,
     pub seed: u64,
     pub scales: Vec<ScaleStorage>,
-    pub churn: Vec<ChurnRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,14 +39,6 @@ pub struct WorldStorage {
     pub sqlite_tableonly_wal_bytes: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChurnRow {
-    pub name: String,
-    pub engine_bytes: Option<u64>,
-    pub sqlite_bytes: Option<u64>,
-    pub sqlite_wal_bytes: Option<u64>,
-}
-
 fn push_world(out: &mut String, world: &WorldStorage) {
     let _ = write!(
         out,
@@ -65,27 +55,6 @@ fn push_world(out: &mut String, world: &WorldStorage) {
         world.sqlite_tableonly_wal_bytes,
         super::per_unit(world.sqlite_tableonly_bytes, world.facts),
     );
-}
-
-fn push_opt_u64(out: &mut String, value: Option<u64>) {
-    match value {
-        Some(v) => {
-            let _ = write!(out, "{v}");
-        }
-        None => out.push_str("null"),
-    }
-}
-
-fn push_churn(out: &mut String, row: &ChurnRow) {
-    out.push_str("{\"name\":");
-    json::push_str_lit(out, &row.name);
-    out.push_str(",\"engine_bytes\":");
-    push_opt_u64(out, row.engine_bytes);
-    out.push_str(",\"sqlite_bytes\":");
-    push_opt_u64(out, row.sqlite_bytes);
-    out.push_str(",\"sqlite_wal_bytes\":");
-    push_opt_u64(out, row.sqlite_wal_bytes);
-    out.push('}');
 }
 
 #[must_use]
@@ -106,13 +75,6 @@ pub fn to_json(report: &StorageReport) -> String {
             push_world(&mut out, world);
         }
         out.push_str("]}");
-    }
-    out.push_str("],\"churn\":[");
-    for (index, row) in report.churn.iter().enumerate() {
-        if index > 0 {
-            out.push(',');
-        }
-        push_churn(&mut out, row);
     }
     out.push_str("]}");
     out
@@ -362,55 +324,6 @@ fn measure_calendar(scale_dir: &Path, cfg: GenConfig) -> Result<WorldStorage, St
     )
 }
 
-fn measure_churn(dir: &Path) -> Result<Vec<ChurnRow>, String> {
-    let entries =
-        std::fs::read_dir(dir).map_err(|e| format!("churn dir {}: {e}", dir.display()))?;
-    let mut checkpoints: Vec<(String, PathBuf)> = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| format!("churn dir {}: {e}", dir.display()))?;
-        let path = entry.path();
-        if path.is_dir() {
-            checkpoints.push((entry.file_name().to_string_lossy().into_owned(), path));
-        }
-    }
-    if checkpoints.is_empty() {
-        return Err(format!(
-            "churn contract: {} holds no checkpoint subdirectories — each checkpoint \
-             is one immediate subdirectory holding `db/data.mdb` (optional) and/or \
-             `oracle.sqlite` (+ optional `oracle.sqlite-wal`)",
-            dir.display()
-        ));
-    }
-    checkpoints.sort_by(|a, b| a.0.cmp(&b.0));
-    checkpoints
-        .into_iter()
-        .map(|(name, path)| {
-            let engine = path.join("db").join("data.mdb");
-            let engine_bytes = if engine.exists() {
-                Some(file_bytes(&engine)?)
-            } else {
-                None
-            };
-            let oracle = path.join("oracle.sqlite");
-            let (sqlite_bytes, sqlite_wal_bytes) = if oracle.exists() {
-                (Some(file_bytes(&oracle)?), Some(wal_bytes(&oracle)?))
-            } else {
-                (None, None)
-            };
-            Ok(ChurnRow {
-                name,
-                engine_bytes,
-                sqlite_bytes,
-                sqlite_wal_bytes,
-            })
-        })
-        .collect()
-}
-
-fn opt_cell(value: Option<u64>) -> String {
-    value.map_or_else(|| "—".to_owned(), |v| v.to_string())
-}
-
 fn render(report: &StorageReport) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "# Storage report\n");
@@ -455,24 +368,6 @@ fn render(report: &StorageReport) -> String {
             );
         }
     }
-    if !report.churn.is_empty() {
-        let _ = writeln!(out, "\n## Churn checkpoints\n");
-        let _ = writeln!(
-            out,
-            "| checkpoint | engine bytes | sqlite bytes | sqlite wal |"
-        );
-        let _ = writeln!(out, "|---|---:|---:|---:|");
-        for row in &report.churn {
-            let _ = writeln!(
-                out,
-                "| {} | {} | {} | {} |",
-                row.name,
-                opt_cell(row.engine_bytes),
-                opt_cell(row.sqlite_bytes),
-                opt_cell(row.sqlite_wal_bytes),
-            );
-        }
-    }
     out
 }
 
@@ -509,16 +404,10 @@ pub fn run(args: &StorageArgs) -> Result<i32, String> {
         });
     }
 
-    let churn = match &args.churn_dir {
-        Some(dir) => measure_churn(dir)?,
-        None => Vec::new(),
-    };
-
     let report = StorageReport {
         provenance: report::provenance(Path::new(".")),
         seed: args.seed,
         scales,
-        churn,
     };
     std::fs::write(out_dir.join("storage-report.json"), to_json(&report))
         .map_err(|e| format!("artifact: {e}"))?;
@@ -571,12 +460,6 @@ mod tests {
                     sqlite_tableonly_bytes: 3000,
                     sqlite_tableonly_wal_bytes: 64,
                 }],
-            }],
-            churn: vec![ChurnRow {
-                name: "delete-half".to_owned(),
-                engine_bytes: Some(1500),
-                sqlite_bytes: None,
-                sqlite_wal_bytes: None,
             }],
         };
         let parsed = crate::json::parse(&to_json(&report)).expect("valid JSON");
@@ -645,17 +528,6 @@ mod tests {
                 .and_then(Value::as_f64),
             Some(64.0)
         );
-        let churn = parsed.get("churn").and_then(Value::as_arr).expect("churn");
-        assert_eq!(
-            churn[0].get("name").and_then(Value::as_str),
-            Some("delete-half")
-        );
-        assert_eq!(
-            churn[0].get("engine_bytes").and_then(Value::as_f64),
-            Some(1500.0)
-        );
-        assert_eq!(churn[0].get("sqlite_bytes"), Some(&Value::Null));
-        assert_eq!(churn[0].get("sqlite_wal_bytes"), Some(&Value::Null));
     }
 
     #[test]
@@ -670,7 +542,6 @@ mod tests {
             scales: vec![Scale::Tiny],
             seed: 1,
             dir: dir.clone(),
-            churn_dir: None,
             out: Some(out.clone()),
             ..StorageArgs::default()
         })
@@ -785,82 +656,6 @@ mod tests {
             file_bytes(&store.join("data.mdb")).expect("stat")
         );
         drop(db);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn churn_checkpoints_are_measured() {
-        let dir = scratch("storage-lane-churn");
-        let churn = dir.join("churn");
-        let c0 = churn.join("c0");
-        let c1 = churn.join("c1");
-        std::fs::create_dir_all(&c0).expect("c0");
-        std::fs::create_dir_all(&c1).expect("c1");
-        let cfg = GenConfig {
-            seed: 1,
-            scale: Scale::Tiny,
-        };
-
-        let load_dir = dir.join("db-load");
-        let db = Db::create(
-            &load_dir,
-            crate::schema::Ledger,
-            crate::harness::bench_work(),
-        )
-        .expect("create")
-        .expect("accepted");
-        crate::corpus::load_bumbledb(&db, cfg).expect("load");
-        db.compact(&c0.join("db"), crate::harness::bench_work())
-            .expect("compact");
-        drop(db);
-        let (conn, _) =
-            crate::corpus::load_sqlite(&c0.join("oracle.sqlite"), cfg).expect("sqlite load");
-        drop(conn);
-        let conn = Connection::open(c1.join("oracle.sqlite")).expect("open");
-        conn.execute_batch("CREATE TABLE t(x INTEGER); INSERT INTO t VALUES (1)")
-            .expect("fill");
-        drop(conn);
-
-        let out = dir.join("out");
-        let code = run(&StorageArgs {
-            scales: vec![],
-            seed: 1,
-            dir: dir.clone(),
-            churn_dir: Some(churn),
-            out: Some(out.clone()),
-            ..StorageArgs::default()
-        })
-        .expect("the lane runs");
-        assert_eq!(code, 0);
-        let text = std::fs::read_to_string(out.join("storage-report.json")).expect("json artifact");
-        let parsed = crate::json::parse(&text).expect("valid JSON");
-        let churn = parsed.get("churn").and_then(Value::as_arr).expect("churn");
-        assert_eq!(churn.len(), 2, "two checkpoints");
-        assert_eq!(churn[0].get("name").and_then(Value::as_str), Some("c0"));
-        assert_eq!(churn[1].get("name").and_then(Value::as_str), Some("c1"));
-        assert!(
-            churn[0]
-                .get("engine_bytes")
-                .and_then(Value::as_f64)
-                .expect("c0 engine bytes")
-                > 0.0
-        );
-        assert!(
-            churn[0]
-                .get("sqlite_bytes")
-                .and_then(Value::as_f64)
-                .expect("c0 sqlite bytes")
-                > 0.0
-        );
-
-        assert_eq!(churn[1].get("engine_bytes"), Some(&Value::Null));
-        assert!(
-            churn[1]
-                .get("sqlite_bytes")
-                .and_then(Value::as_f64)
-                .expect("c1 sqlite bytes")
-                > 0.0
-        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

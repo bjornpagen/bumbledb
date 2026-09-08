@@ -1,5 +1,13 @@
 # Bumbledb 1.0
 
+Historical notes for 1.0/1.0.1. The current release notes are
+[Bumbledb 1.1](release-1.1.md); the
+[original benchmark report](https://github.com/bjornpagen/bumbledb/blob/v1.0.1/docs/perf/results.md)
+retains the measurements quoted here.
+These notes preserve the original release plan; the
+[GitHub release record](https://github.com/bjornpagen/bumbledb/releases/tag/v1.0.1)
+records the subsequent CI waiver and completed npm publication.
+
 ## 1.0.1 patch release
 
 The patch release consolidates the post-1.0 cleanup. Public SDKs,
@@ -27,7 +35,7 @@ clearly distinguished from measured evidence. No new profiles were captured.
 
 ## 1.0 baseline
 
-Bumbledb 1.0 is the production-ready release of the embedded core and local
+Bumbledb 1.0 is the 1.0 release of the embedded core and local
 durable-history layer: a set-semantic application database built on LMDB,
 COLT and Free Join. It targets a database per application user or tenant.
 
@@ -61,7 +69,7 @@ schemas; they are not an adapter for arbitrary historical storage formats.
 
 ## Release scope and limits
 
-The production-ready scope is embedded core and **local** log use. Hosted
+The release scope is embedded core and **local** log use. Hosted
 history APIs are present, but generated hosted initialization/migration is
 not supported through the TypeScript/native bridge. Never migrate an S3
 tenant's local cache as though it were the authoritative history.
@@ -93,7 +101,7 @@ shared, scheduler-boosted host. The engine revision measured was
 `5e83ee60c4e5d88e8ca395daa3de4d92a0c03186`, version **1.0.1**. Subsequent
 documentation commits do not change that measurement identity.
 
-The [performance report](perf/results.md) includes exact coverage, comparison
+The [original performance report](https://github.com/bjornpagen/bumbledb/blob/v1.0.1/docs/perf/results.md) includes exact coverage, comparison
 with the last published run, regressions, clock caveats and storage costs.
 The 100,000-row native result median was 63.86 ms versus 69.34 ms in the
 previous full suite; triangle-join and aggregate-statistics medians fell

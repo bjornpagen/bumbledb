@@ -2,7 +2,6 @@ pub mod appperf;
 pub mod boost;
 pub mod calendar;
 pub mod capacity;
-pub mod churn;
 pub mod cli;
 pub mod clockproxy;
 pub mod closure;

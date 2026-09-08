@@ -5,8 +5,8 @@ use crate::duralane::DurabilityLane;
 use crate::verify::DEFAULT_RANDOM_CASES;
 
 use super::{
-    AppPerfArgs, BenchArgs, ChurnArgs, Cmd, CorpusArgs, CorpusFloatArgs, CurvesArgs, HashProbeArgs,
-    HeapArgs, PrimerlaneArgs, ProfileArgs, ScenarioArgs, StorageArgs, StorageProfile, WritesArgs,
+    AppPerfArgs, BenchArgs, Cmd, CorpusArgs, CorpusFloatArgs, CurvesArgs, HashProbeArgs, HeapArgs,
+    PrimerlaneArgs, ProfileArgs, ScenarioArgs, StorageArgs, StorageProfile, WritesArgs,
 };
 
 struct Tokens<'a> {
@@ -261,10 +261,6 @@ fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             }
             "--seed" => args.seed = parse_u64(&flag, tokens.value(&flag)?)?,
             "--dir" => args.dir = PathBuf::from(tokens.value(&flag)?),
-            "--churn-dir" => {
-                corpus_options = true;
-                args.churn_dir = Some(PathBuf::from(tokens.value(&flag)?));
-            }
             "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
             _ => return Err(unknown("storage", &flag)),
         }
@@ -274,7 +270,7 @@ fn parse_storage(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
             return Err("--rows/--samples require storage --profile home-costs".into());
         }
         StorageProfile::HomeCosts if corpus_options => {
-            return Err("home-costs cannot use --scales or --churn-dir".into());
+            return Err("home-costs cannot use --scales".into());
         }
         StorageProfile::HomeCosts => crate::space::variants::validate_home_args(&args)?,
         StorageProfile::Corpus => {}
@@ -417,28 +413,6 @@ fn parse_primerlane(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
     Ok(Cmd::Primerlane(args))
 }
 
-fn parse_churn(tokens: &mut Tokens<'_>) -> Result<Cmd, String> {
-    let mut args = ChurnArgs::default();
-    while let Some(flag) = tokens.next() {
-        let flag = flag.to_owned();
-        if corpus_flag(&mut args.corpus, &flag, tokens)? {
-            continue;
-        }
-        match flag.as_str() {
-            "--cycles" => args.cycles = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--sample-every" => args.sample_every = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--vacuum-every" => args.vacuum_every = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--analyze-every" => args.analyze_every = parse_u64(&flag, tokens.value(&flag)?)?,
-            "--runs" => {
-                args.runs = Some(tokens.value(&flag)?.split(',').map(str::to_owned).collect());
-            }
-            "--out" => args.out = Some(PathBuf::from(tokens.value(&flag)?)),
-            _ => return Err(unknown("churn", &flag)),
-        }
-    }
-    Ok(Cmd::Churn(args))
-}
-
 /// Seed values for the float corpus accept `0x`-prefixed hex — the P11
 /// regeneration command pins `--seed 0xB0B`.
 fn parse_u64_maybe_hex(flag: &str, raw: &str) -> Result<u64, String> {
@@ -556,7 +530,6 @@ pub fn parse(args: &[String]) -> Result<Cmd, String> {
         "storage" => parse_storage(&mut tokens),
         "writes" => parse_writes(&mut tokens),
         "curves" => parse_curves(&mut tokens),
-        "churn" => parse_churn(&mut tokens),
         "heap" => parse_heap(&mut tokens),
         "primerlane" => parse_primerlane(&mut tokens),
         "corpus-float" => parse_corpus_float(&mut tokens),

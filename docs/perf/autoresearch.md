@@ -1,13 +1,17 @@
 # Development autoresearch notes
 
-Allocation and memory-lifetime cleanup has reached its final verification.
+The allocation and memory-lifetime cleanup below was committed as `b42f5c05`
+and passed all required [cross-platform CI checks](https://github.com/bjornpagen/bumbledb/actions/runs/34243728367).
+The research loop is stopped. The subsequent 1.1.0 benchmark/release refresh
+is separate; see the [current benchmark results](results.md).
+
 The implementation uses ordinary
 unrestricted Rust allocation and OS mmap behavior, with correctness before
 performance before simplicity. The hardware targets include a Raspberry Pi
 Zero 2 with 512 MB RAM and large macOS machines. No Pi performance or memory
-qualification is claimed. No release or publication is authorized.
+qualification is claimed. The cleanup itself did not publish a release.
 
-These are development experiments after the [published 1.0.1 results](results.md),
+These are development experiments after the [published 1.0.1 results](https://github.com/bjornpagen/bumbledb/blob/v1.0.1/docs/perf/results.md),
 not replacement release benchmarks. Priorities are hardening, correctness,
 performance, then simplicity. Existing native traces supplied the leads below;
 no new traces were collected for this round.
@@ -23,7 +27,7 @@ and removal of unjustified spill policies.
 
 The dated checkpoints below preserve intermediate failures and incomplete
 states. See the final wrap-up audit for the current local qualification;
-cross-platform CI must still qualify the exact pushed revision.
+the linked CI above is the completed qualification of the pushed revision.
 
 The retained round87 and round89 profiles identify copy, projection, aggregate,
 and output paths worth inspecting. They are CPU samples, not allocation counts.
@@ -1038,10 +1042,8 @@ and the release warm-allocation contract. One nextest cleanup warning occurred
 in a generated enum roundtrip test; three isolated reruns passed cleanly. Its
 cause is unknown, and the original warning is retained.
 
-The full local suite completed at **22:38:50 UTC**: 15 lanes, 32 read families,
-34 scenario queries, and both 10,000-cycle churn workloads. Source/binary
-identity and report digests were checked. Churn includes checkpoint probe
-oracles and final model/engine/SQLite state agreement.
+The local suite completed at **22:38:50 UTC**, including 32 read families and
+34 scenario queries. Source/binary identity and report digests were checked.
 
 This does not qualify the manifest's six separate prerequisites, turn the
 informational read latency budget green, or replace cross-platform CI.

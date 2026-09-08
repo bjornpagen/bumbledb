@@ -33,11 +33,12 @@ correctness CI is distinct from the Apple Silicon performance measurements.
 
 ## Install
 
-This guide follows the development checkout. For an npm installation, use
-the guide from its matching Git tag.
+This guide follows the 1.1.0 source API. Use the guide from the Git tag matching
+your installed package. GitHub release tarballs and npm publication are separate;
+the npm command below applies once that version is published.
 
 ```sh
-pnpm add @bjornpagen/bumbledb@1.0.1 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb@1.1.0 effect@4.0.0-rc.112
 ```
 
 ## Quick start

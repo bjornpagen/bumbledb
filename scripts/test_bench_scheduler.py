@@ -82,8 +82,8 @@ class NightTests(unittest.TestCase):
 
     def test_full_roster_and_data_paths_are_independent(self):
         jobs = night.lanes(Path("/bin/bench"), Path("/corpus with spaces"), Path("/out"), True)
-        self.assertEqual(len(jobs), 15)
-        self.assertEqual(len({job.name for job in jobs}), 15)
+        self.assertEqual(len(jobs), 14)
+        self.assertEqual(len({job.name for job in jobs}), 14)
         data_paths = [job.command[job.command.index("--dir") + 1] for job in jobs if "--dir" in job.command]
         self.assertEqual(len(data_paths), len(set(data_paths)))
         read = next(job for job in jobs if job.name == "reads")

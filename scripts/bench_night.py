@@ -63,7 +63,6 @@ def lanes(binary, data, out, full):
     # Start the long-running lanes first; fill every free worker from this queue.
     return [
         job("curves", "curves", "curves-report.json", "--scales", "S,M,L", "--warmth"),
-        job("churn", "churn", "churn-report.json"),
         job("reads", "bench", "report.json", "--read-batch", "1"),
         job("scenarios", "scenarios", "scenarios.json"),
         job("writes", "writes", "writes-report.json"),

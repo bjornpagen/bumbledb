@@ -1,8 +1,5 @@
 use std::path::PathBuf;
 
-use crate::churn::ops::{
-    DEFAULT_ANALYZE_EVERY, DEFAULT_CYCLES, DEFAULT_SAMPLE_EVERY, DEFAULT_VACUUM_EVERY,
-};
 use crate::corpus_gen::Scale;
 use crate::duralane::DurabilityLane;
 
@@ -92,7 +89,6 @@ pub enum Cmd {
 
     Curves(CurvesArgs),
 
-    Churn(ChurnArgs),
     /// The heap-arm ladder: frozen-vs-LMDB point reads and admission
     Heap(HeapArgs),
 
@@ -122,7 +118,6 @@ impl Cmd {
             | Self::Storage(_)
             | Self::Writes(_)
             | Self::Curves(_)
-            | Self::Churn(_)
             | Self::Heap(_)
             | Self::Primerlane(_)
             | Self::HashProbe(_) => true,
@@ -180,7 +175,6 @@ pub struct StorageArgs {
     pub seed: u64,
     pub dir: PathBuf,
 
-    pub churn_dir: Option<PathBuf>,
     pub out: Option<PathBuf>,
 }
 
@@ -193,7 +187,6 @@ impl Default for StorageArgs {
             scales: vec![Scale::S],
             seed: 1,
             dir: PathBuf::from("bench-data"),
-            churn_dir: None,
             out: None,
         }
     }
@@ -256,36 +249,6 @@ impl Default for CurvesArgs {
             samples: None,
             cap_ms: 30_000,
             warmth: false,
-            out: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChurnArgs {
-    pub corpus: CorpusArgs,
-
-    pub cycles: u64,
-
-    pub sample_every: u64,
-
-    pub vacuum_every: u64,
-
-    pub analyze_every: u64,
-
-    pub runs: Option<Vec<String>>,
-    pub out: Option<PathBuf>,
-}
-
-impl Default for ChurnArgs {
-    fn default() -> Self {
-        Self {
-            corpus: CorpusArgs::default(),
-            cycles: DEFAULT_CYCLES,
-            sample_every: DEFAULT_SAMPLE_EVERY,
-            vacuum_every: DEFAULT_VACUUM_EVERY,
-            analyze_every: DEFAULT_ANALYZE_EVERY,
-            runs: None,
             out: None,
         }
     }

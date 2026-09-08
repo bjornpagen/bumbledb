@@ -128,9 +128,6 @@ pub fn validate_home_args(args: &crate::cli::StorageArgs) -> Result<(), String> 
     if !(1..=4096).contains(&args.samples) {
         return Err("home-costs --samples must be in 1..=4096".into());
     }
-    if args.churn_dir.is_some() {
-        return Err("home-costs cannot consume --churn-dir".into());
-    }
     Ok(())
 }
 

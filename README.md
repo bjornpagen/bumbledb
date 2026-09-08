@@ -160,10 +160,10 @@ authoritative database for a local migration.
 
 ## Performance
 
-On an Apple M2 Max, the September 7, 2026 suite measured a 0.50 µs median
-point lookup, a 4.83 µs range query, and 63.86 ms to construct and deliver a
+On an Apple M2 Max, the September 8, 2026 suite measured a 0.50 µs median
+point lookup, a 5.17 µs range query, and 5.47 ms to construct and deliver a
 100,000-row native result. It covers 32 read families, 34 scenario queries,
-durable writes, constraints, storage, scaling, and two 10,000-cycle churn runs.
+durable writes, constraints, storage, and scaling.
 
 ![Read latency against indexed SQLite](assets/bench-vs-sqlite.svg)
 
@@ -171,7 +171,12 @@ durable writes, constraints, storage, scaling, and two 10,000-cycle churn runs.
 
 ![Compacted database storage](assets/bench-storage.svg)
 
-These are shared-host, scheduler-boosted measurements of source `5e83ee60`.
+These are shared-host measurements of source `e5d4e4e3`, with up to eight
+concurrent benchmark workers and user-interactive QoS. The worker count matches
+the Mac's performance cores; macOS does not guarantee P-core-only placement.
+Concurrent workers share CPU and I/O, so the historical comparison with the
+older serial run is not a controlled speedup claim.
+
 The read panel has lower medians than indexed SQLite in all 32 families;
 durable writes and constraint refusals include SQLite wins. Compacted stores
 use 1.67–1.80× indexed SQLite's space in the measured ledger/calendar workloads.

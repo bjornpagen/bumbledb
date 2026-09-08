@@ -24,7 +24,6 @@ fn dispatch(cmd: &cli::Cmd) -> Result<i32, String> {
         cli::Cmd::Storage(args) => lanes::storage::run(args),
         cli::Cmd::Writes(args) => lanes::writes::run(args),
         cli::Cmd::Curves(args) => lanes::curves::run(args),
-        cli::Cmd::Churn(args) => driver::cmd_churn(args),
         cli::Cmd::Heap(args) => lanes::heap::run(args),
         cli::Cmd::Primerlane(args) => bumbledb_bench::primerlane::run(args),
         cli::Cmd::CorpusFloat(args) => driver::cmd_corpus_float(args).map(|()| 0),

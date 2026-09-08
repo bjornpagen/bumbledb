@@ -20,7 +20,6 @@ const COMMANDS: &str = "COMMANDS:\n\
     \x20          durability lanes (report-class)\n\
     \x20 curves   scale-curve runner + cold/warm/memoized panel\n\
     \x20          (report-class)\n\
-    \x20 churn    long-lived churn: degradation time series, both engines\n\
     \x20 heap     heap-arm ladder: frozen-vs-LMDB point reads, admission\n\
     \x20          A/I/R/F/J prefixes (report-class)\n\
     \x20 primerlane  the Primer-shaped attribution lane: builder/delta\n\
@@ -96,11 +95,10 @@ pub fn help() -> String {
          \x20 --profile corpus|home-costs              (default corpus)\n\
          \x20 --rows N        home-costs only: 256-row multiples, max 1048576 (default 16384)\n\
          \x20 --samples N     home-costs read samples, 1..4096 (default 64)\n\
-         \x20                 home-costs emits home-costs.json; no corpus/churn options\n\
+         \x20                 home-costs emits home-costs.json; no corpus-scale option\n\
          \x20 --scales S,M,L  corpus scales            (default S)\n\
          \x20 --seed N        corpus seed              (default 1)\n\
          \x20 --dir PATH      corpus cache root        (default bench-data)\n\
-         \x20 --churn-dir PATH  scratch root for the churn ladder (default off)\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-storage)\n\
          \n\
          WRITES:\n\
@@ -122,19 +120,6 @@ pub fn help() -> String {
          \x20 --cap-ms N      per-sample SQLite wall-clock cap (default 30000)\n\
          \x20 --warmth        add the cold/warm/memoized panel\n\
          \x20 --out PATH      artifact dir (default bench-out/<timestamp>-curves)\n\
-         \n\
-         CHURN:\n\
-         \x20 --scale S|M|L   corpus scale             (default S)\n\
-         \x20 --seed N        corpus seed              (default 1)\n\
-         \x20 --dir PATH      scratch root             (default bench-data)\n\
-         \x20 --cycles N      total cycles             (default 10000)\n\
-         \x20 --sample-every N  probe stride, cycles   (default 250)\n\
-         \x20 --vacuum-every N  SQLite VACUUM stride   (default 500)\n\
-         \x20 --analyze-every N SQLite ANALYZE stride  (default 500)\n\
-         \x20 --runs a,b      run only these runs\n\
-         \x20                 (default steady,delete-heavy)\n\
-         \x20 --out PATH      artifact dir (default bench-out/<timestamp>-churn)\n\
-         \x20 report-class; series artifact churn-report.json — never a gate\n\
          \n\
          HEAP:\n\
          \x20 --scale S|M|L   point-read corpus scale  (default S)\n\

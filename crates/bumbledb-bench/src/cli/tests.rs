@@ -198,8 +198,6 @@ fn storage_parses_the_lane_flags() {
         "7",
         "--dir",
         "/tmp/x",
-        "--churn-dir",
-        "/tmp/churn",
         "--out",
         "artifacts",
     ]))
@@ -210,7 +208,6 @@ fn storage_parses_the_lane_flags() {
             scales: vec![Scale::S, Scale::M, Scale::L],
             seed: 7,
             dir: PathBuf::from("/tmp/x"),
-            churn_dir: Some(PathBuf::from("/tmp/churn")),
             out: Some(PathBuf::from("artifacts")),
             ..StorageArgs::default()
         })
@@ -259,7 +256,6 @@ fn storage_home_costs_is_opt_in_bounded_and_separate_from_corpus_options() {
         vec!["--samples", "4"],
         vec!["--profile", "unknown"],
         vec!["--profile", "home-costs", "--scales", "S"],
-        vec!["--profile", "home-costs", "--churn-dir", "old"],
         vec!["--profile", "home-costs", "--rows", "0"],
         vec!["--profile", "home-costs", "--rows", "257"],
         vec!["--profile", "home-costs", "--rows", "1048832"],
@@ -446,63 +442,6 @@ fn primerlane_parses_the_lane_flags() {
 }
 
 #[test]
-fn churn_parses_its_flags() {
-    let cmd = parse(&argv(&[
-        "churn",
-        "--scale",
-        "M",
-        "--seed",
-        "7",
-        "--dir",
-        "/tmp/churn",
-        "--cycles",
-        "100",
-        "--sample-every",
-        "10",
-        "--vacuum-every",
-        "20",
-        "--analyze-every",
-        "25",
-        "--runs",
-        "steady,delete-heavy",
-        "--out",
-        "artifacts",
-    ]))
-    .expect("parses");
-    assert_eq!(
-        cmd,
-        Cmd::Churn(ChurnArgs {
-            corpus: CorpusArgs {
-                scale: Scale::M,
-                seed: 7,
-                dir: PathBuf::from("/tmp/churn"),
-            },
-            cycles: 100,
-            sample_every: 10,
-            vacuum_every: 20,
-            analyze_every: 25,
-            runs: Some(vec!["steady".to_owned(), "delete-heavy".to_owned()]),
-            out: Some(PathBuf::from("artifacts")),
-        })
-    );
-
-    assert_eq!(
-        parse(&argv(&["churn"])),
-        Ok(Cmd::Churn(ChurnArgs::default()))
-    );
-    assert_eq!(ChurnArgs::default().cycles, 10_000);
-    assert_eq!(ChurnArgs::default().sample_every, 250);
-    assert!(ChurnArgs::default().runs.is_none());
-}
-
-#[test]
-fn churn_rejects_unknown_flags() {
-    let err = parse(&argv(&["churn", "--bogus", "x"])).unwrap_err();
-    assert!(err.contains("--bogus"), "{err}");
-    assert!(err.contains("churn"), "{err}");
-}
-
-#[test]
 fn crud_parses_its_flags() {
     let cmd = parse(&argv(&[
         "crud",
@@ -612,7 +551,6 @@ fn the_boost_seam_membership_is_pinned() {
         vec!["storage"],
         vec!["writes"],
         vec!["curves"],
-        vec!["churn"],
         vec!["heap"],
         vec!["primerlane"],
     ] {

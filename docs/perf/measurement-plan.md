@@ -322,7 +322,6 @@ still requires real Graviton and Linux x64 runs.
 | `lawful` | Constraint/admission workloads and their SQL enforcement counterparts. |
 | `writes` | Durable commit/delete batch ladder and insertion stream. There is no supported no-sync engine lane. |
 | `curves` | Its four registered families (`triangle`, `point`, `busy_scan`, `closure_fanout`) at S/M/L; the warmth panel uses the first requested scale. Reopen-cold times the first execution after fresh open/prepare, not process startup or cold OS pages. Capped SQLite samples remain caps, not timings. |
-| `churn` | Default steady/delete-heavy long-lived workloads with SQLite maintenance variants. |
 | `heap` | Frozen-instance versus LMDB access and admission-prefix comparisons. |
 | `primerlane` | Synthetic Primer-shaped builder/change/write/scan attribution. |
 
