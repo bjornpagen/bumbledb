@@ -26,6 +26,7 @@ mod answers;
 mod budgets;
 mod correctness;
 mod disjoint;
+mod empty_inputs;
 mod float_aggregates;
 mod folded;
 mod gates;

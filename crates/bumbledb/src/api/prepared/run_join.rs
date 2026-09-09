@@ -155,7 +155,8 @@ where
     }
 
     for (occ_idx, keys) in resolved_selections.iter().enumerate() {
-        if plan.occurrences()[occ_idx].role.discharged() {
+        let occurrence = &plan.occurrences()[occ_idx];
+        if occurrence.role.discharged() {
             debug_assert!(
                 keys.is_empty(),
                 "discharged occurrences carry no selections"
@@ -163,11 +164,17 @@ where
             continue;
         }
         checkpoint_join_work(work, &mut pending_steps)?;
-        let selected = memo.colts[occ_idx]
-            .select(keys)
-            .map_err(crate::api::prepared::source::work_error)?;
-        let hit = selected.is_some();
-        if !hit {
+        // A positive empty input empties this rule regardless of join order.
+        // With no selection levels, select returns a root cursor even for
+        // zero rows; executing it could first force unrelated nonempty tries.
+        // Empty negation is not evidence that the positive join is empty.
+        if (occurrence.role.participates() && memo.colts[occ_idx].is_empty())
+            || memo.colts[occ_idx]
+                .select(keys)
+                .map_err(crate::api::prepared::source::work_error)?
+                .is_none()
+        {
+            flush_join_work(work, &mut pending_steps)?;
             return Ok(());
         }
     }

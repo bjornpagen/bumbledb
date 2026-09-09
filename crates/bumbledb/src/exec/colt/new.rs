@@ -5,6 +5,12 @@ impl Colt {
         self.view.bound().expect("execute binds the COLT view")
     }
 
+    /// Whether the bound input has any rows, before prefix selection.
+    /// Unbound is a caller error, not an empty relation.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.bound_view().len() == 0
+    }
+
     #[must_use]
     pub fn new(view: View, selections: &[SelectionLevel], join_schema: Vec<Vec<usize>>) -> Self {
         let schema_columns: Vec<Vec<usize>> = selections
