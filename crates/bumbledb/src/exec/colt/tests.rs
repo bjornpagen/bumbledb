@@ -85,10 +85,12 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
 }
 
 mod admit;
+mod construction_tails;
 mod dense;
 mod model;
 mod overflow;
 mod pins;
 mod selection;
 mod sizing;
+pub(super) mod staged_growth;
 mod synthetic;

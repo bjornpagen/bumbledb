@@ -99,13 +99,13 @@ fn cancelled_duplicate_chunk_preserves_the_original_singleton() {
 }
 
 #[test]
-fn cancelled_resize_preserves_the_readable_map_and_can_retry() {
+fn cancelled_child_construction_preserves_the_readable_root_and_can_retry() {
     let schema = schema();
-    let rows: Vec<_> = (0..25).map(|i| (i, i)).collect();
+    let rows: Vec<_> = (0..513).map(|i| (0, i)).collect();
     let view = view_of(&schema, &rows);
     let mut colt = join_colt(&view);
     colt.force_root().unwrap();
-    let mut map = colt.maps[0];
+    let map = colt.maps[0];
     let layout = (
         map.nbuckets,
         map.ctrl_start,
@@ -115,32 +115,30 @@ fn cancelled_resize_preserves_the_readable_map_and_can_retry() {
     let before = lengths(&colt);
     let stopped = WorkContext::new();
     stopped.cancel();
+    let child = colt.get(Colt::root(), 0, &[0]).unwrap();
     colt.bind(Some(&stopped));
-    assert_eq!(colt.grow_map(&mut map), Err(WorkError::Cancelled));
+    assert_eq!(colt.ensure_forced(child, 1), Err(WorkError::Cancelled));
     assert_eq!(
         (
-            map.nbuckets,
-            map.ctrl_start,
-            map.bucket_start,
-            map.dense_start
+            colt.maps[0].nbuckets,
+            colt.maps[0].ctrl_start,
+            colt.maps[0].bucket_start,
+            colt.maps[0].dense_start
         ),
         layout
     );
     assert_eq!(lengths(&colt), before);
-    for i in 0..25 {
-        assert!(colt.get(Colt::root(), 0, &[i]).is_some());
-    }
+    assert_eq!(colt.get(Colt::root(), 0, &[0]), Some(child));
 
     colt.bind(Some(&WorkContext::new()));
-    colt.grow_map(&mut map).unwrap();
-    colt.maps[0] = map;
-    assert_eq!(map.nbuckets, layout.0 * 2);
+    colt.ensure_forced(child, 1).unwrap();
+    assert!(colt.maps[1].nbuckets > super::super::force::force_nbuckets(513));
     assert_eq!(
-        drain(&mut colt, Colt::root(), 0)
+        drain(&mut colt, child, 1)
             .iter()
             .map(|(key, _)| key[0])
             .collect::<Vec<_>>(),
-        (0..25).collect::<Vec<_>>()
+        (0..513).collect::<Vec<_>>()
     );
 }
 
