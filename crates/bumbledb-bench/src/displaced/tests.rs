@@ -65,6 +65,26 @@ fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
 }
 
 #[test]
+fn final_map_size_tracks_distinct_insertions_not_trailing_duplicates() {
+    for (positions, distinct, groups) in [
+        (0, 0, 1),
+        (1, 1, 1),
+        (25, 25, 8),
+        (50, 1, 8),
+        (50, 25, 8),
+        (50, 26, 16),
+        (512, 102, 32),
+        (512, 103, 64),
+    ] {
+        assert_eq!(
+            forced_spoke_map_bytes(positions, distinct),
+            groups * (8 + 16 * 8),
+            "positions={positions} distinct={distinct}"
+        );
+    }
+}
+
+#[test]
 fn the_tiny_world_verifies_on_both_engines() {
     let dir = scratch("parity");
     let cfg = GenConfig {

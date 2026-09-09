@@ -85,6 +85,7 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
 }
 
 mod admit;
+mod construction;
 mod dense;
 mod model;
 mod overflow;

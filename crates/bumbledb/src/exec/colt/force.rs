@@ -247,23 +247,26 @@ impl Colt {
         hash: u64,
         position: u32,
     ) -> Result<(), WorkError> {
+        let (found, mut idx) = self.probe_hashed(m, key, hash);
+        if found {
+            return self.append_child(m.child_at(idx), position);
+        }
         if (usize::try_from(m.len).expect("64-bit usize") + 1) * 5 > m.nbuckets * 16 {
             self.grow_map(m)?;
+            // Growth replaces the table, so the old empty slot is invalid.
+            let (found, new_idx) = self.probe_hashed(m, key, hash);
+            debug_assert!(!found, "rehashing cannot create a missing key");
+            idx = new_idx;
         }
-        let (found, idx) = self.probe_hashed(m, key, hash);
-        if found {
-            self.append_child(m.child_at(idx), position)?;
-        } else {
-            reserve_pool(self.dense.len() + 1, &mut self.dense, self.work.as_ref())?;
-            self.ctrl[m.ctrl_start + idx] = ctrl_tag(hash);
-            for (i, w) in key.iter().enumerate() {
-                self.buckets[m.key_word_at(idx, i)] = *w;
-            }
-            self.buckets[m.child_at(idx)] = pack_child(Cursor::Row(position));
-            self.dense
-                .push(u32::try_from(idx).expect("slot index fits u32"));
-            m.len += 1;
+        reserve_pool(self.dense.len() + 1, &mut self.dense, self.work.as_ref())?;
+        self.ctrl[m.ctrl_start + idx] = ctrl_tag(hash);
+        for (i, w) in key.iter().enumerate() {
+            self.buckets[m.key_word_at(idx, i)] = *w;
         }
+        self.buckets[m.child_at(idx)] = pack_child(Cursor::Row(position));
+        self.dense
+            .push(u32::try_from(idx).expect("slot index fits u32"));
+        m.len += 1;
         Ok(())
     }
 }

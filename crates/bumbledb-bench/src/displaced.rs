@@ -112,17 +112,19 @@ impl DispSizes {
     }
 }
 
-/// The doubling loop here uses `(distinct + 1)` — exact whenever any position
-/// follows the last keys are unknown before the pass), then rehash-doubling per
-/// ingested
+/// Final one-word-key map control and bucket bytes. Initial sizing uses the
+/// position count; only insertion of a new distinct key can double the table.
+/// Retired construction tables, dense indices and retained capacity are excluded.
+///
 /// # Panics
+/// Panics if the fixture counts or computed table layout overflow the host index range.
 #[must_use]
 pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
     let count = usize::try_from(positions).expect("64-bit usize");
     let landed = usize::try_from(distinct).expect("64-bit usize");
     let guess = (count / 8).max(16).min(count.max(1) * 2);
     let mut nbuckets = (guess * 5 / 16).max(1).next_power_of_two();
-    while (landed + 1) * 5 > nbuckets * 16 {
+    while landed * 5 > nbuckets * 16 {
         nbuckets *= 2;
     }
     let ctrl = nbuckets * 8;
