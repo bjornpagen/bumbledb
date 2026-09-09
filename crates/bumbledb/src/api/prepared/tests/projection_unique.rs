@@ -127,11 +127,8 @@ fn hidden_instrument_key_string_filter_matches_forced_hash_in_order() {
         );
         let mut hashed = fix.prepare(&query).unwrap();
         let rule = &hashed.pipeline.main_rules()[0];
-        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            rule.finds(),
-            rule.slot_count(),
-            0,
-        ));
+        hashed.sink =
+            EitherSink::Projection(ProjectionSink::from_finds(rule.finds(), rule.slot_count()));
         for prepared in [&mut append, &mut hashed] {
             prepared.force_cursor_fallback(fallback);
         }
@@ -211,11 +208,8 @@ fn uuid_keyed_join_with_negative_guard_preserves_order_across_sink_tiers() {
         assert!(elided(&append));
         let mut hashed = fix.prepare(&query).unwrap();
         let rule = &hashed.pipeline.main_rules()[0];
-        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            rule.finds(),
-            rule.slot_count(),
-            0,
-        ));
+        hashed.sink =
+            EitherSink::Projection(ProjectionSink::from_finds(rule.finds(), rule.slot_count()));
         for prepared in [&mut append, &mut hashed] {
             prepared.force_cursor_fallback(fallback);
         }

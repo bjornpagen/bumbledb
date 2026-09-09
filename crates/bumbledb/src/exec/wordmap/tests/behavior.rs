@@ -54,9 +54,9 @@ fn duplicates_at_the_load_boundary_do_not_grow_or_rehash() {
                 map.values.as_ptr(),
                 map.ctrl.as_ptr(),
                 map.stamps.as_ptr(),
-                map.dense.as_ptr(),
+                map.slots.as_ptr(),
             );
-            let dense = map.dense.clone();
+            let dense = map.slots.clone();
             #[cfg(feature = "alloc-counter")]
             let before = crate::alloc_counter::snapshot().window;
             for _ in 0..3 {
@@ -86,7 +86,7 @@ fn duplicates_at_the_load_boundary_do_not_grow_or_rehash() {
                 capacity,
                 "arity {arity}, recycled {recycled}"
             );
-            assert_eq!(map.dense, dense, "duplicate lookup does not rehash");
+            assert_eq!(map.slots, dense, "duplicate lookup does not rehash");
             assert_eq!(
                 backing,
                 (
@@ -94,7 +94,7 @@ fn duplicates_at_the_load_boundary_do_not_grow_or_rehash() {
                     map.values.as_ptr(),
                     map.ctrl.as_ptr(),
                     map.stamps.as_ptr(),
-                    map.dense.as_ptr(),
+                    map.slots.as_ptr(),
                 ),
                 "duplicate insertion retains every backing allocation"
             );
@@ -149,7 +149,7 @@ fn panicking_constructor_never_publishes_a_fresh_or_stale_slot() {
             }
             let before_ctrl = map.ctrl.clone();
             let before_stamps = map.stamps.clone();
-            let before_dense = map.dense.clone();
+            let before_dense = map.slots.clone();
             let before_len = map.len;
             let before_stale = map.stale;
             let before_generation = map.generation;
@@ -163,7 +163,7 @@ fn panicking_constructor_never_publishes_a_fresh_or_stale_slot() {
             // implementation an occupied slot can contain uninitialized V.
             // These assertions make that version fail without reading V.
             assert_eq!(map.len, before_len);
-            assert_eq!(map.dense, before_dense);
+            assert_eq!(map.slots, before_dense);
             assert_eq!(map.ctrl, before_ctrl);
             assert_eq!(map.stamps, before_stamps);
             assert_eq!(map.stale, before_stale);
@@ -254,16 +254,16 @@ fn values_accumulate_through_get_or_insert() {
 }
 
 #[test]
-fn grow_rewrites_the_dense_list_in_place() {
+fn grow_rebuilds_index_without_moving_dense_payload() {
     let mut map: WordMap<u64> = WordMap::new(1);
     for i in 0..20u64 {
         map.get_or_insert_with(&[i], || i * 3);
     }
-    let ptr = map.dense.as_ptr();
-    let capacity = map.dense.capacity();
+    let payload = (map.keys.as_ptr(), map.values.as_ptr());
+    let capacity = (map.keys.capacity(), map.values.capacity());
     map.grow();
-    assert_eq!(map.dense.as_ptr(), ptr, "grow re-allocated the dense list");
-    assert_eq!(map.dense.capacity(), capacity);
+    assert_eq!((map.keys.as_ptr(), map.values.as_ptr()), payload);
+    assert_eq!((map.keys.capacity(), map.values.capacity()), capacity);
     assert_eq!(map.len(), 20);
     let keys: Vec<u64> = map.iter().map(|(k, _)| k[0]).collect();
     assert_eq!(
@@ -352,7 +352,7 @@ fn the_ctrl_mirror_tracks_the_head() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(1, 4);
     for i in 0..200u64 {
         map.insert(&[i.wrapping_mul(0x9E37_79B9_7F4A_7C15)]);
-        let capacity = map.values.len();
+        let capacity = map.capacity();
         assert_eq!(
             &map.ctrl[capacity..capacity + WINDOW - 1],
             &map.ctrl[..WINDOW - 1],
@@ -360,7 +360,7 @@ fn the_ctrl_mirror_tracks_the_head() {
         );
     }
     map.clear();
-    let capacity = map.values.len();
+    let capacity = map.capacity();
     assert_eq!(
         &map.ctrl[capacity..capacity + WINDOW - 1],
         &map.ctrl[..WINDOW - 1],
@@ -369,7 +369,7 @@ fn the_ctrl_mirror_tracks_the_head() {
 
     for i in 0..200u64 {
         map.insert(&[i.wrapping_mul(0x9E37_79B9_7F4A_7C15)]);
-        let capacity = map.values.len();
+        let capacity = map.capacity();
         assert_eq!(
             &map.ctrl[capacity..capacity + WINDOW - 1],
             &map.ctrl[..WINDOW - 1],
@@ -437,12 +437,12 @@ fn clear_retains_ctrl_until_saturation_forces_the_physical_reset() {
 #[test]
 fn a_covering_hint_never_grows() {
     let mut map: WordMap<()> = WordMap::with_capacity_hint(2, 100_000);
-    let capacity = map.values.len();
+    let capacity = map.capacity();
     for i in 0..100_000u64 {
         map.insert(&[i, i ^ 0x5555]);
     }
     assert_eq!(map.len(), 100_000);
-    assert_eq!(map.values.len(), capacity, "no rehash under the hint");
+    assert_eq!(map.capacity(), capacity, "no rehash under the hint");
     assert!(
         map.len() * LOAD_DEN <= capacity,
         "the covered hint keeps load at the shipped max"
@@ -455,7 +455,7 @@ fn bulk_rows_preserve_exact_single_row_state_through_growth_and_reuse() {
         assert_eq!(bulk.arity, single.arity);
         assert_eq!(bulk.ctrl, single.ctrl);
         assert_eq!(bulk.stamps, single.stamps);
-        assert_eq!(bulk.dense, single.dense);
+        assert_eq!(bulk.slots, single.slots);
         assert_eq!(bulk.keys, single.keys);
         assert_eq!(bulk.len, single.len);
         assert_eq!(bulk.stale, single.stale);
@@ -465,7 +465,7 @@ fn bulk_rows_preserve_exact_single_row_state_through_growth_and_reuse() {
         assert_eq!(bulk.keys.capacity(), single.keys.capacity());
         assert_eq!(bulk.values.capacity(), single.values.capacity());
         assert_eq!(bulk.stamps.capacity(), single.stamps.capacity());
-        assert_eq!(bulk.dense.capacity(), single.dense.capacity());
+        assert_eq!(bulk.slots.capacity(), single.slots.capacity());
         // Iteration reads only initialized values, in insertion order.
         assert!(bulk.iter().eq(single.iter()));
     }

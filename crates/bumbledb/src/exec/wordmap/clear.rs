@@ -3,7 +3,8 @@ use super::WordMap;
 impl<V: Copy> WordMap<V> {
     pub fn clear(&mut self) {
         self.stale += self.len;
-        self.dense.clear();
+        self.keys.clear();
+        self.values.clear();
         self.len = 0;
         if self.stale == 0 {
             return;
@@ -21,22 +22,12 @@ impl<V: Copy> WordMap<V> {
         self.iter_since(0)
     }
 
-    #[expect(
-        unsafe_code,
-        reason = "the dense list contains only initialized live values"
-    )]
     pub fn iter_since(&self, since: usize) -> impl Iterator<Item = (&[u64], &V)> + Clone {
-        self.dense[since.min(self.dense.len())..]
-            .iter()
-            .map(move |&idx| {
-                let idx = idx as usize;
-                debug_assert_ne!(self.ctrl[idx], 0, "dense entries are occupied");
-                (
-                    &self.keys[idx * self.arity..(idx + 1) * self.arity],
-                    // SAFETY: dense lists only initialized live slots, and
-                    // clear empties that list before advancing generation.
-                    unsafe { self.values[idx].assume_init_ref() },
-                )
-            })
+        (since.min(self.len)..self.len).map(move |row| {
+            (
+                &self.keys[row * self.arity..(row + 1) * self.arity],
+                &self.values[row],
+            )
+        })
     }
 }

@@ -185,12 +185,12 @@ fn probe_steps_stay_near_one_at_max_load() {
         map.insert(&[next(), next()]);
     }
     assert!(
-        map.len() * LOAD_DEN <= map.values.len(),
+        map.len() * LOAD_DEN <= map.capacity(),
         "the sweep runs at the shipped max load"
     );
 
     let keys: Vec<Vec<u64>> = map.iter().map(|(k, ())| k.to_vec()).collect();
-    let mask = map.values.len() - 1;
+    let mask = map.capacity() - 1;
     let mut steps = 0usize;
     for key in &keys {
         let hash = super::hash_words(key);
@@ -200,7 +200,9 @@ fn probe_steps_stay_near_one_at_max_load() {
             let c = map.ctrl[idx];
             assert_ne!(c, 0, "key exists");
             if c == super::tag(hash)
-                && &map.keys[idx * map.arity..(idx + 1) * map.arity] == key.as_slice()
+                && &map.keys
+                    [map.slots[idx] as usize * map.arity..(map.slots[idx] as usize + 1) * map.arity]
+                    == key.as_slice()
             {
                 break;
             }
