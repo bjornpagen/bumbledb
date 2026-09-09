@@ -32,6 +32,7 @@ pub struct WordMap<V> {
     len: usize,
 }
 
+#[cfg(test)]
 const HINT_CAP: usize = 1 << 21;
 
 /// Max load as `len × LOAD_DEN ≤ capacity` — 3 = 33% (justified by
@@ -42,6 +43,15 @@ const HINT_CAP: usize = 1 << 21;
 const LOAD_DEN: usize = 3;
 
 impl<V: Copy> WordMap<V> {
+    #[cfg(test)]
+    pub(crate) fn retained_bytes_for_test(&self) -> usize {
+        self.ctrl.capacity()
+            + self.keys.capacity() * size_of::<u64>()
+            + self.values.capacity() * size_of::<V>()
+            + self.stamps.capacity()
+            + self.dense.capacity() * size_of::<u32>()
+    }
+
     /// Distinct entries before another growth would exceed the u32 slot index.
     /// This is a representation bound, not an execution or memory allowance.
     pub(crate) fn remaining_rows(&self) -> usize {

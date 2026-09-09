@@ -244,11 +244,8 @@ fn store_keyed_range_installs_append_and_matches_forced_hash_control() {
         );
         let mut hashed = store.prepare(&query).unwrap();
         let rule = &hashed.pipeline.main_rules()[0];
-        hashed.sink = EitherSink::Projection(ProjectionSink::with_capacity_hint(
-            rule.finds(),
-            rule.slot_count(),
-            0,
-        ));
+        hashed.sink =
+            EitherSink::Projection(ProjectionSink::from_finds(rule.finds(), rule.slot_count()));
         assert!(!output_hashing_is_elided(&hashed));
         for prepared in [&mut append, &mut hashed] {
             prepared.force_cursor_fallback(fallback);

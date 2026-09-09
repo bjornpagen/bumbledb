@@ -198,14 +198,10 @@ impl std::fmt::Debug for SpilledSet {
 }
 
 impl SpillSet {
-    pub(in crate::exec::sink) fn with_capacity_hint(
-        arity: usize,
-        hint: usize,
-        ordered: bool,
-    ) -> Self {
+    pub(in crate::exec::sink) fn new(arity: usize, ordered: bool) -> Self {
         Self {
             ordered,
-            ram: WordMap::with_capacity_hint(arity, hint),
+            ram: WordMap::new(arity),
             unique_rows: None,
             spilled: None,
             work: None,

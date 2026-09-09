@@ -1,6 +1,9 @@
+#[cfg(test)]
 use std::mem::MaybeUninit;
 
-use super::{HINT_CAP, LOAD_DEN, WINDOW, WordMap};
+use super::WordMap;
+#[cfg(test)]
+use super::{HINT_CAP, LOAD_DEN};
 
 impl<V: Copy> WordMap<V> {
     #[must_use]
@@ -18,9 +21,12 @@ impl<V: Copy> WordMap<V> {
         }
     }
 
+    /// Explicit geometry for collision and generation tests. Production maps
+    /// start empty and grow from actual insertions, not planner estimates.
     /// # Panics
     /// If the hinted backing's key-word count cannot be represented.
     #[must_use]
+    #[cfg(test)]
     pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);
         let capacity = (hint.clamp(2, HINT_CAP) * LOAD_DEN).next_power_of_two();
@@ -28,12 +34,13 @@ impl<V: Copy> WordMap<V> {
         map
     }
 
+    #[cfg(test)]
     fn allocate(&mut self, capacity: usize) {
-        debug_assert!(capacity.is_power_of_two() && capacity >= WINDOW);
+        debug_assert!(capacity.is_power_of_two() && capacity >= super::WINDOW);
         let words = capacity
             .checked_mul(self.arity)
             .expect("WordMap key capacity overflow");
-        self.ctrl = vec![0; capacity + WINDOW - 1];
+        self.ctrl = vec![0; capacity + super::WINDOW - 1];
         self.keys = vec![0; words];
         self.values = std::iter::repeat_with(MaybeUninit::uninit)
             .take(capacity)
@@ -50,7 +57,7 @@ impl<V: Copy> WordMap<V> {
     pub(super) fn set_ctrl(&mut self, idx: usize, value: u8) {
         self.ctrl[idx] = value;
         self.stamps[idx] = self.generation;
-        if idx < WINDOW - 1 {
+        if idx < super::WINDOW - 1 {
             let capacity = self.capacity();
             self.ctrl[capacity + idx] = value;
         }

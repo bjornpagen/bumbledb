@@ -89,7 +89,7 @@ fn written_union_does_not_share_float_inputs_that_alias_in_only_one_rule() {
             }),
         ]
     };
-    let mut sink = AggregateSink::for_union(&finds(0), 2, 0);
+    let mut sink = AggregateSink::for_union(&finds(0), 2);
     let mut bindings = Bindings::new(2);
     bindings.set(0, F64::from(1.0).to_order_key());
     bindings.set(1, F64::from(10.0).to_order_key());
@@ -316,7 +316,7 @@ fn union_reaim_invalidates_fold_sources_even_with_the_same_leaf_layout() {
         ]
     };
     let bindings = Bindings::new(2);
-    let mut sink = AggregateSink::for_union(&finds(0, 1), 2, 0);
+    let mut sink = AggregateSink::for_union(&finds(0, 1), 2);
     sink.emit_batch(&LeafBatch {
         keys: &[100, 1],
         arity: 2,
@@ -778,7 +778,7 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
             FindSpec::Agg(AggSpec::Count),
         ]
     };
-    let mut sink = AggregateSink::for_union(&spec(0, 1), 2, 0);
+    let mut sink = AggregateSink::for_union(&spec(0, 1), 2);
     sink.reset();
 
     let mut bindings = Bindings::new(2);
@@ -838,7 +838,7 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     // VarId order: v0 → g's slot, v1 → x's, v2 → e's, per clone.
     let spans_a = [(0, 1), (1, 1), (2, 1)];
     let spans_b = [(2, 1), (1, 1), (0, 1)];
-    let mut sink = AggregateSink::for_dnf_union(&spec(0, 1), 3, &spans_a, 0);
+    let mut sink = AggregateSink::for_dnf_union(&spec(0, 1), 3, &spans_a);
     sink.reset();
 
     let mut bindings = Bindings::new(3);
