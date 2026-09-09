@@ -1,0 +1,442 @@
+diff --git a/crates/bumbledb/src/exec/run/tests.rs b/crates/bumbledb/src/exec/run/tests.rs
+index ca0f88a9..34e2cf13 100644
+--- a/crates/bumbledb/src/exec/run/tests.rs
++++ b/crates/bumbledb/src/exec/run/tests.rs
+@@ -357,6 +357,7 @@ mod intervals;
+ mod mechanics;
+ mod negation;
+ mod pipeline;
++mod probe_runs;
+ mod scan;
+ mod spill_bounded;
+ mod work_ledger;
+diff --git a/crates/bumbledb/src/exec/sink.rs b/crates/bumbledb/src/exec/sink.rs
+index 3c5cffcb..9eff86a7 100644
+--- a/crates/bumbledb/src/exec/sink.rs
++++ b/crates/bumbledb/src/exec/sink.rs
+@@ -5,6 +5,7 @@
+ use crate::encoding::encode_i64;
+ use crate::exec::scratch::{ScratchAppend, ScratchMapId};
+ use crate::exec::wordmap::WordMap;
++use std::num::NonZeroU32;
+ 
+ mod aggregate;
+ mod projection;
+@@ -839,7 +840,8 @@ pub struct AggregateSink {
+     scan_count: u64,
+     cached_slot_count: Option<usize>,
+     cached_key_slots: Vec<usize>,
+-    cached_outer_slots: Vec<usize>,
++    /// Slot-indexed: None is outer; Some stores the one-based leaf word.
++    cached_leaf_words: Vec<Option<NonZeroU32>>,
+     cached_constant_group: bool,
+     #[cfg(test)]
+     group_probes: usize,
+diff --git a/crates/bumbledb/src/exec/sink/aggregate/fold_batch.rs b/crates/bumbledb/src/exec/sink/aggregate/fold_batch.rs
+index 3197c9d0..a9260feb 100644
+--- a/crates/bumbledb/src/exec/sink/aggregate/fold_batch.rs
++++ b/crates/bumbledb/src/exec/sink/aggregate/fold_batch.rs
+@@ -1,30 +1,47 @@
+ use crate::exec::colt::SuffixRun;
+-use crate::exec::run::{LeafBatch, LeafSource};
++use crate::exec::run::{Bindings, LeafBatch};
+ use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldSource, GroupState, SinkSpec};
++use std::num::NonZeroU32;
+ 
+ use super::reduce::{Partial, merge};
+ 
+ impl AggregateSink {
+     pub(super) fn fold_batch_rows(&mut self, batch: &LeafBatch<'_>) {
+-        for &slot in &self.cached_outer_slots {
+-            self.binding_scratch[slot] = batch.bindings.get(slot);
++        if self.distinct_bindings() {
++            let leaf_words = std::mem::take(&mut self.cached_leaf_words);
++            for &entry in batch.survivors {
++                self.fold_row(&[], |slot| match leaf_words[slot] {
++                    None => batch.bindings.get(slot),
++                    Some(word) => batch.key(entry, word.get() as usize - 1),
++                });
++            }
++            self.cached_leaf_words = leaf_words;
++            return;
+         }
++
++        // Dedup needs the full binding. Keep the outer copy amortized over
++        // the batch and borrow this owner while mutating group state.
++        let mut row = std::mem::take(&mut self.binding_scratch);
++        copy_outer(&self.cached_leaf_words, batch.bindings, &mut row);
+         for &entry in batch.survivors {
+             for (word, slot) in batch.key_slots.iter().enumerate() {
+-                self.binding_scratch[*slot] = batch.key(entry, word);
++                row[*slot] = batch.key(entry, word);
+             }
+-            self.fold_scratch_row();
++            self.fold_row(&row, |slot| row[slot]);
+         }
++        self.binding_scratch = row;
+     }
+ 
+     pub(super) fn fold_batch_dedup_constant_group(&mut self, batch: &LeafBatch<'_>) {
+-        for &slot in &self.cached_outer_slots {
+-            self.binding_scratch[slot] = batch.bindings.get(slot);
+-        }
++        copy_outer(
++            &self.cached_leaf_words,
++            batch.bindings,
++            &mut self.binding_scratch,
++        );
+ 
+         let key_sourced = self.finds.iter().any(|find| match find {
+             SinkSpec::Agg(AggSpec::Fold { slot, .. } | AggSpec::Float { slot, .. }) => {
+-                matches!(batch.source_of(*slot), LeafSource::Key(_))
++                self.cached_leaf_words[*slot].is_some()
+             }
+             _ => false,
+         });
+@@ -112,13 +129,14 @@ impl AggregateSink {
+                         continue;
+                     }
+                     let accumulator = &mut self.float_accs[*index];
+-                    let result = match batch.source_of(*slot) {
+-                        LeafSource::Outer => accumulator.push_repeated(
++                    let result = match self.cached_leaf_words[*slot] {
++                        None => accumulator.push_repeated(
+                             bumbledb_theory::F64::from_order_key(batch.bindings.get(*slot))
+                                 .expect("validated canonical F64 binding"),
+                             count,
+                         ),
+-                        LeafSource::Key(word) => {
++                        Some(word) => {
++                            let word = word.get() as usize - 1;
+                             debug_assert!(!survivors.is_empty(), "count-only folds never gather");
+                             survivors.iter().try_for_each(|&entry| {
+                                 accumulator.push(
+@@ -154,6 +172,14 @@ impl AggregateSink {
+     }
+ }
+ 
++fn copy_outer(leaf_words: &[Option<NonZeroU32>], bindings: &Bindings, row: &mut [u64]) {
++    for (slot, word) in leaf_words.iter().enumerate() {
++        if word.is_none() {
++            row[slot] = bindings.get(slot);
++        }
++    }
++}
++
+ /// Density describes the whole selection, not just its two endpoints.
+ /// Resolve it once for every shared column reduction in this batch.
+ fn batch_run(survivors: &[u32]) -> SuffixRun<'_> {
+diff --git a/crates/bumbledb/src/exec/sink/aggregate/fold_row.rs b/crates/bumbledb/src/exec/sink/aggregate/fold_row.rs
+index 2c7d2699..af845169 100644
+--- a/crates/bumbledb/src/exec/sink/aggregate/fold_row.rs
++++ b/crates/bumbledb/src/exec/sink/aggregate/fold_row.rs
+@@ -1,23 +1,21 @@
+ use crate::exec::sink::{Acc, AggSpec, AggregateSink, FoldOp, GroupState, SinkSpec, word_to_i64};
+ 
+ impl AggregateSink {
+-    pub(super) fn fold_scratch_row(&mut self) {
++    /// Fold borrowed inputs; full bindings are needed only for the seen set.
++    /// A checked distinctness witness permits an empty dedup input.
++    pub(super) fn fold_row(&mut self, bindings: &[u64], get: impl Fn(usize) -> u64) {
+         // A full dense-index representation flushes before another group
+         // could be inserted. This is not an estimated-byte threshold.
+         self.maybe_spill_groups();
+         if self.error.is_some()
+             || self.cardinality_overflow
+             || (!self.distinct_bindings()
+-                && !self
+-                    .dedup
+-                    .consider(&self.binding_scratch, &mut self.union_scratch))
++                && !self.dedup.consider(bindings, &mut self.union_scratch))
+         {
+             return;
+         }
+ 
+-        super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, |slot| {
+-            self.binding_scratch[slot]
+-        });
++        super::groups::load_group_key(&mut self.key_scratch, &self.group_spans, &get);
+         let group_idx = self.probe_group();
+         if matches!(self.group_state, GroupState::Folds { .. }) && !self.advance_group(group_idx, 1)
+         {
+@@ -26,8 +24,7 @@ impl AggregateSink {
+ 
+         match &mut self.group_state {
+             GroupState::Pack { slot, claims } => {
+-                claims[group_idx]
+-                    .push([self.binding_scratch[*slot], self.binding_scratch[*slot + 1]]);
++                claims[group_idx].push([get(*slot), get(*slot + 1)]);
+             }
+             GroupState::Folds { accs, n_aggs } => {
+                 let n_aggs = *n_aggs;
+@@ -44,10 +41,8 @@ impl AggregateSink {
+                                 unreachable!("float accumulator handle")
+                             };
+                             if *primary {
+-                                let value = bumbledb_theory::F64::from_order_key(
+-                                    self.binding_scratch[*slot],
+-                                )
+-                                .expect("validated canonical F64 binding");
++                                let value = bumbledb_theory::F64::from_order_key(get(*slot))
++                                    .expect("validated canonical F64 binding");
+                                 if self.float_accs[*index].push(value).is_err() {
+                                     self.cardinality_overflow = true;
+                                     return;
+@@ -63,7 +58,7 @@ impl AggregateSink {
+                         AggSpec::Fold {
+                             op, slot, signed, ..
+                         } => {
+-                            let word = self.binding_scratch[*slot];
++                            let word = get(*slot);
+                             match (op, acc) {
+                                 (FoldOp::Sum, Acc::SumSigned(total)) => {
+                                     debug_assert!(*signed);
+diff --git a/crates/bumbledb/src/exec/sink/aggregate/groups.rs b/crates/bumbledb/src/exec/sink/aggregate/groups.rs
+index 8d89f6dc..e6bb50ac 100644
+--- a/crates/bumbledb/src/exec/sink/aggregate/groups.rs
++++ b/crates/bumbledb/src/exec/sink/aggregate/groups.rs
+@@ -1,4 +1,5 @@
+ use crate::exec::sink::{Acc, AggSpec, AggregateSink, GroupState, GroupTable, SinkSpec};
++use std::num::NonZeroU32;
+ 
+ pub(super) fn load_group_key(
+     key_scratch: &mut [u64],
+@@ -33,19 +34,19 @@ impl AggregateSink {
+         self.cached_slot_count = Some(self.real_slots);
+         self.cached_key_slots.clear();
+         self.cached_key_slots.extend_from_slice(key_slots);
+-        self.cached_outer_slots.clear();
+-
+-        for slot in 0..self.real_slots {
+-            if !key_slots.contains(&slot) {
+-                self.cached_outer_slots.push(slot);
+-            }
++        self.cached_leaf_words.clear();
++        self.cached_leaf_words.resize(self.real_slots, None);
++        for (word, &slot) in key_slots.iter().enumerate() {
++            self.cached_leaf_words[slot] =
++                NonZeroU32::new(u32::try_from(word + 1).expect("validated leaf width fits u32"));
+         }
+ 
+-        self.cached_constant_group = self
+-            .group_spans
+-            .iter()
+-            .all(|(slot, width)| (*slot..slot + width).all(|word| !key_slots.contains(&word)));
+-        self.prepare_fold_inputs(key_slots);
++        self.cached_constant_group = self.group_spans.iter().all(|(slot, width)| {
++            self.cached_leaf_words[*slot..slot + width]
++                .iter()
++                .all(Option::is_none)
++        });
++        self.prepare_fold_inputs();
+     }
+ 
+     pub(super) fn probe_group(&mut self) -> usize {
+diff --git a/crates/bumbledb/src/exec/sink/aggregate/new.rs b/crates/bumbledb/src/exec/sink/aggregate/new.rs
+index 4542ac4f..a74fe416 100644
+--- a/crates/bumbledb/src/exec/sink/aggregate/new.rs
++++ b/crates/bumbledb/src/exec/sink/aggregate/new.rs
+@@ -212,6 +212,11 @@ impl AggregateSink {
+                 n_aggs,
+             }
+         };
++        let binding_words = if dedup.seen().is_some() {
++            scratch_words
++        } else {
++            0
++        };
+         Self {
+             float_accs: Vec::new(),
+             share_float_inputs,
+@@ -226,7 +231,7 @@ impl AggregateSink {
+             physical_distinct: None,
+             groups,
+             key_scratch: vec![0; key_words],
+-            binding_scratch: vec![0; scratch_words],
++            binding_scratch: vec![0; binding_words],
+             union_scratch: vec![0; union_words],
+             dedup_survivors: Vec::new(),
+             fold_sources: Vec::with_capacity(n_aggs),
+@@ -234,7 +239,7 @@ impl AggregateSink {
+             scan_count: 0,
+             cached_slot_count: None,
+             cached_key_slots: Vec::new(),
+-            cached_outer_slots: Vec::new(),
++            cached_leaf_words: Vec::new(),
+             cached_constant_group: false,
+             #[cfg(test)]
+             group_probes: 0,
+@@ -269,7 +274,7 @@ impl AggregateSink {
+             DedupState::Bindings { .. } | DedupState::Elided { .. } => {}
+         }
+         self.binding_scratch.clear();
+-        self.binding_scratch.resize(slot_count, 0);
++        self.binding_scratch.resize(self.binding_words(), 0);
+         if let GroupState::Pack { slot, .. } = &mut self.group_state {
+             *slot = pack_slot(&self.finds).expect("Pack heads stay Pack across rules");
+         }
+@@ -324,6 +329,16 @@ impl AggregateSink {
+         self.physical_distinct.is_some() || matches!(self.dedup, DedupState::Elided { .. })
+     }
+ 
++    fn binding_words(&self) -> usize {
++        // A physical witness is execution-scoped; its ordinary seen set
++        // still needs staging after reset. Only semantic elision is permanent.
++        if self.dedup.seen().is_some() {
++            self.real_slots
++        } else {
++            0
++        }
++    }
++
+     /// Share this execution's cancellation context with deduplication and scratch.
+     pub(crate) fn begin(&mut self, work: Option<crate::work::WorkContext>) {
+         if let Some(seen) = self.dedup.seen_mut() {
+@@ -381,7 +396,7 @@ impl AggregateSink {
+     pub fn reset(&mut self) {
+         self.clear_state();
+         self.groups.clear();
+-        self.binding_scratch.resize(self.real_slots, 0);
++        self.binding_scratch.resize(self.binding_words(), 0);
+         self.key_scratch
+             .resize(self.group_spans.iter().map(|(_, width)| width).sum(), 0);
+         self.union_scratch.resize(
+@@ -437,7 +452,7 @@ impl AggregateSink {
+         self.fold_sources = Vec::new();
+         self.fold_inputs = Vec::new();
+         self.cached_key_slots = Vec::new();
+-        self.cached_outer_slots = Vec::new();
++        self.cached_leaf_words = Vec::new();
+         self.cached_constant_group = false;
+         self.scan_count = 0;
+     }
+diff --git a/crates/bumbledb/src/exec/sink/aggregate/reduce.rs b/crates/bumbledb/src/exec/sink/aggregate/reduce.rs
+index 1860f31b..c4747c0f 100644
+--- a/crates/bumbledb/src/exec/sink/aggregate/reduce.rs
++++ b/crates/bumbledb/src/exec/sink/aggregate/reduce.rs
+@@ -126,15 +126,16 @@ impl Partial {
+ }
+ 
+ impl AggregateSink {
+-    pub(super) fn prepare_fold_inputs(&mut self, key_slots: &[usize]) {
++    pub(super) fn prepare_fold_inputs(&mut self) {
+         self.fold_sources.clear();
+         self.fold_inputs.clear();
+         for find in &self.finds {
+             let SinkSpec::Agg(spec @ AggSpec::Fold { slot, .. }) = find else {
+                 continue;
+             };
+-            let source = match key_slots.iter().position(|k| k == slot) {
++            let source = match self.cached_leaf_words[*slot] {
+                 Some(word) => {
++                    let word = word.get() as usize - 1;
+                     let partial = Partial::seed(*spec);
+                     let input = self
+                         .fold_inputs
+diff --git a/crates/bumbledb/src/exec/sink/aggregate/sink.rs b/crates/bumbledb/src/exec/sink/aggregate/sink.rs
+index aef6c485..696f3e8e 100644
+--- a/crates/bumbledb/src/exec/sink/aggregate/sink.rs
++++ b/crates/bumbledb/src/exec/sink/aggregate/sink.rs
+@@ -29,10 +29,16 @@ impl Sink for AggregateSink {
+     }
+ 
+     fn emit(&mut self, bindings: &Bindings) -> Flow {
+-        for slot in 0..bindings.slot_count() {
+-            self.binding_scratch[slot] = bindings.get(slot);
++        if self.distinct_bindings() {
++            self.fold_row(&[], |slot| bindings.get(slot));
++        } else {
++            let mut row = std::mem::take(&mut self.binding_scratch);
++            for (slot, word) in row[..bindings.slot_count()].iter_mut().enumerate() {
++                *word = bindings.get(slot);
++            }
++            self.fold_row(&row, |slot| bindings.get(slot));
++            self.binding_scratch = row;
+         }
+-        self.fold_scratch_row();
+         Flow::from_sink_progress(AggregateSink::progress(self))
+     }
+ 
+diff --git a/crates/bumbledb/src/exec/sink/tests.rs b/crates/bumbledb/src/exec/sink/tests.rs
+index ff988979..6bbfa35b 100644
+--- a/crates/bumbledb/src/exec/sink/tests.rs
++++ b/crates/bumbledb/src/exec/sink/tests.rs
+@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
+ use std::sync::Arc;
+ 
+ mod aggregate;
++mod borrowed_rows;
+ mod memory;
+ mod pack;
+ mod projection;
+diff --git a/crates/bumbledb/tests/alloc_census.rs b/crates/bumbledb/tests/alloc_census.rs
+index 31723df6..1a502ee8 100644
+--- a/crates/bumbledb/tests/alloc_census.rs
++++ b/crates/bumbledb/tests/alloc_census.rs
+@@ -16,7 +16,7 @@ use bumbledb::ir::{
+ };
+ use bumbledb::schema::{
+     Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+-    StatementDescriptor, ValueType, Weight,
++    StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
+ };
+ use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db, NonEmpty, ProjectionRule};
+ 
+@@ -357,6 +357,10 @@ fn schema() -> SchemaDescriptor {
+                 relation: PROFILE,
+                 projection: Box::new([FieldId(0)]),
+             },
++            StatementDescriptor::Functionality {
++                relation: ACCOUNT,
++                projection: Box::new([FieldId(0)]),
++            },
+         ],
+     }
+ }
+@@ -1177,6 +1181,46 @@ fn flow_insert_and_scan() {
+     .expect("typed read");
+ }
+ 
++// Keep fixture validity in the normal test run, without capturing allocation
++// backtraces or running the census's repeated measurement windows.
++#[test]
++fn census_fixture_smoke() {
++    schema().validate().expect("valid census schema");
++    for n in [4, 16, 64] {
++        wide_schema(n).validate().expect("valid wide schema");
++    }
++    let dir = common::TempDir::new("census-fixture-smoke");
++    let db = Db::create(dir.path(), schema(), common::work())
++        .expect("create")
++        .expect("accepted");
++    populate(&db);
++    for query in [
++        chain_query(8, 4, 1),
++        chain_query(2, 1, 8),
++        chain_query(2, 8, 1),
++        dnf_query(8),
++    ] {
++        db.prepare(&query, common::work()).expect("prepare");
++    }
++    for (query, params) in [
++        (join_query(), vec![BindValue::I64(0)]),
++        (interiors_only_query(), vec![BindValue::I64(0)]),
++        (aggregate_query(), vec![]),
++        (string_query(), vec![]),
++        (pack_query(), vec![]),
++        (calendar_query(), vec![BindValue::U64(2)]),
++        (marks_query(), vec![BindValue::U64(3)]),
++        (recursive_query(), vec![BindValue::U64(110)]),
++    ] {
++        let mut prepared = db.prepare(&query, common::work()).expect("prepare");
++        db.read(common::work(), |snap| {
++            snap.execute(&mut prepared, &params, &mut Answers::new())?;
++            Ok(())
++        })
++        .expect("execute fixture query");
++    }
++}
++
+ #[test]
+ #[ignore = "the census harness — a measurement instrument, run explicitly"]
+ fn allocation_deep_census() {

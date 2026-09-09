@@ -1,0 +1,49 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g1-closeout-1",
+  "started": "2026-09-09T09:47:37.835399+00:00",
+  "status": "IDENTITIES-AND-UNMOUNTED-SOURCE-VERIFIED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "diff-check",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-source",
+        "diff",
+        "--check"
+      ],
+      "started": "2026-09-09T09:47:38.246427+00:00",
+      "status": "PASS",
+      "pid": 14757,
+      "finished": "2026-09-09T09:47:38.258209+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T09:47:38.259751+00:00",
+      "status": "PASS",
+      "pid": 14770,
+      "finished": "2026-09-09T09:47:40.363730+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "identities": {
+    "E1": "e44e04132d30992ab094d61c93d620207175e1390006046e53733c16fb52cd55",
+    "M1": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+    "P3": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+    "G1": "084f09fd3a2eaaf73b9f0d2c13ddf4f7e12422612e995e27c1872b48547b38df",
+    "P2": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c"
+  },
+  "finished": "2026-09-09T09:47:40.589116+00:00"
+}

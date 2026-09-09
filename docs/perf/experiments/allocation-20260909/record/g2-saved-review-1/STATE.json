@@ -1,0 +1,20 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-saved-review-1",
+  "started": "2026-09-09T10:19:30.964928+00:00",
+  "status": "ALL-OWNERS-AND-SCRATCH-REVIEWED",
+  "diagnostic_only": true,
+  "steps": [],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "changed_snapshots": 50,
+  "windows": 20,
+  "owners": 78,
+  "variants": 3,
+  "input_hashes": {
+    "baseline": "9cdac3da3333b850403544ca62fab803868137e13f4e1994287196a193f7ab75",
+    "g1": "7b7d6c552aaa5085f2d15c907e3b28f104260093403af37c6e71cadcfe41c121",
+    "g2": "8660c7e15aa6447389dc1de52adff508d5402f9b307438ba59dc7458709fe16d"
+  },
+  "conclusion": "All SQL answers/map shapes match. All retired G2 arena contents disappear. Scratch included; other owners unchanged. Prior baseline/G1 results reproduced exactly. Requested layouts/payload capacity only: not RSS, peak, speed, mmap or Pi qualification.",
+  "finished": "2026-09-09T10:19:30.986367+00:00"
+}

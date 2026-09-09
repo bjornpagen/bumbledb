@@ -1,0 +1,97 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-saved-g1-1",
+  "started": "2026-09-09T10:18:38.846971+00:00",
+  "status": "OWNERSHIP-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T10:18:38.873697+00:00",
+      "status": "PASS",
+      "pid": 28241,
+      "finished": "2026-09-09T10:18:38.886238+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "oracle",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "-csv",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/data/fa73e680324f9b26/oracle.sqlite",
+        "WITH draws(lo,hi) AS (VALUES (1,6),(167,172),(333,338),(500,500)) SELECT DISTINCT d.lo,a.account FROM draws d JOIN Posting a ON a.account>=d.lo AND a.account<d.hi JOIN Posting b ON a.instrument=b.instrument JOIN Posting c ON b.entry=c.entry AND a.account=c.account ORDER BY d.lo,a.account;"
+      ],
+      "started": "2026-09-09T10:18:38.922799+00:00",
+      "status": "PASS",
+      "pid": 28244,
+      "finished": "2026-09-09T10:18:39.333870+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T10:18:39.334470+00:00",
+      "status": "PASS",
+      "pid": 28245,
+      "finished": "2026-09-09T10:18:49.704087+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "ownership",
+      "command": [
+        "env",
+        "BUMBLEDB_M1_DB=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-saved-g1-1/db",
+        "BUMBLEDB_M1_ORACLE=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-saved-g1-1/oracle.log",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-saved-g1-1/saved-test",
+        "m1_saved::saved_triangle_ownership",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T10:18:49.758742+00:00",
+      "status": "PASS",
+      "pid": 28303,
+      "finished": "2026-09-09T10:18:52.569817+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "variant": "g1",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+  "source_fingerprint_with_hooks": "3875e30c5d05f6c2168d71752a82b7a897f32d50164e62b94a2bf0fa8692c167",
+  "dependencies": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2_saved.rs": "78508ec7fcc36b20a5523f4f2c0948a40b6ee26ccc84687bcfacf4d4cf5125c6",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2_saved_observer.rs": "f91dfbb22e065564860b8893af0661d4a16488c43dc0a9ac6ed6c13afb6f9eb2",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/crates/bumbledb-bench/src/schema.rs": "7ff990f0c963e2fb651e8d6e92f1859b3726f178dd51d4de51e83e88b710aaa7"
+  },
+  "ordinary_force_sha256": "c04000d56f421bbed0fc2fcf15c6a14d87200a4ca3d643d14a133689b392e188",
+  "ordinary_grow_sha256": "b951426597f2e4eb2b2fdeb8bf1451545441d76b78c571b02d2d36bb291f6f34",
+  "database_sha256": "607f6d3e6d0b4a39294883fe9b95511106878a245fe67c5e8c2f9b55295e5175",
+  "oracle_sha256": "e71bfb9a91736a3a0377a2577c7d664fa11486871358f53a355c1c235b3eea1a",
+  "protocol": "Debug counting-allocator library; saved scale S/seed 1 triangle query, four exact saved parameter draws. Fresh prepared DB per draw cold/warm/repeat; then two four-draw rotations. Exact SQLite account sets in all 20 windows. Snapshot every active/parked occurrence; nonoverlapping live-map ranges checked. No timing, profiler, full trace or new corpus generation. Also report scratch length, capacity and bytes for every owner.",
+  "limitations": "Payload Vec lengths/capacities and Rust requested layouts, not RSS, mmap, allocator usable size, peak query ownership or Pi qualification. Clone counter counts calls/three-arena source bytes/retired source bytes; not allocator traffic. Snapshot/report allocations occur outside execute windows; no snapshot in cloning.",
+  "binary_sha256": "15a8ea67c1a6c0910c9dbcdac1914ae7f682e8a674f6b83ab1827e215f1f7672",
+  "finished": "2026-09-09T10:18:52.660279+00:00"
+}

@@ -1,0 +1,28 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "m1-baseline-regression-1",
+  "started": "2026-09-09T08:40:21.881595+00:00",
+  "status": "EXPECTED-BASELINE-GROWTH-FAILURE-CONFIRMED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "regression",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-audit-baseline-2/m1-audit-test",
+        "construction::duplicates_do_not_grow_maps_but_new_keys_do",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T08:40:21.882722+00:00",
+      "status": "FAIL",
+      "pid": 66809,
+      "finished": "2026-09-09T08:40:21.888989+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "19053ac20fd4e0b4721e3c731097852634a5658f5b6c7435cc8108791e178c7c",
+  "binary_sha256": "0635f7c38978d582bb301f9c226bae5c25c1f8aaf0326a47ffe3573e13086b11",
+  "expected_exit_code": 101,
+  "finished": "2026-09-09T08:40:21.931497+00:00"
+}

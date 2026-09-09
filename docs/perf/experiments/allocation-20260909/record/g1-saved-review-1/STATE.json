@@ -1,0 +1,25 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g1-saved-review-1",
+  "started": "2026-09-09T09:46:15.799517+00:00",
+  "status": "ALL-SAVED-WINDOWS-REVIEWED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "review",
+      "command": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "-B",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-saved-review.py",
+        "1"
+      ],
+      "started": "2026-09-09T09:46:15.804200+00:00",
+      "status": "PASS",
+      "pid": 14208,
+      "finished": "2026-09-09T09:46:15.850207+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "finished": "2026-09-09T09:46:15.850611+00:00"
+}

@@ -1,0 +1,300 @@
+diff --git a/crates/bumbledb/src/api/prepared/tests.rs b/crates/bumbledb/src/api/prepared/tests.rs
+index a649fdb1..f3c7cd81 100644
+--- a/crates/bumbledb/src/api/prepared/tests.rs
++++ b/crates/bumbledb/src/api/prepared/tests.rs
+@@ -290,3 +290,6 @@ fn amounts_of(buffer: &Answers) -> Vec<i64> {
+     amounts.sort_unstable();
+     amounts
+ }
++
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2_saved.rs"]
++mod m1_saved;
+diff --git a/crates/bumbledb/src/exec/colt.rs b/crates/bumbledb/src/exec/colt.rs
+index 4b1b139c..68cb2dd9 100644
+--- a/crates/bumbledb/src/exec/colt.rs
++++ b/crates/bumbledb/src/exec/colt.rs
+@@ -426,3 +426,7 @@ pub fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2_saved_observer.rs"]
++pub(crate) mod m1_observer;
+diff --git a/crates/bumbledb/src/exec/colt/force.rs b/crates/bumbledb/src/exec/colt/force.rs
+index ddaa6545..2fe3855e 100644
+--- a/crates/bumbledb/src/exec/colt/force.rs
++++ b/crates/bumbledb/src/exec/colt/force.rs
+@@ -158,6 +158,8 @@ impl Colt {
+         other: &Colt,
+         mut buffer: Vec<u32>,
+     ) -> Result<View, WorkError> {
++        #[cfg(test)]
++        super::m1_observer::record_clone(other);
+         debug_assert!(
+             self.same_shape(other),
+             "the occurrence dedup clones between identical trie shapes only"
+diff --git a/crates/bumbledb/src/exec/colt/grow.rs b/crates/bumbledb/src/exec/colt/grow.rs
+index 3d322ba4..3d961092 100644
+--- a/crates/bumbledb/src/exec/colt/grow.rs
++++ b/crates/bumbledb/src/exec/colt/grow.rs
+@@ -1,79 +1,122 @@
+ use super::{Colt, Map, ctrl_tag, hash_words, reserve_pool, zero_byte_mask};
+-use crate::work::WorkError;
++use crate::work::{WorkContext, WorkError};
++
++const GROW_BYTES: usize = 64 * 1024;
++
++fn checkpoint(work: Option<&WorkContext>) -> Result<(), WorkError> {
++    #[cfg(test)]
++    super::tests::staged_growth::checkpoint()?;
++    work.map_or(Ok(()), WorkContext::checkpoint)
++}
++
++fn pool_end<T>(start: usize, count: usize) -> Result<usize, WorkError> {
++    start
++        .checked_add(count)
++        .filter(|&end| end <= isize::MAX as usize / std::mem::size_of::<T>())
++        .ok_or(WorkError::Allocation)
++}
++
++// Validate every size before reserving or touching construction storage.
++fn growth_layout(m: &Map) -> Result<(Map, usize, usize, usize), WorkError> {
++    let words = m.arity.checked_add(1).ok_or(WorkError::Allocation)?;
++    let nbuckets = m.nbuckets.checked_mul(2).ok_or(WorkError::Allocation)?;
++    let slots = nbuckets.checked_mul(8).ok_or(WorkError::Allocation)?;
++    u32::try_from(slots.checked_sub(1).ok_or(WorkError::Allocation)?)
++        .map_err(|_| WorkError::Allocation)?;
++    let bucket_words = slots.checked_mul(words).ok_or(WorkError::Allocation)?;
++    let staged_words = (m.len as usize)
++        .checked_mul(words)
++        .ok_or(WorkError::Allocation)?;
++    let ctrl_end = pool_end::<u8>(m.ctrl_start, slots)?;
++    let bucket_end = pool_end::<u64>(m.bucket_start, bucket_words)?;
++    pool_end::<u32>(m.dense_start, m.len as usize)?;
++    pool_end::<u64>(0, staged_words)?;
++    Ok((Map { nbuckets, ..*m }, ctrl_end, bucket_end, staged_words))
++}
++
++fn extend_tail<T: Copy>(
++    pool: &mut Vec<T>,
++    end: usize,
++    value: T,
++    work: Option<&WorkContext>,
++) -> Result<(), WorkError> {
++    let batch = GROW_BYTES / std::mem::size_of::<T>();
++    while pool.len() < end {
++        checkpoint(work)?;
++        pool.resize(pool.len() + (end - pool.len()).min(batch), value);
++    }
++    Ok(())
++}
+ 
+ impl Colt {
++    /// Grow an unpublished map that owns all three arena tails. Any error
++    /// requires `force_unforced` to discard the entire unfinished construction;
++    /// already-published maps precede these tails and are never rewritten.
+     pub(super) fn grow_map(&mut self, m: &mut Map) -> Result<(), WorkError> {
+-        let arity = m.arity;
+-        let stride = m.stride();
+-        let new_nbuckets = m.nbuckets * 2;
+-        let ctrl_needed = self.ctrl.len() + new_nbuckets * 8;
+-        let bucket_needed = self.buckets.len() + new_nbuckets * stride;
+-        let dense_needed = self.dense.len() + usize::try_from(m.len).expect("64-bit usize");
+-        reserve_pool(ctrl_needed, &mut self.ctrl, self.work.as_ref())?;
+-        reserve_pool(bucket_needed, &mut self.buckets, self.work.as_ref())?;
+-        reserve_pool(dense_needed, &mut self.dense, self.work.as_ref())?;
+-        let ctrl_start = self.ctrl.len();
+-        let bucket_start = self.buckets.len();
+-        let dense_start = self.dense.len();
+-        self.ctrl.resize(ctrl_needed, 0);
+-        self.buckets.resize(bucket_needed, 0);
+-        let nbm = new_nbuckets - 1;
+-
+-        let mut key = std::mem::take(&mut self.scratch);
+-        let rehashed = self.rehash_into(m, arity, stride, ctrl_start, bucket_start, nbm, &mut key);
+-        self.scratch = key;
+-        rehashed?;
+-        m.nbuckets = new_nbuckets;
+-        m.ctrl_start = ctrl_start;
+-        m.bucket_start = bucket_start;
+-        m.dense_start = dense_start;
+-        Ok(())
++        let mut entries = std::mem::take(&mut self.scratch);
++        entries.clear();
++        let result = self.grow_staged(m, &mut entries);
++        entries.clear();
++        self.scratch = entries;
++        result
+     }
+ 
+-    #[expect(
+-        clippy::too_many_arguments,
+-        reason = "Separate borrowed arenas and execution limits remain explicit on this internal path"
+-    )]
+-    fn rehash_into(
+-        &mut self,
+-        m: &Map,
+-        arity: usize,
+-        stride: usize,
+-        ctrl_start: usize,
+-        bucket_start: usize,
+-        nbm: usize,
+-        key: &mut Vec<u64>,
+-    ) -> Result<(), WorkError> {
+-        reserve_pool(arity, key, self.work.as_ref())?;
+-        for i in 0..usize::try_from(m.len).expect("64-bit usize") {
++    fn grow_staged(&mut self, m: &mut Map, entries: &mut Vec<u64>) -> Result<(), WorkError> {
++        let (grown, ctrl_end, bucket_end, staged_words) = growth_layout(m)?;
++        assert_eq!(self.ctrl.len(), m.ctrl_start + m.nbuckets * 8);
++        assert_eq!(self.buckets.len(), m.bucket_start + m.nbuckets * m.stride());
++        assert_eq!(self.dense.len(), m.dense_start + m.len as usize);
++        let work = self.work.as_ref();
++        checkpoint(work)?;
++        reserve_pool(staged_words, entries, work)?;
++        for (i, &old_idx) in self.dense[m.dense_start..].iter().enumerate() {
+             if i % super::force::FORCE_BATCH == 0 {
+-                self.poll_force_batch((m.len as usize - i).min(super::force::FORCE_BATCH))?;
++                checkpoint(work)?;
+             }
+-            let old_idx = usize::try_from(self.dense[m.dense_start + i]).expect("64-bit usize");
+-            key.clear();
+-            for word in 0..arity {
+-                key.push(self.buckets[m.key_word_at(old_idx, word)]);
++            let old_idx = old_idx as usize;
++            entries.extend((0..m.arity).map(|word| self.buckets[m.key_word_at(old_idx, word)]));
++            entries.push(self.buckets[m.child_at(old_idx)]);
++        }
++        checkpoint(work)?;
++        reserve_pool(ctrl_end, &mut self.ctrl, work)?;
++        reserve_pool(bucket_end, &mut self.buckets, work)?;
++        checkpoint(work)?;
++
++        // Both reservations precede destructive writes. New bucket words must
++        // be initialized, but empty controls gate the old payload: don't clear it.
++        extend_tail(&mut self.buckets, bucket_end, 0, work)?;
++        for chunk in self.ctrl[m.ctrl_start..].chunks_mut(GROW_BYTES) {
++            checkpoint(work)?;
++            chunk.fill(0);
++        }
++        extend_tail(&mut self.ctrl, ctrl_end, 0, work)?;
++
++        let nbm = grown.nbuckets - 1;
++        for (i, entry) in entries.chunks_exact(m.arity + 1).enumerate() {
++            if i % super::force::FORCE_BATCH == 0 {
++                checkpoint(work)?;
+             }
++            let (key, child) = entry.split_at(m.arity);
+             let hash = hash_words(key);
+             let mut b = usize::try_from(hash).expect("64-bit usize") & nbm;
+             let idx = loop {
+                 let (groups, _) = self.ctrl.as_chunks::<8>();
+-                let cw = u64::from_le_bytes(groups[ctrl_start / 8 + b]);
++                let cw = u64::from_le_bytes(groups[grown.ctrl_start / 8 + b]);
+                 let empties = zero_byte_mask(cw);
+                 if empties != 0 {
+                     break b * 8 + ((empties.trailing_zeros() as usize) >> 3);
+                 }
+                 b = (b + 1) & nbm;
+             };
+-            self.ctrl[ctrl_start + idx] = ctrl_tag(hash);
+-            let new_base = bucket_start + (idx >> 3) * stride;
+-            for (word, w) in key.iter().enumerate() {
+-                self.buckets[new_base + word * 8 + (idx & 7)] = *w;
++            self.ctrl[grown.ctrl_start + idx] = ctrl_tag(hash);
++            for (word, &value) in key.iter().enumerate() {
++                self.buckets[grown.key_word_at(idx, word)] = value;
+             }
+-            self.buckets[new_base + 8 * arity + (idx & 7)] = self.buckets[m.child_at(old_idx)];
+-            self.dense
+-                .push(u32::try_from(idx).expect("slot index fits u32"));
++            self.buckets[grown.child_at(idx)] = child[0];
++            self.dense[grown.dense_start + i] = u32::try_from(idx).expect("checked slot capacity");
+         }
++        checkpoint(work)?;
++        *m = grown;
+         Ok(())
+     }
+ }
+diff --git a/crates/bumbledb/src/exec/colt/tests.rs b/crates/bumbledb/src/exec/colt/tests.rs
+index 36563a62..afa0b233 100644
+--- a/crates/bumbledb/src/exec/colt/tests.rs
++++ b/crates/bumbledb/src/exec/colt/tests.rs
+@@ -85,10 +85,12 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
+ }
+ 
+ mod admit;
++mod construction_tails;
+ mod dense;
+ mod model;
+ mod overflow;
+ mod pins;
+ mod selection;
+ mod sizing;
++pub(super) mod staged_growth;
+ mod synthetic;
+diff --git a/crates/bumbledb/src/exec/colt/tests/admit.rs b/crates/bumbledb/src/exec/colt/tests/admit.rs
+index 57e9629d..7f3df500 100644
+--- a/crates/bumbledb/src/exec/colt/tests/admit.rs
++++ b/crates/bumbledb/src/exec/colt/tests/admit.rs
+@@ -99,13 +99,13 @@ fn cancelled_duplicate_chunk_preserves_the_original_singleton() {
+ }
+ 
+ #[test]
+-fn cancelled_resize_preserves_the_readable_map_and_can_retry() {
++fn cancelled_child_construction_preserves_the_readable_root_and_can_retry() {
+     let schema = schema();
+-    let rows: Vec<_> = (0..25).map(|i| (i, i)).collect();
++    let rows: Vec<_> = (0..513).map(|i| (0, i)).collect();
+     let view = view_of(&schema, &rows);
+     let mut colt = join_colt(&view);
+     colt.force_root().unwrap();
+-    let mut map = colt.maps[0];
++    let map = colt.maps[0];
+     let layout = (
+         map.nbuckets,
+         map.ctrl_start,
+@@ -115,32 +115,30 @@ fn cancelled_resize_preserves_the_readable_map_and_can_retry() {
+     let before = lengths(&colt);
+     let stopped = WorkContext::new();
+     stopped.cancel();
++    let child = colt.get(Colt::root(), 0, &[0]).unwrap();
+     colt.bind(Some(&stopped));
+-    assert_eq!(colt.grow_map(&mut map), Err(WorkError::Cancelled));
++    assert_eq!(colt.ensure_forced(child, 1), Err(WorkError::Cancelled));
+     assert_eq!(
+         (
+-            map.nbuckets,
+-            map.ctrl_start,
+-            map.bucket_start,
+-            map.dense_start
++            colt.maps[0].nbuckets,
++            colt.maps[0].ctrl_start,
++            colt.maps[0].bucket_start,
++            colt.maps[0].dense_start
+         ),
+         layout
+     );
+     assert_eq!(lengths(&colt), before);
+-    for i in 0..25 {
+-        assert!(colt.get(Colt::root(), 0, &[i]).is_some());
+-    }
++    assert_eq!(colt.get(Colt::root(), 0, &[0]), Some(child));
+ 
+     colt.bind(Some(&WorkContext::new()));
+-    colt.grow_map(&mut map).unwrap();
+-    colt.maps[0] = map;
+-    assert_eq!(map.nbuckets, layout.0 * 2);
++    colt.ensure_forced(child, 1).unwrap();
++    assert!(colt.maps[1].nbuckets > super::super::force::force_nbuckets(513));
+     assert_eq!(
+-        drain(&mut colt, Colt::root(), 0)
++        drain(&mut colt, child, 1)
+             .iter()
+             .map(|(key, _)| key[0])
+             .collect::<Vec<_>>(),
+-        (0..25).collect::<Vec<_>>()
++        (0..513).collect::<Vec<_>>()
+     );
+ }
+ 

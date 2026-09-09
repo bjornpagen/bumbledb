@@ -1,0 +1,68 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g1-focused-1",
+  "started": "2026-09-09T09:39:30.919280+00:00",
+  "status": "CHECKS-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T09:39:30.920712+00:00",
+      "status": "PASS",
+      "pid": 11755,
+      "finished": "2026-09-09T09:39:31.016571+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T09:39:31.033330+00:00",
+      "status": "PASS",
+      "pid": 11757,
+      "finished": "2026-09-09T09:39:33.147725+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "focused",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "construction_tails::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T09:39:33.148245+00:00",
+      "status": "PASS",
+      "pid": 11806,
+      "finished": "2026-09-09T09:39:46.766927+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "00dbf24335f49b39385ca4329a9cd6f0fc98cfbdf3d55c6c11760d521685e7ff",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g1-source",
+  "acceptance": "Correctness/retention discriminator only. No speed/RSS/full tracing claim.",
+  "finished": "2026-09-09T09:39:47.018180+00:00"
+}

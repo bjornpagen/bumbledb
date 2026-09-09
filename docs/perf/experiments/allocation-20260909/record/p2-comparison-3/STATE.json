@@ -1,0 +1,321 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p2-comparison-3",
+  "started": "2026-09-09T07:15:46.852674+00:00",
+  "status": "MEASUREMENTS-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": false,
+  "steps": [
+    {
+      "name": "A0-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "olap",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A0/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A0/scenarios"
+      ],
+      "started": "2026-09-09T07:15:46.902242+00:00",
+      "status": "PASS",
+      "pid": 71627,
+      "finished": "2026-09-09T07:16:26.365153+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A0/scenarios/scenarios.json",
+      "sha256": "b630578c31cea9703f9b4163f3fd6794011ad3c8675a3f5b0d4b0720093677b9"
+    },
+    {
+      "name": "A0-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A0/reads"
+      ],
+      "started": "2026-09-09T07:16:26.365837+00:00",
+      "status": "PASS",
+      "pid": 72174,
+      "finished": "2026-09-09T07:17:20.965462+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A0/reads/report.json",
+      "sha256": "3df28e4216db822870420873b79db29fda933177c443a3d368f7525932c275c9"
+    },
+    {
+      "name": "B0-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "olap",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B0/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B0/scenarios"
+      ],
+      "started": "2026-09-09T07:17:21.042610+00:00",
+      "status": "PASS",
+      "pid": 73161,
+      "finished": "2026-09-09T07:18:03.216123+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B0/scenarios/scenarios.json",
+      "sha256": "2b5a1de238eb2b9ba68c8a828d767c9c1ce1cace3f3c5315749588bdd6e1bc42"
+    },
+    {
+      "name": "B0-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B0/reads"
+      ],
+      "started": "2026-09-09T07:18:03.216940+00:00",
+      "status": "PASS",
+      "pid": 74203,
+      "finished": "2026-09-09T07:18:59.691851+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B0/reads/report.json",
+      "sha256": "e5ef9169be371fa6b651d554fddc8fcf1256686b58d2e94335d99d002819248f"
+    },
+    {
+      "name": "C0-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "olap",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C0/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C0/scenarios"
+      ],
+      "started": "2026-09-09T07:18:59.774176+00:00",
+      "status": "PASS",
+      "pid": 75568,
+      "finished": "2026-09-09T07:19:39.472633+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C0/scenarios/scenarios.json",
+      "sha256": "45c271a8a581f3508a960abc62902eb854ce055ed25ad0465758660a862f8e43"
+    },
+    {
+      "name": "C0-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C0/reads"
+      ],
+      "started": "2026-09-09T07:19:39.473366+00:00",
+      "status": "PASS",
+      "pid": 76172,
+      "finished": "2026-09-09T07:21:00.800314+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C0/reads/report.json",
+      "sha256": "2e3d917cd3a946bce28933e6f7ae13b262f31c6e2463c4146549e50762238804"
+    },
+    {
+      "name": "C1-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "olap",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C1/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C1/scenarios"
+      ],
+      "started": "2026-09-09T07:21:00.856775+00:00",
+      "status": "PASS",
+      "pid": 77542,
+      "finished": "2026-09-09T07:21:42.300405+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C1/scenarios/scenarios.json",
+      "sha256": "1fa44602ecfb77f5d5c347662361869d16e098d608a43a5ff7e30c363da6f5e8"
+    },
+    {
+      "name": "C1-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C1/reads"
+      ],
+      "started": "2026-09-09T07:21:42.301514+00:00",
+      "status": "PASS",
+      "pid": 78082,
+      "finished": "2026-09-09T07:22:45.006214+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/C1/reads/report.json",
+      "sha256": "9ee6e87d9708279fe25cbe8a1917dd645ef2b55a2f066279822d1781ce88bac2"
+    },
+    {
+      "name": "B1-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "olap",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B1/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B1/scenarios"
+      ],
+      "started": "2026-09-09T07:22:45.092278+00:00",
+      "status": "PASS",
+      "pid": 79617,
+      "finished": "2026-09-09T07:23:28.981715+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B1/scenarios/scenarios.json",
+      "sha256": "e90d51b3a590fb0a2345b3f44d8168eb56deb82db8720257ff9f6a80dbdca9d9"
+    },
+    {
+      "name": "B1-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B1/reads"
+      ],
+      "started": "2026-09-09T07:23:28.982666+00:00",
+      "status": "PASS",
+      "pid": 80606,
+      "finished": "2026-09-09T07:24:18.228322+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/B1/reads/report.json",
+      "sha256": "94647488f48c437170f7883ef736592607a34fc09a9191f37efc80b10e2a7a1b"
+    },
+    {
+      "name": "A1-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "olap",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A1/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A1/scenarios"
+      ],
+      "started": "2026-09-09T07:24:18.319240+00:00",
+      "status": "PASS",
+      "pid": 81511,
+      "finished": "2026-09-09T07:25:01.262934+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A1/scenarios/scenarios.json",
+      "sha256": "578ca8f6d4181b4e96607249d80f9d365ceb9ef1c2984cb923d5aabddd5356ce"
+    },
+    {
+      "name": "A1-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A1/reads"
+      ],
+      "started": "2026-09-09T07:25:01.264158+00:00",
+      "status": "PASS",
+      "pid": 82303,
+      "finished": "2026-09-09T07:25:54.859170+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-comparison-3/A1/reads/report.json",
+      "sha256": "67554c7af69fd5b7f6197691800250a8f469b257343908704639a5e7b80f9255"
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c",
+  "executables": {
+    "A": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+      "sha256": "84b920460fe27b49181a8e8a444e6557971f559e96972fb5e5780f305d47cc74",
+      "role": "published baseline"
+    },
+    "B": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-5/bumbledb-bench",
+      "sha256": "84092b1b5d1ae97b134c4ced3f7fb4d7f3e7aeb57c1a3cb4935084ef03b646e0",
+      "role": "prior P2 gate 5"
+    },
+    "C": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-6/bumbledb-bench",
+      "sha256": "e298a4295192a5dd6a54cbe945c407882a42eec579a970d51357852a0e5ad06b",
+      "role": "current P2 gate 6"
+    }
+  },
+  "protocol": "ABC/CBA; 24 scenario samples and 8 warmups on olap; 32 read samples, batch 1, on point,range,stats,disp_probe. Independent binary-bound verified read corpora; new scenario fixtures each round.",
+  "limitations": "Shared host. Scenario suite has no per-family clock guard. Retain flagged read windows and baseline pauses; no Pi qualification.",
+  "expected_scenarios": [
+    "o1_revenue_by_region",
+    "o2_category_window",
+    "o3_promo_split",
+    "o4_segment_category",
+    "o5_store_extremes",
+    "o6_brand_drill"
+  ],
+  "expected_reads": [
+    "point",
+    "range",
+    "stats",
+    "disp_probe"
+  ],
+  "finished": "2026-09-09T07:25:54.948404+00:00"
+}

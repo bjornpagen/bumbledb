@@ -1,0 +1,90 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q1-time-build-baseline-1",
+  "started": "2026-09-09T11:15:42.013885+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T11:15:42.277898+00:00",
+      "status": "PASS",
+      "pid": 81108,
+      "finished": "2026-09-09T11:15:42.290686+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T11:15:42.291127+00:00",
+      "status": "PASS",
+      "pid": 81109,
+      "finished": "2026-09-09T11:15:44.502144+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb-bench",
+        "--bin",
+        "q1-timing",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T11:15:44.503022+00:00",
+      "status": "FAIL",
+      "pid": 81121,
+      "finished": "2026-09-09T11:16:11.342527+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "variant": "baseline",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source",
+  "source_files": {
+    "crates/bumbledb-bench/Cargo.toml": "d618d2673e29843611ab01a4bc08a043911bad4061f663a5c5feabf8b021a379"
+  },
+  "candidate_identity": "9f87b492b1248093d241a0217b2cb089db08d8ed82a6f1f72a5fce3a43d6b418",
+  "dependencies": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_timing.rs": "3ae2f769af3d20570bbccf291e2adfd41b129746c924f7168d12497dda301284",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_control_cases.rs": "08f26f0022b2857d256e4475afc56bf00b52198cb6bcc9d3fc38346f9c55a84b",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/families/read.rs": "64252750ebabac48d5cca9e4f79eedba976aa0e1f2eb9b7028c5dad7fe96dcdc",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/translate/goldens.rs": "122f76352613c9e7b0f844509dd4122b1f810d5517a6d3a8474970af89d45dd6",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/schema.rs": "7ff990f0c963e2fb651e8d6e92f1859b3726f178dd51d4de51e83e88b710aaa7",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/boost.rs": "d4387badc47863858ec35b7b6d8aacbb32ac54c4190e49b3698e9cfce82177d1",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/clockproxy.rs": "62afce65de422b97ac8032f5f1e7acc2df56232dbb841d28dfea8cfe327b648a",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/harness/work.rs": "26cbffd74d9af52cd9a80f9a44bbb435dde9cee115f50d004c1dfb0d1b7b4664"
+  },
+  "prior_identities": {
+    "E1": "e44e04132d30992ab094d61c93d620207175e1390006046e53733c16fb52cd55",
+    "M1": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+    "P3": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+    "G1": "084f09fd3a2eaaf73b9f0d2c13ddf4f7e12422612e995e27c1872b48547b38df",
+    "G2": "c759483862ce7a957dcda1a39e4246b36fe47fd1e1eb5614dfa82bd725f70e04",
+    "P2": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c"
+  },
+  "protocol": "Same checkout path, same external driver, workspace ordinary fat-LTO release profile; no allocator/CPU tracing; fresh phase-specific target AND build directories.",
+  "finished": "2026-09-09T11:16:11.347372+00:00"
+}

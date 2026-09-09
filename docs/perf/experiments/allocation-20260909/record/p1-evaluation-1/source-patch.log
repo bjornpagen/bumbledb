@@ -1,0 +1,125 @@
+diff --git a/crates/bumbledb/src/exec/run/probe_pass.rs b/crates/bumbledb/src/exec/run/probe_pass.rs
+index 23e02c90..dc3e091f 100644
+--- a/crates/bumbledb/src/exec/run/probe_pass.rs
++++ b/crates/bumbledb/src/exec/run/probe_pass.rs
+@@ -642,15 +642,30 @@ impl Executor {
+                     );
+                 }
+             }
+-            for (k, &element) in survivors.iter().enumerate() {
+-                let element = element as usize;
+-                // A carried cursor may force a different node. Drop its
+-                // borrowed view before preparing the next cursor's probe.
+-                let Some(probe) = self.colt_ok(colt.prepare_probe(cursor_at(element), s_level))
+-                else {
++            let Some(&first) = survivors.first() else {
++                return;
++            };
++            let mut cursor = cursor_at(first as usize);
++            let mut k = 0;
++            loop {
++                // Adjacent parents can carry the same tagged cursor. Keep its
++                // borrowed probe until that cursor changes; preparing the next
++                // one may force a node and relocate the pools.
++                let Some(probe) = self.colt_ok(colt.prepare_probe(cursor, s_level)) else {
+                     break;
+                 };
+-                probe_one(&probe, k, element);
++                loop {
++                    probe_one(&probe, k, survivors[k] as usize);
++                    k += 1;
++                    if k == n {
++                        return;
++                    }
++                    let next = cursor_at(survivors[k] as usize);
++                    if next != cursor {
++                        cursor = next;
++                        break;
++                    }
++                }
+             }
+         } else {
+             let Some(probe) = self.colt_ok(colt.prepare_probe(start_cursor, s_level)) else {
+diff --git a/crates/bumbledb/src/exec/run/tests.rs b/crates/bumbledb/src/exec/run/tests.rs
+index ca0f88a9..34e2cf13 100644
+--- a/crates/bumbledb/src/exec/run/tests.rs
++++ b/crates/bumbledb/src/exec/run/tests.rs
+@@ -357,6 +357,7 @@ mod intervals;
+ mod mechanics;
+ mod negation;
+ mod pipeline;
++mod probe_runs;
+ mod scan;
+ mod spill_bounded;
+ mod work_ledger;
+diff --git a/crates/bumbledb/tests/alloc_census.rs b/crates/bumbledb/tests/alloc_census.rs
+index 31723df6..1a502ee8 100644
+--- a/crates/bumbledb/tests/alloc_census.rs
++++ b/crates/bumbledb/tests/alloc_census.rs
+@@ -16,7 +16,7 @@ use bumbledb::ir::{
+ };
+ use bumbledb::schema::{
+     Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, SchemaDescriptor, Side,
+-    StatementDescriptor, ValueType, Weight,
++    StatementDescriptor, ValidateDescriptor as _, ValueType, Weight,
+ };
+ use bumbledb::{AllenMask, Answers, BindValue, ConditionTree, Db, NonEmpty, ProjectionRule};
+ 
+@@ -357,6 +357,10 @@ fn schema() -> SchemaDescriptor {
+                 relation: PROFILE,
+                 projection: Box::new([FieldId(0)]),
+             },
++            StatementDescriptor::Functionality {
++                relation: ACCOUNT,
++                projection: Box::new([FieldId(0)]),
++            },
+         ],
+     }
+ }
+@@ -1177,6 +1181,46 @@ fn flow_insert_and_scan() {
+     .expect("typed read");
+ }
+ 
++// Keep fixture validity in the normal test run, without capturing allocation
++// backtraces or running the census's repeated measurement windows.
++#[test]
++fn census_fixture_smoke() {
++    schema().validate().expect("valid census schema");
++    for n in [4, 16, 64] {
++        wide_schema(n).validate().expect("valid wide schema");
++    }
++    let dir = common::TempDir::new("census-fixture-smoke");
++    let db = Db::create(dir.path(), schema(), common::work())
++        .expect("create")
++        .expect("accepted");
++    populate(&db);
++    for query in [
++        chain_query(8, 4, 1),
++        chain_query(2, 1, 8),
++        chain_query(2, 8, 1),
++        dnf_query(8),
++    ] {
++        db.prepare(&query, common::work()).expect("prepare");
++    }
++    for (query, params) in [
++        (join_query(), vec![BindValue::I64(0)]),
++        (interiors_only_query(), vec![BindValue::I64(0)]),
++        (aggregate_query(), vec![]),
++        (string_query(), vec![]),
++        (pack_query(), vec![]),
++        (calendar_query(), vec![BindValue::U64(2)]),
++        (marks_query(), vec![BindValue::U64(3)]),
++        (recursive_query(), vec![BindValue::U64(110)]),
++    ] {
++        let mut prepared = db.prepare(&query, common::work()).expect("prepare");
++        db.read(common::work(), |snap| {
++            snap.execute(&mut prepared, &params, &mut Answers::new())?;
++            Ok(())
++        })
++        .expect("execute fixture query");
++    }
++}
++
+ #[test]
+ #[ignore = "the census harness — a measurement instrument, run explicitly"]
+ fn allocation_deep_census() {

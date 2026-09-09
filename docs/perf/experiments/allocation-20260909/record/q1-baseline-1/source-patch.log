@@ -1,0 +1,32 @@
+diff --git a/crates/bumbledb/src/exec/sink/tests.rs b/crates/bumbledb/src/exec/sink/tests.rs
+index ff988979..5761dfc6 100644
+--- a/crates/bumbledb/src/exec/sink/tests.rs
++++ b/crates/bumbledb/src/exec/sink/tests.rs
+@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
+ use std::sync::Arc;
+ 
+ mod aggregate;
++mod demand_growth;
+ mod memory;
+ mod pack;
+ mod projection;
+diff --git a/crates/bumbledb/src/exec/wordmap.rs b/crates/bumbledb/src/exec/wordmap.rs
+index 243a11dd..eecf3c16 100644
+--- a/crates/bumbledb/src/exec/wordmap.rs
++++ b/crates/bumbledb/src/exec/wordmap.rs
+@@ -42,6 +42,15 @@ const HINT_CAP: usize = 1 << 21;
+ const LOAD_DEN: usize = 3;
+ 
+ impl<V: Copy> WordMap<V> {
++    #[cfg(test)]
++    pub(crate) fn retained_bytes_for_test(&self) -> usize {
++        self.ctrl.capacity()
++            + self.keys.capacity() * size_of::<u64>()
++            + self.values.capacity() * size_of::<V>()
++            + self.stamps.capacity()
++            + self.dense.capacity() * size_of::<u32>()
++    }
++
+     /// Distinct entries before another growth would exceed the u32 slot index.
+     /// This is a representation bound, not an execution or memory allowance.
+     pub(crate) fn remaining_rows(&self) -> usize {

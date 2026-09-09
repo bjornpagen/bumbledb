@@ -1,0 +1,331 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p3-comparison-2",
+  "started": "2026-09-09T08:23:25.032327+00:00",
+  "status": "MEASUREMENTS-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": false,
+  "steps": [
+    {
+      "name": "A0-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "temporal",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A0/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A0/scenarios"
+      ],
+      "started": "2026-09-09T08:23:25.150255+00:00",
+      "status": "PASS",
+      "pid": 46159,
+      "finished": "2026-09-09T08:24:13.637227+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A0/scenarios/scenarios.json",
+      "sha256": "14f5570c314189619a64cdf7761c269676a3fe2ed0c63c2c1eef1c45186b7310"
+    },
+    {
+      "name": "A0-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,mandate_overlap,conflict_pairs,conflict_free,slot_booking_overlap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A0/reads"
+      ],
+      "started": "2026-09-09T08:24:13.637950+00:00",
+      "status": "PASS",
+      "pid": 47428,
+      "finished": "2026-09-09T08:24:26.589565+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A0/reads/report.json",
+      "sha256": "cd009f587b90560d7c815b339187327fc5d82e409c81226a0d604f2ec5206122"
+    },
+    {
+      "name": "B0-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "temporal",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B0/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B0/scenarios"
+      ],
+      "started": "2026-09-09T08:24:26.640705+00:00",
+      "status": "PASS",
+      "pid": 47757,
+      "finished": "2026-09-09T08:25:08.718650+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B0/scenarios/scenarios.json",
+      "sha256": "dde79614653f27de67c2d5a0969125762501a739912368122b9f34978008e764"
+    },
+    {
+      "name": "B0-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,mandate_overlap,conflict_pairs,conflict_free,slot_booking_overlap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B0/reads"
+      ],
+      "started": "2026-09-09T08:25:08.719385+00:00",
+      "status": "PASS",
+      "pid": 48685,
+      "finished": "2026-09-09T08:25:21.757968+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B0/reads/report.json",
+      "sha256": "d2ff08b439f3eba0d829f341d870590873b2987ab4890c866c69c0322a51e113"
+    },
+    {
+      "name": "C0-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "temporal",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C0/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C0/scenarios"
+      ],
+      "started": "2026-09-09T08:25:21.805394+00:00",
+      "status": "PASS",
+      "pid": 48992,
+      "finished": "2026-09-09T08:26:02.604561+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C0/scenarios/scenarios.json",
+      "sha256": "c66172b5dafd3aaf89602480b2c55c8e5b46cd0ddc82b8c561d672a810dfb41d"
+    },
+    {
+      "name": "C0-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,mandate_overlap,conflict_pairs,conflict_free,slot_booking_overlap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C0/reads"
+      ],
+      "started": "2026-09-09T08:26:02.607290+00:00",
+      "status": "PASS",
+      "pid": 50160,
+      "finished": "2026-09-09T08:26:15.738991+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C0/reads/report.json",
+      "sha256": "ec8f78b14519144a1cbbea0ffc428ac7d9134210c11bdea4f331d6fd7298acac"
+    },
+    {
+      "name": "C1-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "temporal",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C1/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C1/scenarios"
+      ],
+      "started": "2026-09-09T08:26:15.798348+00:00",
+      "status": "PASS",
+      "pid": 50504,
+      "finished": "2026-09-09T08:26:57.440827+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C1/scenarios/scenarios.json",
+      "sha256": "5f24c13e25cef4dc84cc5de13949328ae8aa373165d95b53f836e2fbfd8c2298"
+    },
+    {
+      "name": "C1-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,mandate_overlap,conflict_pairs,conflict_free,slot_booking_overlap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C1/reads"
+      ],
+      "started": "2026-09-09T08:26:57.441532+00:00",
+      "status": "PASS",
+      "pid": 51331,
+      "finished": "2026-09-09T08:27:10.266614+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/C1/reads/report.json",
+      "sha256": "718adac037fe34b33751e5f72886d20f4e01e757310335434cb495eccf7483ff"
+    },
+    {
+      "name": "B1-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "temporal",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B1/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B1/scenarios"
+      ],
+      "started": "2026-09-09T08:27:10.312835+00:00",
+      "status": "PASS",
+      "pid": 51630,
+      "finished": "2026-09-09T08:27:52.031334+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B1/scenarios/scenarios.json",
+      "sha256": "73211c73c415a7f7af627120048e9f6e022c29f3e6f71a3ab9de368355e0cb97"
+    },
+    {
+      "name": "B1-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,mandate_overlap,conflict_pairs,conflict_free,slot_booking_overlap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B1/reads"
+      ],
+      "started": "2026-09-09T08:27:52.032050+00:00",
+      "status": "PASS",
+      "pid": 52417,
+      "finished": "2026-09-09T08:28:05.305646+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/B1/reads/report.json",
+      "sha256": "ea5769ad15f392f9cf84dfee7b88c11feadab3805dd5cc2cb06a0907aaba047b"
+    },
+    {
+      "name": "A1-scenarios",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+        "scenarios",
+        "--only",
+        "temporal",
+        "--samples",
+        "24",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A1/corpus",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A1/scenarios"
+      ],
+      "started": "2026-09-09T08:28:05.354210+00:00",
+      "status": "PASS",
+      "pid": 52765,
+      "finished": "2026-09-09T08:28:38.771988+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A1/scenarios/scenarios.json",
+      "sha256": "3cc8dd6f84377f8546f9d1f39f7d18dfc67cec374936a89f2b94083685b03700"
+    },
+    {
+      "name": "A1-reads",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,mandate_overlap,conflict_pairs,conflict_free,slot_booking_overlap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A1/reads"
+      ],
+      "started": "2026-09-09T08:28:38.772800+00:00",
+      "status": "PASS",
+      "pid": 53646,
+      "finished": "2026-09-09T08:28:52.217530+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-comparison-2/A1/reads/report.json",
+      "sha256": "59fc073e3a4c4c3d4b4d0f123325ab605ae42dd3d7d03762ab85a12ffe424a80"
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+  "executables": {
+    "A": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+      "sha256": "84b920460fe27b49181a8e8a444e6557971f559e96972fb5e5780f305d47cc74",
+      "role": "standalone baseline"
+    },
+    "B": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/bumbledb-bench",
+      "sha256": "0fbe16bd472018555ff63c6ac3eadaba4dbe67cf9317a69b78504d6cdd980e63",
+      "role": "standalone compact"
+    },
+    "C": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-block8-3/bumbledb-bench",
+      "sha256": "3fd1ed105d37974ba1e8e1c4dad449442fc07d6faed9d1c2c2669bd6e910d390",
+      "role": "standalone block8"
+    }
+  },
+  "protocol": "ABC/CBA; 24 samples/8 warmups over all five temporal queries; 32 samples, batch 1, over selected ledger/calendar read controls. Independent binary-bound oracle-verified read corpora; new scenario corpus each round.",
+  "limitations": "Shared macOS host with QoS, not hard P-core affinity; no per-query scenario clock stamps. Keep every read boundary flag and round, no frequency normalization. Descriptive comparison, not independent sample-level significance or Pi qualification.",
+  "expected_scenarios": [
+    "t1_stab",
+    "t2_overlap_join",
+    "t3_mixed_mask",
+    "t4_ray_stab",
+    "t5_pack_key"
+  ],
+  "expected_reads": [
+    "point",
+    "range",
+    "stats",
+    "mandate_overlap",
+    "conflict_pairs",
+    "conflict_free",
+    "slot_booking_overlap"
+  ],
+  "order": [
+    "A0",
+    "B0",
+    "C0",
+    "C1",
+    "B1",
+    "A1"
+  ],
+  "finished": "2026-09-09T08:28:52.308298+00:00"
+}

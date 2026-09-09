@@ -1,0 +1,134 @@
+diff --git a/crates/bumbledb/src/api/prepared/tests.rs b/crates/bumbledb/src/api/prepared/tests.rs
+index a649fdb1..7bdc8810 100644
+--- a/crates/bumbledb/src/api/prepared/tests.rs
++++ b/crates/bumbledb/src/api/prepared/tests.rs
+@@ -45,6 +45,9 @@ mod statically_empty;
+ mod text_retention;
+ mod view_memo;
+ 
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1_saved.rs"]
++mod m1_saved;
++
+ /// The one dynamic test theory: any descriptor as a `Theory`.
+ #[derive(Clone)]
+ pub(super) struct T(pub(super) SchemaDescriptor);
+diff --git a/crates/bumbledb/src/exec/colt.rs b/crates/bumbledb/src/exec/colt.rs
+index 4b1b139c..66280f1e 100644
+--- a/crates/bumbledb/src/exec/colt.rs
++++ b/crates/bumbledb/src/exec/colt.rs
+@@ -426,3 +426,7 @@ pub fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1_saved_observer.rs"]
++pub(crate) mod m1_observer;
+diff --git a/crates/bumbledb/src/exec/colt/force.rs b/crates/bumbledb/src/exec/colt/force.rs
+index ddaa6545..9c67f588 100644
+--- a/crates/bumbledb/src/exec/colt/force.rs
++++ b/crates/bumbledb/src/exec/colt/force.rs
+@@ -158,6 +158,8 @@ impl Colt {
+         other: &Colt,
+         mut buffer: Vec<u32>,
+     ) -> Result<View, WorkError> {
++        #[cfg(test)]
++        super::m1_observer::record_clone(other);
+         debug_assert!(
+             self.same_shape(other),
+             "the occurrence dedup clones between identical trie shapes only"
+@@ -248,7 +250,7 @@ impl Colt {
+         position: u32,
+     ) -> Result<(), WorkError> {
+         if (usize::try_from(m.len).expect("64-bit usize") + 1) * 5 > m.nbuckets * 16 {
+-            self.grow_map(m)?;
++            self.grow_construction_map(m)?;
+         }
+         let (found, idx) = self.probe_hashed(m, key, hash);
+         if found {
+diff --git a/crates/bumbledb/src/exec/colt/grow.rs b/crates/bumbledb/src/exec/colt/grow.rs
+index 3d322ba4..f85f2050 100644
+--- a/crates/bumbledb/src/exec/colt/grow.rs
++++ b/crates/bumbledb/src/exec/colt/grow.rs
+@@ -1,7 +1,69 @@
+ use super::{Colt, Map, ctrl_tag, hash_words, reserve_pool, zero_byte_mask};
+ use crate::work::WorkError;
+ 
++// Copy leftward in bounded pieces so cancellation also interrupts relocation.
++// A refusal leaves this unpublished tail disposable, not readable as a map.
++pub(super) fn compact_tail<T: Copy>(
++    pool: &mut Vec<T>,
++    start: usize,
++    from: usize,
++    checkpoint: &mut impl FnMut() -> Result<(), WorkError>,
++) -> Result<(), WorkError> {
++    assert!(start <= from, "construction compacts leftward");
++    let count = pool.len() - from;
++    let chunk = (64 * 1024 / std::mem::size_of::<T>().max(1)).max(1);
++    for offset in (0..count).step_by(chunk) {
++        checkpoint()?;
++        let end = offset + chunk.min(count - offset);
++        pool.copy_within(from + offset..from + end, start + offset);
++    }
++    checkpoint()?;
++    pool.truncate(start + count);
++    Ok(())
++}
++
+ impl Colt {
++    /// Only the local, unpublished map in `force_fill` owns these arena tails.
++    /// Reclaim after each growth, before another reservation can count dead
++    /// tables. On any refusal `force_unforced` rolls back the whole construction;
++    /// older published maps lie strictly before these starts and never move.
++    pub(super) fn grow_construction_map(&mut self, m: &mut Map) -> Result<(), WorkError> {
++        let old = *m;
++        assert_eq!(
++            self.ctrl.len(),
++            old.ctrl_start + old.nbuckets * 8,
++            "construction owns control tail"
++        );
++        assert_eq!(
++            self.buckets.len(),
++            old.bucket_start + old.nbuckets * old.stride(),
++            "construction owns bucket tail"
++        );
++        assert_eq!(
++            self.dense.len(),
++            old.dense_start + old.len as usize,
++            "construction owns dense tail"
++        );
++        self.grow_map(m)?;
++        let mut poll = || {
++            self.work
++                .as_ref()
++                .map_or(Ok(()), crate::work::WorkContext::checkpoint)
++        };
++        compact_tail(&mut self.ctrl, old.ctrl_start, m.ctrl_start, &mut poll)?;
++        compact_tail(
++            &mut self.buckets,
++            old.bucket_start,
++            m.bucket_start,
++            &mut poll,
++        )?;
++        compact_tail(&mut self.dense, old.dense_start, m.dense_start, &mut poll)?;
++        m.ctrl_start = old.ctrl_start;
++        m.bucket_start = old.bucket_start;
++        m.dense_start = old.dense_start;
++        Ok(())
++    }
++
+     pub(super) fn grow_map(&mut self, m: &mut Map) -> Result<(), WorkError> {
+         let arity = m.arity;
+         let stride = m.stride();
+diff --git a/crates/bumbledb/src/exec/colt/tests.rs b/crates/bumbledb/src/exec/colt/tests.rs
+index 36563a62..dc43b191 100644
+--- a/crates/bumbledb/src/exec/colt/tests.rs
++++ b/crates/bumbledb/src/exec/colt/tests.rs
+@@ -85,6 +85,7 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
+ }
+ 
+ mod admit;
++mod construction_tails;
+ mod dense;
+ mod model;
+ mod overflow;

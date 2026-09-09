@@ -1,0 +1,68 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-focused-1",
+  "started": "2026-09-09T10:08:26.664782+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T10:08:26.666054+00:00",
+      "status": "PASS",
+      "pid": 22574,
+      "finished": "2026-09-09T10:08:26.777907+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T10:08:26.793835+00:00",
+      "status": "PASS",
+      "pid": 22578,
+      "finished": "2026-09-09T10:08:28.799771+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "focused",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "exec::colt::tests::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T10:08:28.802032+00:00",
+      "status": "FAIL",
+      "pid": 22582,
+      "finished": "2026-09-09T10:08:31.870221+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "d6a027b839ef488cc932ce5ec2a0965b435c0257ba1cd07489423e87ee6c4ed1",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+  "acceptance": "Correctness/retention discriminator only. No speed/RSS/full tracing claim.",
+  "finished": "2026-09-09T10:08:31.870825+00:00"
+}

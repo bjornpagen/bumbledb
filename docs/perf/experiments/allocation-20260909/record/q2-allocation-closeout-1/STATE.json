@@ -1,0 +1,76 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q2-allocation-closeout-1",
+  "started": "2026-09-09T11:51:04.382233+00:00",
+  "status": "Q2-CORRECTNESS-ALLOCATION-CHECKPOINT-VERIFIED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q2-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T11:51:05.059452+00:00",
+      "status": "PASS",
+      "pid": 10368,
+      "finished": "2026-09-09T11:51:07.139902+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "diff-check",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q2-source",
+        "diff",
+        "--check"
+      ],
+      "started": "2026-09-09T11:51:07.140403+00:00",
+      "status": "PASS",
+      "pid": 10386,
+      "finished": "2026-09-09T11:51:07.155597+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "dc78c0d7123b10edc7f9df4751a9d3a4792b65e4a428458f639c8a9d6e936f3c",
+  "prior_identities": {
+    "E1": "e44e04132d30992ab094d61c93d620207175e1390006046e53733c16fb52cd55",
+    "M1": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+    "P3": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+    "G1": "084f09fd3a2eaaf73b9f0d2c13ddf4f7e12422612e995e27c1872b48547b38df",
+    "G2": "c759483862ce7a957dcda1a39e4246b36fe47fd1e1eb5614dfa82bd725f70e04",
+    "P2": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c"
+  },
+  "controls": {
+    "q1": {
+      "binary_sha256": "5e44826e2594a7f2985376ae124b1c2332deef3baafb5736714477e3f585aea7",
+      "source": "9f87b492b1248093d241a0217b2cb089db08d8ed82a6f1f72a5fce3a43d6b418"
+    },
+    "q2": {
+      "binary_sha256": "0d51fd0cc54100d494c0ecbb7d19822c2bdea9f0a073a351388982b033fc90f3",
+      "source": "dc78c0d7123b10edc7f9df4751a9d3a4792b65e4a428458f639c8a9d6e936f3c"
+    }
+  },
+  "comparison_source": "clean at b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "gate_sha256": "7992b31c3cc20e9db5f1ec626637fedaf3d83306ceb2e28bba7c34d9a79801fc",
+  "review_sha256": "e60b9f336a957e30c660ada734ce6253c9286888823f11d06ba4c79b4ba3b887",
+  "documents": {
+    "Q2-DENSE-WORDMAP-LEAD.md": "f5a30a0a118a3b78ec0e83a15c857a26352f0952628cf57e4f9cd57e746f7217",
+    "Q2-ALLOCATION-REVIEW.md": "40eb04668b134a7ad5a71322bb7ebc988b962bbf3bc1737124f4fd28aad0aca3",
+    "TRACE-EXHAUSTION.md": "3619f8a0b98d2ac5cd59be50635ed2c7756c9ba2eb53ac243770823bd12d7bd0"
+  },
+  "unexecuted_timing_scripts": {
+    "q2_time_experiment.py": "3e33b4e5a0123c48455d5a55f61acda3f66e29abad302d52f21f7bf779e1bd5f",
+    "q2-time-build.py": "71b7abdef00eb4d19f138dfbf54420b582ac9e9a25b8d3f4f7163b1f35f899a9",
+    "q2-timing.py": "c9cc55a6a8718bdb90f65c8afd4b59848a8052671862646d4d45ac0d5310dd17",
+    "q2-timing-review.py": "6a2ec6c162ce427af4ba9fc294cb0cd860ab7fce05fac3362ca9a543ec3695a7"
+  },
+  "acceptance": "Correctness and allocation checkpoint only. Ordinary Q2-vs-Q1 timing remains required; no speed/RSS/Pi/full-suite acceptance or trace exhaustion.",
+  "finished": "2026-09-09T11:51:07.709619+00:00"
+}

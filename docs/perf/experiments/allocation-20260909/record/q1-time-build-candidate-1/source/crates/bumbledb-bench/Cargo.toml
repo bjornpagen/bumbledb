@@ -1,0 +1,24 @@
+[package]
+name = "bumbledb-bench"
+version.workspace = true
+edition = "2024"
+publish = false
+
+[features]
+alloc-counter = ["bumbledb/alloc-counter"]
+
+[dependencies]
+aegis = "=0.9.15"
+blake3 = "1"
+bumbledb = { path = "../bumbledb", features = ["collision-probe"] }
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+
+[dev-dependencies]
+bumbledb = { path = "../bumbledb", features = ["ground-off"] }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "q1-timing"
+path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_timing.rs"

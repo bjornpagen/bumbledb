@@ -1,0 +1,24 @@
+diff --git a/crates/bumbledb-bench/Cargo.toml b/crates/bumbledb-bench/Cargo.toml
+index 4fbcb0b8..0bfdb6ab 100644
+--- a/crates/bumbledb-bench/Cargo.toml
++++ b/crates/bumbledb-bench/Cargo.toml
+@@ -18,3 +18,7 @@ bumbledb = { path = "../bumbledb", features = ["ground-off"] }
+ 
+ [lints]
+ workspace = true
++
++[[bin]]
++name = "e1-timing"
++path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1_timing.rs"
+diff --git a/crates/bumbledb/src/api/prepared/tests.rs b/crates/bumbledb/src/api/prepared/tests.rs
+index a649fdb1..82c3e5a5 100644
+--- a/crates/bumbledb/src/api/prepared/tests.rs
++++ b/crates/bumbledb/src/api/prepared/tests.rs
+@@ -26,6 +26,7 @@ mod answers;
+ mod budgets;
+ mod correctness;
+ mod disjoint;
++mod empty_inputs;
+ mod float_aggregates;
+ mod folded;
+ mod gates;

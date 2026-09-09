@@ -1,0 +1,73 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "m1-audit-baseline-1",
+  "started": "2026-09-09T08:38:40.643509+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T08:38:40.645458+00:00",
+      "status": "PASS",
+      "pid": 65074,
+      "finished": "2026-09-09T08:38:40.752036+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T08:38:40.765683+00:00",
+      "status": "FAIL",
+      "pid": 65077,
+      "finished": "2026-09-09T08:38:50.159668+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "ab92913b79e20e89a743f56e3a0b75f50527e44b6d7e86628cc73d442f961522",
+  "observer_sha256": "9ff2b67af865558e9ca0fdb7f00b17ea84e66910e1f1078e344608907999c67b",
+  "variant": "baseline",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source",
+  "protocol": "Debug allocation-counter build; 28 synthetic cells, fixed/dynamic/zero widths, 25/26 distinct keys, grouped/interleaved real image order; exact model rows, cold force, same-shape clone, reset/reforce. No timings, CPU samples or full trace.",
+  "owner_fields": [
+    "nbuckets",
+    "distinct",
+    "ctrl_len",
+    "ctrl_capacity",
+    "bucket_len",
+    "bucket_capacity",
+    "dense_len",
+    "dense_capacity",
+    "three_arena_live_bytes",
+    "all_pool_retained_bytes"
+  ],
+  "allocation_fields": [
+    "requests",
+    "dealloc_calls",
+    "requested_bytes",
+    "relinquished_bytes"
+  ],
+  "limitations": "Synthetic discriminators do not prove workload prevalence. Requested layouts and Vec payload capacities are not RSS, mmap, allocator physical traffic or Pi results.",
+  "finished": "2026-09-09T08:38:50.160209+00:00"
+}

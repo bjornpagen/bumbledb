@@ -1,0 +1,168 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "m1-gates-duplicate-1",
+  "started": "2026-09-09T08:43:22.117645+00:00",
+  "status": "GATES-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T08:43:22.118580+00:00",
+      "status": "PASS",
+      "pid": 70208,
+      "finished": "2026-09-09T08:43:22.128325+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T08:43:22.178487+00:00",
+      "status": "PASS",
+      "pid": 70215,
+      "finished": "2026-09-09T08:43:24.187714+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "-p",
+        "bumbledb-bench",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T08:43:24.231714+00:00",
+      "status": "PASS",
+      "pid": 70255,
+      "finished": "2026-09-09T08:43:46.735276+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "library-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T08:43:46.780579+00:00",
+      "status": "PASS",
+      "pid": 70943,
+      "finished": "2026-09-09T08:44:31.635062+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "allocation-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T08:44:31.693399+00:00",
+      "status": "PASS",
+      "pid": 71679,
+      "finished": "2026-09-09T08:44:55.846294+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "layout-model-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb-bench",
+        "displaced::",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T08:44:55.887618+00:00",
+      "status": "PASS",
+      "pid": 72112,
+      "finished": "2026-09-09T08:45:33.671389+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "release-build",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source/Cargo.toml",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb-bench"
+      ],
+      "started": "2026-09-09T08:45:33.729380+00:00",
+      "status": "PASS",
+      "pid": 72761,
+      "finished": "2026-09-09T08:46:53.861496+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "verify",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/bumbledb-bench",
+        "verify",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/data"
+      ],
+      "started": "2026-09-09T08:46:53.868738+00:00",
+      "status": "PASS",
+      "pid": 73992,
+      "finished": "2026-09-09T08:47:43.123145+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-source",
+  "variant": "duplicate-only",
+  "acceptance": "Correctness/build only. Synthetic ownership is separate from ordinary timing. No P1/P2/P3 changes, compaction or full traces.",
+  "binary_sha256": "78b50d781da898bfe7b46ed83d87f60b4055d27cf155265f7905204c29300b61",
+  "finished": "2026-09-09T08:47:43.168998+00:00"
+}

@@ -1,0 +1,128 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-geometry-1",
+  "started": "2026-09-09T09:59:21.687529+00:00",
+  "status": "FOUR-OWNER-MODEL-COMPLETE-NOT-A-CANDIDATE-MEASUREMENT",
+  "diagnostic_only": true,
+  "steps": [],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "results": [
+    {
+      "mode": "append",
+      "arena_owners": [
+        [
+          229376,
+          229376
+        ],
+        [
+          458752,
+          458752
+        ],
+        [
+          82557,
+          131072
+        ]
+      ],
+      "scratch_owner": [
+        1,
+        8
+      ],
+      "arena_capacity_bytes": 4423680,
+      "scratch_capacity_bytes": 64,
+      "all_four_capacity_bytes": 4423744,
+      "all_four_requests": 22,
+      "all_four_requested_bytes": 7176224,
+      "whole_table_relocation_bytes": 0,
+      "scratch_payload_write_bytes": 314568,
+      "growths": [
+        [
+          8192,
+          13107
+        ],
+        [
+          16384,
+          26214
+        ]
+      ]
+    },
+    {
+      "mode": "compact-each-growth",
+      "arena_owners": [
+        [
+          131072,
+          196608
+        ],
+        [
+          262144,
+          393216
+        ],
+        [
+          43236,
+          65536
+        ]
+      ],
+      "scratch_owner": [
+        1,
+        8
+      ],
+      "arena_capacity_bytes": 3604480,
+      "scratch_capacity_bytes": 64,
+      "all_four_capacity_bytes": 3604544,
+      "all_four_requests": 21,
+      "all_four_requested_bytes": 6094880,
+      "whole_table_relocation_bytes": 3499620,
+      "scratch_payload_write_bytes": 314568,
+      "growths": [
+        [
+          8192,
+          13107
+        ],
+        [
+          16384,
+          26214
+        ]
+      ]
+    },
+    {
+      "mode": "staged-live",
+      "arena_owners": [
+        [
+          131072,
+          131072
+        ],
+        [
+          262144,
+          262144
+        ],
+        [
+          43236,
+          65536
+        ]
+      ],
+      "scratch_owner": [
+        0,
+        52428
+      ],
+      "arena_capacity_bytes": 2490368,
+      "scratch_capacity_bytes": 419424,
+      "all_four_capacity_bytes": 2909792,
+      "all_four_requests": 22,
+      "all_four_requested_bytes": 5052784,
+      "whole_table_relocation_bytes": 0,
+      "scratch_payload_write_bytes": 629136,
+      "growths": [
+        [
+          8192,
+          13107
+        ],
+        [
+          16384,
+          26214
+        ]
+      ]
+    }
+  ],
+  "scope": "One saved 100000-row/43236-key width-one root; identical bucket/load schedule. All three arenas PLUS the existing rehash scratch, including retained scratch capacity. Other owners, allocator usable size, RSS, peak live bytes and CPU time are excluded. Scratch writes and whole-table relocation are separate operations, not total memory traffic.",
+  "acceptance": "Arithmetic hypothesis, not an implemented or measured G2 candidate.",
+  "finished": "2026-09-09T09:59:21.720525+00:00"
+}

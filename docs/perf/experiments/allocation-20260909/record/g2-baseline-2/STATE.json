@@ -1,0 +1,96 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-baseline-2",
+  "started": "2026-09-09T10:05:19.761924+00:00",
+  "status": "EXPECTED-BASELINE-FAILURE-VERIFIED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T10:05:19.766390+00:00",
+      "status": "PASS",
+      "pid": 20991,
+      "finished": "2026-09-09T10:05:19.871817+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T10:05:19.896252+00:00",
+      "status": "PASS",
+      "pid": 20993,
+      "finished": "2026-09-09T10:05:21.876406+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T10:05:21.876896+00:00",
+      "status": "PASS",
+      "pid": 20996,
+      "finished": "2026-09-09T10:06:00.429251+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "controls",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-baseline-2/g2-test",
+        "construction_tails::construction_preserves_",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T10:06:00.488737+00:00",
+      "status": "PASS",
+      "pid": 21181,
+      "finished": "2026-09-09T10:06:00.960400+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "expected-retention-failure",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-baseline-2/g2-test",
+        "construction_tails::successful_construction_retains_only_live_table_lengths",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T10:06:00.961022+00:00",
+      "status": "FAIL",
+      "pid": 21182,
+      "finished": "2026-09-09T10:06:00.975649+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "1bf410efe3fb0288b6cd91dd731f5e98108a01851faee9d6033f4f40813b6546",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+  "acceptance": "Correctness/retention discriminator only. No speed/RSS/full tracing claim.",
+  "binary_sha256": "887aa48fc65d064df629853ba4ae850be6235f0c9c10ad678aac67639e09d350",
+  "expected_baseline_failure_verified": true,
+  "finished": "2026-09-09T10:06:01.387871+00:00"
+}

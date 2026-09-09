@@ -1,0 +1,3416 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q1-growth-model-1",
+  "started": "2026-09-09T11:33:57.334944+00:00",
+  "status": "SAVED-OWNER-GROWTH-MODEL-COMPLETE-ASSUMPTIONS-EXPLICIT",
+  "diagnostic_only": true,
+  "steps": [],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "9f87b492b1248093d241a0217b2cb089db08d8ed82a6f1f72a5fce3a43d6b418",
+  "prior_identities": {
+    "E1": "e44e04132d30992ab094d61c93d620207175e1390006046e53733c16fb52cd55",
+    "M1": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+    "P3": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+    "G1": "084f09fd3a2eaaf73b9f0d2c13ddf4f7e12422612e995e27c1872b48547b38df",
+    "G2": "c759483862ce7a957dcda1a39e4246b36fe47fd1e1eb5614dfa82bd725f70e04",
+    "P2": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c"
+  },
+  "source_files": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source/crates/bumbledb/src/exec/wordmap.rs": "fe0200fd1efa47c8de158bcb9c1a0a3c4e0086c5457d8169e9c20c73d2d229fe",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source/crates/bumbledb/src/exec/wordmap/grow.rs": "e47b2d7626662ab5dc4765b1d08187980bb09db3ac4c5990fdbb256b6d1911f4",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source/crates/bumbledb/src/exec/wordmap/entry.rs": "028c36ed6215aebbede3009a78dcdb8b822dbdb0fbc2a313c7725c13ef9abe43",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source/crates/bumbledb/src/exec/wordmap/new.rs": "8bed77a6fca33288c7e30aba5a3de4e596c95e2cd9e13edfd3bb05188cdfdd3e"
+  },
+  "input_hashes": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-controls-baseline-2/controls.log": "6c5c796713dc543dc02af3bf413ad4ac28691a2509389f217b13da62a615a325",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-controls-candidate-2/controls.log": "e444bc60e0dabb9d071a8b955a0fe2033a0a9a7f84e2ba3506485e5694439132"
+  },
+  "maps": {
+    "computed:0/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -3,
+        "table_requested_bytes": -2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "computed:5/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          }
+        ],
+        "table_requests": 6,
+        "table_requested_bytes": 446,
+        "rehashed_entries": 2,
+        "rehashed_key_words": 4,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 3,
+        "table_requested_bytes": -2358857,
+        "rehashed_entries": 2,
+        "rehashed_key_words": 4,
+        "copied_value_bytes": 0
+      }
+    },
+    "computed:513/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          }
+        ],
+        "table_requests": 27,
+        "table_requested_bytes": 73647,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 1352,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 24,
+        "table_requested_bytes": -2285656,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 1352,
+        "copied_value_bytes": 0
+      }
+    },
+    "computed:8192/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          }
+        ],
+        "table_requests": 39,
+        "table_requested_bytes": 1179595,
+        "rehashed_entries": 10914,
+        "rehashed_key_words": 21828,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 36,
+        "table_requested_bytes": -1179708,
+        "rehashed_entries": 10914,
+        "rehashed_key_words": 21828,
+        "copied_value_bytes": 0
+      }
+    },
+    "computed:100000/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 9,
+        "table_requested_bytes": 16515093,
+        "rehashed_entries": 131071,
+        "rehashed_key_words": 262142,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 51,
+        "table_requested_bytes": 18874343,
+        "rehashed_entries": 174752,
+        "rehashed_key_words": 349504,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "union:0/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -3,
+        "table_requested_bytes": -2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "union:5/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          }
+        ],
+        "table_requests": 12,
+        "table_requested_bytes": 2188,
+        "rehashed_entries": 17,
+        "rehashed_key_words": 34,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 9,
+        "table_requested_bytes": -2357115,
+        "rehashed_entries": 17,
+        "rehashed_key_words": 34,
+        "copied_value_bytes": 0
+      }
+    },
+    "union:513/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          }
+        ],
+        "table_requests": 33,
+        "table_requested_bytes": 294845,
+        "rehashed_entries": 2723,
+        "rehashed_key_words": 5446,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 30,
+        "table_requested_bytes": -2064458,
+        "rehashed_entries": 2723,
+        "rehashed_key_words": 5446,
+        "copied_value_bytes": 0
+      }
+    },
+    "union:8192/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          }
+        ],
+        "table_requests": 45,
+        "table_requested_bytes": 4718553,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "union:100000/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 9,
+        "table_requested_bytes": 16515093,
+        "rehashed_entries": 131071,
+        "rehashed_key_words": 262142,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 51,
+        "table_requested_bytes": 18874343,
+        "rehashed_entries": 174752,
+        "rehashed_key_words": 349504,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "groups:0/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -4,
+        "table_requested_bytes": -294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "groups:5/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          }
+        ],
+        "table_requests": 8,
+        "table_requested_bytes": 446,
+        "rehashed_entries": 2,
+        "rehashed_key_words": 2,
+        "copied_value_bytes": 16
+      },
+      "delta": {
+        "table_requests": 4,
+        "table_requested_bytes": -294473,
+        "rehashed_entries": 2,
+        "rehashed_key_words": 2,
+        "copied_value_bytes": 16
+      }
+    },
+    "groups:513/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 80,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 21,
+            "copied_value_bytes": 168,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 336,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 85,
+            "copied_value_bytes": 680,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 1360,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 341,
+            "copied_value_bytes": 2728,
+            "requested_bytes": 36871
+          }
+        ],
+        "table_requests": 36,
+        "table_requested_bytes": 73647,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      },
+      "delta": {
+        "table_requests": 32,
+        "table_requested_bytes": -221272,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      }
+    },
+    "groups:8192/main/groups": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 5461,
+            "copied_value_bytes": 43688,
+            "requested_bytes": 589831
+          }
+        ],
+        "table_requests": 8,
+        "table_requested_bytes": 884750,
+        "rehashed_entries": 5461,
+        "rehashed_key_words": 5461,
+        "copied_value_bytes": 43688
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 80,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 21,
+            "copied_value_bytes": 168,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 336,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 85,
+            "copied_value_bytes": 680,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 1360,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 341,
+            "copied_value_bytes": 2728,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 5456,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 1365,
+            "copied_value_bytes": 10920,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 21840,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 5461,
+            "copied_value_bytes": 43688,
+            "requested_bytes": 589831
+          }
+        ],
+        "table_requests": 52,
+        "table_requested_bytes": 1179595,
+        "rehashed_entries": 10914,
+        "rehashed_key_words": 10914,
+        "copied_value_bytes": 87312
+      },
+      "delta": {
+        "table_requests": 44,
+        "table_requested_bytes": 294845,
+        "rehashed_entries": 5453,
+        "rehashed_key_words": 5453,
+        "copied_value_bytes": 43624
+      }
+    },
+    "groups:100000/main/groups": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 5461,
+            "copied_value_bytes": 43688,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 87376,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 21845,
+            "copied_value_bytes": 174760,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 349520,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 87381,
+            "copied_value_bytes": 699048,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 24,
+        "table_requested_bytes": 18579498,
+        "rehashed_entries": 169299,
+        "rehashed_key_words": 169299,
+        "copied_value_bytes": 1354392
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 80,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 21,
+            "copied_value_bytes": 168,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 336,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 85,
+            "copied_value_bytes": 680,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 1360,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 341,
+            "copied_value_bytes": 2728,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 5456,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 1365,
+            "copied_value_bytes": 10920,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 21840,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 5461,
+            "copied_value_bytes": 43688,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 87376,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 21845,
+            "copied_value_bytes": 174760,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 349520,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 87381,
+            "copied_value_bytes": 699048,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 68,
+        "table_requested_bytes": 18874343,
+        "rehashed_entries": 174752,
+        "rehashed_key_words": 174752,
+        "copied_value_bytes": 1398016
+      },
+      "delta": {
+        "table_requests": 44,
+        "table_requested_bytes": 294845,
+        "rehashed_entries": 5453,
+        "rehashed_key_words": 5453,
+        "copied_value_bytes": 43624
+      }
+    },
+    "pairs:0/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -3,
+        "table_requested_bytes": -2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "pairs:0/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -4,
+        "table_requested_bytes": -294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "pairs:5/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -3,
+        "table_requested_bytes": -2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "pairs:5/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          }
+        ],
+        "table_requests": 8,
+        "table_requested_bytes": 446,
+        "rehashed_entries": 2,
+        "rehashed_key_words": 2,
+        "copied_value_bytes": 16
+      },
+      "delta": {
+        "table_requests": 4,
+        "table_requested_bytes": -294473,
+        "rehashed_entries": 2,
+        "rehashed_key_words": 2,
+        "copied_value_bytes": 16
+      }
+    },
+    "pairs:500/main/seen": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 3,
+        "table_requested_bytes": 2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [],
+        "table_requests": 0,
+        "table_requested_bytes": 0,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": -3,
+        "table_requested_bytes": -2359303,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "pairs:500/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 80,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 21,
+            "copied_value_bytes": 168,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 336,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 85,
+            "copied_value_bytes": 680,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 1360,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 341,
+            "copied_value_bytes": 2728,
+            "requested_bytes": 36871
+          }
+        ],
+        "table_requests": 36,
+        "table_requested_bytes": 73647,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      },
+      "delta": {
+        "table_requests": 32,
+        "table_requested_bytes": -221272,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      }
+    },
+    "union_groups:0/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 6,
+        "table_requested_bytes": 7077902,
+        "rehashed_entries": 43690,
+        "rehashed_key_words": 87380,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 48,
+        "table_requested_bytes": 9437152,
+        "rehashed_entries": 87371,
+        "rehashed_key_words": 174742,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "union_groups:0/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          }
+        ],
+        "table_requests": 4,
+        "table_requested_bytes": 151,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 0,
+        "table_requested_bytes": -294768,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "union_groups:5/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 6,
+        "table_requested_bytes": 7077902,
+        "rehashed_entries": 43690,
+        "rehashed_key_words": 87380,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 48,
+        "table_requested_bytes": 9437152,
+        "rehashed_entries": 87371,
+        "rehashed_key_words": 174742,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "union_groups:5/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          }
+        ],
+        "table_requests": 12,
+        "table_requested_bytes": 1029,
+        "rehashed_entries": 7,
+        "rehashed_key_words": 7,
+        "copied_value_bytes": 56
+      },
+      "delta": {
+        "table_requests": 8,
+        "table_requested_bytes": -293890,
+        "rehashed_entries": 7,
+        "rehashed_key_words": 7,
+        "copied_value_bytes": 56
+      }
+    },
+    "union_groups:500/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 9,
+        "table_requested_bytes": 16515093,
+        "rehashed_entries": 131071,
+        "rehashed_key_words": 262142,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 51,
+        "table_requested_bytes": 18874343,
+        "rehashed_entries": 174752,
+        "rehashed_key_words": 349504,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "union_groups:500/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 80,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 21,
+            "copied_value_bytes": 168,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 336,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 85,
+            "copied_value_bytes": 680,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 1360,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 341,
+            "copied_value_bytes": 2728,
+            "requested_bytes": 36871
+          }
+        ],
+        "table_requests": 36,
+        "table_requested_bytes": 73647,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      },
+      "delta": {
+        "table_requests": 32,
+        "table_requested_bytes": -221272,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      }
+    },
+    "dnf_groups:0/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 6,
+        "table_requested_bytes": 7077902,
+        "rehashed_entries": 43690,
+        "rehashed_key_words": 87380,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 48,
+        "table_requested_bytes": 9437152,
+        "rehashed_entries": 87371,
+        "rehashed_key_words": 174742,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "dnf_groups:0/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          }
+        ],
+        "table_requests": 4,
+        "table_requested_bytes": 151,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 0,
+        "table_requested_bytes": -294768,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      }
+    },
+    "dnf_groups:5/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 6,
+        "table_requested_bytes": 7077902,
+        "rehashed_entries": 43690,
+        "rehashed_key_words": 87380,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          }
+        ],
+        "table_requests": 48,
+        "table_requested_bytes": 9437152,
+        "rehashed_entries": 87371,
+        "rehashed_key_words": 174742,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "dnf_groups:5/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          }
+        ],
+        "table_requests": 12,
+        "table_requested_bytes": 1029,
+        "rehashed_entries": 7,
+        "rehashed_key_words": 7,
+        "copied_value_bytes": 56
+      },
+      "delta": {
+        "table_requests": 8,
+        "table_requested_bytes": -293890,
+        "rehashed_entries": 7,
+        "rehashed_key_words": 7,
+        "copied_value_bytes": 56
+      }
+    },
+    "dnf_groups:500/main/seen": {
+      "baseline": {
+        "steps": [
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 9,
+        "table_requested_bytes": 16515093,
+        "rehashed_entries": 131071,
+        "rehashed_key_words": 262142,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 4,
+            "copied_value_bytes": 0,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 0,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 20,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 84,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 340,
+            "copied_value_bytes": 0,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 682,
+            "copied_value_bytes": 0,
+            "requested_bytes": 36871
+          },
+          {
+            "old_slots": 2048,
+            "new_slots": 4096,
+            "rehashed_entries": 682,
+            "rehashed_key_words": 1364,
+            "copied_value_bytes": 0,
+            "requested_bytes": 73735
+          },
+          {
+            "old_slots": 4096,
+            "new_slots": 8192,
+            "rehashed_entries": 1365,
+            "rehashed_key_words": 2730,
+            "copied_value_bytes": 0,
+            "requested_bytes": 147463
+          },
+          {
+            "old_slots": 8192,
+            "new_slots": 16384,
+            "rehashed_entries": 2730,
+            "rehashed_key_words": 5460,
+            "copied_value_bytes": 0,
+            "requested_bytes": 294919
+          },
+          {
+            "old_slots": 16384,
+            "new_slots": 32768,
+            "rehashed_entries": 5461,
+            "rehashed_key_words": 10922,
+            "copied_value_bytes": 0,
+            "requested_bytes": 589831
+          },
+          {
+            "old_slots": 32768,
+            "new_slots": 65536,
+            "rehashed_entries": 10922,
+            "rehashed_key_words": 21844,
+            "copied_value_bytes": 0,
+            "requested_bytes": 1179655
+          },
+          {
+            "old_slots": 65536,
+            "new_slots": 131072,
+            "rehashed_entries": 21845,
+            "rehashed_key_words": 43690,
+            "copied_value_bytes": 0,
+            "requested_bytes": 2359303
+          },
+          {
+            "old_slots": 131072,
+            "new_slots": 262144,
+            "rehashed_entries": 43690,
+            "rehashed_key_words": 87380,
+            "copied_value_bytes": 0,
+            "requested_bytes": 4718599
+          },
+          {
+            "old_slots": 262144,
+            "new_slots": 524288,
+            "rehashed_entries": 87381,
+            "rehashed_key_words": 174762,
+            "copied_value_bytes": 0,
+            "requested_bytes": 9437191
+          }
+        ],
+        "table_requests": 51,
+        "table_requested_bytes": 18874343,
+        "rehashed_entries": 174752,
+        "rehashed_key_words": 349504,
+        "copied_value_bytes": 0
+      },
+      "delta": {
+        "table_requests": 42,
+        "table_requested_bytes": 2359250,
+        "rehashed_entries": 43681,
+        "rehashed_key_words": 87362,
+        "copied_value_bytes": 0
+      }
+    },
+    "dnf_groups:500/main/groups": {
+      "baseline": {
+        "steps": [],
+        "table_requests": 4,
+        "table_requested_bytes": 294919,
+        "rehashed_entries": 0,
+        "rehashed_key_words": 0,
+        "copied_value_bytes": 0
+      },
+      "candidate": {
+        "steps": [
+          {
+            "old_slots": 0,
+            "new_slots": 8,
+            "rehashed_entries": 0,
+            "rehashed_key_words": 0,
+            "copied_value_bytes": 0,
+            "requested_bytes": 151
+          },
+          {
+            "old_slots": 8,
+            "new_slots": 16,
+            "rehashed_entries": 2,
+            "rehashed_key_words": 2,
+            "copied_value_bytes": 16,
+            "requested_bytes": 295
+          },
+          {
+            "old_slots": 16,
+            "new_slots": 32,
+            "rehashed_entries": 5,
+            "rehashed_key_words": 5,
+            "copied_value_bytes": 40,
+            "requested_bytes": 583
+          },
+          {
+            "old_slots": 32,
+            "new_slots": 64,
+            "rehashed_entries": 10,
+            "rehashed_key_words": 10,
+            "copied_value_bytes": 80,
+            "requested_bytes": 1159
+          },
+          {
+            "old_slots": 64,
+            "new_slots": 128,
+            "rehashed_entries": 21,
+            "rehashed_key_words": 21,
+            "copied_value_bytes": 168,
+            "requested_bytes": 2311
+          },
+          {
+            "old_slots": 128,
+            "new_slots": 256,
+            "rehashed_entries": 42,
+            "rehashed_key_words": 42,
+            "copied_value_bytes": 336,
+            "requested_bytes": 4615
+          },
+          {
+            "old_slots": 256,
+            "new_slots": 512,
+            "rehashed_entries": 85,
+            "rehashed_key_words": 85,
+            "copied_value_bytes": 680,
+            "requested_bytes": 9223
+          },
+          {
+            "old_slots": 512,
+            "new_slots": 1024,
+            "rehashed_entries": 170,
+            "rehashed_key_words": 170,
+            "copied_value_bytes": 1360,
+            "requested_bytes": 18439
+          },
+          {
+            "old_slots": 1024,
+            "new_slots": 2048,
+            "rehashed_entries": 341,
+            "rehashed_key_words": 341,
+            "copied_value_bytes": 2728,
+            "requested_bytes": 36871
+          }
+        ],
+        "table_requests": 36,
+        "table_requested_bytes": 73647,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      },
+      "delta": {
+        "table_requests": 32,
+        "table_requested_bytes": -221272,
+        "rehashed_entries": 676,
+        "rehashed_key_words": 676,
+        "copied_value_bytes": 5408
+      }
+    }
+  },
+  "cases": {
+    "computed:0": {
+      "table_requests": -3,
+      "table_requested_bytes": -2359303,
+      "rehashed_entries": 0,
+      "rehashed_key_words": 0,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2359319,
+      "requested_delta_outside_modeled_tables": -16,
+      "measured_all_requests_delta": -4,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "computed:5": {
+      "table_requests": 3,
+      "table_requested_bytes": -2358857,
+      "rehashed_entries": 2,
+      "rehashed_key_words": 4,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2358873,
+      "requested_delta_outside_modeled_tables": -16,
+      "measured_all_requests_delta": 2,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "computed:513": {
+      "table_requests": 24,
+      "table_requested_bytes": -2285656,
+      "rehashed_entries": 676,
+      "rehashed_key_words": 1352,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2285672,
+      "requested_delta_outside_modeled_tables": -16,
+      "measured_all_requests_delta": 23,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "computed:8192": {
+      "table_requests": 36,
+      "table_requested_bytes": -1179708,
+      "rehashed_entries": 10914,
+      "rehashed_key_words": 21828,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -1179724,
+      "requested_delta_outside_modeled_tables": -16,
+      "measured_all_requests_delta": 35,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "computed:100000": {
+      "table_requests": 42,
+      "table_requested_bytes": 2359250,
+      "rehashed_entries": 43681,
+      "rehashed_key_words": 87362,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": 2359234,
+      "requested_delta_outside_modeled_tables": -16,
+      "measured_all_requests_delta": 41,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "union:0": {
+      "table_requests": -3,
+      "table_requested_bytes": -2359303,
+      "rehashed_entries": 0,
+      "rehashed_key_words": 0,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2359335,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": -5,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "union:5": {
+      "table_requests": 9,
+      "table_requested_bytes": -2357115,
+      "rehashed_entries": 17,
+      "rehashed_key_words": 34,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2357147,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 7,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "union:513": {
+      "table_requests": 30,
+      "table_requested_bytes": -2064458,
+      "rehashed_entries": 2723,
+      "rehashed_key_words": 5446,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2064490,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 28,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "union:8192": {
+      "table_requests": 42,
+      "table_requested_bytes": 2359250,
+      "rehashed_entries": 43681,
+      "rehashed_key_words": 87362,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": 2359218,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 40,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "union:100000": {
+      "table_requests": 42,
+      "table_requested_bytes": 2359250,
+      "rehashed_entries": 43681,
+      "rehashed_key_words": 87362,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": 2359218,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 40,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "groups:0": {
+      "table_requests": -4,
+      "table_requested_bytes": -294919,
+      "rehashed_entries": 0,
+      "rehashed_key_words": 0,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -294951,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": -5,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "groups:5": {
+      "table_requests": 4,
+      "table_requested_bytes": -294473,
+      "rehashed_entries": 2,
+      "rehashed_key_words": 2,
+      "copied_value_bytes": 16,
+      "measured_all_requested_bytes_delta": -294505,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 3,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "groups:513": {
+      "table_requests": 32,
+      "table_requested_bytes": -221272,
+      "rehashed_entries": 676,
+      "rehashed_key_words": 676,
+      "copied_value_bytes": 5408,
+      "measured_all_requested_bytes_delta": -221304,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 31,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "groups:8192": {
+      "table_requests": 44,
+      "table_requested_bytes": 294845,
+      "rehashed_entries": 5453,
+      "rehashed_key_words": 5453,
+      "copied_value_bytes": 43624,
+      "measured_all_requested_bytes_delta": 294813,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 43,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "groups:100000": {
+      "table_requests": 44,
+      "table_requested_bytes": 294845,
+      "rehashed_entries": 5453,
+      "rehashed_key_words": 5453,
+      "copied_value_bytes": 43624,
+      "measured_all_requested_bytes_delta": 294813,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 43,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "pairs:0": {
+      "table_requests": -7,
+      "table_requested_bytes": -2654222,
+      "rehashed_entries": 0,
+      "rehashed_key_words": 0,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": -2654254,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": -8,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "pairs:5": {
+      "table_requests": 1,
+      "table_requested_bytes": -2653776,
+      "rehashed_entries": 2,
+      "rehashed_key_words": 2,
+      "copied_value_bytes": 16,
+      "measured_all_requested_bytes_delta": -2653808,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 0,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "pairs:500": {
+      "table_requests": 29,
+      "table_requested_bytes": -2580575,
+      "rehashed_entries": 676,
+      "rehashed_key_words": 676,
+      "copied_value_bytes": 5408,
+      "measured_all_requested_bytes_delta": -2580607,
+      "requested_delta_outside_modeled_tables": -32,
+      "measured_all_requests_delta": 28,
+      "request_delta_outside_modeled_tables": -1
+    },
+    "union_groups:0": {
+      "table_requests": 42,
+      "table_requested_bytes": 2064482,
+      "rehashed_entries": 43681,
+      "rehashed_key_words": 87362,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": 2064418,
+      "requested_delta_outside_modeled_tables": -64,
+      "measured_all_requests_delta": 40,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "union_groups:5": {
+      "table_requests": 50,
+      "table_requested_bytes": 2065360,
+      "rehashed_entries": 43688,
+      "rehashed_key_words": 87369,
+      "copied_value_bytes": 56,
+      "measured_all_requested_bytes_delta": 2065296,
+      "requested_delta_outside_modeled_tables": -64,
+      "measured_all_requests_delta": 48,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "union_groups:500": {
+      "table_requests": 74,
+      "table_requested_bytes": 2137978,
+      "rehashed_entries": 44357,
+      "rehashed_key_words": 88038,
+      "copied_value_bytes": 5408,
+      "measured_all_requested_bytes_delta": 2137914,
+      "requested_delta_outside_modeled_tables": -64,
+      "measured_all_requests_delta": 72,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "dnf_groups:0": {
+      "table_requests": 42,
+      "table_requested_bytes": 2064482,
+      "rehashed_entries": 43681,
+      "rehashed_key_words": 87362,
+      "copied_value_bytes": 0,
+      "measured_all_requested_bytes_delta": 2064418,
+      "requested_delta_outside_modeled_tables": -64,
+      "measured_all_requests_delta": 40,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "dnf_groups:5": {
+      "table_requests": 50,
+      "table_requested_bytes": 2065360,
+      "rehashed_entries": 43688,
+      "rehashed_key_words": 87369,
+      "copied_value_bytes": 56,
+      "measured_all_requested_bytes_delta": 2065296,
+      "requested_delta_outside_modeled_tables": -64,
+      "measured_all_requests_delta": 48,
+      "request_delta_outside_modeled_tables": -2
+    },
+    "dnf_groups:500": {
+      "table_requests": 74,
+      "table_requested_bytes": 2137978,
+      "rehashed_entries": 44357,
+      "rehashed_key_words": 88038,
+      "copied_value_bytes": 5408,
+      "measured_all_requested_bytes_delta": 2137914,
+      "requested_delta_outside_modeled_tables": -64,
+      "measured_all_requests_delta": 72,
+      "request_delta_outside_modeled_tables": -2
+    }
+  },
+  "assumptions": "Single monotonic first-use fill for these nonrecursive control maps; load denominator 3, doubling from minimum8, successful inserts, no mid-fill clear/release/spill. Cardinalities and initial/final geometry are observed; intermediate work is source-derived, not a measured event trace. No prediction of wall time/cache misses/RSS.",
+  "scope": "Backing arrays only: excludes dense-list growth and other owners/transient preparation allocations. Residual against complete measured allocation windows is retained, not silently attributed to table growth.",
+  "finished": "2026-09-09T11:33:58.192402+00:00"
+}

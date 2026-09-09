@@ -1,0 +1,38 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p1-route-1",
+  "started": "2026-09-09T05:41:15.423326+00:00",
+  "status": "COMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "route",
+      "command": [
+        "env",
+        "BUMBLEDB_ROUTE_DB=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-route-1/db",
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "probe_route_diagnostic::saved_displaced_route",
+        "--",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T05:41:15.592848+00:00",
+      "status": "PASS",
+      "pid": 61922,
+      "finished": "2026-09-09T05:43:50.329969+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "store_sha256": "135f09ff88238a590c869b05935fa2cb6cd5992c3ce4ea2419eeb4e4bce9f6c6",
+  "original": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2-resume-1/A3/reads/scratch/displaced/db",
+  "diagnostic_source_sha256": "3146ca7314cbb810ecf6ddbf83eb36eec0eb83d55a5eebf10495d865c546f615",
+  "finished": "2026-09-09T05:43:50.466249+00:00"
+}

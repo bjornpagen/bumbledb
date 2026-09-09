@@ -1,0 +1,91 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-gates-2",
+  "started": "2026-09-09T10:11:02.822864+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T10:11:02.824931+00:00",
+      "status": "PASS",
+      "pid": 23641,
+      "finished": "2026-09-09T10:11:02.940985+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T10:11:02.958178+00:00",
+      "status": "PASS",
+      "pid": 23645,
+      "finished": "2026-09-09T10:11:05.063275+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "focused",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "exec::colt::tests::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T10:11:05.063785+00:00",
+      "status": "PASS",
+      "pid": 23651,
+      "finished": "2026-09-09T10:11:11.016953+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "-p",
+        "bumbledb-bench",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T10:11:11.266229+00:00",
+      "status": "FAIL",
+      "pid": 23671,
+      "finished": "2026-09-09T10:11:40.202612+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "49599a96171417d80c5a16a2c9606161a8aeceabb44fba1a2fa3ca7aa8dc6746",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+  "acceptance": "Correctness/retention discriminator only. No speed/RSS/full tracing claim.",
+  "finished": "2026-09-09T10:11:40.212373+00:00"
+}

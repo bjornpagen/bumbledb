@@ -1,0 +1,113 @@
+diff --git a/crates/bumbledb-bench/src/displaced.rs b/crates/bumbledb-bench/src/displaced.rs
+index f2c78944..1ee6b4e3 100644
+--- a/crates/bumbledb-bench/src/displaced.rs
++++ b/crates/bumbledb-bench/src/displaced.rs
+@@ -112,17 +112,19 @@ impl DispSizes {
+     }
+ }
+ 
+-/// The doubling loop here uses `(distinct + 1)` — exact whenever any position
+-/// follows the last keys are unknown before the pass), then rehash-doubling per
+-/// ingested
++/// Final one-word-key map control and bucket bytes. Initial sizing uses the
++/// position count; only insertion of a new distinct key can double the table.
++/// Retired construction tables, dense indices and retained capacity are excluded.
++///
+ /// # Panics
++/// Panics if the fixture counts or computed table layout overflow the host index range.
+ #[must_use]
+ pub fn forced_spoke_map_bytes(positions: u64, distinct: u64) -> u64 {
+     let count = usize::try_from(positions).expect("64-bit usize");
+     let landed = usize::try_from(distinct).expect("64-bit usize");
+     let guess = (count / 8).max(16).min(count.max(1) * 2);
+     let mut nbuckets = (guess * 5 / 16).max(1).next_power_of_two();
+-    while (landed + 1) * 5 > nbuckets * 16 {
++    while landed * 5 > nbuckets * 16 {
+         nbuckets *= 2;
+     }
+     let ctrl = nbuckets * 8;
+diff --git a/crates/bumbledb-bench/src/displaced/tests.rs b/crates/bumbledb-bench/src/displaced/tests.rs
+index 04729250..69a60b2e 100644
+--- a/crates/bumbledb-bench/src/displaced/tests.rs
++++ b/crates/bumbledb-bench/src/displaced/tests.rs
+@@ -64,6 +64,26 @@ fn the_bench_shape_exceeds_the_l2_by_layout_arithmetic() {
+     assert_eq!(DispSizes::of(Scale::L), sizes);
+ }
+ 
++#[test]
++fn final_map_size_tracks_distinct_insertions_not_trailing_duplicates() {
++    for (positions, distinct, groups) in [
++        (0, 0, 1),
++        (1, 1, 1),
++        (25, 25, 8),
++        (50, 1, 8),
++        (50, 25, 8),
++        (50, 26, 16),
++        (512, 102, 32),
++        (512, 103, 64),
++    ] {
++        assert_eq!(
++            forced_spoke_map_bytes(positions, distinct),
++            groups * (8 + 16 * 8),
++            "positions={positions} distinct={distinct}"
++        );
++    }
++}
++
+ #[test]
+ fn the_tiny_world_verifies_on_both_engines() {
+     let dir = scratch("parity");
+diff --git a/crates/bumbledb/src/api/prepared/tests.rs b/crates/bumbledb/src/api/prepared/tests.rs
+index a649fdb1..7bdc8810 100644
+--- a/crates/bumbledb/src/api/prepared/tests.rs
++++ b/crates/bumbledb/src/api/prepared/tests.rs
+@@ -45,6 +45,9 @@ mod statically_empty;
+ mod text_retention;
+ mod view_memo;
+ 
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1_saved.rs"]
++mod m1_saved;
++
+ /// The one dynamic test theory: any descriptor as a `Theory`.
+ #[derive(Clone)]
+ pub(super) struct T(pub(super) SchemaDescriptor);
+diff --git a/crates/bumbledb/src/exec/colt.rs b/crates/bumbledb/src/exec/colt.rs
+index 4b1b139c..1666e7fa 100644
+--- a/crates/bumbledb/src/exec/colt.rs
++++ b/crates/bumbledb/src/exec/colt.rs
+@@ -267,6 +267,10 @@ struct PoolMark {
+ /// every capacity retained (the 40-execution doc's zero-alloc discipline).
+ /// RULED (audit 29): no `Vec::new` / `to_vec` / `.clone` on
+ /// refill/advance — those paths truncate to a [`PoolMark`] and reuse.
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1_saved_observer.rs"]
++pub(crate) mod m1_observer;
++
+ pub struct Colt {
+     view: View,
+ 
+diff --git a/crates/bumbledb/src/exec/colt/force.rs b/crates/bumbledb/src/exec/colt/force.rs
+index ddaa6545..2fe3855e 100644
+--- a/crates/bumbledb/src/exec/colt/force.rs
++++ b/crates/bumbledb/src/exec/colt/force.rs
+@@ -158,6 +158,8 @@ impl Colt {
+         other: &Colt,
+         mut buffer: Vec<u32>,
+     ) -> Result<View, WorkError> {
++        #[cfg(test)]
++        super::m1_observer::record_clone(other);
+         debug_assert!(
+             self.same_shape(other),
+             "the occurrence dedup clones between identical trie shapes only"
+diff --git a/crates/bumbledb/src/exec/colt/tests.rs b/crates/bumbledb/src/exec/colt/tests.rs
+index 36563a62..55e77669 100644
+--- a/crates/bumbledb/src/exec/colt/tests.rs
++++ b/crates/bumbledb/src/exec/colt/tests.rs
+@@ -85,6 +85,7 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
+ }
+ 
+ mod admit;
++mod construction;
+ mod dense;
+ mod model;
+ mod overflow;

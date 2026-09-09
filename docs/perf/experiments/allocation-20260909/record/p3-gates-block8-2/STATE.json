@@ -1,0 +1,68 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p3-gates-block8-2",
+  "started": "2026-09-09T08:14:53.114182+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T08:14:53.123294+00:00",
+      "status": "PASS",
+      "pid": 36603,
+      "finished": "2026-09-09T08:14:53.147530+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T08:14:53.253965+00:00",
+      "status": "PASS",
+      "pid": 36610,
+      "finished": "2026-09-09T08:14:55.531965+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T08:14:55.612710+00:00",
+      "status": "FAIL",
+      "pid": 36652,
+      "finished": "2026-09-09T08:15:02.993624+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "72696a1a449fbb8bc7d500e5a699cbfbc70f462009723333d861bb5d017c90d6",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source",
+  "variant": "block8",
+  "acceptance": "Correctness only, not memory or timing acceptance. Published baseline production for baseline; no P1/P2 production changes in this worktree.",
+  "finished": "2026-09-09T08:15:02.994271+00:00"
+}

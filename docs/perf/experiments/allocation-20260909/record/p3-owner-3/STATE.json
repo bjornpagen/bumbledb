@@ -1,0 +1,103 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p3-owner-3",
+  "started": "2026-09-09T07:35:22.079495+00:00",
+  "status": "OWNERSHIP-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "oracle",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/data/scenarios/scenarios/temporal/oracle.sqlite",
+        "SELECT count(*) FROM \"Span\" a JOIN \"Span\" b ON a.\"key\"=b.\"key\" AND a.id < b.id AND a.span_start < b.span_end AND b.span_start < a.span_end;"
+      ],
+      "started": "2026-09-09T07:35:22.112087+00:00",
+      "status": "PASS",
+      "pid": 93221,
+      "finished": "2026-09-09T07:35:22.701613+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "-csv",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/data/scenarios/scenarios/temporal/oracle.sqlite",
+        "SELECT \"key\", count(*) FROM \"Span\" GROUP BY \"key\" ORDER BY \"key\";"
+      ],
+      "started": "2026-09-09T07:35:22.702177+00:00",
+      "status": "PASS",
+      "pid": 93251,
+      "finished": "2026-09-09T07:35:22.714606+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T07:35:22.714959+00:00",
+      "status": "PASS",
+      "pid": 93252,
+      "finished": "2026-09-09T07:35:22.728910+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T07:35:22.729254+00:00",
+      "status": "PASS",
+      "pid": 93253,
+      "finished": "2026-09-09T07:37:52.536223+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "ownership",
+      "command": [
+        "env",
+        "BUMBLEDB_OWNER_DB=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-3/db",
+        "BUMBLEDB_OWNER_GROUPS=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-3/groups.log",
+        "BUMBLEDB_OWNER_ANSWER=267603",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-3/bumbledb-owner-test",
+        "p3_owner_diagnostic::saved_temporal_cache_ownership",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T07:37:52.627500+00:00",
+      "status": "PASS",
+      "pid": 95502,
+      "finished": "2026-09-09T07:37:52.988959+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint_with_test_hooks": "a4f4301f116fe0c0a81ec9782a62ec035915a355198098d77c58d95e080bb0f5",
+  "unhooked_production_fingerprint": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c",
+  "production_note": "Gate 6 unaccepted P2; interval and executor production logic unchanged.",
+  "store_sha256": "eac6c13f77462959fb5f4415293f22466bc228731dd946fd267ba001ee79e13c",
+  "oracle_sha256": "82d593ec1a348dad8b2996edb22c779a1764724794e63e576a541eb681b11b36",
+  "protocol": "Same saved query/schema on a byte-identical private LMDB copy; cold/warm/released passes; independent SQLite value oracle and exact per-key group counts; no timings or profiler.",
+  "limitations": "Counting allocator + observer changes code generation. Cache-probe scoped requests include its feed closure; global query counts may include harness activity. Payload capacities are not allocator usable sizes, RSS, mmap or C allocations.",
+  "binary_sha256": "f66d024adc4c2b4553bba96eeb1eae191f396374283285a4f3aaf79545c3b349",
+  "expected_answer": 267603,
+  "finished": "2026-09-09T07:37:53.060455+00:00"
+}

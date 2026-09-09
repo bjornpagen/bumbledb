@@ -1,0 +1,111 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p1-focused-1",
+  "started": "2026-09-09T05:44:16.703956+00:00",
+  "status": "MEASUREMENTS-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": false,
+  "steps": [
+    {
+      "name": "A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,triangle,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/A0"
+      ],
+      "started": "2026-09-09T05:44:16.712864+00:00",
+      "status": "PASS",
+      "pid": 64866,
+      "finished": "2026-09-09T05:45:36.518123+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/A0/report.json",
+      "sha256": "f9363f1962851ae568e4596996f06dc24593a30f55ff8a92a3839c290a90252d"
+    },
+    {
+      "name": "B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2/candidate-bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,triangle,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2-resume-1/candidate-data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/B0"
+      ],
+      "started": "2026-09-09T05:45:36.525247+00:00",
+      "status": "PASS",
+      "pid": 66645,
+      "finished": "2026-09-09T05:47:14.177729+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/B0/report.json",
+      "sha256": "77bcb96be47da18d780d11b6bf78ee45dac10533c2dab80c05c0db57c3baf02c"
+    },
+    {
+      "name": "B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2/candidate-bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,triangle,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2-resume-1/candidate-data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/B1"
+      ],
+      "started": "2026-09-09T05:47:14.182961+00:00",
+      "status": "PASS",
+      "pid": 68947,
+      "finished": "2026-09-09T05:48:17.542942+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/B1/report.json",
+      "sha256": "6878ebd89b0a2439380165e1445a9d87f7e6b6cd37187730df04c32fbdbed7e2"
+    },
+    {
+      "name": "A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/release/bumbledb-bench",
+        "bench",
+        "--samples",
+        "32",
+        "--read-batch",
+        "1",
+        "--families",
+        "point,range,stats,triangle,disp_probe",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-evaluation-2/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/A1"
+      ],
+      "started": "2026-09-09T05:48:17.550034+00:00",
+      "status": "PASS",
+      "pid": 70394,
+      "finished": "2026-09-09T05:49:13.480306+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p1-focused-1/A1/report.json",
+      "sha256": "d3a5042fbc259d8158618e1d051380f75cf9a239a09265656e3a62083b7c34c9"
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "hypothesis": "Investigate undisplaced root-probe signal and replace flagged cheap controls.",
+  "protocol": "Ordinary ABBA, 32 samples per family, read batch 1; no profiler or new trace.",
+  "source_kernel_sha256": "4749ac651eee975bbe1e113c4118f844a97eb286034b5c45e58eef293a81c5d6",
+  "limitations": "Descriptive shared-host controls, no hard P-core affinity or Pi qualification.",
+  "finished": "2026-09-09T05:49:13.481562+00:00"
+}

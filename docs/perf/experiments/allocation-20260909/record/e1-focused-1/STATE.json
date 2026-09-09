@@ -1,0 +1,68 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "e1-focused-1",
+  "started": "2026-09-09T09:11:29.866998+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T09:11:29.868133+00:00",
+      "status": "PASS",
+      "pid": 98282,
+      "finished": "2026-09-09T09:11:29.990119+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T09:11:30.275574+00:00",
+      "status": "PASS",
+      "pid": 98294,
+      "finished": "2026-09-09T09:11:32.384606+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "focused",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "empty_inputs::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T09:11:32.653215+00:00",
+      "status": "FAIL",
+      "pid": 98329,
+      "finished": "2026-09-09T09:11:39.629001+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "e8d3d0a2607bf44e5b344b99e5febf9edee1957f5d93861e00b13a9fb661d587",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source",
+  "acceptance": "Correctness/build only. No timing, CPU trace, other candidates or releases.",
+  "finished": "2026-09-09T09:11:39.629478+00:00"
+}

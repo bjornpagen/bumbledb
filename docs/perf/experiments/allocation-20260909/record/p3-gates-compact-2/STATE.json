@@ -1,0 +1,145 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p3-gates-compact-2",
+  "started": "2026-09-09T07:49:03.813269+00:00",
+  "status": "GATES-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T07:49:03.820412+00:00",
+      "status": "PASS",
+      "pid": 7387,
+      "finished": "2026-09-09T07:49:03.918418+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T07:49:04.154986+00:00",
+      "status": "PASS",
+      "pid": 7417,
+      "finished": "2026-09-09T07:49:06.199304+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T07:49:06.417428+00:00",
+      "status": "PASS",
+      "pid": 7426,
+      "finished": "2026-09-09T07:49:12.059994+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "library-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T07:49:12.298980+00:00",
+      "status": "PASS",
+      "pid": 7579,
+      "finished": "2026-09-09T07:49:38.506308+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "allocation-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T07:49:38.743617+00:00",
+      "status": "PASS",
+      "pid": 7971,
+      "finished": "2026-09-09T07:50:04.257109+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "release-build",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb-bench"
+      ],
+      "started": "2026-09-09T07:50:04.489450+00:00",
+      "status": "PASS",
+      "pid": 8333,
+      "finished": "2026-09-09T07:51:23.281101+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "verify",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/bumbledb-bench",
+        "verify",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-compact-2/data"
+      ],
+      "started": "2026-09-09T07:51:23.289157+00:00",
+      "status": "PASS",
+      "pid": 9510,
+      "finished": "2026-09-09T07:52:18.763403+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "bed447ab25161b2ca64954468ce5a135df5fa08d2f2be6f27881d88591aafb7f",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source",
+  "variant": "compact",
+  "acceptance": "Correctness only, not memory or timing acceptance. Published baseline production for baseline; no P1/P2 production changes in this worktree.",
+  "binary_sha256": "0fbe16bd472018555ff63c6ac3eadaba4dbe67cf9317a69b78504d6cdd980e63",
+  "finished": "2026-09-09T07:52:19.147600+00:00"
+}

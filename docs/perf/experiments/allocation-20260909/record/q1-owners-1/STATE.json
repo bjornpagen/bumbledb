@@ -1,0 +1,97 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q1-owners-1",
+  "started": "2026-09-09T10:37:48.570210+00:00",
+  "status": "OWNERSHIP-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T10:37:48.830759+00:00",
+      "status": "PASS",
+      "pid": 44311,
+      "finished": "2026-09-09T10:37:48.913923+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "oracle",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "-csv",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/data/fa73e680324f9b26/oracle.sqlite",
+        "WITH draws(i,lo,hi) AS (VALUES (0,1,6),(1,167,172),(2,333,338),(3,500,500)) SELECT DISTINCT 'triangle', d.i,a.account FROM draws d JOIN Posting a ON a.account>=d.lo AND a.account<d.hi JOIN Posting b ON a.instrument=b.instrument JOIN Posting c ON b.entry=c.entry AND a.account=c.account ORDER BY d.i,a.account; WITH draws(i) AS (VALUES (0),(1),(2),(3)) SELECT 'range', d.i,p.id,p.amount FROM draws d JOIN Posting p ON p.at>=1700000000000000+5000000*(2*d.i+1)/16 AND p.at<1700000000000000+5000000*(2*d.i+1)/16+100000 ORDER BY d.i,p.id,p.amount;"
+      ],
+      "started": "2026-09-09T10:37:48.936854+00:00",
+      "status": "PASS",
+      "pid": 44312,
+      "finished": "2026-09-09T10:37:49.420557+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T10:37:49.421020+00:00",
+      "status": "PASS",
+      "pid": 44324,
+      "finished": "2026-09-09T10:38:23.111656+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "ownership",
+      "command": [
+        "env",
+        "BUMBLEDB_Q1_DB=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-owners-1/db",
+        "BUMBLEDB_Q1_ORACLE=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-owners-1/oracle.log",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-owners-1/saved-test",
+        "q1_saved::saved_output_and_survivors",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T10:38:23.147918+00:00",
+      "status": "PASS",
+      "pid": 45588,
+      "finished": "2026-09-09T10:38:26.767069+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source",
+  "hooks_sha256": "1bfe6ac4c6b9e23d1e800e468695fc8557e04e76407edaac805288cde7ae4ab2",
+  "ordinary_source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "dependencies": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_saved.rs": "ccc01eb3dd90a05f55255cc2db1e4c24b93ce881952f5eb42f98fe72e39d8481",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_colt_observer.rs": "9815a03868fa880819f40edcd168399422e23194c88dc9a232c950b4a84bacd8",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_sink_observer.rs": "c285987d9c673d769e2245e2b632dfa9878e1f7bc202a32077b0421444ebd93b",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_wordmap_observer.rs": "7e547720a989c329683022051ad18552e69f8d824ce6248d72e7fc035a85ec9f",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_view_observer.rs": "242707bda81b46b4395e7b6695cca444ace7b4871ecb58e1ac579551a6d5c625",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-source/crates/bumbledb-bench/src/schema.rs": "7ff990f0c963e2fb651e8d6e92f1859b3726f178dd51d4de51e83e88b710aaa7"
+  },
+  "database_sha256": "607f6d3e6d0b4a39294883fe9b95511106878a245fe67c5e8c2f9b55295e5175",
+  "oracle_sha256": "e71bfb9a91736a3a0377a2577c7d664fa11486871358f53a355c1c235b3eea1a",
+  "protocol": "32 exact saved SQL windows; allocation counts before observation; seed replay outside counters; no timing or full trace",
+  "binary_sha256": "cd38400d04e8005798f48ae7942f611214e7f4b1c39c217040841d7414e84cc3",
+  "finished": "2026-09-09T10:38:27.066348+00:00"
+}

@@ -1,0 +1,24 @@
+diff --git a/crates/bumbledb-bench/Cargo.toml b/crates/bumbledb-bench/Cargo.toml
+index 4fbcb0b8..19cd4e6e 100644
+--- a/crates/bumbledb-bench/Cargo.toml
++++ b/crates/bumbledb-bench/Cargo.toml
+@@ -18,3 +18,7 @@ bumbledb = { path = "../bumbledb", features = ["ground-off"] }
+ 
+ [lints]
+ workspace = true
++
++[[bin]]
++name = "g1-timing"
++path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1_timing.rs"
+diff --git a/crates/bumbledb/src/exec/colt/tests.rs b/crates/bumbledb/src/exec/colt/tests.rs
+index 36563a62..dc43b191 100644
+--- a/crates/bumbledb/src/exec/colt/tests.rs
++++ b/crates/bumbledb/src/exec/colt/tests.rs
+@@ -85,6 +85,7 @@ fn drain(colt: &mut Colt, cursor: Cursor, level: usize) -> Vec<(Vec<u64>, Cursor
+ }
+ 
+ mod admit;
++mod construction_tails;
+ mod dense;
+ mod model;
+ mod overflow;

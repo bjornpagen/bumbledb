@@ -1,0 +1,52 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "e1-baseline-regression-5",
+  "started": "2026-09-09T09:10:40.186438+00:00",
+  "status": "EXPECTED-BASELINE-CONSTRUCTION-FAILURE-CONFIRMED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T09:10:40.187519+00:00",
+      "status": "PASS",
+      "pid": 97196,
+      "finished": "2026-09-09T09:10:40.298851+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "regression",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "empty_inputs::empty_positive_inputs_leave_all_join_maps_unforced",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T09:10:40.312948+00:00",
+      "status": "FAIL",
+      "pid": 97200,
+      "finished": "2026-09-09T09:10:47.124598+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "0df347438ec2db0a7bcb115c12112f7587f4cd5361976b153de2e3833db1e51c",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/e1-source",
+  "protocol": "Expect a specific old-policy assertion failure; keep raw FAIL, not a passing test.",
+  "finished": "2026-09-09T09:10:47.419223+00:00"
+}

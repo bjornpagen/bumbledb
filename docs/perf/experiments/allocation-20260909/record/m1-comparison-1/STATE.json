@@ -1,0 +1,145 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "m1-comparison-1",
+  "started": "2026-09-09T08:49:48.047385+00:00",
+  "status": "MEASUREMENTS-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": false,
+  "steps": [
+    {
+      "name": "A0-warmth",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+        "curves",
+        "--scales",
+        "S",
+        "--seed",
+        "1",
+        "--families",
+        "triangle,point",
+        "--samples",
+        "32",
+        "--warmth",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/A0"
+      ],
+      "started": "2026-09-09T08:49:48.093194+00:00",
+      "status": "PASS",
+      "pid": 76586,
+      "finished": "2026-09-09T08:49:53.665181+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/A0/curves-report.json",
+      "sha256": "deb9b0ff78adccfcb89612af356ec59de995250e28703f4eb685e8de90053423"
+    },
+    {
+      "name": "B0-warmth",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/bumbledb-bench",
+        "curves",
+        "--scales",
+        "S",
+        "--seed",
+        "1",
+        "--families",
+        "triangle,point",
+        "--samples",
+        "32",
+        "--warmth",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/B0"
+      ],
+      "started": "2026-09-09T08:49:53.708686+00:00",
+      "status": "PASS",
+      "pid": 76727,
+      "finished": "2026-09-09T08:49:59.139034+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/B0/curves-report.json",
+      "sha256": "45351322e97dafe3c1efeeb70da2b6dcc7dc0c3e85aa7727622c2ce5321ef5cb"
+    },
+    {
+      "name": "B1-warmth",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/bumbledb-bench",
+        "curves",
+        "--scales",
+        "S",
+        "--seed",
+        "1",
+        "--families",
+        "triangle,point",
+        "--samples",
+        "32",
+        "--warmth",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/B1"
+      ],
+      "started": "2026-09-09T08:49:59.182702+00:00",
+      "status": "PASS",
+      "pid": 76861,
+      "finished": "2026-09-09T08:50:04.552272+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/B1/curves-report.json",
+      "sha256": "b2457ee0be634b40197a2928f739175e9f65bdd9d9b8aa4a76b6e64ba47f2d5f"
+    },
+    {
+      "name": "A1-warmth",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+        "curves",
+        "--scales",
+        "S",
+        "--seed",
+        "1",
+        "--families",
+        "triangle,point",
+        "--samples",
+        "32",
+        "--warmth",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/data",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/A1"
+      ],
+      "started": "2026-09-09T08:50:04.597976+00:00",
+      "status": "PASS",
+      "pid": 76968,
+      "finished": "2026-09-09T08:50:09.949280+00:00",
+      "exit_code": 0,
+      "artifact": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-comparison-1/A1/curves-report.json",
+      "sha256": "615dd747e133918bdb97ac528aae301e4c7a1015330549b41c01691c26a62353"
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+  "order": [
+    "A0",
+    "B0",
+    "B1",
+    "A1"
+  ],
+  "executables": {
+    "A": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-gates-baseline-1/bumbledb-bench",
+      "sha256": "84b920460fe27b49181a8e8a444e6557971f559e96972fb5e5780f305d47cc74",
+      "role": "baseline"
+    },
+    "B": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/m1-gates-duplicate-1/bumbledb-bench",
+      "sha256": "78b50d781da898bfe7b46ed83d87f60b4055d27cf155265f7905204c29300b61",
+      "role": "duplicate-only"
+    }
+  },
+  "protocol": "ABBA, scale S, seed 1. Existing triangle and point curves, 8 warmups/32 samples; warmth: 2 discarded reopen rounds +16 cold/warm measured rounds, then 8 warmups/64 memoized samples. Open/prepare excluded; OS page cache warm. Independent value-multiset gate before timing. No instrumented executable.",
+  "rationale": "triangle exercises general cold join-map construction and warm probes; point is a small lookup control. This is not a duplicate-boundary frequency census.",
+  "limitations": "Shared macOS host with QoS, not hard P-core pinning. Warmth uses one non-retrying clock bracket for all engines/rounds; curve brackets may retry once. Parameter draws are pooled; all distributions/flags retained, no frequency normalization or significance/Pi/RSS claim. Runtime git provenance names cwd; the frozen gate/source and executable hashes identify variants.",
+  "expected_families": [
+    "triangle",
+    "point"
+  ],
+  "finished": "2026-09-09T08:50:09.991345+00:00"
+}

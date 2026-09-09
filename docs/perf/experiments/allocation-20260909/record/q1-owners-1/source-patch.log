@@ -1,0 +1,68 @@
+diff --git a/crates/bumbledb/src/api/prepared/tests.rs b/crates/bumbledb/src/api/prepared/tests.rs
+index a649fdb1..6aaf9984 100644
+--- a/crates/bumbledb/src/api/prepared/tests.rs
++++ b/crates/bumbledb/src/api/prepared/tests.rs
+@@ -10,6 +10,9 @@
+ //! `execute`/`execute_owned`), so every suite exercises the real seam.
+ use super::*;
+ 
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_saved.rs"]
++mod q1_saved;
++
+ use crate::api::db::{InstanceBuilder, OwnedInstance};
+ use crate::error::Error;
+ use crate::ir::{
+diff --git a/crates/bumbledb/src/exec/colt.rs b/crates/bumbledb/src/exec/colt.rs
+index 4b1b139c..18fb9876 100644
+--- a/crates/bumbledb/src/exec/colt.rs
++++ b/crates/bumbledb/src/exec/colt.rs
+@@ -426,3 +426,7 @@ pub fn hash_key_core<const K: usize>(words: &[u64]) -> u64 {
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_colt_observer.rs"]
++mod q1_observer;
+diff --git a/crates/bumbledb/src/exec/sink.rs b/crates/bumbledb/src/exec/sink.rs
+index 3c5cffcb..cc6fee2c 100644
+--- a/crates/bumbledb/src/exec/sink.rs
++++ b/crates/bumbledb/src/exec/sink.rs
+@@ -708,6 +708,10 @@ pub struct ProjectionSink {
+     scan_count: u64,
+ }
+ 
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_sink_observer.rs"]
++mod q1_observer;
++
+ #[derive(Debug)]
+ enum GroupTable {
+     Hashed(WordMap<usize>),
+diff --git a/crates/bumbledb/src/exec/wordmap.rs b/crates/bumbledb/src/exec/wordmap.rs
+index 243a11dd..62654da2 100644
+--- a/crates/bumbledb/src/exec/wordmap.rs
++++ b/crates/bumbledb/src/exec/wordmap.rs
+@@ -71,3 +71,7 @@ use super::swar::{ctrl_tag, eq_byte_mask, hash_core, hash_words, zero_byte_mask}
+ 
+ #[cfg(test)]
+ mod tests;
++
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_wordmap_observer.rs"]
++mod q1_observer;
+diff --git a/crates/bumbledb/src/image/view.rs b/crates/bumbledb/src/image/view.rs
+index a2cbe2f4..b934a85f 100644
+--- a/crates/bumbledb/src/image/view.rs
++++ b/crates/bumbledb/src/image/view.rs
+@@ -9,6 +9,10 @@ use crate::image::RelationImage;
+ mod apply;
+ mod eval;
+ 
++#[cfg(test)]
++#[path = "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_view_observer.rs"]
++pub(crate) mod q1_observer;
++
+ pub use apply::apply;
+ pub(crate) use eval::{
+     DENSE_NEG_INF_KEY, ImageRow, Loaded, OperandAddr, Operands, dense_probe_word,

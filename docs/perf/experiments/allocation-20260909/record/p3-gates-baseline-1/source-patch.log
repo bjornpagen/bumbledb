@@ -1,0 +1,27 @@
+diff --git a/crates/bumbledb/src/exec/run/tests/intervals.rs b/crates/bumbledb/src/exec/run/tests/intervals.rs
+index f6a0510a..223346c0 100644
+--- a/crates/bumbledb/src/exec/run/tests/intervals.rs
++++ b/crates/bumbledb/src/exec/run/tests/intervals.rs
+@@ -4,6 +4,8 @@ use crate::ir::normalize::{IntervalWord, OccBind, SlotWidth};
+ use bumbledb_theory::allen::AllenMask;
+ use bumbledb_theory::schema::ValueType;
+ 
++mod constraints;
++
+ fn tagged_interval_schema(relations: usize) -> Schema {
+     SchemaDescriptor {
+         relations: (0..relations)
+diff --git a/crates/bumbledb/src/interval/overlap.rs b/crates/bumbledb/src/interval/overlap.rs
+index d3a43bc3..bce7f4a2 100644
+--- a/crates/bumbledb/src/interval/overlap.rs
++++ b/crates/bumbledb/src/interval/overlap.rs
+@@ -244,6 +244,9 @@ impl OverlapCache {
+     }
+ }
+ 
++#[cfg(test)]
++mod boundaries;
++
+ #[cfg(test)]
+ mod tests {
+     use super::{OverlapCache, Probe};

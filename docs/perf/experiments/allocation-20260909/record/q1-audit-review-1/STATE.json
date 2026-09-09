@@ -1,0 +1,947 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q1-audit-review-1",
+  "started": "2026-09-09T10:55:42.512719+00:00",
+  "status": "ALL-SAVED-OWNERS-AND-JOINT-WINDOWS-VERIFIED",
+  "diagnostic_only": true,
+  "steps": [],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "audit": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-audit-1",
+  "source_fingerprint": "9f87b492b1248093d241a0217b2cb089db08d8ed82a6f1f72a5fce3a43d6b418",
+  "input_hashes": {
+    "baseline_execution": "aaf02f9450cc02ce0e469b668287ab7709af1ae52630da23941214fad576d0a9",
+    "baseline_preparation": "6423c3beba81d9492b25c2e024ea69c720c3ed9cb1408d36962a75232c573ff7",
+    "candidate_execution": "0ce7758c3f099af41201140b75cb208998fcc7399b81923e72cb4a97e41306a4",
+    "candidate_preparation": "f0f1adf7c702d8bd8f8d76441c7b46a94389860920a1f9e82d9c07a16197cc27"
+  },
+  "unchanged_owner_records": {
+    "execution_ANSWER": 32,
+    "execution_VIEW": 100,
+    "execution_SPARE": 64,
+    "execution_SURVIVORS": 32,
+    "preparation_ANSWER": 2,
+    "preparation_VIEW": 0,
+    "preparation_SPARE": 4,
+    "preparation_SURVIVORS": 2
+  },
+  "execution": {
+    "cold-range-0": {
+      "baseline": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "candidate": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "warm-range-0": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "cold-range-1": {
+      "baseline": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "candidate": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "warm-range-1": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "cold-range-2": {
+      "baseline": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "candidate": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "warm-range-2": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "cold-range-3": {
+      "baseline": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "candidate": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "warm-range-3": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation0-range-0": {
+      "baseline": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "candidate": [
+        31,
+        4,
+        5461892,
+        32918
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation0-range-1": {
+      "baseline": [
+        5,
+        0,
+        400144,
+        0
+      ],
+      "candidate": [
+        5,
+        0,
+        400144,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation0-range-2": {
+      "baseline": [
+        5,
+        0,
+        400144,
+        0
+      ],
+      "candidate": [
+        5,
+        0,
+        400144,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation0-range-3": {
+      "baseline": [
+        5,
+        0,
+        400144,
+        0
+      ],
+      "candidate": [
+        5,
+        0,
+        400144,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation1-range-0": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation1-range-1": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation1-range-2": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "rotation1-range-3": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 0,
+      "result_retained_candidate": 0
+    },
+    "cold-triangle-0": {
+      "baseline": [
+        166,
+        4,
+        16597148,
+        4806726
+      ],
+      "candidate": [
+        172,
+        7,
+        16597402,
+        4806813
+      ],
+      "delta": [
+        6,
+        3,
+        254,
+        87
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "warm-triangle-0": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "cold-triangle-1": {
+      "baseline": [
+        163,
+        4,
+        16587932,
+        4802118
+      ],
+      "candidate": [
+        169,
+        7,
+        16588186,
+        4802205
+      ],
+      "delta": [
+        6,
+        3,
+        254,
+        87
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "warm-triangle-1": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "cold-triangle-2": {
+      "baseline": [
+        166,
+        4,
+        16601244,
+        4808774
+      ],
+      "candidate": [
+        172,
+        7,
+        16601498,
+        4808861
+      ],
+      "delta": [
+        6,
+        3,
+        254,
+        87
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "warm-triangle-2": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "cold-triangle-3": {
+      "baseline": [
+        95,
+        4,
+        16414780,
+        4718502
+      ],
+      "candidate": [
+        95,
+        4,
+        16414780,
+        4718502
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886087,
+      "result_retained_candidate": 0
+    },
+    "warm-triangle-3": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886087,
+      "result_retained_candidate": 0
+    },
+    "rotation0-triangle-0": {
+      "baseline": [
+        166,
+        4,
+        16597148,
+        4806726
+      ],
+      "candidate": [
+        172,
+        7,
+        16597402,
+        4806813
+      ],
+      "delta": [
+        6,
+        3,
+        254,
+        87
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation0-triangle-1": {
+      "baseline": [
+        44,
+        0,
+        558296,
+        74992
+      ],
+      "candidate": [
+        44,
+        0,
+        558296,
+        74992
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation0-triangle-2": {
+      "baseline": [
+        45,
+        0,
+        566488,
+        79088
+      ],
+      "candidate": [
+        45,
+        0,
+        566488,
+        79088
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation0-triangle-3": {
+      "baseline": [
+        10,
+        0,
+        402752,
+        0
+      ],
+      "candidate": [
+        10,
+        0,
+        402752,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation1-triangle-0": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation1-triangle-1": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation1-triangle-2": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    },
+    "rotation1-triangle-3": {
+      "baseline": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "candidate": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "delta": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "result_retained_baseline": 83886119,
+      "result_retained_candidate": 199
+    }
+  },
+  "preparation": {
+    "range": {
+      "baseline": [
+        173,
+        103,
+        613519,
+        597279
+      ],
+      "candidate": [
+        169,
+        99,
+        23672,
+        7440
+      ],
+      "delta": [
+        -4,
+        -4,
+        -589847,
+        -589839
+      ]
+    },
+    "triangle": {
+      "baseline": [
+        299,
+        146,
+        83938163,
+        15840
+      ],
+      "candidate": [
+        295,
+        145,
+        52028,
+        15816
+      ],
+      "delta": [
+        -4,
+        -1,
+        -83886135,
+        -24
+      ]
+    }
+  },
+  "combined": {
+    "cold-range-0": {
+      "baseline": [
+        204,
+        107,
+        6075411,
+        630197
+      ],
+      "candidate": [
+        200,
+        103,
+        5485564,
+        40358
+      ],
+      "delta": [
+        -4,
+        -4,
+        -589847,
+        -589839
+      ],
+      "net_requested_minus_freed_delta": -8
+    },
+    "cold-range-1": {
+      "baseline": [
+        204,
+        107,
+        6075411,
+        630197
+      ],
+      "candidate": [
+        200,
+        103,
+        5485564,
+        40358
+      ],
+      "delta": [
+        -4,
+        -4,
+        -589847,
+        -589839
+      ],
+      "net_requested_minus_freed_delta": -8
+    },
+    "cold-range-2": {
+      "baseline": [
+        204,
+        107,
+        6075411,
+        630197
+      ],
+      "candidate": [
+        200,
+        103,
+        5485564,
+        40358
+      ],
+      "delta": [
+        -4,
+        -4,
+        -589847,
+        -589839
+      ],
+      "net_requested_minus_freed_delta": -8
+    },
+    "cold-range-3": {
+      "baseline": [
+        204,
+        107,
+        6075411,
+        630197
+      ],
+      "candidate": [
+        200,
+        103,
+        5485564,
+        40358
+      ],
+      "delta": [
+        -4,
+        -4,
+        -589847,
+        -589839
+      ],
+      "net_requested_minus_freed_delta": -8
+    },
+    "cold-triangle-0": {
+      "baseline": [
+        465,
+        150,
+        100535311,
+        4822566
+      ],
+      "candidate": [
+        467,
+        152,
+        16649430,
+        4822629
+      ],
+      "delta": [
+        2,
+        2,
+        -83885881,
+        63
+      ],
+      "net_requested_minus_freed_delta": -83885944
+    },
+    "cold-triangle-1": {
+      "baseline": [
+        462,
+        150,
+        100526095,
+        4817958
+      ],
+      "candidate": [
+        464,
+        152,
+        16640214,
+        4818021
+      ],
+      "delta": [
+        2,
+        2,
+        -83885881,
+        63
+      ],
+      "net_requested_minus_freed_delta": -83885944
+    },
+    "cold-triangle-2": {
+      "baseline": [
+        465,
+        150,
+        100539407,
+        4824614
+      ],
+      "candidate": [
+        467,
+        152,
+        16653526,
+        4824677
+      ],
+      "delta": [
+        2,
+        2,
+        -83885881,
+        63
+      ],
+      "net_requested_minus_freed_delta": -83885944
+    },
+    "cold-triangle-3": {
+      "baseline": [
+        394,
+        150,
+        100352943,
+        4734342
+      ],
+      "candidate": [
+        390,
+        149,
+        16466808,
+        4734318
+      ],
+      "delta": [
+        -4,
+        -1,
+        -83886135,
+        -24
+      ],
+      "net_requested_minus_freed_delta": -83886111
+    }
+  },
+  "limitations": "Requested Rust layouts and retained capacities, not RSS/peak or speed. High-cardinality, union/recursive and aggregate allocation/timing controls still required; not accepted.",
+  "finished": "2026-09-09T10:55:42.520679+00:00"
+}

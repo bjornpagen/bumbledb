@@ -1,0 +1,102 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q3-gates-1",
+  "started": "2026-09-09T12:09:53.692847+00:00",
+  "status": "INCOMPLETE",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q3-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T12:09:54.113856+00:00",
+      "status": "PASS",
+      "pid": 37568,
+      "finished": "2026-09-09T12:09:54.238385+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q3-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T12:09:55.116990+00:00",
+      "status": "PASS",
+      "pid": 37637,
+      "finished": "2026-09-09T12:09:57.190039+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "wordmap-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q3-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "exec::wordmap::tests::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T12:09:58.074568+00:00",
+      "status": "FAIL",
+      "pid": 37715,
+      "finished": "2026-09-09T12:10:21.250110+00:00",
+      "exit_code": 101
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "e403fb71fb0bcefa5817db05704e87b84f04a3b97b546b18a434367d715d521d",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q3-source",
+  "base_q2_fingerprint": "dc78c0d7123b10edc7f9df4751a9d3a4792b65e4a428458f639c8a9d6e936f3c",
+  "prior_identities": {
+    "E1": "e44e04132d30992ab094d61c93d620207175e1390006046e53733c16fb52cd55",
+    "M1": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+    "P3": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+    "G1": "084f09fd3a2eaaf73b9f0d2c13ddf4f7e12422612e995e27c1872b48547b38df",
+    "G2": "c759483862ce7a957dcda1a39e4246b36fe47fd1e1eb5614dfa82bd725f70e04",
+    "P2": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c"
+  },
+  "acceptance": "Hardening/correctness only. Single row cardinality and ordinal entry unmeasured; no speed/RSS/Pi/full-suite acceptance.",
+  "source_files": {
+    "crates/bumbledb/src/api/prepared/build.rs": "e5760a468b710a6eb654e8416c1745e83009c92cb9e59d6317e5dba9d91bb6a9",
+    "crates/bumbledb/src/api/prepared/reach/spill_bounded.rs": "53680d1a9d30b85947f80b1e62585894cfef48ab4e1c9cb1a3e263f005b03014",
+    "crates/bumbledb/src/api/prepared/tests/correctness.rs": "2c07159c301f3a11820a8581c5d149bcc0ae9088fad59329a79dbb5d028fbb81",
+    "crates/bumbledb/src/api/prepared/tests/projection_unique.rs": "e46a8dfba6419bd2581ead09730b89906a9f25259c82092e583b22cf2eef1bdb",
+    "crates/bumbledb/src/exec/sink.rs": "590368dd5d26f1346c70b304a6a42b2f3f1715ad7fe86de5bc3c779a4ee0de8d",
+    "crates/bumbledb/src/exec/sink/aggregate/new.rs": "9f88fa5ab2af4379c22dc15ca8ecd3ab7a8b48fc46ab28a29ff32cff53bff026",
+    "crates/bumbledb/src/exec/sink/projection/new.rs": "2196de62f6fc426cfcabefff734814a1d91238df65dcd28e726a75a3cf871d70",
+    "crates/bumbledb/src/exec/sink/tests.rs": "2a42d4e47b9b98999456cd4f835f005484f4df6806bcf2dec76b679c17c71803",
+    "crates/bumbledb/src/exec/sink/tests/aggregate.rs": "50f4dd57c84ffecb90cb95205595473056693b36edc4a65e9a7521d5e7361493",
+    "crates/bumbledb/src/exec/sink/tests/demand_growth.rs": "366f92458ffbd066a26bfad7ea6498c576d661c3e0e291135ad3b73ac0e64bf4",
+    "crates/bumbledb/src/exec/sink/tests/stage_spill.rs": "123b00484288c87ef71387899bf29b317bd45486ce9fbe8e249d004e8a10ef6f",
+    "crates/bumbledb/src/exec/wordmap.rs": "ee741a0e71f80f1e72bb4025397960f02f7a91075c835424d0eac4f4cbf263b0",
+    "crates/bumbledb/src/exec/wordmap/clear.rs": "31a8e81595cbbd3174032597ab2af3239c85b8605a24ac7e362e2fc0559849e2",
+    "crates/bumbledb/src/exec/wordmap/entry.rs": "afec277a383039f048a9c3cf4b6e43d4ca8ccc498688992a2c9b4631e6af2927",
+    "crates/bumbledb/src/exec/wordmap/grow.rs": "6ea53d2528a180c8872a04ab6cd3363f994b72cc191247deb552892c69a12324",
+    "crates/bumbledb/src/exec/wordmap/new.rs": "900e242293c7275789599bec70b03b0b01d22262a435f38a615e4ce30ca6e24f",
+    "crates/bumbledb/src/exec/wordmap/probe.rs": "17ebdf31e20ddac1719735d1e44cfb7c5122ee69fb3993fa32009c647e4a77ff",
+    "crates/bumbledb/src/exec/wordmap/tests.rs": "504e15df6c42c68bc4eb82c52bf4735ba7329b9fd089def23913c5acb0c47f3d",
+    "crates/bumbledb/src/exec/wordmap/tests/behavior.rs": "12014faa86b475a9cf39faa66a224944b51e14500d2ef13b92101745bef27097",
+    "crates/bumbledb/src/exec/wordmap/tests/contracts.rs": "2405262202377e8ed08d081572309abc6f3275486132e5d2540530b87d38e5b2",
+    "crates/bumbledb/src/exec/wordmap/tests/packed.rs": "033a6f75a3e2797df551b621e20d2a256dfc23eb288a6cf02032454973cbf977",
+    "crates/bumbledb/src/plan/fj.rs": "c9573459144c95f457a2848517f4e04d0ca114294e16c14fc8b9824d6c9e7b4c",
+    "crates/bumbledb/src/plan/fj/derive_nodes.rs": "cedd4f7d50f31013cd0e3565614c37c5f4da7fa5ebbf28e5719c512169e45bb7"
+  },
+  "finished": "2026-09-09T12:10:21.250676+00:00"
+}

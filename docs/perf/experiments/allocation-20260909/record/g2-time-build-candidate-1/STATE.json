@@ -1,0 +1,99 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "g2-time-build-candidate-1",
+  "started": "2026-09-09T10:23:03.201326+00:00",
+  "status": "ORDINARY-TIMING-BINARY-FROZEN",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T10:23:03.203817+00:00",
+      "status": "PASS",
+      "pid": 30497,
+      "finished": "2026-09-09T10:23:03.216066+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T10:23:03.231635+00:00",
+      "status": "PASS",
+      "pid": 30499,
+      "finished": "2026-09-09T10:23:05.400791+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "-p",
+        "bumbledb-bench",
+        "--bin",
+        "g2-timing",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T10:23:05.401465+00:00",
+      "status": "PASS",
+      "pid": 30529,
+      "finished": "2026-09-09T10:23:12.253664+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source/Cargo.toml",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb-bench",
+        "--bin",
+        "g2-timing",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T10:23:12.254237+00:00",
+      "status": "PASS",
+      "pid": 30584,
+      "finished": "2026-09-09T10:24:19.374693+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "variant": "candidate",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/g2-source",
+  "source_fingerprint": "36b62fe53de7ff4c37a0d30f2f92c9c904a85e64f3bd1ba6655e916c4033bb45",
+  "harness_sha256": "13e2309e46788f7778394c80f16b910679da976e240531a8649971fd33ebb4d1",
+  "production_files": {
+    "crates/bumbledb/src/exec/colt/force.rs": "5d1fe7329cd2874f879ff1aa51d13e38eb1fbba0df8f8f28fe19585f4a433c7f",
+    "crates/bumbledb/src/exec/colt/grow.rs": "6ca56921c7327365f1616cf5dfa037e01ff49192eacc571ea003c7edd92ed415"
+  },
+  "protocol": "Same external per-draw driver and workspace fat-LTO release profile. No allocator features, observer hooks, profiler or timed compilation.",
+  "engine_features": [
+    "collision-probe"
+  ],
+  "binary_sha256": "e6e3386316f32a9123b282ebbd425bae4c2a52008577c24d68861111e2f6d038",
+  "finished": "2026-09-09T10:24:19.447763+00:00"
+}

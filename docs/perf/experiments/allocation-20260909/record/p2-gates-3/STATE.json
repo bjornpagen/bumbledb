@@ -1,0 +1,134 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p2-gates-3",
+  "started": "2026-09-09T06:18:34.768502+00:00",
+  "status": "GATES-COMPLETE-PERFORMANCE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T06:18:34.769495+00:00",
+      "status": "PASS",
+      "pid": 7409,
+      "finished": "2026-09-09T06:18:34.780830+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "started": "2026-09-09T06:18:34.835489+00:00",
+      "status": "PASS",
+      "pid": 7418,
+      "finished": "2026-09-09T06:18:36.832693+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "started": "2026-09-09T06:18:36.874419+00:00",
+      "status": "PASS",
+      "pid": 7451,
+      "finished": "2026-09-09T06:18:39.337410+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "library-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--lib",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T06:18:39.378363+00:00",
+      "status": "PASS",
+      "pid": 7509,
+      "finished": "2026-09-09T06:19:07.706686+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "allocation-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "exec::",
+        "--",
+        "--quiet",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T06:19:07.763418+00:00",
+      "status": "PASS",
+      "pid": 7834,
+      "finished": "2026-09-09T06:19:23.342269+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "release-build",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb-bench"
+      ],
+      "started": "2026-09-09T06:19:23.385538+00:00",
+      "status": "PASS",
+      "pid": 8079,
+      "finished": "2026-09-09T06:20:42.495529+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "verify-candidate",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-3/bumbledb-bench",
+        "verify",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p2-gates-3/data"
+      ],
+      "started": "2026-09-09T06:20:42.503695+00:00",
+      "status": "PASS",
+      "pid": 9429,
+      "finished": "2026-09-09T06:21:31.984238+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "66f441f1763f86d13bfe7174a2fbb12555fa57de310e6b1f65c36d0ad5c2fbc2",
+  "source_note": "Published baseline plus isolated P2 and retained test-only repairs.",
+  "hypothesis": "Read witnessed aggregate inputs directly without full-binding staging; preserve existing dedup ownership, amortized outer reads, and bulk reductions.",
+  "acceptance": "Correctness gates only. No speedup, RSS, or Pi qualification implied.",
+  "binary_sha256": "1c60107fd352ca220205e096cc3a605207657b35d8f9bd5cc37b97f787deef88",
+  "finished": "2026-09-09T06:21:32.059106+00:00"
+}

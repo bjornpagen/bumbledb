@@ -1,0 +1,148 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "p3-owner-5",
+  "started": "2026-09-09T08:30:23.628781+00:00",
+  "status": "OWNERSHIP-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": true,
+  "steps": [
+    {
+      "name": "oracle",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/data/scenarios/scenarios/temporal/oracle.sqlite",
+        "SELECT count(*) FROM \"Span\" a JOIN \"Span\" b ON a.\"key\"=b.\"key\" AND a.id < b.id AND a.span_start < b.span_end AND b.span_start < a.span_end;"
+      ],
+      "started": "2026-09-09T08:30:23.663181+00:00",
+      "status": "PASS",
+      "pid": 55767,
+      "finished": "2026-09-09T08:30:24.232852+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "-csv",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/data/scenarios/scenarios/temporal/oracle.sqlite",
+        "SELECT \"key\", count(*) FROM \"Span\" GROUP BY \"key\" ORDER BY \"key\";"
+      ],
+      "started": "2026-09-09T08:30:24.233426+00:00",
+      "status": "PASS",
+      "pid": 55768,
+      "finished": "2026-09-09T08:30:24.245850+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "mixed-pairs",
+      "command": [
+        "sqlite3",
+        "-readonly",
+        "-csv",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/data/scenarios/scenarios/temporal/oracle.sqlite",
+        "SELECT a.\"key\",a.id,b.id FROM \"Span\" a JOIN \"Span\" b ON a.\"key\"=b.\"key\" WHERE a.\"key\" IN (0,1,5,1000000) AND ((a.span_start > b.span_start AND a.span_end < b.span_end) OR a.span_end=b.span_start) ORDER BY a.\"key\",a.id,b.id;"
+      ],
+      "started": "2026-09-09T08:30:24.246163+00:00",
+      "status": "PASS",
+      "pid": 55769,
+      "finished": "2026-09-09T08:30:27.616263+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "source-patch",
+      "command": [
+        "git",
+        "-C",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source",
+        "diff",
+        "--binary",
+        "HEAD"
+      ],
+      "started": "2026-09-09T08:30:27.618066+00:00",
+      "status": "PASS",
+      "pid": 55823,
+      "finished": "2026-09-09T08:30:27.631604+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source/Cargo.toml",
+        "--locked",
+        "--release",
+        "-p",
+        "bumbledb",
+        "--features",
+        "alloc-counter",
+        "--lib",
+        "--no-run",
+        "--message-format=json"
+      ],
+      "started": "2026-09-09T08:30:27.647386+00:00",
+      "status": "PASS",
+      "pid": 55825,
+      "finished": "2026-09-09T08:32:57.850399+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "ownership",
+      "command": [
+        "env",
+        "BUMBLEDB_OWNER_DB=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-5/db",
+        "BUMBLEDB_OWNER_GROUPS=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-5/groups.log",
+        "BUMBLEDB_OWNER_ANSWER=267603",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-5/bumbledb-owner-test",
+        "p3_owner_diagnostic::saved_temporal_cache_ownership",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T08:32:57.918078+00:00",
+      "status": "PASS",
+      "pid": 58296,
+      "finished": "2026-09-09T08:32:58.287625+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "mixed-paths",
+      "command": [
+        "env",
+        "BUMBLEDB_OWNER_DB=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-5/db",
+        "BUMBLEDB_MIXED_PAIRS=/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-5/mixed-pairs.log",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-owner-5/bumbledb-owner-test",
+        "p3_owner_diagnostic::saved_mixed_mask_paths",
+        "--ignored",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "started": "2026-09-09T08:32:58.288861+00:00",
+      "status": "PASS",
+      "pid": 58363,
+      "finished": "2026-09-09T08:32:58.324681+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint_with_test_hooks": "265c5ca48bfbef66d517b4e0b65c11123b83032df0fdd6e67b873c1da9f6ea77",
+  "unhooked_production_fingerprint": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+  "source_tree": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3-source",
+  "production_note": "Independent P3 worktree; no P1/P2 production changes.",
+  "test_sources": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3_cache_observer.rs": "500a4eb316f1b0487891de5a3600ab7fde96be324f741d77bd37883286cfa509",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3_exec_observer.rs": "4102f3b275142511e4d7e5578bff25df0e9fddbfcb55167e57745977558bbc95",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/p3_owner.rs": "2a820f875bd6882ac1a8e999e07e561809053d7298a899aab781d971a7efccac"
+  },
+  "store_sha256": "eac6c13f77462959fb5f4415293f22466bc228731dd946fd267ba001ee79e13c",
+  "oracle_sha256": "82d593ec1a348dad8b2996edb22c779a1764724794e63e576a541eb681b11b36",
+  "protocol": "Same saved query/schema on a byte-identical private LMDB copy; cold/warm/released passes; independent SQLite value oracle and exact per-key group counts; no timings or profiler.",
+  "limitations": "Counting allocator + observer changes code generation. Cache-probe scoped requests include its feed closure; global query counts may include harness activity. Payload capacities are not allocator usable sizes, RSS, mmap or C allocations.",
+  "mixed_paths": true,
+  "mixed_pairs_sha256": "109ee2762e20dbff495431c10f67478805b537480b33db54a7da6985eccb3133",
+  "binary_sha256": "75c17a636177f7eebe2cc98b3333e287eaab4a99a646f9c75e2b29bce96f82e9",
+  "expected_answer": 267603,
+  "finished": "2026-09-09T08:32:58.410078+00:00"
+}

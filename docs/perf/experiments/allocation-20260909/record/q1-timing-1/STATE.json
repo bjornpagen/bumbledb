@@ -1,0 +1,1852 @@
+{
+  "source": "b02a641e087364ec09c161a97c67c87cf626e6b2",
+  "phase": "q1-timing-1",
+  "started": "2026-09-09T11:24:28.288893+00:00",
+  "status": "ORDINARY-Q1-TIMING-COMPLETE-REVIEW-REQUIRED",
+  "diagnostic_only": false,
+  "steps": [
+    {
+      "name": "saved_triangle-0-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:28.595385+00:00",
+      "status": "PASS",
+      "pid": 88071,
+      "finished": "2026-09-09T11:24:30.985339+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-0-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:31.284047+00:00",
+      "status": "PASS",
+      "pid": 88100,
+      "finished": "2026-09-09T11:24:33.621172+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-0-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:33.924630+00:00",
+      "status": "PASS",
+      "pid": 88133,
+      "finished": "2026-09-09T11:24:36.118396+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-0-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:36.433743+00:00",
+      "status": "PASS",
+      "pid": 88237,
+      "finished": "2026-09-09T11:24:38.637048+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-0-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:39.000944+00:00",
+      "status": "PASS",
+      "pid": 88282,
+      "finished": "2026-09-09T11:24:39.212829+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-0-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:39.523966+00:00",
+      "status": "PASS",
+      "pid": 88311,
+      "finished": "2026-09-09T11:24:39.736201+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-0-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:40.057683+00:00",
+      "status": "PASS",
+      "pid": 88367,
+      "finished": "2026-09-09T11:24:40.292897+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-0-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:40.597273+00:00",
+      "status": "PASS",
+      "pid": 88396,
+      "finished": "2026-09-09T11:24:40.832543+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-0-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:41.203762+00:00",
+      "status": "PASS",
+      "pid": 88433,
+      "finished": "2026-09-09T11:24:41.537980+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-0-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:41.846924+00:00",
+      "status": "PASS",
+      "pid": 88462,
+      "finished": "2026-09-09T11:24:42.196694+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-0-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:42.505448+00:00",
+      "status": "PASS",
+      "pid": 88491,
+      "finished": "2026-09-09T11:24:42.855027+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-0-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "0"
+      ],
+      "started": "2026-09-09T11:24:43.162976+00:00",
+      "status": "PASS",
+      "pid": 88520,
+      "finished": "2026-09-09T11:24:43.498081+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-1-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:43.804555+00:00",
+      "status": "PASS",
+      "pid": 88549,
+      "finished": "2026-09-09T11:24:45.994444+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-1-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:46.329374+00:00",
+      "status": "PASS",
+      "pid": 88583,
+      "finished": "2026-09-09T11:24:48.481058+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-1-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:48.794713+00:00",
+      "status": "PASS",
+      "pid": 88613,
+      "finished": "2026-09-09T11:24:50.954778+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-1-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:51.268126+00:00",
+      "status": "PASS",
+      "pid": 88647,
+      "finished": "2026-09-09T11:24:53.485624+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-1-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:53.791146+00:00",
+      "status": "PASS",
+      "pid": 88677,
+      "finished": "2026-09-09T11:24:54.003804+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-1-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:54.329782+00:00",
+      "status": "PASS",
+      "pid": 88707,
+      "finished": "2026-09-09T11:24:54.547021+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-1-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:54.866544+00:00",
+      "status": "PASS",
+      "pid": 88738,
+      "finished": "2026-09-09T11:24:55.094747+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-1-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:55.414756+00:00",
+      "status": "PASS",
+      "pid": 88768,
+      "finished": "2026-09-09T11:24:55.650399+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-1-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:55.983646+00:00",
+      "status": "PASS",
+      "pid": 88799,
+      "finished": "2026-09-09T11:24:56.322421+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-1-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:56.637222+00:00",
+      "status": "PASS",
+      "pid": 88829,
+      "finished": "2026-09-09T11:24:56.979421+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-1-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:57.311882+00:00",
+      "status": "PASS",
+      "pid": 88859,
+      "finished": "2026-09-09T11:24:57.651882+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-1-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "1"
+      ],
+      "started": "2026-09-09T11:24:57.968984+00:00",
+      "status": "PASS",
+      "pid": 88888,
+      "finished": "2026-09-09T11:24:58.304876+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "2"
+      ],
+      "started": "2026-09-09T11:24:58.618943+00:00",
+      "status": "PASS",
+      "pid": 88917,
+      "finished": "2026-09-09T11:25:00.798634+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:01.140284+00:00",
+      "status": "PASS",
+      "pid": 88954,
+      "finished": "2026-09-09T11:25:03.319639+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:03.625345+00:00",
+      "status": "PASS",
+      "pid": 89002,
+      "finished": "2026-09-09T11:25:05.758412+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:06.076398+00:00",
+      "status": "PASS",
+      "pid": 89036,
+      "finished": "2026-09-09T11:25:08.246471+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:08.565192+00:00",
+      "status": "PASS",
+      "pid": 89069,
+      "finished": "2026-09-09T11:25:08.866917+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:09.174785+00:00",
+      "status": "PASS",
+      "pid": 89098,
+      "finished": "2026-09-09T11:25:09.466984+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:09.805035+00:00",
+      "status": "PASS",
+      "pid": 89132,
+      "finished": "2026-09-09T11:25:10.044029+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:10.365209+00:00",
+      "status": "PASS",
+      "pid": 89193,
+      "finished": "2026-09-09T11:25:10.577948+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:10.885419+00:00",
+      "status": "PASS",
+      "pid": 89222,
+      "finished": "2026-09-09T11:25:11.213925+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:11.519182+00:00",
+      "status": "PASS",
+      "pid": 89253,
+      "finished": "2026-09-09T11:25:11.843654+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:12.146243+00:00",
+      "status": "PASS",
+      "pid": 89282,
+      "finished": "2026-09-09T11:25:12.477888+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:12.795385+00:00",
+      "status": "PASS",
+      "pid": 89312,
+      "finished": "2026-09-09T11:25:13.132057+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-3-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:13.444677+00:00",
+      "status": "PASS",
+      "pid": 89343,
+      "finished": "2026-09-09T11:25:15.573684+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-3-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:15.884445+00:00",
+      "status": "PASS",
+      "pid": 89373,
+      "finished": "2026-09-09T11:25:17.988408+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-3-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:18.367862+00:00",
+      "status": "PASS",
+      "pid": 89431,
+      "finished": "2026-09-09T11:25:20.495099+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_triangle-3-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_triangle",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:20.809941+00:00",
+      "status": "PASS",
+      "pid": 89508,
+      "finished": "2026-09-09T11:25:22.942287+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-3-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:23.264586+00:00",
+      "status": "PASS",
+      "pid": 89542,
+      "finished": "2026-09-09T11:25:23.500945+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-3-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:23.835154+00:00",
+      "status": "PASS",
+      "pid": 89609,
+      "finished": "2026-09-09T11:25:24.047525+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-3-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:24.386288+00:00",
+      "status": "PASS",
+      "pid": 89693,
+      "finished": "2026-09-09T11:25:24.599128+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_point-3-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_point",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:24.935521+00:00",
+      "status": "PASS",
+      "pid": 89764,
+      "finished": "2026-09-09T11:25:25.171245+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-3-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:25.517831+00:00",
+      "status": "PASS",
+      "pid": 89818,
+      "finished": "2026-09-09T11:25:25.870846+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-3-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:26.220311+00:00",
+      "status": "PASS",
+      "pid": 89848,
+      "finished": "2026-09-09T11:25:26.547349+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-3-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:26.889035+00:00",
+      "status": "PASS",
+      "pid": 89887,
+      "finished": "2026-09-09T11:25:27.218432+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "saved_range-3-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "saved_range",
+        "3"
+      ],
+      "started": "2026-09-09T11:25:27.538543+00:00",
+      "status": "PASS",
+      "pid": 89917,
+      "finished": "2026-09-09T11:25:27.871237+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-0-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "0"
+      ],
+      "started": "2026-09-09T11:25:28.185429+00:00",
+      "status": "PASS",
+      "pid": 89946,
+      "finished": "2026-09-09T11:25:28.618721+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-0-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "0"
+      ],
+      "started": "2026-09-09T11:25:28.927258+00:00",
+      "status": "PASS",
+      "pid": 89985,
+      "finished": "2026-09-09T11:25:29.317227+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-0-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "0"
+      ],
+      "started": "2026-09-09T11:25:29.659740+00:00",
+      "status": "PASS",
+      "pid": 90024,
+      "finished": "2026-09-09T11:25:30.039586+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-0-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "0"
+      ],
+      "started": "2026-09-09T11:25:30.345125+00:00",
+      "status": "PASS",
+      "pid": 90063,
+      "finished": "2026-09-09T11:25:30.759136+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-1-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "1"
+      ],
+      "started": "2026-09-09T11:25:31.072223+00:00",
+      "status": "PASS",
+      "pid": 90103,
+      "finished": "2026-09-09T11:25:31.449908+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-1-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "1"
+      ],
+      "started": "2026-09-09T11:25:31.767400+00:00",
+      "status": "PASS",
+      "pid": 90142,
+      "finished": "2026-09-09T11:25:32.154367+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-1-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "1"
+      ],
+      "started": "2026-09-09T11:25:32.467268+00:00",
+      "status": "PASS",
+      "pid": 90183,
+      "finished": "2026-09-09T11:25:32.841824+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-1-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "1"
+      ],
+      "started": "2026-09-09T11:25:33.169377+00:00",
+      "status": "PASS",
+      "pid": 90228,
+      "finished": "2026-09-09T11:25:33.595030+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-4-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:33.931394+00:00",
+      "status": "PASS",
+      "pid": 90317,
+      "finished": "2026-09-09T11:25:36.867780+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-4-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:37.232999+00:00",
+      "status": "PASS",
+      "pid": 90494,
+      "finished": "2026-09-09T11:25:40.049832+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-4-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:40.357791+00:00",
+      "status": "PASS",
+      "pid": 90533,
+      "finished": "2026-09-09T11:25:43.231963+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "computed-4-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "computed",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:43.540507+00:00",
+      "status": "PASS",
+      "pid": 90575,
+      "finished": "2026-09-09T11:25:46.456242+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:46.770821+00:00",
+      "status": "PASS",
+      "pid": 90624,
+      "finished": "2026-09-09T11:25:47.306094+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:47.637129+00:00",
+      "status": "PASS",
+      "pid": 90669,
+      "finished": "2026-09-09T11:25:48.155536+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:48.480233+00:00",
+      "status": "PASS",
+      "pid": 90710,
+      "finished": "2026-09-09T11:25:48.999068+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "2"
+      ],
+      "started": "2026-09-09T11:25:49.317141+00:00",
+      "status": "PASS",
+      "pid": 90751,
+      "finished": "2026-09-09T11:25:49.844540+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-4-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:50.162606+00:00",
+      "status": "PASS",
+      "pid": 90790,
+      "finished": "2026-09-09T11:25:52.102211+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-4-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:52.412585+00:00",
+      "status": "PASS",
+      "pid": 90832,
+      "finished": "2026-09-09T11:25:54.386135+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-4-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:54.694634+00:00",
+      "status": "PASS",
+      "pid": 90873,
+      "finished": "2026-09-09T11:25:56.651479+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union-4-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union",
+        "4"
+      ],
+      "started": "2026-09-09T11:25:56.995234+00:00",
+      "status": "PASS",
+      "pid": 90939,
+      "finished": "2026-09-09T11:25:58.990596+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-1-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "1"
+      ],
+      "started": "2026-09-09T11:25:59.307886+00:00",
+      "status": "PASS",
+      "pid": 90992,
+      "finished": "2026-09-09T11:25:59.701698+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-1-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "1"
+      ],
+      "started": "2026-09-09T11:26:00.011914+00:00",
+      "status": "PASS",
+      "pid": 91033,
+      "finished": "2026-09-09T11:26:00.395670+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-1-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "1"
+      ],
+      "started": "2026-09-09T11:26:00.701727+00:00",
+      "status": "PASS",
+      "pid": 91072,
+      "finished": "2026-09-09T11:26:01.100184+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-1-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "1"
+      ],
+      "started": "2026-09-09T11:26:01.415922+00:00",
+      "status": "PASS",
+      "pid": 91111,
+      "finished": "2026-09-09T11:26:01.837630+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-3-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "3"
+      ],
+      "started": "2026-09-09T11:26:02.160805+00:00",
+      "status": "PASS",
+      "pid": 91150,
+      "finished": "2026-09-09T11:26:05.427814+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-3-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "3"
+      ],
+      "started": "2026-09-09T11:26:05.740327+00:00",
+      "status": "PASS",
+      "pid": 91193,
+      "finished": "2026-09-09T11:26:08.978526+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-3-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "3"
+      ],
+      "started": "2026-09-09T11:26:09.294601+00:00",
+      "status": "PASS",
+      "pid": 91239,
+      "finished": "2026-09-09T11:26:12.799942+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-3-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "3"
+      ],
+      "started": "2026-09-09T11:26:13.117662+00:00",
+      "status": "PASS",
+      "pid": 91285,
+      "finished": "2026-09-09T11:26:16.296552+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-4-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "4"
+      ],
+      "started": "2026-09-09T11:26:16.617219+00:00",
+      "status": "PASS",
+      "pid": 91325,
+      "finished": "2026-09-09T11:26:22.399945+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-4-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "4"
+      ],
+      "started": "2026-09-09T11:26:22.717427+00:00",
+      "status": "PASS",
+      "pid": 91375,
+      "finished": "2026-09-09T11:26:28.431636+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-4-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "4"
+      ],
+      "started": "2026-09-09T11:26:28.790291+00:00",
+      "status": "PASS",
+      "pid": 91462,
+      "finished": "2026-09-09T11:26:34.242326+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "groups-4-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "groups",
+        "4"
+      ],
+      "started": "2026-09-09T11:26:34.559415+00:00",
+      "status": "PASS",
+      "pid": 91651,
+      "finished": "2026-09-09T11:26:40.293868+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-0-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "0"
+      ],
+      "started": "2026-09-09T11:26:40.613769+00:00",
+      "status": "PASS",
+      "pid": 91695,
+      "finished": "2026-09-09T11:26:42.197405+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-0-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "0"
+      ],
+      "started": "2026-09-09T11:26:42.510597+00:00",
+      "status": "PASS",
+      "pid": 91732,
+      "finished": "2026-09-09T11:26:44.102519+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-0-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "0"
+      ],
+      "started": "2026-09-09T11:26:44.411751+00:00",
+      "status": "PASS",
+      "pid": 91767,
+      "finished": "2026-09-09T11:26:46.022753+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-0-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "0"
+      ],
+      "started": "2026-09-09T11:26:46.352342+00:00",
+      "status": "PASS",
+      "pid": 91805,
+      "finished": "2026-09-09T11:26:47.919304+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:26:48.284632+00:00",
+      "status": "PASS",
+      "pid": 91844,
+      "finished": "2026-09-09T11:26:51.388387+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:26:51.706729+00:00",
+      "status": "PASS",
+      "pid": 91887,
+      "finished": "2026-09-09T11:26:55.003945+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:26:55.342652+00:00",
+      "status": "PASS",
+      "pid": 91923,
+      "finished": "2026-09-09T11:26:58.470008+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dnf_groups-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dnf_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:26:58.788286+00:00",
+      "status": "PASS",
+      "pid": 91968,
+      "finished": "2026-09-09T11:27:01.940655+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "pairs-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "pairs",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:02.252292+00:00",
+      "status": "PASS",
+      "pid": 92005,
+      "finished": "2026-09-09T11:27:02.929378+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "pairs-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "pairs",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:03.245228+00:00",
+      "status": "PASS",
+      "pid": 92040,
+      "finished": "2026-09-09T11:27:03.937212+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "pairs-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "pairs",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:04.249929+00:00",
+      "status": "PASS",
+      "pid": 92077,
+      "finished": "2026-09-09T11:27:04.936601+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "pairs-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "pairs",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:05.260312+00:00",
+      "status": "PASS",
+      "pid": 92152,
+      "finished": "2026-09-09T11:27:05.944695+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dense-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dense",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:06.273455+00:00",
+      "status": "PASS",
+      "pid": 92188,
+      "finished": "2026-09-09T11:27:06.501430+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dense-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dense",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:06.818198+00:00",
+      "status": "PASS",
+      "pid": 92224,
+      "finished": "2026-09-09T11:27:07.048023+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dense-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dense",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:07.371267+00:00",
+      "status": "PASS",
+      "pid": 92261,
+      "finished": "2026-09-09T11:27:07.605589+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "dense-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "dense",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:07.925324+00:00",
+      "status": "PASS",
+      "pid": 92297,
+      "finished": "2026-09-09T11:27:08.153582+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior-4-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior",
+        "4"
+      ],
+      "started": "2026-09-09T11:27:08.461651+00:00",
+      "status": "PASS",
+      "pid": 92332,
+      "finished": "2026-09-09T11:27:11.098695+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior-4-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior",
+        "4"
+      ],
+      "started": "2026-09-09T11:27:11.417155+00:00",
+      "status": "PASS",
+      "pid": 92381,
+      "finished": "2026-09-09T11:27:14.384009+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior-4-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior",
+        "4"
+      ],
+      "started": "2026-09-09T11:27:14.797552+00:00",
+      "status": "PASS",
+      "pid": 92430,
+      "finished": "2026-09-09T11:27:17.383058+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior-4-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior",
+        "4"
+      ],
+      "started": "2026-09-09T11:27:17.721701+00:00",
+      "status": "PASS",
+      "pid": 92482,
+      "finished": "2026-09-09T11:27:20.298467+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "reach-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:20.608061+00:00",
+      "status": "PASS",
+      "pid": 92525,
+      "finished": "2026-09-09T11:27:20.849317+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "reach-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:21.159387+00:00",
+      "status": "PASS",
+      "pid": 92560,
+      "finished": "2026-09-09T11:27:21.388181+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "reach-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:21.711250+00:00",
+      "status": "PASS",
+      "pid": 92601,
+      "finished": "2026-09-09T11:27:21.948261+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "reach-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:22.258666+00:00",
+      "status": "PASS",
+      "pid": 92636,
+      "finished": "2026-09-09T11:27:22.503553+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior_reach-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior_reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:22.817061+00:00",
+      "status": "PASS",
+      "pid": 92673,
+      "finished": "2026-09-09T11:27:23.052246+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior_reach-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior_reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:23.360908+00:00",
+      "status": "PASS",
+      "pid": 92708,
+      "finished": "2026-09-09T11:27:23.614121+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior_reach-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior_reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:23.932656+00:00",
+      "status": "PASS",
+      "pid": 92743,
+      "finished": "2026-09-09T11:27:24.168484+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "interior_reach-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "interior_reach",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:24.480855+00:00",
+      "status": "PASS",
+      "pid": 92778,
+      "finished": "2026-09-09T11:27:24.720764+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union_groups-2-A0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:25.040754+00:00",
+      "status": "PASS",
+      "pid": 92813,
+      "finished": "2026-09-09T11:27:28.227346+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union_groups-2-B0",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:28.559048+00:00",
+      "status": "PASS",
+      "pid": 92879,
+      "finished": "2026-09-09T11:27:31.859798+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union_groups-2-B1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:32.188589+00:00",
+      "status": "PASS",
+      "pid": 92914,
+      "finished": "2026-09-09T11:27:35.372196+00:00",
+      "exit_code": 0
+    },
+    {
+      "name": "union_groups-2-A1",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/db",
+        "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-timing-1/oracle.sqlite",
+        "union_groups",
+        "2"
+      ],
+      "started": "2026-09-09T11:27:35.700050+00:00",
+      "status": "PASS",
+      "pid": 92951,
+      "finished": "2026-09-09T11:27:38.882005+00:00",
+      "exit_code": 0
+    }
+  ],
+  "driver_sha256": "5e81c8769626e93c1482eb74bae3a6225b9e81c531c7df8484c70732939a6c28",
+  "source_fingerprint": "9f87b492b1248093d241a0217b2cb089db08d8ed82a6f1f72a5fce3a43d6b418",
+  "prior_identities": {
+    "E1": "e44e04132d30992ab094d61c93d620207175e1390006046e53733c16fb52cd55",
+    "M1": "11340858461482ca80cea8c55ce83661d8ae794e2f193438241fc66f47cd50fd",
+    "P3": "3f89f14dfea19b2ae5a58bc3244e8022b0ea20131a39e5e7b87786902163f7a6",
+    "G1": "084f09fd3a2eaaf73b9f0d2c13ddf4f7e12422612e995e27c1872b48547b38df",
+    "G2": "c759483862ce7a957dcda1a39e4246b36fe47fd1e1eb5614dfa82bd725f70e04",
+    "P2": "3bc43f3f04a09fa8983abeaf183eb54152fc8159a4a5b26fd73cbceb9f26958c"
+  },
+  "cases": [
+    [
+      "saved_triangle",
+      0
+    ],
+    [
+      "saved_point",
+      0
+    ],
+    [
+      "saved_range",
+      0
+    ],
+    [
+      "saved_triangle",
+      1
+    ],
+    [
+      "saved_point",
+      1
+    ],
+    [
+      "saved_range",
+      1
+    ],
+    [
+      "saved_triangle",
+      2
+    ],
+    [
+      "saved_point",
+      2
+    ],
+    [
+      "saved_range",
+      2
+    ],
+    [
+      "saved_triangle",
+      3
+    ],
+    [
+      "saved_point",
+      3
+    ],
+    [
+      "saved_range",
+      3
+    ],
+    [
+      "computed",
+      0
+    ],
+    [
+      "computed",
+      1
+    ],
+    [
+      "computed",
+      4
+    ],
+    [
+      "union",
+      2
+    ],
+    [
+      "union",
+      4
+    ],
+    [
+      "groups",
+      1
+    ],
+    [
+      "groups",
+      3
+    ],
+    [
+      "groups",
+      4
+    ],
+    [
+      "dnf_groups",
+      0
+    ],
+    [
+      "dnf_groups",
+      2
+    ],
+    [
+      "pairs",
+      2
+    ],
+    [
+      "dense",
+      2
+    ],
+    [
+      "interior",
+      4
+    ],
+    [
+      "reach",
+      2
+    ],
+    [
+      "interior_reach",
+      2
+    ],
+    [
+      "union_groups",
+      2
+    ]
+  ],
+  "order": [
+    "A0",
+    "B0",
+    "B1",
+    "A1"
+  ],
+  "executables": {
+    "A": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-baseline-2/q1-timing",
+      "sha256": "f49101f7131295c8a141d612bc7a5d872214b77591ce39ab954479d429990dbc"
+    },
+    "B": {
+      "path": "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-time-build-candidate-1/q1-timing",
+      "sha256": "73ba3f1dd792cd07f211cc5b0a8941b2ecd68c1f900b2d1d9970d24121ccbcaa"
+    }
+  },
+  "dependencies": {
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_timing.rs": "ed6f33be2220c5b4e62218f5aa91d96003bfd457e9920cd285e6e5765f6623ab",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1_control_cases.rs": "08f26f0022b2857d256e4475afc56bf00b52198cb6bcc9d3fc38346f9c55a84b",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/families/read.rs": "64252750ebabac48d5cca9e4f79eedba976aa0e1f2eb9b7028c5dad7fe96dcdc",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/translate/goldens.rs": "122f76352613c9e7b0f844509dd4122b1f810d5517a6d3a8474970af89d45dd6",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/schema.rs": "7ff990f0c963e2fb651e8d6e92f1859b3726f178dd51d4de51e83e88b710aaa7",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/boost.rs": "d4387badc47863858ec35b7b6d8aacbb32ac54c4190e49b3698e9cfce82177d1",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/clockproxy.rs": "62afce65de422b97ac8032f5f1e7acc2df56232dbb841d28dfea8cfe327b648a",
+    "/Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/q1-control-baseline-source/crates/bumbledb-bench/src/harness/work.rs": "26cbffd74d9af52cd9a80f9a44bbb435dde9cee115f50d004c1dfb0d1b7b4664"
+  },
+  "input_hashes": {
+    "db/data.mdb": "607f6d3e6d0b4a39294883fe9b95511106878a245fe67c5e8c2f9b55295e5175",
+    "oracle.sqlite": "e71bfb9a91736a3a0377a2577c7d664fa11486871358f53a355c1c235b3eea1a"
+  },
+  "protocol": "Per-case ABBA, no retries/filtering/clock normalization. Cold: 2 discarded then 16 fresh DB reopen+prepare calls; DB open and AST/bind-array/empty-answer construction excluded. Separate prepare, first and jointly measured prepare+first, then second. Both warm modes: independent prepare, 8 warmups + 320 individual calls; alternating executes/checks the next fixture draw outside timer before each target. SQL expected values computed before timings, exact outputs checked after every operation. WorkContext creation remains inside ordinary prepare/read as in existing benchmarks.",
+  "rollover_probe": {
+    "same_target_index": 248,
+    "basis": "8 warmups; single reset per call, first empty reset does not advance generation. Source-model prediction for nonempty single-sink saved triangle, not automatic attribution of all tails."
+  },
+  "limitations": "Shared macOS host; verified QoS steering, not hard P-core affinity. One non-retrying clock bracket around the cold pair panel, one for each warm mode. Result checker outside timing uses one numeric row buffer and sorting; it can warm/evict caches. Fresh DB reopen is not an OS-cold-cache claim. No allocator/CPU instrumentation/full suite/RSS/Pi qualification.",
+  "processes_completed": 112,
+  "distributions": 672,
+  "finished": "2026-09-09T11:27:39.263291+00:00"
+}
