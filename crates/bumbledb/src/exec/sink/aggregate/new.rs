@@ -212,6 +212,11 @@ impl AggregateSink {
                 n_aggs,
             }
         };
+        let binding_words = if dedup.seen().is_some() {
+            scratch_words
+        } else {
+            0
+        };
         Self {
             float_accs: Vec::new(),
             share_float_inputs,
@@ -226,7 +231,7 @@ impl AggregateSink {
             physical_distinct: None,
             groups,
             key_scratch: vec![0; key_words],
-            binding_scratch: vec![0; scratch_words],
+            binding_scratch: vec![0; binding_words],
             union_scratch: vec![0; union_words],
             dedup_survivors: Vec::new(),
             fold_sources: Vec::with_capacity(n_aggs),
@@ -234,7 +239,7 @@ impl AggregateSink {
             scan_count: 0,
             cached_slot_count: None,
             cached_key_slots: Vec::new(),
-            cached_outer_slots: Vec::new(),
+            cached_leaf_words: Vec::new(),
             cached_constant_group: false,
             #[cfg(test)]
             group_probes: 0,
@@ -269,7 +274,7 @@ impl AggregateSink {
             DedupState::Bindings { .. } | DedupState::Elided { .. } => {}
         }
         self.binding_scratch.clear();
-        self.binding_scratch.resize(slot_count, 0);
+        self.binding_scratch.resize(self.binding_words(), 0);
         if let GroupState::Pack { slot, .. } = &mut self.group_state {
             *slot = pack_slot(&self.finds).expect("Pack heads stay Pack across rules");
         }
@@ -322,6 +327,16 @@ impl AggregateSink {
 
     pub(super) fn distinct_bindings(&self) -> bool {
         self.physical_distinct.is_some() || matches!(self.dedup, DedupState::Elided { .. })
+    }
+
+    fn binding_words(&self) -> usize {
+        // A physical witness is execution-scoped; its ordinary seen set
+        // still needs staging after reset. Only semantic elision is permanent.
+        if self.dedup.seen().is_some() {
+            self.real_slots
+        } else {
+            0
+        }
     }
 
     /// Share this execution's cancellation context with deduplication and scratch.
@@ -381,7 +396,7 @@ impl AggregateSink {
     pub fn reset(&mut self) {
         self.clear_state();
         self.groups.clear();
-        self.binding_scratch.resize(self.real_slots, 0);
+        self.binding_scratch.resize(self.binding_words(), 0);
         self.key_scratch
             .resize(self.group_spans.iter().map(|(_, width)| width).sum(), 0);
         self.union_scratch.resize(
@@ -437,7 +452,7 @@ impl AggregateSink {
         self.fold_sources = Vec::new();
         self.fold_inputs = Vec::new();
         self.cached_key_slots = Vec::new();
-        self.cached_outer_slots = Vec::new();
+        self.cached_leaf_words = Vec::new();
         self.cached_constant_group = false;
         self.scan_count = 0;
     }

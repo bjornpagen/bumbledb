@@ -29,10 +29,16 @@ impl Sink for AggregateSink {
     }
 
     fn emit(&mut self, bindings: &Bindings) -> Flow {
-        for slot in 0..bindings.slot_count() {
-            self.binding_scratch[slot] = bindings.get(slot);
+        if self.distinct_bindings() {
+            self.fold_row(&[], |slot, _| bindings.get(slot));
+        } else {
+            let mut row = std::mem::take(&mut self.binding_scratch);
+            for (slot, word) in row[..bindings.slot_count()].iter_mut().enumerate() {
+                *word = bindings.get(slot);
+            }
+            self.fold_row(&row, |slot, _| bindings.get(slot));
+            self.binding_scratch = row;
         }
-        self.fold_scratch_row();
         Flow::from_sink_progress(AggregateSink::progress(self))
     }
 

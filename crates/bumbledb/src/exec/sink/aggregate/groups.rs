@@ -1,4 +1,5 @@
 use crate::exec::sink::{Acc, AggSpec, AggregateSink, GroupState, GroupTable, SinkSpec};
+use std::num::NonZeroU32;
 
 pub(super) fn load_group_key(
     key_scratch: &mut [u64],
@@ -26,26 +27,33 @@ impl AggregateSink {
         true
     }
 
+    #[inline]
     pub(super) fn refresh_shape_cache(&mut self, key_slots: &[usize]) {
         if self.cached_slot_count == Some(self.real_slots) && self.cached_key_slots == key_slots {
             return;
         }
+        self.rebuild_shape_cache(key_slots);
+    }
+
+    // Keep the rebuild's register frame off the per-batch cache-hit path.
+    #[inline(never)]
+    fn rebuild_shape_cache(&mut self, key_slots: &[usize]) {
         self.cached_slot_count = Some(self.real_slots);
         self.cached_key_slots.clear();
         self.cached_key_slots.extend_from_slice(key_slots);
-        self.cached_outer_slots.clear();
-
-        for slot in 0..self.real_slots {
-            if !key_slots.contains(&slot) {
-                self.cached_outer_slots.push(slot);
-            }
+        self.cached_leaf_words.clear();
+        self.cached_leaf_words.resize(self.real_slots, None);
+        for (word, &slot) in key_slots.iter().enumerate() {
+            self.cached_leaf_words[slot] =
+                NonZeroU32::new(u32::try_from(word + 1).expect("validated leaf width fits u32"));
         }
 
-        self.cached_constant_group = self
-            .group_spans
-            .iter()
-            .all(|(slot, width)| (*slot..slot + width).all(|word| !key_slots.contains(&word)));
-        self.prepare_fold_inputs(key_slots);
+        self.cached_constant_group = self.group_spans.iter().all(|(slot, width)| {
+            self.cached_leaf_words[*slot..slot + width]
+                .iter()
+                .all(Option::is_none)
+        });
+        self.prepare_fold_inputs();
     }
 
     pub(super) fn probe_group(&mut self) -> usize {

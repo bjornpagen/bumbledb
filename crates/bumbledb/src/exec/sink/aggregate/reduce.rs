@@ -126,15 +126,16 @@ impl Partial {
 }
 
 impl AggregateSink {
-    pub(super) fn prepare_fold_inputs(&mut self, key_slots: &[usize]) {
+    pub(super) fn prepare_fold_inputs(&mut self) {
         self.fold_sources.clear();
         self.fold_inputs.clear();
         for find in &self.finds {
             let SinkSpec::Agg(spec @ AggSpec::Fold { slot, .. }) = find else {
                 continue;
             };
-            let source = match key_slots.iter().position(|k| k == slot) {
+            let source = match self.cached_leaf_words[*slot] {
                 Some(word) => {
+                    let word = word.get() as usize - 1;
                     let partial = Partial::seed(*spec);
                     let input = self
                         .fold_inputs

@@ -357,6 +357,7 @@ mod intervals;
 mod mechanics;
 mod negation;
 mod pipeline;
+mod probe_runs;
 mod scan;
 mod spill_bounded;
 mod work_ledger;

@@ -5,6 +5,7 @@
 use crate::encoding::encode_i64;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId};
 use crate::exec::wordmap::WordMap;
+use std::num::NonZeroU32;
 
 mod aggregate;
 mod projection;
@@ -839,7 +840,8 @@ pub struct AggregateSink {
     scan_count: u64,
     cached_slot_count: Option<usize>,
     cached_key_slots: Vec<usize>,
-    cached_outer_slots: Vec<usize>,
+    /// Slot-indexed: None is outer; Some stores the one-based leaf word.
+    cached_leaf_words: Vec<Option<NonZeroU32>>,
     cached_constant_group: bool,
     #[cfg(test)]
     group_probes: usize,

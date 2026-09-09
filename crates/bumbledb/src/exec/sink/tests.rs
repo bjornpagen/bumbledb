@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 mod aggregate;
+mod borrowed_rows;
 mod memory;
 mod pack;
 mod projection;
