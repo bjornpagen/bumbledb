@@ -1,6 +1,6 @@
-use std::mem::MaybeUninit;
-
-use super::{HINT_CAP, LOAD_DEN, WINDOW, WordMap};
+use super::WordMap;
+#[cfg(test)]
+use super::{HINT_CAP, LOAD_DEN};
 
 impl<V: Copy> WordMap<V> {
     #[must_use]
@@ -13,14 +13,16 @@ impl<V: Copy> WordMap<V> {
             stamps: Vec::new(),
             generation: 0,
             stale: 0,
-            dense: Vec::new(),
-            len: 0,
+            slots: Vec::new(),
         }
     }
 
+    /// Explicit geometry for collision and generation tests. Production maps
+    /// start empty and grow from actual insertions, not planner estimates.
     /// # Panics
     /// If the hinted backing's key-word count cannot be represented.
     #[must_use]
+    #[cfg(test)]
     pub fn with_capacity_hint(arity: usize, hint: usize) -> Self {
         let mut map = Self::new(arity);
         let capacity = (hint.clamp(2, HINT_CAP) * LOAD_DEN).next_power_of_two();
@@ -28,29 +30,27 @@ impl<V: Copy> WordMap<V> {
         map
     }
 
+    #[cfg(test)]
     fn allocate(&mut self, capacity: usize) {
-        debug_assert!(capacity.is_power_of_two() && capacity >= WINDOW);
-        let words = capacity
+        debug_assert!(capacity.is_power_of_two() && capacity >= super::WINDOW);
+        capacity
             .checked_mul(self.arity)
             .expect("WordMap key capacity overflow");
-        self.ctrl = vec![0; capacity + WINDOW - 1];
-        self.keys = vec![0; words];
-        self.values = std::iter::repeat_with(MaybeUninit::uninit)
-            .take(capacity)
-            .collect();
+        self.ctrl = vec![0; capacity + super::WINDOW - 1];
+        self.slots = vec![0; capacity];
         self.stamps = vec![0; capacity];
     }
 
     #[inline(always)]
     pub(super) fn capacity(&self) -> usize {
-        self.values.len()
+        self.slots.len()
     }
 
     #[inline(always)]
     pub(super) fn set_ctrl(&mut self, idx: usize, value: u8) {
         self.ctrl[idx] = value;
         self.stamps[idx] = self.generation;
-        if idx < WINDOW - 1 {
+        if idx < super::WINDOW - 1 {
             let capacity = self.capacity();
             self.ctrl[capacity + idx] = value;
         }

@@ -51,7 +51,7 @@ pub struct Subatom {
 
 /// One plan node: a list of subatoms. Executed as: iterate the chosen
 /// cover, probe the rest in order. `estimate` is the planner's per-step
-/// row count — copied through fold-split, sealed onto [`PlanNode`].
+/// row count used during planning and copied through fold-split.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub subatoms: Vec<Subatom>,
@@ -210,8 +210,6 @@ pub struct PlanNode {
     pub new_vars: Vec<VarId>,
 
     pub suffix_skip: SuffixSkip,
-
-    pub estimate: u64,
 }
 
 /// Plan evidence for D2 subtree cancellation. `Licensed` means this node
@@ -289,11 +287,6 @@ impl ValidatedPlan {
             Distinctness::Proven(witness) => Some(witness),
             Distinctness::Unproven => None,
         }
-    }
-
-    #[must_use]
-    pub fn estimates(&self) -> Vec<u64> {
-        self.nodes.iter().map(|node| node.estimate).collect()
     }
 
     /// # Panics

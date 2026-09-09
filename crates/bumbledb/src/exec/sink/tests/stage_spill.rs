@@ -29,8 +29,8 @@ fn assert_hashed_kernel_state(actual: &SpillSet, dynamic: &SpillSet) {
 fn direct_hashed_kernel_preserves_duplicates_and_order_across_explicit_transition() {
     for arity in [0, 1, 2, 3] {
         for transition in [None, Some(0), Some(3)] {
-            let mut direct = SpillSet::with_capacity_hint(arity, 0, true);
-            let mut dynamic = SpillSet::with_capacity_hint(arity, 0, true);
+            let mut direct = SpillSet::new(arity, true);
+            let mut dynamic = SpillSet::new(arity, true);
             for _ in 0..2 {
                 for set in [&mut direct, &mut dynamic] {
                     set.clear();
@@ -67,8 +67,8 @@ fn direct_hashed_kernel_preserves_duplicates_and_order_across_explicit_transitio
 
 #[test]
 fn direct_hashed_kernel_preserves_cancellation_stickiness_and_reuse() {
-    let mut direct = SpillSet::with_capacity_hint(2, 0, true);
-    let mut dynamic = SpillSet::with_capacity_hint(2, 0, true);
+    let mut direct = SpillSet::new(2, true);
+    let mut dynamic = SpillSet::new(2, true);
     for set in [&mut direct, &mut dynamic] {
         let context = work();
         context.cancel();
@@ -108,8 +108,8 @@ fn direct_hashed_kernel_preserves_cancellation_stickiness_and_reuse() {
 fn bulk_hashed_insert_preserves_transition_order_and_early_stop() {
     for arity in [1, 2, 9] {
         for transition in [None, Some(0), Some(3)] {
-            let mut bulk = SpillSet::with_capacity_hint(arity, 0, true);
-            let mut control = SpillSet::with_capacity_hint(arity, 0, true);
+            let mut bulk = SpillSet::new(arity, true);
+            let mut control = SpillSet::new(arity, true);
             for set in [&mut bulk, &mut control] {
                 set.begin(Some(work()));
             }
@@ -151,8 +151,8 @@ fn bulk_hashed_insert_preserves_transition_order_and_early_stop() {
 fn bulk_hashed_insert_matches_cancellation_boundaries_stickiness_and_reuse() {
     for cancel_at in [None, Some(0), Some(255), Some(256), Some(257)] {
         for duplicates in [false, true] {
-            let mut bulk = SpillSet::with_capacity_hint(2, 0, true);
-            let mut control = SpillSet::with_capacity_hint(2, 0, true);
+            let mut bulk = SpillSet::new(2, true);
+            let mut control = SpillSet::new(2, true);
             for set in [&mut bulk, &mut control] {
                 set.begin(Some(work()));
             }
@@ -255,8 +255,8 @@ fn output_key_witness() -> crate::plan::fj::ProjectionDistinctWitness {
 fn proved_output_append_matches_ordered_set_across_ram_spill_and_reuse() {
     let witness = output_key_witness();
     for transition in [None, Some(0), Some(2)] {
-        let mut hashed = SpillSet::with_capacity_hint(2, 0, true);
-        let mut append = SpillSet::with_capacity_hint(2, 0, true);
+        let mut hashed = SpillSet::new(2, true);
+        let mut append = SpillSet::new(2, true);
         append.elide_output_hashing(witness);
         for round in 0..2 {
             hashed.clear();
@@ -325,7 +325,7 @@ fn proved_output_append_matches_ordered_set_across_ram_spill_and_reuse() {
 #[test]
 fn proved_output_append_keeps_work_quantum_failure_sticky_and_reuses_capacity() {
     let ledger = work();
-    let mut append = SpillSet::with_capacity_hint(2, 0, true);
+    let mut append = SpillSet::new(2, true);
     append.elide_output_hashing(output_key_witness());
     append.begin(Some(ledger.clone()));
     for i in 0..STEP_QUANTUM - 1 {
@@ -355,7 +355,7 @@ fn proved_output_append_keeps_work_quantum_failure_sticky_and_reuses_capacity() 
 #[test]
 fn failed_proved_output_transition_preserves_rows_and_can_retry() {
     let context = work();
-    let mut append = SpillSet::with_capacity_hint(2, 0, true);
+    let mut append = SpillSet::new(2, true);
     append.elide_output_hashing(output_key_witness());
     append.begin(Some(context.clone()));
     assert!(append.insert(&[1, 2]));
@@ -383,7 +383,7 @@ fn failed_proved_output_transition_preserves_rows_and_can_retry() {
 }
 
 fn bulk_unique_set() -> SpillSet {
-    let mut set = SpillSet::with_capacity_hint(2, 0, true);
+    let mut set = SpillSet::new(2, true);
     set.elide_output_hashing(output_key_witness());
     let rows = set.unique_rows.as_mut().unwrap();
     rows.words = vec![0; 3].into_boxed_slice().into_vec();
@@ -564,7 +564,7 @@ fn generated_unique_rows_do_not_publish_an_unfinished_span_on_panic() {
 #[test]
 fn resident_dedup_polls_duplicates_at_the_exact_work_quantum_and_stops_stickily() {
     let ledger = work();
-    let mut seen = SpillSet::with_capacity_hint(1, 0, false);
+    let mut seen = SpillSet::new(1, false);
     seen.begin(Some(ledger.clone()));
     assert!(seen.insert(&[7]));
     for _ in 1..STEP_QUANTUM - 1 {
@@ -589,7 +589,7 @@ fn resident_dedup_polls_duplicates_at_the_exact_work_quantum_and_stops_stickily(
 
 #[test]
 fn explicit_transition_preserves_duplicates_and_insertion_order() {
-    let mut seen = SpillSet::with_capacity_hint(2, 0, true);
+    let mut seen = SpillSet::new(2, true);
     seen.begin(Some(work()));
     assert!(seen.insert(&[1, 2]));
     assert!(seen.insert(&[3, 4]));
@@ -611,7 +611,7 @@ fn explicit_transition_preserves_duplicates_and_insertion_order() {
 #[test]
 fn failed_hashed_transition_keeps_the_resident_set_and_can_retry() {
     let context = work();
-    let mut seen = SpillSet::with_capacity_hint(2, 0, true);
+    let mut seen = SpillSet::new(2, true);
     seen.begin(Some(context.clone()));
     assert!(seen.insert(&[1, 2]));
     assert!(seen.insert(&[3, 4]));
@@ -665,7 +665,7 @@ fn d09_projection_stream_into_scratch_matches_resident() {
         }
     };
 
-    let mut resident = ProjectionSink::with_capacity_hint(&finds, 2, 0);
+    let mut resident = ProjectionSink::from_finds(&finds, 2);
     feed(&mut resident);
     let mut expected = Vec::new();
     resident
@@ -676,7 +676,7 @@ fn d09_projection_stream_into_scratch_matches_resident() {
         .expect("resident drain");
     expected.sort();
 
-    let mut spilled = ProjectionSink::with_capacity_hint(&finds, 2, 0);
+    let mut spilled = ProjectionSink::from_finds(&finds, 2);
     spilled.begin(Some(work()));
     feed(&mut spilled);
     spilled.seen.spill().unwrap();
@@ -695,7 +695,7 @@ fn d09_projection_stream_into_scratch_matches_resident() {
 #[test]
 fn d09_drain_since_propagates_failure_immediately() {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
-    let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
+    let mut sink = ProjectionSink::from_finds(&finds, 1);
     let mut bindings = Bindings::new(1);
     for i in 0..8u64 {
         bindings.set(0, i);
@@ -717,7 +717,7 @@ fn d09_drain_since_propagates_failure_immediately() {
 #[test]
 fn d09_drain_since_early_stop_is_not_an_error() {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
-    let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
+    let mut sink = ProjectionSink::from_finds(&finds, 1);
     let mut bindings = Bindings::new(1);
     for i in 0..6u64 {
         bindings.set(0, i);
@@ -765,7 +765,7 @@ fn d09_aggregate_stream_finalize_stays_one_row_per_group() {
 #[test]
 fn cancelled_destination_refuses_stream_without_consuming_source() {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
-    let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
+    let mut sink = ProjectionSink::from_finds(&finds, 1);
     let mut bindings = Bindings::new(1);
     for i in 0..4096u64 {
         bindings.set(0, i);
@@ -836,7 +836,7 @@ fn d09_tiny_finalize_never_opens_scratch_env() {
 #[test]
 fn d09_tiny_projection_stream_never_opens_scratch_env() {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
-    let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
+    let mut sink = ProjectionSink::from_finds(&finds, 1);
     let mut bindings = Bindings::new(1);
     for i in 0..3u64 {
         bindings.set(0, i);

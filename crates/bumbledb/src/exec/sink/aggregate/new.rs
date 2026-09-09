@@ -42,7 +42,7 @@ impl AggregateSink {
     #[cfg(test)]
     #[must_use]
     pub fn new(finds: impl AsRef<[FindSpec]>, slot_count: usize) -> Self {
-        Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, 0, &[])
+        Self::build(finds.as_ref(), slot_count, DedupRegime::Bindings, &[])
     }
 
     #[cfg(test)]
@@ -56,7 +56,6 @@ impl AggregateSink {
             finds.as_ref(),
             slot_count,
             DedupRegime::Bindings,
-            0,
             dense_groups,
         )
     }
@@ -72,36 +71,25 @@ impl AggregateSink {
             finds.as_ref(),
             slot_count,
             DedupRegime::Elided(witness),
-            0,
             &[],
         )
     }
 
     #[must_use]
-    pub fn with_capacity_hint(
-        finds: &[FindSpec],
-        slot_count: usize,
-        hint: usize,
-        dense_groups: &[u16],
-    ) -> Self {
-        Self::build(finds, slot_count, DedupRegime::Bindings, hint, dense_groups)
+    pub fn for_bindings(finds: &[FindSpec], slot_count: usize, dense_groups: &[u16]) -> Self {
+        Self::build(finds, slot_count, DedupRegime::Bindings, dense_groups)
     }
 
     #[must_use]
-    pub fn for_union(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
-        Self::build(finds, slot_count, DedupRegime::Union, hint, &[])
+    pub fn for_union(finds: &[FindSpec], slot_count: usize) -> Self {
+        Self::build(finds, slot_count, DedupRegime::Union, &[])
     }
 
     /// DNF union seen-set re-keys on the shared slot arrays
     /// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
     #[must_use]
-    pub fn for_dnf_union(
-        finds: &[FindSpec],
-        slot_count: usize,
-        spans: &[(usize, usize)],
-        hint: usize,
-    ) -> Self {
-        Self::build(finds, slot_count, DedupRegime::DnfUnion(spans), hint, &[])
+    pub fn for_dnf_union(finds: &[FindSpec], slot_count: usize, spans: &[(usize, usize)]) -> Self {
+        Self::build(finds, slot_count, DedupRegime::DnfUnion(spans), &[])
     }
 
     #[must_use]
@@ -109,14 +97,12 @@ impl AggregateSink {
         finds: &[FindSpec],
         slot_count: usize,
         witness: crate::plan::fj::DistinctWitness,
-        hint: usize,
         dense_groups: &[u16],
     ) -> Self {
         Self::build(
             finds,
             slot_count,
             DedupRegime::Elided(witness),
-            hint,
             dense_groups,
         )
     }
@@ -129,7 +115,6 @@ impl AggregateSink {
         finds: &[FindSpec],
         slot_count: usize,
         regime: DedupRegime<'_>,
-        hint: usize,
         dense_groups: &[u16],
     ) -> Self {
         let finds = parse_finds(finds);
@@ -153,7 +138,7 @@ impl AggregateSink {
         let (dedup, union_words) = match regime {
             DedupRegime::Bindings => (
                 DedupState::Bindings {
-                    seen: SpillSet::with_capacity_hint(scratch_words, hint, false),
+                    seen: SpillSet::new(scratch_words, false),
                 },
                 0,
             ),
@@ -162,7 +147,7 @@ impl AggregateSink {
                 let words: usize = spans.iter().map(|(_, width)| width).sum();
                 (
                     DedupState::Union {
-                        seen: SpillSet::with_capacity_hint(words, hint, false),
+                        seen: SpillSet::new(words, false),
                         spans,
                     },
                     words,
@@ -173,7 +158,7 @@ impl AggregateSink {
                 let words: usize = spans.iter().map(|(_, width)| width).sum();
                 (
                     DedupState::DnfUnion {
-                        seen: SpillSet::with_capacity_hint(words, hint, false),
+                        seen: SpillSet::new(words, false),
                         spans,
                     },
                     words,
@@ -183,7 +168,7 @@ impl AggregateSink {
         };
 
         let groups = if dense_groups.is_empty() {
-            GroupTable::Hashed(WordMap::with_capacity_hint(key_words, hint.min(4096)))
+            GroupTable::Hashed(WordMap::new(key_words))
         } else {
             debug_assert_eq!(
                 dense_groups.len(),

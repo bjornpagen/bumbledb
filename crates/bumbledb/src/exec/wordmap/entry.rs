@@ -4,7 +4,7 @@ impl<V: Copy> WordMap<V> {
     #[must_use]
     pub(crate) fn contains_key(&self, key: &[u64]) -> bool {
         assert_eq!(key.len(), self.arity);
-        self.len != 0 && self.probe(key, hash_words(key)).0
+        self.len() != 0 && self.probe(key, hash_words(key)).0
     }
 
     /// Insert complete, nonempty-width rows in their original order.
@@ -52,6 +52,14 @@ impl<V: Copy> WordMap<V> {
     /// If `key.len() != arity`, capacity is exhausted, or `make` panics.
     #[inline(always)]
     pub fn get_or_insert_with(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
+        let (row, inserted) = self.entry(key, make);
+        (&mut self.values[row], inserted)
+    }
+
+    // Set consumers need an ordinal, not a discarded mutable value reference.
+    // Keep lookup, growth and publication shared with real-value consumers.
+    #[inline(always)]
+    pub(super) fn entry(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (usize, bool) {
         assert_eq!(key.len(), self.arity);
 
         match self.arity {
@@ -70,7 +78,7 @@ impl<V: Copy> WordMap<V> {
 
     #[cold]
     #[inline(never)]
-    fn entry_dyn_hashing(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (&mut V, bool) {
+    fn entry_dyn_hashing(&mut self, key: &[u64], make: impl FnOnce() -> V) -> (usize, bool) {
         self.entry_dyn(key, hash_words(key), make)
     }
 
@@ -79,90 +87,83 @@ impl<V: Copy> WordMap<V> {
         &mut self,
         key: &[u64],
         make: impl FnOnce() -> V,
-    ) -> (&mut V, bool) {
+    ) -> (usize, bool) {
         let hash = hash_core::<K>(key);
         self.entry_hashed_core::<K>(key, hash, make)
     }
 
     #[inline(always)]
-    #[expect(
-        unsafe_code,
-        reason = "only matched or fully published live values are returned"
-    )]
     fn entry_hashed_core<const K: usize>(
         &mut self,
         key: &[u64],
         hash: u64,
         make: impl FnOnce() -> V,
-    ) -> (&mut V, bool) {
+    ) -> (usize, bool) {
         debug_assert_eq!(key.len(), K);
-        if (self.len + 1) * LOAD_DEN > self.capacity() {
-            // Only new keys need capacity. Probe on this cold boundary
-            // before allocating replacement arrays; ordinary inserts still
-            // use the single probe below. Empty maps have no probe backing.
-            if self.len != 0 {
-                let (found, idx) = self.probe_core::<K>(key, hash);
+        if (self.len() + 1) * LOAD_DEN > self.capacity() {
+            // Duplicates at the boundary do not grow either index or payload.
+            if self.len() != 0 {
+                let (found, slot) = self.probe_core::<K>(key, hash);
                 if found {
-                    // SAFETY: the matching live slot has an initialized V.
-                    return (unsafe { self.values[idx].assume_init_mut() }, false);
+                    return (self.slots[slot] as usize, false);
                 }
             }
             self.grow();
         }
-        let (found, idx) = self.probe_core::<K>(key, hash);
-        if !found {
-            let value = make();
-            let dense_idx = u32::try_from(idx).expect("slot index fits u32");
-            self.keys[idx * K..idx * K + K].copy_from_slice(&key[..K]);
-            self.values[idx].write(value);
-            self.dense.push(dense_idx);
-            // Publish only after construction and dense growth succeed.
-            // Before this point partial slot writes remain empty or stale.
-            self.stale -= usize::from(self.ctrl[idx] != 0);
-            self.set_ctrl(idx, ctrl_tag(hash));
-            self.len += 1;
+        let (found, slot) = self.probe_core::<K>(key, hash);
+        if found {
+            (self.slots[slot] as usize, false)
+        } else {
+            (self.insert_vacant(&key[..K], slot, hash, make), true)
         }
-        // SAFETY: a matched or newly published live slot has an initialized
-        // value. Stale slots never match, and V: Copy has no drop state.
-        (unsafe { self.values[idx].assume_init_mut() }, !found)
     }
 
-    #[expect(
-        unsafe_code,
-        reason = "only matched or fully published live values are returned"
-    )]
     pub(super) fn entry_dyn(
         &mut self,
         key: &[u64],
         hash: u64,
         make: impl FnOnce() -> V,
-    ) -> (&mut V, bool) {
+    ) -> (usize, bool) {
         debug_assert_eq!(key.len(), self.arity);
-        if (self.len + 1) * LOAD_DEN > self.capacity() {
-            if self.len != 0 {
-                let (found, idx) = self.probe(key, hash);
+        if (self.len() + 1) * LOAD_DEN > self.capacity() {
+            if self.len() != 0 {
+                let (found, slot) = self.probe(key, hash);
                 if found {
-                    // SAFETY: the matching live slot has an initialized V.
-                    return (unsafe { self.values[idx].assume_init_mut() }, false);
+                    return (self.slots[slot] as usize, false);
                 }
             }
             self.grow();
         }
-        let (found, idx) = self.probe(key, hash);
-        if !found {
-            let value = make();
-            let dense_idx = u32::try_from(idx).expect("slot index fits u32");
-            self.keys[idx * self.arity..(idx + 1) * self.arity].copy_from_slice(key);
-            self.values[idx].write(value);
-            self.dense.push(dense_idx);
-            // Match the constant-arity publication boundary above.
-            self.stale -= usize::from(self.ctrl[idx] != 0);
-            self.set_ctrl(idx, ctrl_tag(hash));
-            self.len += 1;
+        let (found, slot) = self.probe(key, hash);
+        if found {
+            (self.slots[slot] as usize, false)
+        } else {
+            (self.insert_vacant(key, slot, hash, make), true)
         }
-        // SAFETY: a matched or newly published live slot has an initialized
-        // value. Stale slots never match, and V: Copy has no drop state.
-        (unsafe { self.values[idx].assume_init_mut() }, !found)
+    }
+
+    #[inline(always)]
+    fn insert_vacant(
+        &mut self,
+        key: &[u64],
+        slot: usize,
+        hash: u64,
+        make: impl FnOnce() -> V,
+    ) -> usize {
+        let row = self.len();
+        let ordinal = u32::try_from(row).expect("row ordinal fits u32");
+        let stale = self.stale - usize::from(self.ctrl[slot] != 0);
+        let value = make();
+        // Reserve values before appending Copy keys. A failed key reservation
+        // leaves its length unchanged; after it succeeds, the reserved value
+        // push cannot allocate or invoke user code. Publish the index last.
+        self.values.reserve(1);
+        self.keys.extend_from_slice(key);
+        self.values.push(value);
+        self.slots[slot] = ordinal;
+        self.stale = stale;
+        self.set_ctrl(slot, ctrl_tag(hash));
+        row
     }
 
     #[inline(always)]
@@ -170,6 +171,6 @@ impl<V: Copy> WordMap<V> {
     where
         V: Default,
     {
-        self.get_or_insert_with(key, V::default).1
+        self.entry(key, V::default).1
     }
 }

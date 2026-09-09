@@ -3,7 +3,8 @@ use super::{WINDOW, WordMap, ctrl_tag, eq_byte_mask, zero_byte_mask};
 impl<V: Copy> WordMap<V> {
     #[inline(always)]
     fn key_at_matches(&self, slot: usize, key: &[u64]) -> bool {
-        let stored = &self.keys[slot * self.arity..slot * self.arity + key.len()];
+        let row = self.slots[slot] as usize;
+        let stored = &self.keys[row * self.arity..row * self.arity + key.len()];
         let mut matches = true;
         for i in 0..key.len() {
             matches &= stored[i] == key[i];
@@ -13,7 +14,8 @@ impl<V: Copy> WordMap<V> {
 
     #[inline(always)]
     fn key_at_matches_core<const K: usize>(&self, slot: usize, key: &[u64]) -> bool {
-        let stored = &self.keys[slot * K..slot * K + K];
+        let row = self.slots[slot] as usize;
+        let stored = &self.keys[row * K..row * K + K];
         let mut matches = true;
         for i in 0..K {
             matches &= stored[i] == key[i];
@@ -32,7 +34,7 @@ impl<V: Copy> WordMap<V> {
 
     #[inline(always)]
     fn probe_with(&self, hash: u64, key_at: impl Fn(usize) -> bool) -> (bool, usize) {
-        debug_assert!(!self.values.is_empty());
+        debug_assert!(!self.slots.is_empty());
         let capacity = self.capacity();
         let mask = capacity - 1;
         let wanted = ctrl_tag(hash);

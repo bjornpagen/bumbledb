@@ -25,16 +25,16 @@ impl ProjectionSink {
     #[must_use]
     pub fn new(slots: Vec<usize>) -> Self {
         let slot_count = slots.iter().max().map_or(0, |slot| slot + 1);
-        Self::with_capacity_hint_sources(slots, slot_count, 0)
+        Self::from_sources(slots, slot_count)
     }
 
     #[must_use]
-    fn with_capacity_hint_sources(sources: Vec<usize>, slot_count: usize, hint: usize) -> Self {
+    fn from_sources(sources: Vec<usize>, slot_count: usize) -> Self {
         let arity = sources.len();
         Self {
             finds: Vec::new(),
             sources,
-            seen: SpillSet::with_capacity_hint(arity, hint, true),
+            seen: SpillSet::new(arity, true),
             scratch: vec![0; arity],
             batch_route: super::ProjectionRoute::new(arity, slot_count),
             scan_route: super::ProjectionRoute::new(arity, slot_count),
@@ -44,10 +44,10 @@ impl ProjectionSink {
     }
 
     #[must_use]
-    pub fn with_capacity_hint(finds: &[FindSpec], slot_count: usize, hint: usize) -> Self {
+    pub fn from_finds(finds: &[FindSpec], slot_count: usize) -> Self {
         let parsed = parse_finds(finds);
         let sources = sources_of(&parsed);
-        let mut sink = Self::with_capacity_hint_sources(sources, slot_count, hint);
+        let mut sink = Self::from_sources(sources, slot_count);
         sink.finds = parsed;
         sink
     }

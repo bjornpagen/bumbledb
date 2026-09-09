@@ -267,7 +267,7 @@ fn feed_ids(sink: &mut ProjectionSink, values: impl IntoIterator<Item = u64>) {
 
 fn spilled_sink(rows: u64) -> ProjectionSink {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
-    let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
+    let mut sink = ProjectionSink::from_finds(&finds, 1);
     sink.begin(Some(work()));
     feed_ids(&mut sink, 0..rows);
     sink.force_spill().unwrap();
@@ -304,7 +304,7 @@ fn d09_spilled_projection_seal_is_scratch_and_complete() {
 #[test]
 fn d09_small_projection_stays_resident() {
     let finds = [FindSpec::Var { slot: 0, width: 1 }];
-    let mut sink = ProjectionSink::with_capacity_hint(&finds, 1, 0);
+    let mut sink = ProjectionSink::from_finds(&finds, 1);
     feed_ids(&mut sink, 0..3);
     assert!(!sink.spilled());
     let mut derived = DerivedImages::default();

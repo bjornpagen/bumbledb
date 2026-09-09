@@ -184,7 +184,6 @@ fn prepare_witnessed<S>(
     }
     let params = param_specs(witness);
 
-    let output_hint = output_hint(&rules);
     if rules.len() > 1 && dnf_derived(&written) {
         seal_dnf_spans(&mut rules);
     }
@@ -195,7 +194,7 @@ fn prepare_witnessed<S>(
         Vec::new()
     };
     let mut sink = rules.first().map_or_else(
-        || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
+        || make_sink(&[], 0, SinkRegime::SingleRule(None), &[]),
         |first| {
             let regime = if rules.len() > 1 {
                 if dnf_derived(&written) {
@@ -206,13 +205,7 @@ fn prepare_witnessed<S>(
             } else {
                 SinkRegime::SingleRule(first.distinct_witness())
             };
-            make_sink(
-                first.finds(),
-                first.slot_count(),
-                regime,
-                output_hint,
-                &dense_groups,
-            )
+            make_sink(first.finds(), first.slot_count(), regime, &dense_groups)
         },
     );
     // The initial experiment licenses only a store-pinned singleton head,
@@ -385,12 +378,11 @@ fn prepare_interior(
         seal_dnf_spans(&mut rules);
     }
     let units = rules.len();
-    let hint = output_hint(&rules);
     // An interior is a full stage: projection, aggregate, or computed —
     // the same sink selection as main (chapter 12's uniform nonrecursive
     // composition; the projection-only wall is deleted).
     let sink = rules.first().map_or_else(
-        || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
+        || make_sink(&[], 0, SinkRegime::SingleRule(None), &[]),
         |first| {
             let regime = if rules.len() > 1 {
                 if dnf_derived(&written) {
@@ -401,7 +393,7 @@ fn prepare_interior(
             } else {
                 SinkRegime::SingleRule(first.distinct_witness())
             };
-            make_sink(first.finds(), first.slot_count(), regime, hint, &[])
+            make_sink(first.finds(), first.slot_count(), regime, &[])
         },
     );
     Ok(PreparedInterior {
@@ -462,27 +454,19 @@ fn prepare_reach(
         )?);
     }
     let units = base.len() + rec_rules.len();
-    let hint = output_hint(&base) + rec_rules.iter().map(free_join_hint).max().unwrap_or(0);
     let sink = base.first().map_or_else(
         || {
             rec_rules.first().map_or_else(
-                || crate::exec::sink::ProjectionSink::with_capacity_hint(&[], 0, 0),
+                || crate::exec::sink::ProjectionSink::from_finds(&[], 0),
                 |first| {
-                    crate::exec::sink::ProjectionSink::with_capacity_hint(
+                    crate::exec::sink::ProjectionSink::from_finds(
                         &first.finds,
                         first.plan.slot_count(),
-                        hint,
                     )
                 },
             )
         },
-        |first| {
-            crate::exec::sink::ProjectionSink::with_capacity_hint(
-                first.finds(),
-                first.slot_count(),
-                hint,
-            )
-        },
+        |first| crate::exec::sink::ProjectionSink::from_finds(first.finds(), first.slot_count()),
     );
     Ok(super::reach::ReachDriver {
         base,
@@ -515,29 +499,6 @@ fn ground_rules(
         .enumerate()
         .filter(|(idx, _)| !subsumed.contains(idx))
         .collect()
-}
-
-fn output_hint(rules: &[PreparedRule]) -> usize {
-    rules
-        .iter()
-        .map(|rule| match rule {
-            PreparedRule::FreeJoin(rule) => free_join_hint(rule),
-            PreparedRule::KeyProbe(_) => 1,
-        })
-        .max()
-        .unwrap_or(0)
-}
-
-fn free_join_hint(rule: &super::FreeJoinRule) -> usize {
-    usize::try_from(
-        rule.plan
-            .estimates()
-            .last()
-            .copied()
-            .unwrap_or(0)
-            .min(1 << 21),
-    )
-    .expect("clamped")
 }
 
 fn param_specs(witness: &crate::ir::validate::ValidatedQuery) -> Vec<super::ParamSpec> {
@@ -1031,7 +992,6 @@ fn make_sink(
     finds: &[FindSpec],
     slot_count: usize,
     regime: SinkRegime<'_>,
-    hint: usize,
     dense_groups: &[u16],
 ) -> EitherSink {
     if finds
@@ -1045,38 +1005,35 @@ fn make_sink(
         // stage error boundary). Dense-group radixes never cover the
         // appended slots, so the inner sink stays hashed.
         let (lowered, programs, total) = crate::api::prepared::computed::lower(finds, slot_count);
-        let inner = make_plain_sink(&lowered, total, regime, hint, &[]);
+        let inner = make_plain_sink(&lowered, total, regime, &[]);
         return EitherSink::Computed(Box::new(crate::api::prepared::computed::ComputedSink::new(
             inner, programs, slot_count, total,
         )));
     }
-    make_plain_sink(finds, slot_count, regime, hint, dense_groups)
+    make_plain_sink(finds, slot_count, regime, dense_groups)
 }
 
 fn make_plain_sink(
     finds: &[FindSpec],
     slot_count: usize,
     regime: SinkRegime<'_>,
-    hint: usize,
     dense_groups: &[u16],
 ) -> EitherSink {
     let all_plain = finds
         .iter()
         .all(|spec| matches!(spec, FindSpec::Var { .. }));
     if all_plain {
-        EitherSink::Projection(ProjectionSink::with_capacity_hint(finds, slot_count, hint))
+        EitherSink::Projection(ProjectionSink::from_finds(finds, slot_count))
     } else {
         let sink = match regime {
             SinkRegime::SingleRule(Some(witness)) => {
-                AggregateSink::without_seen_set(finds, slot_count, witness, hint, dense_groups)
+                AggregateSink::without_seen_set(finds, slot_count, witness, dense_groups)
             }
             SinkRegime::SingleRule(None) => {
-                AggregateSink::with_capacity_hint(finds, slot_count, hint, dense_groups)
+                AggregateSink::for_bindings(finds, slot_count, dense_groups)
             }
-            SinkRegime::Union => AggregateSink::for_union(finds, slot_count, hint),
-            SinkRegime::DnfUnion(spans) => {
-                AggregateSink::for_dnf_union(finds, slot_count, spans, hint)
-            }
+            SinkRegime::Union => AggregateSink::for_union(finds, slot_count),
+            SinkRegime::DnfUnion(spans) => AggregateSink::for_dnf_union(finds, slot_count, spans),
         };
         EitherSink::Aggregate(Box::new(sink))
     }
