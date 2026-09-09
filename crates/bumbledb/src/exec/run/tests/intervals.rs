@@ -4,6 +4,8 @@ use crate::ir::normalize::{IntervalWord, OccBind, SlotWidth};
 use bumbledb_theory::allen::AllenMask;
 use bumbledb_theory::schema::ValueType;
 
+mod constraints;
+
 fn tagged_interval_schema(relations: usize) -> Schema {
     SchemaDescriptor {
         relations: (0..relations)
