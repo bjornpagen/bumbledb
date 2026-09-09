@@ -248,7 +248,7 @@ impl Colt {
         position: u32,
     ) -> Result<(), WorkError> {
         if (usize::try_from(m.len).expect("64-bit usize") + 1) * 5 > m.nbuckets * 16 {
-            self.grow_map(m)?;
+            self.grow_construction_map(m)?;
         }
         let (found, idx) = self.probe_hashed(m, key, hash);
         if found {
