@@ -1,9 +1,11 @@
 # Allocation research checkpoint — September 9, 2026
 
 Research stopped at the user's request. These are preserved experiments,
-not a combined implementation or a performance-accepted release. Main and
-version 1.1.0 remain unchanged. Do not infer authorization to resume work
-from the historical plans and next steps in `record/`.
+not a combined implementation or a performance-accepted release. The user
+subsequently requested merging the current P2 branch and this archive into
+main; the other experimental alternatives remain on their separate branches.
+Version 1.1.0 is unchanged and no release is being made. Do not infer
+authorization to resume work from historical plans and next steps in `record/`.
 
 ## Source snapshots
 
