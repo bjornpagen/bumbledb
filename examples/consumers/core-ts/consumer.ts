@@ -12,6 +12,7 @@ import {
 	ChangeSet,
 	contained,
 	Db,
+	describeQuery,
 	f64,
 	i64,
 	Uuid,
@@ -22,12 +23,12 @@ import {
 	type NativeRuntimeOptions,
 	on,
 	query,
+	queryFromDescription,
 	type QueryReader,
 	ref,
 	relation,
 	Scalar,
 	schema,
-	span,
 	str,
 	u64,
 	v,
@@ -46,9 +47,11 @@ export const Attempt = relation("Attempt", {
 	active: interval(i64)
 })
 
+export const StudentById = key(Student, ["id"])
+export const AttemptById = key(Attempt, ["id"])
 export const Learning = schema("Learning", { Student, Attempt }, [
-	key(Student, ["id"]),
-	key(Attempt, ["id"]),
+	StudentById,
+	AttemptById,
 	contained(on(Attempt, "student"), on(Student, "id")),
 	capacity(on(Student, "id"), {
 		from: on(Attempt, "student"),
@@ -68,6 +71,9 @@ export const attemptsFor = query(Learning).rule((r) => {
 		.where(r.eq(student, r.param("student")))
 		.find({ id, student, score, units, active })
 })
+
+/** Generated logical descriptions use the same checked schema and typed result fields. */
+export const describedAttempts = queryFromDescription(Learning, describeQuery(attemptsFor), Attempt.fields)
 
 export const attemptStats = query(Learning)
 	.rule((r) => {
@@ -90,7 +96,7 @@ export const newAttempt = Effect.fn("newAttempt")(function* (
 	attemptId: Uuid
 ) {
 	const draft = yield* ChangeSet.builder(Learning)
-	const active = yield* Effect.fromResult(span(0n, 60n))
+	const active = { start: 0n, end: 60n }
 	yield* draft.insert(Student, [{ id: studentId, name: "Ada", budget: 10n }])
 	yield* draft.insert(Attempt, [
 		{ id: attemptId, student: studentId, score: 0.9, units: 1n, active }
@@ -147,7 +153,7 @@ export const correctScore = (localPath: string, attemptId: Uuid) =>
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
 					const snapshot = yield* db.snapshot()
-					const previous = yield* snapshot.get(Attempt, { id: attemptId })
+					const previous = yield* snapshot.get(AttemptById, { id: attemptId })
 					if (Option.isNone(previous)) {
 						return yield* Effect.fail({ missing: attemptId })
 					}

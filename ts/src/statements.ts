@@ -2,69 +2,44 @@ import {
 	type BoundsOnTarget,
 	type CapacityWeight,
 	type CapacityWindow,
-	isCapacityWeight,
-	isCapacityWindow,
+	capacityWeight,
+	capacityWindow,
 	type UnitDimensionBan,
 	unitWeight,
 	type WeightOnSource
 } from "#capacity.ts"
-import { isClosedMember, sealedFieldOf } from "#closed.ts"
+import { isClosedMember, memberDescriptor, sealedFieldOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
-import { type AnyFace, type FaceData, renderFace, type SameArity, type SameShapes } from "#face.ts"
-import { type AnyClosedRoster, rosterOf, rostersAgree } from "#fields.ts"
+import { type AnyFace, faceDescriptor, renderFace, type SameArity, type SameShapes } from "#face.ts"
+import { type AnyClosedRoster, assertDeclarationRecord, rosterOf, rostersAgree, signaturesAgree } from "#fields.ts"
+import { descriptorCache } from "#immutable.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import { type CapacityWindowSpec, renderCapacityWindow, renderWeight, type WeightSpec } from "#spec.ts"
+import { arrayValue, recordValue } from "#values.ts"
 
-interface KeyData<R extends AnyRelation, Projection extends readonly string[]> {
+interface KeyStatement<R extends AnyRelation = AnyRelation, Projection extends readonly string[] = readonly string[]> {
 	readonly kind: "key"
 	readonly owner: R
 	readonly projection: Projection
 }
-
-interface ContainmentData<Src extends FaceData = FaceData, Tgt extends FaceData = FaceData> {
+interface ContainmentStatement<Src extends AnyFace = AnyFace, Tgt extends AnyFace = AnyFace> {
 	readonly kind: "containment"
 	readonly source: Src
 	readonly target: Tgt
 }
-
-interface MirrorsData<Src extends FaceData = FaceData, Tgt extends FaceData = FaceData> {
+interface MirrorsStatement<Src extends AnyFace = AnyFace, Tgt extends AnyFace = AnyFace> {
 	readonly kind: "mirrors"
 	readonly source: Src
 	readonly target: Tgt
 }
-
-interface CapacityData<Tgt extends FaceData = FaceData, Src extends FaceData = FaceData> {
+interface CapacityStatement<Tgt extends AnyFace = AnyFace, Src extends AnyFace = AnyFace> {
 	readonly kind: "capacity"
 	readonly target: Tgt
-	readonly weight: WeightSpec
-	readonly window: CapacityWindowSpec
+	readonly weight: CapacityWeight
+	readonly window: CapacityWindow
 	readonly source: Src
 }
-
-type StatementData = KeyData<AnyRelation, readonly string[]> | ContainmentData | MirrorsData | CapacityData
-
-const admitted: unique symbol = Symbol("bumbledb.statement.admitted")
-
-interface Statement {
-	readonly data: StatementData
-	readonly [admitted]: true
-}
-
-function isStatement(value: unknown): value is Statement {
-	return typeof value === "object" && value !== null && admitted in value
-}
-
-interface ContainedStatement<Src extends FaceData, Tgt extends FaceData> extends Statement {
-	readonly data: ContainmentData<Src, Tgt> | MirrorsData<Src, Tgt>
-}
-
-interface CapacityStatement<Tgt extends FaceData, Src extends FaceData> extends Statement {
-	readonly data: CapacityData<Tgt, Src>
-}
-
-interface KeyStatement<R extends AnyRelation, Projection extends readonly string[]> extends Statement {
-	readonly data: KeyData<R, Projection>
-}
+type Statement = KeyStatement | ContainmentStatement | MirrorsStatement | CapacityStatement
 
 function renderRosterSide(roster: AnyClosedRoster | undefined): string {
 	return roster === undefined ? "a bare column" : `a ${roster.name} reference`
@@ -79,7 +54,7 @@ function renderRosterSide(roster: AnyClosedRoster | undefined): string {
  * `Db.create`'s colder engine refusal. The error carries the two faces'
  * own facts: names, arities, and the rendered statement.
  */
-function assertArityAgreement(source: FaceData, target: FaceData, statement: Statement): void {
+function assertArityAgreement(source: AnyFace, target: AnyFace, statement: Statement): void {
 	if (source.projection.length !== target.projection.length) {
 		throw new AuthoringError({
 			message: `${source.owner.name}(${source.projection.join(", ")}) and ${target.owner.name}(${target.projection.join(", ")}) project ${source.projection.length} vs ${target.projection.length} fields — positional pairing requires both faces to project equally many — ${renderStatement(statement)}`
@@ -87,7 +62,7 @@ function assertArityAgreement(source: FaceData, target: FaceData, statement: Sta
 	}
 }
 
-function assertRosterAgreement(source: FaceData, target: FaceData, statement: Statement): void {
+function assertRosterAgreement(source: AnyFace, target: AnyFace, statement: Statement): void {
 	source.projection.forEach(function agreeAt(fieldName, position) {
 		const targetField = target.projection[position]
 		if (targetField === undefined) {
@@ -103,79 +78,7 @@ function assertRosterAgreement(source: FaceData, target: FaceData, statement: St
 	})
 }
 
-/**
- * `R(X) -> R` — the FD key form, composite keys as tuples. No selection
- * parameter exists (the FD-with-selection shape is unrepresentable, as in
- * the grammar), and only ordinary relations are accepted: a closed
- * relation's key `R(id) -> R` is materialized by the engine, so an
- * explicit one would only ever be a duplicate. Every projected name is
- * checked against `R`'s field block in the type, and the tuple is carried
- * in the returned value's type ({@link KeyStatement}) — keyed point reads
- * through THIS statement are typed field-for-field, descriptors resolvable
- * through the owner's schema type. A DUPLICATE field in the projection is
- * refused here, at the mint (the engine's `FieldSet` refuses the same
- * duplicate at `Db.create`; canonical utterance says the twice-spelled
- * field is the once-spelled projection respelled) — without this wall a
- * `new Set`-collapsed duplicate could set-match a shorter target
- * projection the engine refuses.
- */
-function key<
-	R extends AnyRelation,
-	const Projection extends readonly [keyof RelationFields<R> & string, ...(keyof RelationFields<R> & string)[]]
->(relation: R, fields: Projection): KeyStatement<R, Projection> {
-	if (isClosedMember(relation)) {
-		throw new AuthoringError({
-			message: `key(${relation.name}, ...): closedness already materializes ${relation.name}(id) -> ${relation.name} — an explicit key on a closed relation is rejected as a duplicate`
-		})
-	}
-	const seen = new Set<string>()
-	for (const fieldName of fields) {
-		if (seen.has(fieldName)) {
-			throw new AuthoringError({
-				message: `key(${relation.name}, ...): the projection spells ${fieldName} twice — write it once (the canonical-utterance law: one meaning, one spelling)`
-			})
-		}
-		seen.add(fieldName)
-	}
-	const data: KeyData<R, Projection> = Object.freeze({
-		kind: "key",
-		owner: relation,
-		projection: Object.freeze(fields)
-	})
-	return Object.freeze({ data, [admitted]: true as const })
-}
-
-function contained<A extends AnyFace, B extends AnyFace>(
-	source: A,
-	target: B & SameArity<A, B> & SameShapes<A, B>
-): ContainedStatement<A["data"], B["data"]> {
-	const data: ContainmentData<A["data"], B["data"]> = Object.freeze({
-		kind: "containment",
-		source: source.data,
-		target: target.data
-	})
-	const statement = Object.freeze({ data, [admitted]: true as const })
-	assertArityAgreement(data.source, data.target, statement)
-	assertRosterAgreement(data.source, data.target, statement)
-	return statement
-}
-
-function mirrors<A extends AnyFace, B extends AnyFace>(
-	source: A,
-	target: B & SameArity<A, B> & SameShapes<A, B>
-): ContainedStatement<A["data"], B["data"]> {
-	const data: MirrorsData<A["data"], B["data"]> = Object.freeze({
-		kind: "mirrors",
-		source: source.data,
-		target: target.data
-	})
-	const statement = Object.freeze({ data, [admitted]: true as const })
-	assertArityAgreement(data.source, data.target, statement)
-	assertRosterAgreement(data.source, data.target, statement)
-	return statement
-}
-
-function assertWeightOnSource(weight: WeightSpec, source: FaceData, statement: Statement): void {
+function assertWeightOnSource(weight: WeightSpec, source: AnyFace, statement: Statement): void {
 	if (weight.kind === "unit") {
 		return
 	}
@@ -197,7 +100,7 @@ function assertWeightOnSource(weight: WeightSpec, source: FaceData, statement: S
 	}
 }
 
-function assertBoundsOnTarget(window: CapacityWindowSpec, target: FaceData, statement: Statement): void {
+function assertBoundsOnTarget(window: CapacityWindowSpec, target: AnyFace, statement: Statement): void {
 	const bounds = window.kind === "range" ? [window.lo, window.hi] : [window.kind === "exact" ? window.n : window.lo]
 	for (const bound of bounds) {
 		if (bound.kind === "lit") {
@@ -222,19 +125,112 @@ function assertBoundsOnTarget(window: CapacityWindowSpec, target: FaceData, stat
 	}
 }
 
-/**
- * The chapter 34 NAMED-OPTIONS capacity call — it replaces the old four
- * positional arguments: `capacity(target, { from, weight?, within })`.
- * Unit weight is the default; `weigh(...)`/`within(...)` remain the only
- * mints for the weight/window values.
- */
+function assertShapes(source: AnyFace, target: AnyFace): void {
+	for (let i = 0; i < source.projection.length; i++) {
+		const a = sealedFieldOf(source.owner, source.projection[i] ?? "")
+		const b = sealedFieldOf(target.owner, target.projection[i] ?? "")
+		if (a === undefined || b === undefined) throw new AuthoringError({ message: "statement: unknown projected field" })
+		const left = a.kind === "interval" ? { ...a, width: undefined } : a
+		const right = b.kind === "interval" ? { ...b, width: undefined } : b
+		if (!signaturesAgree(left, right))
+			throw new AuthoringError({ message: "statement: projected field shapes do not agree" })
+	}
+}
+
+/** Every authoring path checks and owns the same plain descriptor. */
+function statementDescriptor<S extends Statement>(input: S): S
+function statementDescriptor(input: unknown): Statement
+function statementDescriptor(input: unknown): Statement {
+	return checkedStatement(input)
+}
+
+const checkedStatement = descriptorCache((raw): Statement => {
+	const input = recordValue("statement", raw, typeof raw === "object" && raw !== null ? Object.keys(raw) : [])
+	assertDeclarationRecord("statement", input)
+	if (input?.kind === "key") {
+		recordValue("key", input, ["kind", "owner", "projection"])
+		const owner = memberDescriptor(input.owner as unknown)
+		if (isClosedMember(owner))
+			throw new AuthoringError({
+				message: `key(${owner.name}, ...): closedness already materializes its key; explicit keys on closed relations are duplicates`
+			})
+		const projection = arrayValue("key projection", input.projection, (_, value) => {
+			if (typeof value !== "string") throw new AuthoringError({ message: "key: expected a field name" })
+			return value
+		})
+		if (projection.length === 0) throw new AuthoringError({ message: "key: expected a nonempty field projection" })
+		const seen = new Set<string>()
+		for (const field of projection) {
+			if (typeof field !== "string" || sealedFieldOf(owner, field) === undefined)
+				throw new AuthoringError({ message: `key(${owner.name}, ...): unknown field ${String(field)}` })
+			if (seen.has(field))
+				throw new AuthoringError({ message: `key(${owner.name}, ...): the projection spells ${field} twice` })
+			seen.add(field)
+		}
+		return Object.freeze({ kind: "key", owner, projection })
+	}
+	if (input?.kind !== "containment" && input?.kind !== "mirrors" && input?.kind !== "capacity") {
+		throw new AuthoringError({ message: "statement: unknown kind" })
+	}
+	recordValue(
+		"statement",
+		input,
+		input.kind === "capacity" ? ["kind", "target", "weight", "window", "source"] : ["kind", "source", "target"]
+	)
+	const source = faceDescriptor(input.source)
+	const target = faceDescriptor(input.target)
+	const statement =
+		input.kind === "capacity"
+			? Object.freeze({
+					kind: input.kind,
+					source,
+					target,
+					weight: capacityWeight(input.weight),
+					window: capacityWindow(input.window)
+				})
+			: Object.freeze({ kind: input.kind, source, target })
+	assertArityAgreement(source, target, statement)
+	assertRosterAgreement(source, target, statement)
+	assertShapes(source, target)
+	if (statement.kind === "capacity") {
+		const { weight, window } = statement
+		if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
+			throw new AuthoringError({ message: "a unit (count) window against a duration bound mixes dimensions (C18)" })
+		}
+		assertWeightOnSource(weight, source, statement)
+		assertBoundsOnTarget(window, target, statement)
+	}
+	return statement
+})
+
+function key<
+	R extends AnyRelation,
+	const Projection extends readonly [keyof RelationFields<R> & string, ...(keyof RelationFields<R> & string)[]]
+>(relation: R, fields: Projection): KeyStatement<R, Projection> {
+	return statementDescriptor({ kind: "key", owner: relation, projection: fields })
+}
+
+function contained<A extends AnyFace, B extends AnyFace>(
+	source: A,
+	target: B & SameArity<A, B> & SameShapes<A, B>
+): ContainmentStatement<A, B> {
+	return statementDescriptor({ kind: "containment", source, target })
+}
+
+function mirrors<A extends AnyFace, B extends AnyFace>(
+	source: A,
+	target: B & SameArity<A, B> & SameShapes<A, B>
+): MirrorsStatement<A, B> {
+	return statementDescriptor({ kind: "mirrors", source, target })
+}
+
 function capacity<B extends AnyFace, W extends CapacityWindow, A extends AnyFace>(
 	target: B,
 	options: {
 		readonly from: A & SameArity<B, A> & SameShapes<B, A>
 		readonly within: W & UnitDimensionBan<W> & BoundsOnTarget<W, B>
 	}
-): CapacityStatement<B["data"], A["data"]>
+): CapacityStatement<B, A>
 function capacity<B extends AnyFace, M extends CapacityWeight, W extends CapacityWindow, A extends AnyFace>(
 	target: B,
 	options: {
@@ -242,84 +238,37 @@ function capacity<B extends AnyFace, M extends CapacityWeight, W extends Capacit
 		readonly weight: M & WeightOnSource<M, A>
 		readonly within: W & BoundsOnTarget<W, B>
 	}
-): CapacityStatement<B["data"], A["data"]>
+): CapacityStatement<B, A>
 function capacity(
 	target: AnyFace,
-	options: {
-		readonly from: AnyFace
-		readonly weight?: unknown
-		readonly within: unknown
-	}
-): CapacityStatement<FaceData, FaceData> {
-	if (typeof options !== "object" || options === null || !("from" in options) || !("within" in options)) {
-		throw new AuthoringError({
-			message:
-				"capacity takes named options — capacity(target, { from, weight?, within }) (chapter 34's one spelling; the positional arguments are deleted)"
-		})
-	}
-	const windowValue = options.within
-	const source = options.from
-	if (!isCapacityWindow(windowValue)) {
-		throw new AuthoringError({
-			message:
-				"a capacity window is minted only by within() — a structural literal skips the ban table (the canonical-utterance law)"
-		})
-	}
-	let weight: WeightSpec = unitWeight
-	if (options.weight !== undefined) {
-		if (!isCapacityWeight(options.weight)) {
-			throw new AuthoringError({
-				message: "a capacity weight is minted only by weigh() — a structural literal skips the row-local weight wall"
-			})
-		}
-		weight = options.weight.weight
-	}
-	const window = windowValue.window
-	// The unit-floor and vacuous-window ban tables are deleted:
-	// `{1..*}`, `{N..*}` and `{0..*}` are accepted canonical laws now.
-	// CapacityDimensionMixing remains — genuinely different semantics.
-	if (weight.kind === "unit" && window.kind === "range" && window.hi.kind === "durationField") {
-		throw new AuthoringError({
-			message: `a unit (count) window against the duration() bound on ${window.hi.field} mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal`
-		})
-	}
-	const data: CapacityData = Object.freeze({
+	options: { readonly from: AnyFace; readonly weight?: unknown; readonly within: unknown }
+): CapacityStatement {
+	recordValue(
+		"capacity options",
+		options,
+		Object.hasOwn(options, "weight") ? ["from", "weight", "within"] : ["from", "within"]
+	)
+	return statementDescriptor({
 		kind: "capacity",
-		target: target.data,
-		weight,
-		window,
-		source: source.data
+		target,
+		source: options.from,
+		weight: options.weight === undefined ? unitWeight : capacityWeight(options.weight),
+		window: capacityWindow(options.within)
 	})
-	const statement = Object.freeze({ data, [admitted]: true as const })
-	assertArityAgreement(data.source, data.target, statement)
-	assertRosterAgreement(data.source, data.target, statement)
-	assertWeightOnSource(weight, data.source, statement)
-	assertBoundsOnTarget(window, data.target, statement)
-	return statement
 }
 
 function renderStatement(statement: Statement): string {
-	const data = statement.data
-	switch (data.kind) {
+	switch (statement.kind) {
 		case "key":
-			return `${data.owner.name}(${data.projection.join(", ")}) -> ${data.owner.name}`
+			return `${statement.owner.name}(${statement.projection.join(", ")}) -> ${statement.owner.name}`
 		case "containment":
-			return `${renderFace(data.source)} <= ${renderFace(data.target)}`
+			return `${renderFace(statement.source)} <= ${renderFace(statement.target)}`
 		case "mirrors":
-			return `${renderFace(data.source)} == ${renderFace(data.target)}`
+			return `${renderFace(statement.source)} == ${renderFace(statement.target)}`
 		case "capacity":
-			return `${renderFace(data.target)} <=${renderWeight(data.weight)}${renderCapacityWindow(data.window)} ${renderFace(data.source)}`
+			return `${renderFace(statement.target)} <=${renderWeight(statement.weight)}${renderCapacityWindow(statement.window)} ${renderFace(statement.source)}`
 	}
 }
 
-export type {
-	CapacityData,
-	CapacityStatement,
-	ContainedStatement,
-	ContainmentData,
-	KeyData,
-	KeyStatement,
-	Statement,
-	StatementData
-}
-export { capacity, contained, isStatement, key, mirrors, renderStatement }
+export type { CapacityStatement, ContainmentStatement, KeyStatement, MirrorsStatement, Statement }
+export { capacity, contained, key, mirrors, renderStatement, statementDescriptor }

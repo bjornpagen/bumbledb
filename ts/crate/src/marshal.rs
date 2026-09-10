@@ -17,7 +17,7 @@ use bumbledb::{
     ScalarExpr, SchemaDescriptor, SchemaSpec, StatementId, StatementKind, Term, Uuid, Value, VarId,
 };
 use napi::bindgen_prelude::{
-    Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, i64n,
+    Array, BigInt, Env, FromNapiValue, Object, ToNapiValue, Uint8Array, Utf16String, i64n,
 };
 use napi::{Unknown, ValueType as JsType, sys};
 
@@ -103,6 +103,24 @@ pub(crate) fn req_at<T: FromNapiValue>(
             "bumbledb marshal: missing element {index} in {ctx}"
         ))
     })
+}
+
+// N-API's UTF-8 conversion replaces unpaired JS surrogates. Read code units
+// instead so malformed input is refused, never changed into a different fact.
+fn string_in(value: &Utf16String, ctx: impl std::fmt::Display) -> napi::Result<String> {
+    String::from_utf16(value).map_err(|_| {
+        err(format!(
+            "bumbledb marshal: {ctx}: expected well-formed Unicode text"
+        ))
+    })
+}
+
+fn req_text(obj: &Object, key: &str, ctx: impl std::fmt::Display + Copy) -> napi::Result<String> {
+    string_in(&req::<Utf16String>(obj, key, ctx)?, ctx)
+}
+
+fn text_at(arr: &Array, index: u32, ctx: impl std::fmt::Display + Copy) -> napi::Result<String> {
+    string_in(&req_at::<Utf16String>(arr, index, ctx)?, ctx)
 }
 
 pub(crate) fn u64_in(value: &BigInt, ctx: impl std::fmt::Display) -> napi::Result<u64> {
@@ -291,14 +309,14 @@ pub(crate) fn schema_value_in(
             if got != JsType::String {
                 return Err(mismatch("string"));
             }
-            let text = unsafe { value.cast::<String>()? };
+            let text = string_in(&unsafe { value.cast::<Utf16String>()? }, ctx)?;
             Ok(Value::String(text.into()))
         }
         ValueType::Uuid => {
             if got != JsType::String {
                 return Err(mismatch("string (canonical UUID text)"));
             }
-            let text = unsafe { value.cast::<String>()? };
+            let text = string_in(&unsafe { value.cast::<Utf16String>()? }, ctx)?;
             Ok(Value::Uuid(uuid_in(&text, ctx)?))
         }
         ValueType::FixedBytes { len } => {
@@ -465,7 +483,7 @@ pub(crate) fn key_row(
 }
 
 pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
-    let kind: String = req(obj, "kind", "value")?;
+    let kind: String = req_text(obj, "kind", "value")?;
     match kind.as_str() {
         tags::value::BOOL => Ok(Value::Bool(req::<bool>(obj, "value", "bool value")?)),
         tags::value::U64 => Ok(Value::U64(u64_in(
@@ -482,10 +500,10 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
             "f64 value",
         )?))),
         tags::value::STRING => Ok(Value::String(
-            req::<String>(obj, "value", "string value")?.into(),
+            req_text(obj, "value", "string value")?.into(),
         )),
         tags::value::UUID => Ok(Value::Uuid(uuid_in(
-            &req::<String>(obj, "value", "uuid value")?,
+            &req_text(obj, "value", "uuid value")?,
             "uuid value",
         )?)),
         tags::value::FIXED_BYTES => Ok(Value::FixedBytes(
@@ -511,7 +529,7 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
     let mut params = Vec::with_capacity(arr.len() as usize);
     for index in 0..arr.len() {
         let obj = req_at::<Object>(arr, index, "params")?;
-        let kind: String = req(&obj, "kind", "param")?;
+        let kind: String = req_text(&obj, "kind", "param")?;
         if kind == tags::param::SET {
             let values: Array = req(&obj, "values", "set param")?;
             let mut set = Vec::with_capacity(values.len() as usize);
@@ -528,7 +546,7 @@ pub(crate) fn params_in(arr: &Array) -> napi::Result<Vec<OwnedParam>> {
 }
 
 pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
-    let kind: String = req(obj, "kind", "value type")?;
+    let kind: String = req_text(obj, "kind", "value type")?;
     match kind.as_str() {
         tags::value_type::BOOL => Ok(ValueType::Bool),
         tags::value_type::U64 => Ok(ValueType::U64),
@@ -543,7 +561,7 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
             Ok(ValueType::FixedBytes { len })
         }
         tags::value_type::INTERVAL => {
-            let element: String = req(obj, "element", "interval type")?;
+            let element: String = req_text(obj, "element", "interval type")?;
             let element = tags::interval_element::parse(&element).ok_or_else(|| {
                 err(format!(
                     "bumbledb marshal: unknown interval element `{element}`"
@@ -581,10 +599,10 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
 }
 
 fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
-    let kind: String = req(obj, "kind", "literal")?;
+    let kind: String = req_text(obj, "kind", "literal")?;
     match kind.as_str() {
         tags::literal::HANDLE => Ok(LiteralSpec::Handle(
-            req::<String>(obj, "handle", "handle literal")?.into(),
+            req_text(obj, "handle", "handle literal")?.into(),
         )),
         tags::literal::VALUE => {
             let value: Object = req(obj, "value", "value literal")?;
@@ -597,7 +615,7 @@ fn literal_in(obj: &Object) -> napi::Result<LiteralSpec> {
 }
 
 fn literal_set_in(obj: &Object) -> napi::Result<LiteralSetSpec> {
-    let kind: String = req(obj, "kind", "literal set")?;
+    let kind: String = req_text(obj, "kind", "literal set")?;
     match kind.as_str() {
         tags::literal_set::ONE => {
             let literal: Object = req(obj, "literal", "one-literal binding")?;
@@ -622,35 +640,35 @@ fn side_in(obj: &Object) -> napi::Result<SideSpec> {
     let projection: Array = req(obj, "projection", "side")?;
     let mut fields = Vec::with_capacity(projection.len() as usize);
     for index in 0..projection.len() {
-        fields.push(req_at::<String>(&projection, index, "side projection")?.into());
+        fields.push(text_at(&projection, index, "side projection")?.into());
     }
     let selection: Array = req(obj, "selection", "side")?;
     let mut bindings = Vec::with_capacity(selection.len() as usize);
     for index in 0..selection.len() {
         let pair = req_at::<Array>(&selection, index, "side selection")?;
-        let field: String = req_at(&pair, 0, "selection binding")?;
+        let field: String = text_at(&pair, 0, "selection binding")?;
         let set: Object = req_at(&pair, 1, "selection binding")?;
         bindings.push((field.into(), literal_set_in(&set)?));
     }
     Ok(SideSpec {
-        relation: req::<String>(obj, "relation", "side")?.into(),
+        relation: req_text(obj, "relation", "side")?.into(),
         projection: fields,
         selection: bindings,
     })
 }
 
 fn capacity_bound_in(obj: &Object) -> napi::Result<BoundSpec> {
-    let kind: String = req(obj, "kind", "capacity bound")?;
+    let kind: String = req_text(obj, "kind", "capacity bound")?;
     match kind.as_str() {
         tags::capacity_bound::LIT => Ok(BoundSpec::Lit(u64_in(
             &req::<BigInt>(obj, "value", "lit bound")?,
             "capacity bound",
         )?)),
         tags::capacity_bound::FIELD => Ok(BoundSpec::Field(
-            req::<String>(obj, "field", "field bound")?.into(),
+            req_text(obj, "field", "field bound")?.into(),
         )),
         tags::capacity_bound::DURATION_FIELD => Ok(BoundSpec::Duration(
-            req::<String>(obj, "field", "durationField bound")?.into(),
+            req_text(obj, "field", "durationField bound")?.into(),
         )),
         other => Err(err(format!(
             "bumbledb marshal: unknown capacity bound kind `{other}`"
@@ -659,7 +677,7 @@ fn capacity_bound_in(obj: &Object) -> napi::Result<BoundSpec> {
 }
 
 fn capacity_window_in(obj: &Object) -> napi::Result<CapacityWindowSpec> {
-    let kind: String = req(obj, "kind", "capacity window")?;
+    let kind: String = req_text(obj, "kind", "capacity window")?;
     match kind.as_str() {
         tags::capacity_window::EXACT => {
             Ok(CapacityWindowSpec::Exact(capacity_bound_in(
@@ -682,14 +700,14 @@ fn capacity_window_in(obj: &Object) -> napi::Result<CapacityWindowSpec> {
 }
 
 fn weight_in(obj: &Object) -> napi::Result<WeightSpec> {
-    let kind: String = req(obj, "kind", "weight")?;
+    let kind: String = req_text(obj, "kind", "weight")?;
     match kind.as_str() {
         tags::weight::UNIT => Ok(WeightSpec::Unit),
         tags::weight::FIELD => Ok(WeightSpec::Field(
-            req::<String>(obj, "field", "field weight")?.into(),
+            req_text(obj, "field", "field weight")?.into(),
         )),
         tags::weight::DURATION_FIELD => Ok(WeightSpec::Duration(
-            req::<String>(obj, "field", "durationField weight")?.into(),
+            req_text(obj, "field", "durationField weight")?.into(),
         )),
         other => Err(err(format!(
             "bumbledb marshal: unknown weight kind `{other}`"
@@ -698,16 +716,16 @@ fn weight_in(obj: &Object) -> napi::Result<WeightSpec> {
 }
 
 fn statement_in(obj: &Object) -> napi::Result<StatementSpec> {
-    let kind: String = req(obj, "kind", "statement")?;
+    let kind: String = req_text(obj, "kind", "statement")?;
     match kind.as_str() {
         tags::statement::FD => {
             let projection: Array = req(obj, "projection", "fd statement")?;
             let mut fields = Vec::with_capacity(projection.len() as usize);
             for index in 0..projection.len() {
-                fields.push(req_at::<String>(&projection, index, "fd projection")?.into());
+                fields.push(text_at(&projection, index, "fd projection")?.into());
             }
             Ok(StatementSpec::Fd {
-                relation: req::<String>(obj, "relation", "fd statement")?.into(),
+                relation: req_text(obj, "relation", "fd statement")?.into(),
                 projection: fields,
             })
         }
@@ -739,9 +757,12 @@ pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
             let field = req_at::<Object>(&fields, field_index, "relation fields")?;
             let value_type: Object = req(&field, "valueType", "field spec")?;
             field_specs.push(FieldSpec {
-                name: req::<String>(&field, "name", "field spec")?.into(),
+                name: req_text(&field, "name", "field spec")?.into(),
                 value_type: value_type_in(&value_type)?,
-                newtype: field.get::<String>("newtype")?.map(Into::into),
+                newtype: field
+                    .get::<Utf16String>("newtype")?
+                    .map(|value| string_in(&value, "field newtype").map(Into::into))
+                    .transpose()?,
             });
         }
         // Closedness as one sum, mirroring the fused `RelationSpec`
@@ -763,18 +784,18 @@ pub(crate) fn schema_spec(obj: &Object) -> napi::Result<SchemaSpec> {
                         literals.push(literal_in(&literal)?);
                     }
                     row_specs.push(RowSpec {
-                        handle: req::<String>(&row, "handle", "closed row")?.into(),
+                        handle: req_text(&row, "handle", "closed row")?.into(),
                         values: literals,
                     });
                 }
                 Some(ClosedSpec {
-                    newtype: req::<String>(&closed, "newtype", "closed relation")?.into(),
+                    newtype: req_text(&closed, "newtype", "closed relation")?.into(),
                     rows: row_specs,
                 })
             }
         };
         relation_specs.push(RelationSpec {
-            name: req::<String>(&relation, "name", "relation spec")?.into(),
+            name: req_text(&relation, "name", "relation spec")?.into(),
             fields: field_specs,
             closed,
         });
@@ -806,7 +827,7 @@ fn param_in(obj: &Object, key: &str, ctx: &str) -> napi::Result<ParamId> {
 }
 
 fn term_in(obj: &Object) -> napi::Result<Term> {
-    let kind: String = req(obj, "kind", "term")?;
+    let kind: String = req_text(obj, "kind", "term")?;
     match kind.as_str() {
         tags::term::VAR => Ok(Term::Var(var_in(obj, "var", "var term")?)),
         tags::term::PARAM => Ok(Term::Param(param_in(obj, "param", "param term")?)),
@@ -835,7 +856,7 @@ fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
             "bumbledb marshal: scalar expression deeper than {MAX_SCALAR_DEPTH}"
         )));
     }
-    let kind: String = req(obj, "kind", "scalar expression")?;
+    let kind: String = req_text(obj, "kind", "scalar expression")?;
     match kind.as_str() {
         tags::scalar_expr::VAR => Ok(ScalarExpr::Var(var_in(obj, "var", "scalar var")?)),
         tags::scalar_expr::LITERAL => {
@@ -862,7 +883,7 @@ fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
             Box::new(scalar_child(obj, "right", depth)?),
         )),
         tags::scalar_expr::CAST => {
-            let cast: String = req(obj, "cast", "scalar cast")?;
+            let cast: String = req_text(obj, "cast", "scalar cast")?;
             let kind = tags::numeric_cast::parse(&cast)
                 .ok_or_else(|| err(format!("bumbledb marshal: unknown cast kind `{cast}`")))?;
             Ok(ScalarExpr::Cast {
@@ -888,12 +909,12 @@ fn scalar_child(obj: &Object, key: &str, depth: usize) -> napi::Result<ScalarExp
 }
 
 fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
-    let kind: String = req(obj, "kind", "head term")?;
+    let kind: String = req_text(obj, "kind", "head term")?;
     match kind.as_str() {
         tags::head_term::VAR => Ok(HeadTerm::Var),
         tags::head_term::COMPUTE => Ok(HeadTerm::Compute),
         tags::head_term::AGGREGATE => {
-            let op: String = req(obj, "op", "head aggregate")?;
+            let op: String = req_text(obj, "op", "head aggregate")?;
             let op = tags::head_op::parse(&op)
                 .ok_or_else(|| err(format!("bumbledb marshal: unknown head op `{op}`")))?;
             Ok(HeadTerm::Aggregate(op))
@@ -905,7 +926,7 @@ fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
 }
 
 fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
-    let kind: String = req(obj, "kind", "fold op")?;
+    let kind: String = req_text(obj, "kind", "fold op")?;
     let op = tags::head_op::parse(&kind)
         .ok_or_else(|| err(format!("bumbledb marshal: unknown fold op `{kind}`")))?;
     match op {
@@ -923,7 +944,7 @@ fn fold_op_in(obj: &Object) -> napi::Result<FoldOp> {
 }
 
 fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
-    let kind: String = req(obj, "kind", "find term")?;
+    let kind: String = req_text(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
         tags::find_term::COMPUTE => {
@@ -954,7 +975,7 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
 
 fn atom_in(obj: &Object) -> napi::Result<Atom> {
     let source: Object = req(obj, "source", "atom")?;
-    let source_kind: String = req(&source, "kind", "atom source")?;
+    let source_kind: String = req_text(&source, "kind", "atom source")?;
     let source = match source_kind.as_str() {
         tags::atom_source::EDB => AtomSource::Edb(RelationId(ordinal(
             req::<f64>(&source, "relation", "edb source")?,
@@ -992,7 +1013,7 @@ fn atom_in(obj: &Object) -> napi::Result<Atom> {
 
 fn comparison_in(obj: &Object) -> napi::Result<Comparison> {
     let op: Object = req(obj, "op", "comparison")?;
-    let op_kind: String = req(&op, "kind", "comparison op")?;
+    let op_kind: String = req_text(&op, "kind", "comparison op")?;
     let op = match op_kind.as_str() {
         tags::cmp_op::EQ => CmpOp::Eq,
         tags::cmp_op::NE => CmpOp::Ne,
@@ -1031,7 +1052,7 @@ fn condition_in(obj: &Object, depth: usize) -> napi::Result<ConditionTree> {
             bumbledb::MAX_CONDITION_DEPTH
         )));
     }
-    let kind: String = req(obj, "kind", "condition")?;
+    let kind: String = req_text(obj, "kind", "condition")?;
     match kind.as_str() {
         tags::condition::LEAF => {
             let cmp: Object = req(obj, "cmp", "leaf condition")?;
@@ -1209,7 +1230,7 @@ fn interiors_in(obj: &Object) -> napi::Result<Vec<Interior>> {
 }
 
 pub(crate) fn query_in(obj: &Object) -> napi::Result<Query> {
-    let kind: String = req(obj, "kind", "query")?;
+    let kind: String = req_text(obj, "kind", "query")?;
     let interiors = interiors_in(obj)?;
     match kind.as_str() {
         tags::query::CQ => Ok(Query {

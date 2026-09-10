@@ -1,9 +1,43 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
-import { installNativeArtifact } from "../scripts/native-artifact.ts"
+import { assertNativeProvenance, installNativeArtifact } from "../scripts/native-artifact.ts"
+
+test("native staging rejects missing or stale source, platform, and binary provenance", () => {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-native-provenance-"))
+	const binary = path.join(dir, "bumbledb.node")
+	const stampPath = path.join(dir, ".native-provenance.json")
+	const expected = { candidateSourceDigest: "a".repeat(64), specificationRevision: "b".repeat(64) }
+	const platform = "linux-arm64"
+	const stamp = {
+		...expected,
+		platform,
+		artifact: { path: `ts/npm/${platform}/bumbledb.node`, sha256: createHash("sha256").update("addon").digest("hex") }
+	}
+	try {
+		fs.writeFileSync(binary, "addon")
+		assert.throws(() => assertNativeProvenance(binary, platform, expected), /provenance missing/)
+		for (const invalid of [
+			{ ...stamp, candidateSourceDigest: "stale" },
+			{ ...stamp, specificationRevision: "stale" },
+			{ ...stamp, platform: "darwin-arm64" },
+			{ ...stamp, artifact: { ...stamp.artifact, path: "another.node" } },
+			{ ...stamp, artifact: { ...stamp.artifact, sha256: "wrong" } }
+		]) {
+			fs.writeFileSync(stampPath, JSON.stringify(invalid))
+			assert.throws(() => assertNativeProvenance(binary, platform, expected), /stale or mismatched/)
+		}
+		fs.writeFileSync(stampPath, JSON.stringify(stamp))
+		assert.doesNotThrow(() => assertNativeProvenance(binary, platform, expected))
+		fs.writeFileSync(binary, "replacement addon")
+		assert.throws(() => assertNativeProvenance(binary, platform, expected), /stale or mismatched/)
+	} finally {
+		fs.rmSync(dir, { recursive: true, force: true })
+	}
+})
 
 test("native installation replaces the inode without altering an existing reader", () => {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bumbledb-native-install-"))

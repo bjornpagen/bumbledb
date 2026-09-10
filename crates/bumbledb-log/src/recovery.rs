@@ -18,6 +18,7 @@
 //! (never the old checkpoint's authority). Interrupted candidates stay
 //! invisible staging.
 
+use bumbledb::integration::Preparation;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -254,8 +255,8 @@ pub fn write_binding<S>(
         .finish()
         .map_err(RecoveryError::Changes)?;
     let prepared = match session.prepare(&empty)? {
-        bumbledb::Admission::Accepted(prepared) => prepared,
-        bumbledb::Admission::Rejected(_) => {
+        Preparation::Accepted(prepared) => prepared,
+        Preparation::Rejected { .. } => {
             return Err(RecoveryError::Corrupt("empty delta rejected"));
         }
     };

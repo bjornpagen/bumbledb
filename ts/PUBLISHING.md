@@ -44,10 +44,13 @@ addon from a different package version.
    The `bumbledb-log` workflow builds the Linux artifacts in Amazon Linux
    2023 on their respective architectures.
 3. Download `bumbledb.darwin-arm64.node`, `bumbledb.linux-arm64.node` and
-   `bumbledb.linux-x64.node` from that run. Place them as
-   `ts/npm/<platform>/bumbledb.node`; retain the
+   `bumbledb.linux-x64.node`, with their accompanying provenance JSON, from
+   that run. Place each binary as `ts/npm/<platform>/bumbledb.node` and its
+   provenance as `ts/npm/<platform>/.native-provenance.json`; retain the
    run ID, source revision, and artifact digests. Do not substitute a macOS
    binary or an earlier candidate's artifact.
+   Staging checks the recorded candidate, specification, platform, and binary
+   hash before assigning the current release version to a native tarball.
 4. Build both SDKs and verify the Apple Silicon addon against the release
    version. Stage all platforms and run the installed-consumer check.
    Per-host CI uses `--host-only`;

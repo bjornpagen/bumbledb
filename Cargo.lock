@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "blake3",
  "bumbledb-macros",
@@ -135,7 +135,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-bench"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "aegis",
  "blake3",
@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-log"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "blake3",
  "bumbledb",
@@ -158,14 +158,14 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-macros"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bumbledb-theory",
 ]
 
 [[package]]
 name = "bumbledb-query"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bumbledb",
  "bumbledb-query-macros",
@@ -173,14 +173,14 @@ dependencies = [
 
 [[package]]
 name = "bumbledb-query-macros"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "bumbledb-theory",
 ]
 
 [[package]]
 name = "bumbledb-theory"
-version = "1.1.0"
+version = "1.2.0"
 dependencies = [
  "uuid",
 ]

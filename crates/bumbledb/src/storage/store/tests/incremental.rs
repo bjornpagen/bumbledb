@@ -267,7 +267,10 @@ fn compare_and_commit(
                 .expect("commit");
             true
         }
-        Prepared::Rejected(violations) => {
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => {
             assert!(!violations.is_empty(), "a rejection names its statements");
             false
         }
@@ -613,7 +616,10 @@ fn capacity_measure_follows_target_row_order_not_delta_group_order() {
             .expect("prepare")
         {
             Prepared::Admitted(_) => panic!("both room capacities are exceeded"),
-            Prepared::Rejected(violations) => {
+            Prepared::Rejected {
+                rejection: violations,
+                ..
+            } => {
                 assert_eq!(violations.len(), 1);
                 assert_eq!(violations[0].kind, StatementKind::Capacity);
                 assert_eq!(violations[0].measure, Some(3));
@@ -663,7 +669,10 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
         .expect("prepare")
     {
         Prepared::Admitted(_) => panic!("this delta violates four statements"),
-        Prepared::Rejected(violations) => {
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => {
             let statements: Vec<StatementId> = violations
                 .iter()
                 .map(|violation| violation.statement)
@@ -689,6 +698,49 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
     }
 }
 
+struct PremiseWitness<'s> {
+    schema: &'s Schema,
+}
+impl CandidateJudge for PremiseWitness<'_> {
+    type Rejection = std::convert::Infallible;
+
+    fn judge(
+        &self,
+        candidate: &CandidateState<'_, '_>,
+        work: &WorkContext,
+    ) -> StoreResult<Judgment<Self::Rejection>> {
+        let production = SchemaJudge::new(self.schema).judge_incremental(
+            LawfulParent::established(),
+            candidate,
+            work,
+        )?;
+        assert!(
+            matches!(production, Judgment::Admitted),
+            "the incremental judge misses untouched standing violations"
+        );
+        let reference = judge_final_state(
+            self.schema,
+            &ReferenceFacts {
+                candidate,
+                schema: self.schema,
+                work,
+            },
+            work,
+            JudgeBudget::default(),
+        )
+        .expect("reference completes");
+        let SchemaJudgment::Rejected(violations) = reference else {
+            panic!("the complete judge must convict the unlawful parent");
+        };
+        let statements: Vec<StatementId> = violations
+            .iter()
+            .map(|violation| violation.statement)
+            .collect();
+        assert_eq!(statements, vec![USER_EMAIL_KEY, BOOKING_ROOM_EXISTS]);
+        Ok(Judgment::Admitted)
+    }
+}
+
 /// The lawful-parent premise, pinned honestly on the physical store: a
 /// parent seeded UNLAWFULLY through a permissive test judge (a state the
 /// production admission path cannot produce) can hide from the incremental
@@ -697,48 +749,6 @@ fn a_multi_statement_rejection_is_equal_both_ways_with_all_families() {
 /// judgment — reports it offline.
 #[test]
 fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts() {
-    struct PremiseWitness<'s> {
-        schema: &'s Schema,
-    }
-    impl CandidateJudge for PremiseWitness<'_> {
-        type Rejection = std::convert::Infallible;
-
-        fn judge(
-            &self,
-            candidate: &CandidateState<'_, '_>,
-            work: &WorkContext,
-        ) -> StoreResult<Judgment<Self::Rejection>> {
-            let production = SchemaJudge::new(self.schema).judge_incremental(
-                LawfulParent::established(),
-                candidate,
-                work,
-            )?;
-            assert!(
-                matches!(production, Judgment::Admitted),
-                "the incremental judge misses untouched standing violations"
-            );
-            let reference = judge_final_state(
-                self.schema,
-                &ReferenceFacts {
-                    candidate,
-                    schema: self.schema,
-                    work,
-                },
-                work,
-                JudgeBudget::default(),
-            )
-            .expect("reference completes");
-            let SchemaJudgment::Rejected(violations) = reference else {
-                panic!("the complete judge must convict the unlawful parent");
-            };
-            let statements: Vec<StatementId> = violations
-                .iter()
-                .map(|violation| violation.statement)
-                .collect();
-            assert_eq!(statements, vec![USER_EMAIL_KEY, BOOKING_ROOM_EXISTS]);
-            Ok(Judgment::Admitted)
-        }
-    }
     let (_dir, path) = store_dir("incremental-unlawful");
     let schema = delta_schema();
     let store = Store::create(&path, &schema, MapPolicy::default())
@@ -771,7 +781,9 @@ fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts(
                     .commit()
                     .expect("commit");
             }
-            Prepared::Rejected(never) => match never {},
+            Prepared::Rejected {
+                rejection: never, ..
+            } => match never {},
         }
     }
 
@@ -788,7 +800,9 @@ fn an_unlawful_parent_hides_from_the_incremental_judge_and_the_sweeper_convicts(
             .expect("prepare")
         {
             Prepared::Admitted(prepared) => prepared.abort(),
-            Prepared::Rejected(never) => match never {},
+            Prepared::Rejected {
+                rejection: never, ..
+            } => match never {},
         }
     }
 
@@ -854,7 +868,9 @@ fn seed_users(store: &Store, schema: &Schema, from: u64, to: u64) {
                 .commit()
                 .expect("commit");
         }
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
 }
 
@@ -875,7 +891,10 @@ fn measured_one_row_judgment(store: &Store, schema: &Schema, id: u64) -> u64 {
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => prepared.abort(),
-        Prepared::Rejected(violations) => panic!("unexpected rejection: {violations:?}"),
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => panic!("unexpected rejection: {violations:?}"),
     }
     judge.cost.get()
 }

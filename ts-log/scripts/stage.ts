@@ -3,7 +3,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { Result } from "effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { Effect, Result } from "effect"
 import { BuildInputError, BuildOperationError } from "./errors.ts"
 
 /** Repository root (three levels above ts-log/scripts/). */
@@ -238,7 +239,7 @@ function main(): void {
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (invokedDirectly) {
-	main()
+	NodeRuntime.runMain(Effect.sync(main))
 }
 
 export { EFFECT_PIN, packedLogManifest, packProvenance, stageLogPackage, tarballFile, tarballFiles }

@@ -1,15 +1,18 @@
-import { sealedFieldsOf } from "#closed.ts"
+import { membersAgree, sealedFieldsOf } from "#closed.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
 import {
 	assertDeclarationOrderKey,
 	f64 as f64Field,
+	i64 as i64Field,
 	isFloatIntervalValue,
 	isIntervalValue,
 	literalShapeError,
 	rosterOf,
+	rostersAgree,
 	u64 as u64Field
 } from "#fields.ts"
+import { snapshotData } from "#immutable.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AtomIr,
@@ -86,7 +89,8 @@ import {
 } from "#query/scope.ts"
 import { literalWireOf } from "#scalar.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
-import { Uuid } from "#uuid.ts"
+import { schemaDescriptor, schemasAgree } from "#schema.ts"
+import { arrayValue, recordValue, taggedValueOf } from "#values.ts"
 
 type QueryRelation<Rels extends SchemaRelations> = Extract<Rels[keyof Rels], MatchOwner>
 
@@ -481,8 +485,8 @@ interface ResolvedBindings {
 
 /**
  * The MINT slot of a variable, the runtime twin of {@link MintSlotOf}: (i)
- * verifies the mint owner is the schema's own member value — a variable
- * minted from a foreign relation is refused, naming its label — and (ii)
+ * verifies the mint owner agrees with the schema's ordered declaration — a
+ * conflicting declaration is refused, naming its label — and (ii)
  * returns the descriptor it was minted at plus the law-computed class read
  * off the schema's frozen class map. Because {@link fieldJoins} is an
  * equality, judging every binding position against this one slot makes all
@@ -495,16 +499,16 @@ function mintSlotOf(context: ChainContext, ref: AnyVar): ClassedField {
 		// the descriptor it projected and the carrier class that survived
 		// the projection (aggregate outputs are bare derived scalars).
 		const column = facade.columns.get(ref.column)
-		if (column === undefined || (facade.source.schema as AnySchema) !== context.theory) {
+		if (column === undefined || !schemasAgree(facade.source.schema as AnySchema, context.theory)) {
 			throw new AuthoringError({
 				message: `the variable ${ref.label} was minted from a query template schema ${context.theory.name} does not own`
 			})
 		}
 		return column.slot ?? { field: ref.field, class: undefined }
 	}
-	if (context.theory.relations[ref.owner.name] !== ref.owner) {
+	if (!membersAgree(context.theory.relations[ref.owner.name], ref.owner)) {
 		throw new AuthoringError({
-			message: `the variable ${ref.label} was minted from a relation schema ${context.theory.name} does not declare — mint variables with v() from the schema's own relations`
+			message: `the variable ${ref.label} was minted from a relation schema ${context.theory.name} does not declare — use an equivalent ordered declaration`
 		})
 	}
 	return { field: ref.field, class: context.classes[ref.owner.name]?.[ref.column] }
@@ -532,7 +536,7 @@ function membershipSet(
 		})
 	}
 	const seen = new Set<string>()
-	const members = value.map(function memberName(member) {
+	const members = arrayValue(context, value, function memberName(context, member) {
 		if (typeof member !== "string") {
 			throw literalShapeError(context, `a ${roster.name} handle name (string)`, member)
 		}
@@ -548,22 +552,30 @@ function membershipSet(
 	return { name: `∈ ${roster.name} ${JSON.stringify(key)}`, members: Object.freeze(members) }
 }
 
+function queryRecord(context: string, input: unknown): Readonly<Record<string, unknown>> {
+	return recordValue(context, input, typeof input === "object" && input !== null ? Object.keys(input) : [])
+}
+
 function resolveBindings(
 	context: ChainContext,
 	label: string,
-	relation: MatchOwner,
-	bindings: Readonly<Record<string, unknown>>,
+	input: MatchOwner,
+	bindings: unknown,
 	joins: (a: ClassedField, b: ClassedField) => boolean = fieldJoins
 ): ResolvedBindings {
+	const relation = context.theory.relations[input.name]
+	if (relation === undefined || !membersAgree(relation, input)) {
+		throw new AuthoringError({
+			message: `${label}: schema ${context.theory.name} does not declare this ordered relation`
+		})
+	}
+	// Retain the schema-owned declaration, not mutable caller metadata.
 	const entries: BindingEntry[] = []
 	const vars: AnyVar[] = []
 	const uses: ParamUse[] = []
 	const relationClasses = context.classes[relation.name]
 	const ordered = sealedFieldsOf(relation)
-	for (const [fieldName, value] of Object.entries(bindings)) {
-		if (value === undefined) {
-			continue
-		}
+	for (const [fieldName, value] of Object.entries(queryRecord(label, bindings))) {
 		const declared = ordered.find(function byName(candidate) {
 			return candidate.name === fieldName
 		})
@@ -627,7 +639,10 @@ function resolveBindings(
 				})
 			)
 		} else {
-			bound = Object.freeze({ kind: "literal" as const, value })
+			bound = Object.freeze({
+				kind: "literal" as const,
+				value: ownLiteral(`${label}.${fieldName}`, declared.field, value, "binding")
+			})
 		}
 		entries.push(Object.freeze({ field: fieldName, data: declared.field, class: fieldClass, term: bound }))
 	}
@@ -683,9 +698,22 @@ function sideUses(op: CmpKind, side: CmpTermData, sibling: CmpTermData, uses: Pa
 }
 
 function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
+	queryRecord("query condition", cond)
 	if (cond.cond === "cmp") {
-		const lhs = cmpTermDataOf(cond.lhs)
-		const rhs = cmpTermDataOf(cond.rhs)
+		let lhs = cmpTermDataOf(cond.lhs)
+		let rhs = cmpTermDataOf(cond.rhs)
+		if (lhs.kind === "literal" && rhs.kind === "var") {
+			lhs = Object.freeze({
+				kind: "literal",
+				value: ownLiteral("comparison literal", rhs.ref.field, lhs.value, cond.op)
+			})
+		}
+		if (rhs.kind === "literal" && lhs.kind === "var") {
+			rhs = Object.freeze({
+				kind: "literal",
+				value: ownLiteral("comparison literal", lhs.ref.field, rhs.value, cond.op)
+			})
+		}
 		sideUses(cond.op, lhs, rhs, uses)
 		sideUses(cond.op, rhs, lhs, uses)
 		if (cond.op === "allen") {
@@ -705,8 +733,8 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 		return Object.freeze({ kind: "cmp" as const, op: { kind: cond.op }, lhs, rhs })
 	}
 	if (cond.cond === "tree") {
-		const children = cond.children.map(function lowerChild(child) {
-			return condDataOf(child, uses)
+		const children = arrayValue("query condition children", cond.children, function lowerChild(_context, child) {
+			return condDataOf(child as AnyCond, uses)
 		})
 		return Object.freeze({ kind: "tree" as const, op: cond.op, children: Object.freeze(children) })
 	}
@@ -716,25 +744,22 @@ function condDataOf(cond: AnyCond, uses: ParamUse[]): CondData {
 }
 
 function advanceWhere(context: ChainContext, state: RuleBuildState, cond: AnyCond): RuleBuildState {
+	queryRecord("query condition", cond)
 	if (typeof cond !== "object" || cond === null || !("cond" in cond)) {
 		throw new AuthoringError({ message: "where() takes a comparison, an and()/or() tree, or a negated atom" })
 	}
 	if (cond.cond === "notInterior") {
-		const bindings: Readonly<Record<string, unknown>> = Object.fromEntries(
-			Object.entries(cond.bindings ?? {}).filter(function defined([, value]) {
-				return value !== undefined
-			})
-		)
-		return notInteriorAdvance(context, state, cond.name, bindings)
+		return notInteriorAdvance(context, state, cond.name, queryRecord("negated interior bindings", cond.bindings))
 	}
 	if (cond.cond === "not") {
 		const relation: MatchOwner = cond.relation
-		const bindings: Readonly<Record<string, unknown>> = Object.fromEntries(
-			Object.entries(cond.bindings ?? {}).filter(function defined([, value]) {
-				return value !== undefined
-			})
+		const resolved = resolveBindings(
+			context,
+			`negated relation ${relation.name}`,
+			relation,
+			cond.bindings,
+			fieldAntiJoins
 		)
-		const resolved = resolveBindings(context, `negated relation ${relation.name}`, relation, bindings, fieldAntiJoins)
 		return Object.freeze({
 			items: Object.freeze([...state.items, Object.freeze({ kind: "negated" as const, atom: resolved.atom })]),
 			bound: state.bound,
@@ -757,10 +782,7 @@ function advanceInterior(
 	kind: "interior" | "negatedInterior"
 ): RuleBuildState {
 	const resolved: Array<{ readonly key: string; readonly ref: AnyVar }> = []
-	for (const [key, value] of Object.entries(bindings)) {
-		if (value === undefined) {
-			continue
-		}
+	for (const [key, value] of Object.entries(queryRecord(`interior ${target.name} bindings`, bindings))) {
 		if (!isTerm(value) || value[term] !== "var") {
 			throw new AuthoringError({
 				message: `interior ${target.name}: position ${key} takes a variable — bind literals and params through where()/match()`
@@ -1177,28 +1199,43 @@ interface ImportEntry {
 
 const importEntries = new WeakMap<object, ImportEntry>()
 const importTables = new WeakSet<InteriorData>()
+const importOrigins = new WeakMap<InteriorData, InteriorData>()
+
+function snapshotQueryData<A>(input: A): A {
+	return snapshotData(input, (source, snapshot) => {
+		// Detached imports retain their authoring identity for deduplication.
+		if (importTables.has(source as InteriorData)) {
+			const table = snapshot as InteriorData
+			importTables.add(table)
+			importOrigins.set(table, importOrigins.get(source as InteriorData) ?? (source as InteriorData))
+			const inner = importInner.get(source as InteriorData)
+			if (inner !== undefined) importInner.set(table, inner)
+		}
+	})
+}
 
 function importEntryOf(context: ChainContext, imported: AnyQuery): ImportEntry {
 	const cached = importEntries.get(imported)
 	if (cached !== undefined) {
-		if (imported.schema !== context.theory) {
+		if (!schemasAgree(imported.schema, context.theory)) {
 			throw new AuthoringError({
 				message: `${contextLabel(context)}: the imported query belongs to schema ${imported.schema.name}, not ${context.theory.name} — templates compose within one schema`
 			})
 		}
 		return cached
 	}
-	if (imported.schema !== context.theory) {
+	if (!schemasAgree(imported.schema, context.theory)) {
 		throw new AuthoringError({
 			message: `${contextLabel(context)}: the imported query belongs to schema ${imported.schema.name}, not ${context.theory.name} — templates compose within one schema`
 		})
 	}
-	if (imported.data.kind === "reach") {
+	const data = imported.data
+	if (data.kind === "reach") {
 		throw new AuthoringError({
 			message: `${contextLabel(context)}: a recursive query is not importable as a relation expression yet — declare the recursion on the consuming query (C05 boundary, recorded)`
 		})
 	}
-	const userParams = imported.data.params.filter(function userSupplied(entry) {
+	const userParams = data.params.filter(function userSupplied(entry) {
 		return entry.membership === undefined
 	})
 	if (userParams.length > 0) {
@@ -1211,10 +1248,10 @@ function importEntryOf(context: ChainContext, imported: AnyQuery): ImportEntry {
 	const facade = importFacadeOf(imported)
 	const table: InteriorData = Object.freeze({
 		name: facade.owner.name,
-		finds: imported.data.finds,
-		rules: imported.data.rules
+		finds: data.finds,
+		rules: data.rules
 	})
-	const entry: ImportEntry = Object.freeze({ table, inner: imported.data.interiors })
+	const entry: ImportEntry = Object.freeze({ table, inner: data.interiors })
 	importEntries.set(imported, entry)
 	importTables.add(table)
 	importInner.set(table, entry.inner)
@@ -1242,8 +1279,9 @@ function referencedImports(
 					continue
 				}
 				const target = item.target as InteriorData
-				if (importTables.has(target) && !seen.has(target)) {
-					seen.add(target)
+				const origin = importOrigins.get(target) ?? target
+				if (importTables.has(target) && !seen.has(origin)) {
+					seen.add(origin)
 					out.push(target)
 				}
 			}
@@ -1280,7 +1318,8 @@ function spliceImports(
 	const names = new Set<string>()
 	const added = new Set<InteriorData>()
 	function add(table: InteriorData): void {
-		if (added.has(table)) {
+		const origin = importOrigins.get(table) ?? table
+		if (added.has(origin)) {
 			return
 		}
 		if (names.has(table.name)) {
@@ -1288,7 +1327,7 @@ function spliceImports(
 				message: `query: the derived-table name ${table.name} appears twice after import splicing — rename the colliding interior (names are unique)`
 			})
 		}
-		added.add(table)
+		added.add(origin)
 		names.add(table.name)
 		spliced.push(table)
 	}
@@ -1330,15 +1369,13 @@ function notInteriorAdvance(
 
 function findColumns(context: ChainContext, entries: Readonly<Record<string, unknown>>): FindColumn[] {
 	const columns: FindColumn[] = []
+	queryRecord("query find", entries)
 	// Nonrecursive derived stages (interiors) may emit aggregate/computed
 	// outputs (C05: "do not leave Interior.rules projection only"); ONLY the
 	// recursive feedback cycle stays projection-only — no aggregate,
 	// arithmetic-created value or negation flows through it.
 	const recName = context.kind === "rec-base" || context.kind === "rec-arm" ? context.self.name : undefined
 	for (const [name, entry] of Object.entries(entries)) {
-		if (entry === undefined) {
-			continue
-		}
 		if (recName !== undefined && !(isTerm(entry) && entry[term] === "var")) {
 			throw new AuthoringError({
 				message: `rec ${recName}: a rec head projects bound variables only — no aggregate or arithmetic-created value flows through the feedback cycle (compute over the finished set in the main rules)`
@@ -1540,7 +1577,7 @@ function paramRegistryOf(
 			if (existing.anchor !== undefined && use.anchor !== undefined) {
 				const registered = rosterOf(existing.anchor)
 				const anchored = rosterOf(use.anchor)
-				if (registered !== anchored) {
+				if (!rostersAgree(registered, anchored)) {
 					throw new AuthoringError({
 						message: `query param ${use.name} is anchored at ${renderParamAnchor(registered)} and at ${renderParamAnchor(anchored)} — a closed-anchored param translates handle names through ONE roster (one name, one domain); name the params differently`
 					})
@@ -1627,7 +1664,7 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 		}
 		rule.finds.forEach(function verifyClosedSlice(column, position) {
 			const lead = first.finds[position]
-			if (lead !== undefined && column.closed !== lead.closed) {
+			if (lead !== undefined && !rostersAgree(column.closed, lead.closed)) {
 				throw new AuthoringError({
 					message: `every rule of ${label} derives the same head — the head column ${lead.name} is ${renderClosedSlice(lead.closed)} in rule 0 but ${renderClosedSlice(column.closed)} in rule ${index} (one column decodes through one roster)`
 				})
@@ -1671,11 +1708,17 @@ function afterMainError(what: string): Error {
 }
 
 function makeRawQuery(
-	theory: AnySchema,
-	interiors: readonly InteriorData[],
-	rec: RecData | undefined,
-	rules: readonly RuleData[]
+	inputTheory: AnySchema,
+	inputInteriors: readonly InteriorData[],
+	inputRec: RecData | undefined,
+	inputRules: readonly RuleData[]
 ): RawQuery {
+	const { theory, interiors, rec, rules } = snapshotQueryData({
+		theory: inputTheory,
+		interiors: inputInteriors,
+		rec: inputRec,
+		rules: inputRules
+	})
 	const mergedFinds = alignedHeadOf("a query", rules)
 	const first = rules[0]
 	if (first === undefined) {
@@ -1704,8 +1747,12 @@ function makeRawQuery(
 					params
 				})
 	const value: RawQuery = {
-		schema: theory,
-		data,
+		get schema() {
+			return snapshotData(theory)
+		},
+		get data() {
+			return snapshotQueryData(data)
+		},
 		rule(build) {
 			const built = build(makeRawScope({ kind: "query", classes: theory.classes, theory, ...env }))
 			return makeRawQuery(theory, interiors, rec, [...rules, built.rule])
@@ -1799,9 +1846,9 @@ function collectRec<Rels extends SchemaRelations, Classes extends SchemaClasses>
 	const sealedRec: RecData["rec"] = [firstRec, ...rec.slice(1)]
 	const recData: RecData = Object.freeze({
 		name,
-		finds: sealedFinds,
-		base: sealedBase,
-		rec: sealedRec
+		finds: Object.freeze(sealedFinds),
+		base: Object.freeze(sealedBase),
+		rec: Object.freeze(sealedRec)
 	})
 	return recData
 }
@@ -1882,112 +1929,21 @@ function makeQueryReachStart<Rels extends SchemaRelations, Classes extends Schem
 function query<Rels extends SchemaRelations, Classes extends SchemaClasses>(
 	theory: Schema<Rels, Classes>
 ): QueryStart<Rels, Classes> {
-	return makeQueryStart<Rels, Classes, Record<never, never>>(theory, [])
-}
-
-function taggedHandleId(
-	context: string,
-	closed: { readonly name: string; readonly handles: readonly string[] },
-	value: unknown
-): TaggedValue {
-	if (typeof value !== "string") {
-		throw literalShapeError(context, `a ${closed.name} handle name (string)`, value)
-	}
-	const id = closed.handles.indexOf(value)
-	if (id < 0) {
-		throw new AuthoringError({
-			message: `${context}: "${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
-		})
-	}
-	return { kind: "u64", value: BigInt(id) }
+	return makeQueryStart<Rels, Classes, Record<never, never>>(schemaDescriptor(theory), [])
 }
 
 function taggedAtElementDomain(context: string, element: "u64" | "i64" | "f64", value: unknown): TaggedValue {
-	if (element === "f64") {
-		if (typeof value === "number") {
-			return { kind: "f64", value }
-		}
-		if (isFloatIntervalValue(value)) {
-			if (Number.isNaN(value.start) || Number.isNaN(value.end) || !(value.start < value.end)) {
-				throw literalShapeError(context, "a nonempty float interval with non-NaN endpoints", value)
-			}
-			return {
-				kind: "intervalF64",
-				start: Object.is(value.start, -0) ? 0 : value.start,
-				end: Object.is(value.end, -0) ? 0 : value.end
-			}
-		}
-		throw literalShapeError(context, "number (point) or { start, end } numbers (interval)", value)
-	}
-	if (typeof value === "bigint") {
-		if (element === "u64") {
-			return { kind: "u64", value }
-		}
-		return { kind: "i64", value }
-	}
-	if (isIntervalValue(value)) {
-		if (element === "u64") {
-			return { kind: "intervalU64", start: value.start, end: value.end }
-		}
-		return { kind: "intervalI64", start: value.start, end: value.end }
-	}
-	throw literalShapeError(context, "bigint (point) or { start, end } (interval)", value)
+	const field: AnyField =
+		typeof value === "number" || typeof value === "bigint"
+			? { u64: u64Field, i64: i64Field, f64: f64Field }[element]
+			: { kind: "interval", element, width: undefined }
+	return taggedValueOf(context, field, value)
 }
 
 function taggedLiteral(context: string, field: AnyField, value: unknown): TaggedValue {
-	const roster = rosterOf(field)
-	if (roster !== undefined) {
-		return taggedHandleId(context, roster, value)
-	}
-	switch (field.kind) {
-		case "bool": {
-			if (typeof value !== "boolean") {
-				throw literalShapeError(context, "boolean", value)
-			}
-			return { kind: "bool", value }
-		}
-		case "u64": {
-			if (typeof value !== "bigint") {
-				throw literalShapeError(context, "bigint", value)
-			}
-			return { kind: "u64", value }
-		}
-		case "i64": {
-			if (typeof value !== "bigint") {
-				throw literalShapeError(context, "bigint", value)
-			}
-			return { kind: "i64", value }
-		}
-		case "f64": {
-			if (typeof value !== "number") {
-				throw literalShapeError(context, "number", value)
-			}
-			return { kind: "f64", value }
-		}
-		case "uuid": {
-			if (!Uuid.isUuid(value)) {
-				throw literalShapeError(context, "a UUID (canonical UUID text)", value)
-			}
-			return { kind: "uuid", value }
-		}
-		case "str": {
-			if (typeof value !== "string") {
-				throw literalShapeError(context, "string", value)
-			}
-			if (!value.isWellFormed()) {
-				throw literalShapeError(context, "well-formed string", value)
-			}
-			return { kind: "string", value }
-		}
-		case "bytes": {
-			if (!(value instanceof Uint8Array)) {
-				throw literalShapeError(context, "Uint8Array", value)
-			}
-			return { kind: "fixedBytes", value }
-		}
-		case "interval":
-			return taggedAtElementDomain(context, field.element, value)
-	}
+	return field.kind === "interval"
+		? taggedAtElementDomain(context, field.element, value)
+		: taggedValueOf(context, field, value)
 }
 
 /**
@@ -1996,7 +1952,7 @@ function taggedLiteral(context: string, field: AnyField, value: unknown): Tagged
  * contributes its element domain, a scalar sibling its own type. At
  * `pointIn` the operand order is interval-left, point-right, so an
  * interval-shaped literal beside a scalar element-typed sibling is the LEGAL
- * interval operand of `pointIn(t, span(...))`; under every other operator an
+ * interval operand of `pointIn(t, { start, end })`; under every other operator an
  * interval shape against a scalar sibling stays refused.
  */
 function taggedCmpLiteral(context: string, sibling: AnyField, value: unknown, op: CmpKind | "binding"): TaggedValue {
@@ -2015,6 +1971,14 @@ function taggedCmpLiteral(context: string, sibling: AnyField, value: unknown, op
 		return taggedAtElementDomain(context, "f64", value)
 	}
 	return taggedLiteral(context, sibling, value)
+}
+
+/** Validate and own a literal when the query is authored, before caller mutation. */
+function ownLiteral(context: string, field: AnyField, value: unknown, op: CmpKind | "binding"): unknown {
+	const tagged = taggedCmpLiteral(context, field, value, op)
+	if (rosterOf(field) !== undefined) return value
+	if ("value" in tagged) return tagged.value
+	return Object.freeze({ start: tagged.start, end: tagged.end })
 }
 
 interface LowerContext {
@@ -2054,7 +2018,7 @@ function paramIdOf(ctx: LowerContext, name: string): number {
 
 function lowerAtom(ctx: LowerContext, atom: AtomData, ids: VarIds): AtomIr {
 	const member = ctx.theory.relations[atom.relation.name]
-	if (member !== atom.relation) {
+	if (!membersAgree(member, atom.relation)) {
 		throw new AuthoringError({
 			message: `query lowering: relation ${atom.relation.name} is not the relation value schema ${ctx.theory.name} declares`
 		})
@@ -2306,20 +2270,21 @@ function lowerRule(ctx: LowerContext, rule: RuleData): RuleIr {
 
 function lowerQuery(q: AnyQuery): ParsedQuery {
 	const theory = q.schema
+	const data = q.data
 	const relationIds = new Map<string, number>()
 	Object.keys(theory.relations).forEach(function assignOrdinal(name, index) {
 		relationIds.set(name, index)
 	})
 	const interiorIds = new Map<string, number>()
-	q.data.interiors.forEach(function assignInteriorId(interior, index) {
+	data.interiors.forEach(function assignInteriorId(interior, index) {
 		interiorIds.set(interior.name, index)
 	})
-	if (q.data.kind === "reach") {
-		interiorIds.set(q.data.rec.name, q.data.interiors.length)
+	if (data.kind === "reach") {
+		interiorIds.set(data.rec.name, data.interiors.length)
 	}
 	const paramIds = new Map<string, number>()
 	const params = new Map<string, ParamEntry>()
-	q.data.params.forEach(function assignParamId(entry, index) {
+	data.params.forEach(function assignParamId(entry, index) {
 		if (entry.anchor === undefined) {
 			throw new AuthoringError({
 				message: `query param ${entry.name} has no field-anchored use — bind it in an atom or compare it against a bound variable`
@@ -2329,7 +2294,7 @@ function lowerQuery(q: AnyQuery): ParsedQuery {
 		params.set(entry.name, entry)
 	})
 	const ctx: LowerContext = { theory, relationIds, interiorIds, paramIds, params }
-	const interiors = q.data.interiors.map(function lowerInterior(interior) {
+	const interiors = data.interiors.map(function lowerInterior(interior) {
 		return {
 			head: interior.finds.map(headTermOf),
 			rules: interior.rules.map(function lowerInteriorRule(rule) {
@@ -2337,22 +2302,22 @@ function lowerQuery(q: AnyQuery): ParsedQuery {
 			})
 		}
 	})
-	const head = q.data.finds.map(headTermOf)
-	const rules = q.data.rules.map(function lowerMainRule(rule) {
+	const head = data.finds.map(headTermOf)
+	const rules = data.rules.map(function lowerMainRule(rule) {
 		return lowerRule(ctx, rule)
 	})
-	if (q.data.kind === "cq") {
+	if (data.kind === "cq") {
 		return parseQueryIr({ kind: "cq", interiors, head, rules })
 	}
 	return parseQueryIr({
 		kind: "reach",
 		interiors,
 		rec: {
-			head: q.data.rec.finds.map(headTermOf),
-			base: q.data.rec.base.map(function lowerBase(rule) {
+			head: data.rec.finds.map(headTermOf),
+			base: data.rec.base.map(function lowerBase(rule) {
 				return lowerRule(ctx, rule)
 			}),
-			rec: q.data.rec.rec.map(function lowerRecArm(rule) {
+			rec: data.rec.rec.map(function lowerRecArm(rule) {
 				return lowerRule(ctx, rule)
 			})
 		},
@@ -2364,6 +2329,7 @@ function lowerQuery(q: AnyQuery): ParsedQuery {
 export type {
 	AnyQuery,
 	AnyRuleValue,
+	ChainContext,
 	Query,
 	QueryData,
 	QueryParams,
@@ -2378,4 +2344,4 @@ export type {
 	RuleValue,
 	TermOps
 }
-export { lowerQuery, query, taggedCmpLiteral }
+export { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, query, taggedCmpLiteral }

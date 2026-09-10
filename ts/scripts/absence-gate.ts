@@ -239,9 +239,10 @@ function checkTsPackages(findings: string[]): void {
 		}
 	}
 	const log = readJson("ts-log/package.json")
-	if (Object.keys(record(log.dependencies)).length > 0) {
+	const logDependencies = record(log.dependencies)
+	if (Object.keys(logDependencies).length !== 1 || logDependencies["@effect/platform-node"] !== EFFECT_PIN) {
 		findings.push(
-			`ts-log/package.json carries dependencies ${JSON.stringify(log.dependencies)} — the log package is thin: core + effect peers only`
+			`ts-log/package.json must depend only on @effect/platform-node at ${EFFECT_PIN} for its executable; core and effect remain peers`
 		)
 	}
 	const core = readJson("ts/package.json")

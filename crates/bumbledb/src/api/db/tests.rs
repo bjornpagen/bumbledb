@@ -23,6 +23,7 @@
 //! exist to test. Their safety intent — an aborted write leaks no issued
 //! authority — is unrepresentable now: identities are application values.
 
+use crate::integration::Preparation;
 use bumbledb_theory::schema::{
     FieldDescriptor, RelationId, Row, SchemaDescriptor, StatementDescriptor, StatementId, ValueType,
 };
@@ -1639,8 +1640,8 @@ fn compact_copies_content_host_records_and_generation_coherently() {
             .finish()
             .expect("empty delta");
         let prepared = match session.prepare(&empty).expect("prepare") {
-            Admission::Accepted(prepared) => prepared,
-            Admission::Rejected(_) => panic!("the empty delta admits"),
+            Preparation::Accepted(prepared) => prepared,
+            Preparation::Rejected { .. } => panic!("the empty delta admits"),
         };
         let records = [crate::storage::store::HostRecordChange::Put {
             key: b"receipt/1",
@@ -1698,8 +1699,15 @@ fn a_rejected_integration_candidate_retains_the_session() {
     };
     let mut session = db.integration_writer(&work).expect("session");
     match session.prepare(&conflicting).expect("prepare") {
-        Admission::Rejected(violations) => assert_eq!(violations.len(), 1),
-        Admission::Accepted(_) => panic!("conflicting keys must reject"),
+        Preparation::Rejected {
+            violations,
+            application,
+        } => {
+            assert_eq!(violations.len(), 1);
+            assert_eq!(application.added, 2);
+            assert_eq!(application.removed, 0);
+        }
+        Preparation::Accepted(_) => panic!("conflicting keys must reject"),
     }
     // The same exclusive session prepares the receipt-only follow-up: no
     // gap for another writer, no application fact changed.
@@ -1707,8 +1715,8 @@ fn a_rejected_integration_candidate_retains_the_session() {
         .finish()
         .expect("empty delta");
     let prepared = match session.prepare(&empty).expect("prepare") {
-        Admission::Accepted(prepared) => prepared,
-        Admission::Rejected(_) => panic!("the empty delta admits"),
+        Preparation::Accepted(prepared) => prepared,
+        Preparation::Rejected { .. } => panic!("the empty delta admits"),
     };
     let records = [crate::storage::store::HostRecordChange::Put {
         key: b"receipt/rejected",

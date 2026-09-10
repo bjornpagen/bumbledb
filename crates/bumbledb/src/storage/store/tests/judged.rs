@@ -90,7 +90,10 @@ fn judged_commit(
             .expect("seal")
             .commit()
             .expect("commit")),
-        Prepared::Rejected(violations) => Err(violations.into_vec()),
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => Err(violations.into_vec()),
     }
 }
 

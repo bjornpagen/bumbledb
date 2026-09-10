@@ -1599,9 +1599,8 @@ the whole group's measure erroneous, never a value — so Sum/Min/Max
 over `measure v` (ANY fold over the column) inherit 02's ray refusal
 (`measure_fold_poisons` composes it; `Value.measure?` reads `none`
 exactly on rays and non-intervals — `measure_ray_none`,
-`measure?_ray_none`). Bridge: `fold_row.rs::fold_scratch_row` — "a
-ray poisons the sink and the row is dropped"; the engine's answer is
-the typed `crate::Error::MeasureOfRay`. -/
+`measure?_ray_none`). This theorem concerns the optional measure-column
+denotation; it does not assert a current query-evaluator correspondence. -/
 theorem measure_fold_laws (v : VarId) :
     ∀ σs : List Assignment,
       measureColumn v σs = none ↔ ∃ σ ∈ σs, (σ v).measure? = none

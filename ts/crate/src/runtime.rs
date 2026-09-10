@@ -242,8 +242,19 @@ pub enum Output {
     Draft(crate::db_wire::DraftOpened),
     /// A sealed immutable `ChangeSet` consumed out of a draft.
     Changes(crate::db_wire::ChangesOpened),
+    /// Independent position over shared immutable change bytes.
+    ChangesCursor(crate::db_wire::ChangesCursorOpened),
+    ChangePage(Option<Vec<crate::db_wire::ChangeRecordWire>>),
+    /// Continue the same admitted operation on another resource's worker.
+    /// Never published to JS; no worker blocks waiting for another worker.
+    PayloadContinuation {
+        cap: Capability,
+        work: session::PayloadWork,
+    },
     /// One immutable final-state apply outcome (chapter 35 `Db.apply`).
     Apply(crate::db_wire::ApplyOutcomeOwned),
+    /// A non-committing judgment; cancellation never becomes mutation evidence.
+    Judge(crate::db_wire::JudgeOutcomeOwned),
     /// Bounded database diagnostics (measurements, never rows).
     DbReport(crate::db_wire::DbInspectionOwned),
     /// Owned bounded byte payloads (row codec, migration codec responses).
@@ -270,7 +281,7 @@ impl Output {
     /// A page/rows owner whose ownership and cursor advance are already
     /// committed. Later checkpoints must not replace this slot.
     fn queued_publication(&self) -> bool {
-        matches!(self, Self::Page(_) | Self::Rows(_))
+        matches!(self, Self::Page(_) | Self::Rows(_) | Self::ChangePage(_))
     }
 }
 pub type Work = Box<dyn FnOnce(&WorkContext) -> Result<Output, RuntimeError> + Send>;
@@ -1033,6 +1044,17 @@ impl Runtime {
                 }
                 match result {
                     Ok(None) => self.complete_published(operation),
+                    Ok(Some(Output::PayloadContinuation { cap: next, work })) => {
+                        if let Err(error) = self.send_resource(
+                            next,
+                            session::Message::Payload {
+                                operation: Arc::clone(operation),
+                                work,
+                            },
+                        ) {
+                            self.complete_operation(operation, Err(error));
+                        }
+                    }
                     Ok(Some(value)) => self.complete_operation(operation, Ok(value)),
                     Err(error) => self.complete_operation(operation, Err(error)),
                 }

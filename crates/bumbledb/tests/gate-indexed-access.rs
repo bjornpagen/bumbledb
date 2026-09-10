@@ -488,7 +488,10 @@ mod forced_collisions {
                         .commit()
                         .expect("commit");
                 }
-                Prepared::Rejected(violations) => {
+                Prepared::Rejected {
+                    rejection: violations,
+                    ..
+                } => {
                     panic!("distinct emails rejected: {violations:?}")
                 }
             }
@@ -503,7 +506,10 @@ mod forced_collisions {
                 .expect("prepare")
             {
                 Prepared::Admitted(_) => panic!("a duplicate email must reject"),
-                Prepared::Rejected(violations) => {
+                Prepared::Rejected {
+                    rejection: violations,
+                    ..
+                } => {
                     assert_eq!(violations.len(), 1);
                     assert_eq!(violations[0].statement, EMAIL_KEY);
                     assert_eq!(
@@ -534,7 +540,9 @@ mod forced_collisions {
                 .expect("prepare")
             {
                 Prepared::Admitted(prepared) => prepared.abort(),
-                Prepared::Rejected(never) => match never {},
+                Prepared::Rejected {
+                    rejection: never, ..
+                } => match never {},
             }
         }
         assert_eq!(

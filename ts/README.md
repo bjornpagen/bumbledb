@@ -19,6 +19,11 @@ ordinary `bigint`, `number` (for `f64`), `string`, boolean, byte, `Uuid`,
 and interval values; queries infer their parameter and result types from how
 those values are used.
 
+Relations, closed rosters, keys, selections, and constraints are checked
+structural descriptions. Schema construction owns copies of declarations.
+Independently constructed equivalent declarations work in queries, codecs,
+writes, and key lookups; ordered fields and enum handles must agree.
+
 ## Platform support
 
 The TypeScript package ships native binaries for **darwin-arm64**
@@ -33,12 +38,12 @@ correctness CI is distinct from the Apple Silicon performance measurements.
 
 ## Install
 
-This guide follows the 1.1.0 source API. Use the guide from the Git tag matching
+This guide follows the 1.2.0 source API. Use the guide from the Git tag matching
 your installed package. GitHub release tarballs and npm publication are separate;
 the npm command below applies once that version is published.
 
 ```sh
-pnpm add @bjornpagen/bumbledb@1.1.0 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb@1.2.0 effect@4.0.0-rc.112
 ```
 
 ## Quick start
@@ -85,8 +90,9 @@ const Attempt = relation("Attempt", {
 })
 
 // Keys are declared statements; references and capacity are laws.
+const StudentById = key(Student, ["id"])
 const Learning = schema("Learning", { Student, Attempt }, [
-	key(Student, ["id"]),
+	StudentById,
 	key(Attempt, ["id"]),
 	contained(on(Attempt, "student"), on(Student, "id")),
 	capacity(on(Student, "id"), {
@@ -127,7 +133,7 @@ const program = Effect.scoped(
 			return outcome
 		}
 		const snapshot = yield* db.snapshot()
-		const found = yield* snapshot.get(Student, { id: studentId })
+		const found = yield* snapshot.get(StudentById, { id: studentId })
 		if (Option.isNone(found)) {
 			return outcome
 		}
@@ -151,8 +157,8 @@ The SDK translates TypeScript values directly into the engine's shared schema
 and query representations.
 
 - Fields use `bool`, `bytes`, `f64`, `i64`, `uuid`, `u64`, `str`, and
-  `interval` (`interval(f64)` is the dense float interval); `span` builds
-  checked interval values. `relation()` declares stored records, while
+  `interval` (`interval(f64)` is the dense float interval). Interval values
+  are plain `{ start, end }` records checked against their field. `relation()` declares stored records, while
   `closed()` declares a fixed enum-like set whose values may carry typed
   columns. `Infer` exposes the resulting TypeScript value type. `Uuid` is
   a structural template-literal string, not a nominal brand or a cast helper.
@@ -162,7 +168,9 @@ and query representations.
 - `schema()` accepts `key`, `contained`, `mirrors`, and `capacity`
   statements. Keys are declared statements — there is no minted identity.
   `capacity(target, { from, weight?, within })` takes named options;
-  `.where` makes a reference conditional, `within` sets a count or
+  `select(relation, { field: value })` makes a reference conditional,
+  `closedId(roster)` supplies a field that accepts named enum handles,
+  `within` sets a count or
   measurement range, and `weigh` chooses a numeric field or interval
   duration. Harmless equivalent window spellings lower to one canonical
   law; genuinely different meanings still refuse.
@@ -172,10 +180,24 @@ and query representations.
   existing authority. `db.apply(changes, { expected })` judges one
   immutable final-state change: `accepted`, `no-change`,
   `invariant-rejected` (complete statement diagnostics), or `moved`.
+  `db.judge(changes, { expected })` uses the same admission path but aborts
+  the private candidate. It returns `admitted` or `invariant-rejected` with
+  the actual base witness and net additions/removals, or `moved` without
+  judging. Both use `WriteOptions`; judgment never guarantees a later apply.
 - `ChangeSet.builder(schema)` acquires a scoped database-free draft;
   `insert`/`delete` are lazy bounded ingestion effects, `finish()` seals the
-  immutable `ChangeSet`. Snapshots satisfy the shared `QueryReader`: typed
-  `get` returns `Option`, `execute` returns a sealed `CompleteResult` whose
+  immutable `ChangeSet`. It exposes `schemaId`, `counts`, and `byteLength`.
+  `records()` is a reusable, bounded stream of relation-name-discriminated
+  facts; each traversal owns an independent scoped cursor. `toBytes()`
+  explicitly materializes canonical bytes; `ChangeSet.fromBytes(schema, bytes)`
+  checks them without normalizing malformed input. `left.compose(right)`
+  merges native records into one add-wins command without decoding rows.
+  Composition is commutative, associative, and idempotent, not sequential
+  replay. Its counts describe requested distinct actions; only `judge`
+  measures their effect against a store.
+- Snapshots satisfy the shared `QueryReader`: typed
+  `get(keyDescriptor, keyValues)` chooses an explicit declared key and returns
+  `Option`; `execute` returns a sealed `CompleteResult` whose
   `collect()` explicitly materializes all rows and whose
   `pages()` is a one-shot consuming `Stream` of owned page
   arrays after complete evaluation. Each page contains up to 256 rows; this
@@ -188,6 +210,21 @@ and query representations.
   `f64` are deterministic with one final rounding), named intermediate
   results, nonrecursive composition of query templates, and linear
   recursive reachability.
+- `describeQuery(q)` returns owned logical IR, result names, intermediate
+  table names, and parameter names. `queryFromDescription(S, description,
+  resultFields)` checks a generated description through the same rule builder,
+  scalar grammar, lowering, and execution paths. The result-field record is
+  checked against the derived head and infers the returned row type; it is
+  not an unchecked cast. Generated parameters are validated by their uses at
+  execution. Ordinals refer to the supplied schema's ordered declarations;
+  variable ordinals are local to each rule. Native preparation still checks
+  engine semantics. The description contains plain values, including bigint
+  and byte arrays, rather than native resources or a JSON encoding.
+  Query `data` and `schema`, and compiled-schema inspection properties,
+  return detached snapshots: editing their byte buffers cannot change the
+  query or compilation. Checked immutable branches may be shared. Structural
+  declarations with byte payloads are copied when consumed; JavaScript byte
+  buffers themselves are mutable and are never treated as immutable cache keys.
 - `Scalar.field("units")` is an unresolved source-field leaf.
   `Scalar.add(Scalar.field("units"), Scalar.u64(1n))` authors synchronously
   without native loading. Native schema binding typechecks it, including
@@ -196,6 +233,12 @@ and query representations.
   Effect error channel; interruption and finalizer problems stay in
   `Cause`. Resource owners are scoped and report honest `CloseReport`s;
   incomplete teardown surfaces as a structured `CloseFailure` defect.
+  `error.message` contains the operation and reason code for safe default
+  display. Inspect `error.reason` explicitly for engine details, or
+  `InvalidArgument.detail` for authoring text and available structured
+  diagnostics such as `MissingField`, `UnknownField`, and `InvalidValue`.
+  Those details can contain application names or values and should not be
+  copied into public logs indiscriminately.
 
 ## Cookbook
 

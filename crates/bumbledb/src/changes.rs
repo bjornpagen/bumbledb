@@ -55,6 +55,14 @@ impl std::error::Error for ChangeError {}
 struct Payload {
     bytes: Vec<u8>,
     schema: SchemaFingerprint,
+    added: u64,
+}
+
+/// Distinct requested actions, not net changes against a database state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChangeCounts {
+    pub added: u64,
+    pub removed: u64,
 }
 
 /// Clones share the same sealed native bytes.
@@ -88,7 +96,7 @@ impl ChangeSet {
                 work,
             )?;
         }
-        seal_records(fingerprint(schema), count, size, records, work)
+        seal_records(fingerprint(schema), count, size, records.map(Ok), work)
     }
 
     #[must_use]
@@ -124,63 +132,56 @@ impl ChangeSet {
         self.len() == 0
     }
 
+    #[must_use]
+    pub fn counts(&self) -> ChangeCounts {
+        ChangeCounts {
+            added: self.0.added,
+            removed: self.len() - self.0.added,
+        }
+    }
+
+    /// Combine two commands as one final-state change. Exact-fact additions
+    /// win over removals; distinct rows sharing a key remain distinct and
+    /// must still pass database admission. This operation is commutative,
+    /// associative and idempotent, not sequential replay.
+    ///
+    /// Merges canonical records in linear time without decoding row values.
+    /// # Errors
+    /// Rejects a different schema, cancellation or allocation failure.
+    pub fn compose(&self, other: &Self, work: &WorkContext) -> Result<Self, ChangeError> {
+        work.checkpoint()?;
+        if self.schema() != other.schema() {
+            return Err(ChangeError::WrongSchema);
+        }
+        if Arc::ptr_eq(&self.0, &other.0) || other.is_empty() {
+            return Ok(self.clone());
+        }
+        if self.is_empty() {
+            return Ok(other.clone());
+        }
+        let records = merge_records(self, other, work);
+        let (count, size) = records
+            .clone()
+            .try_fold((0u64, HEADER), |(count, size), record| {
+                let record = record?;
+                let count = count.checked_add(1).ok_or(ChangeError::LengthOverflow)?;
+                let size = size
+                    .checked_add(RECORD)
+                    .and_then(|size| size.checked_add(record.row.len()))
+                    .ok_or(ChangeError::LengthOverflow)?;
+                Ok::<_, ChangeError>((count, size))
+            })?;
+        seal_records(self.schema(), count, size, records, work)
+    }
+
     /// Accepts exactly one normalization: unique rows ordered by relation/full
     /// canonical bytes, at most one action per row. Signed/hashed input is
     /// rejected rather than silently normalized.
     /// # Errors
     /// Rejects malformed, foreign-schema or noncanonical data, cancellation,
     /// or an unallocatable capacity.
-    #[expect(
-        clippy::missing_panics_doc,
-        reason = "header and record widths are checked before fixed-array conversions"
-    )]
     pub fn parse(schema: &Schema, bytes: &[u8], work: &WorkContext) -> Result<Self, ChangeError> {
-        work.checkpoint()?;
-        if bytes.len() < HEADER {
-            return Err(ChangeError::Truncated);
-        }
-        if &bytes[..8] != MAGIC {
-            return Err(ChangeError::WrongFamily);
-        }
-        if u16::from_be_bytes(bytes[8..10].try_into().unwrap()) != VERSION {
-            return Err(ChangeError::WrongVersion);
-        }
-        let identity = fingerprint(schema);
-        if bytes[10..42] != identity.0 {
-            return Err(ChangeError::WrongSchema);
-        }
-        let count = u64::from_be_bytes(bytes[42..50].try_into().unwrap());
-        let mut rest = &bytes[HEADER..];
-        if count > (rest.len() / (RECORD + 2)) as u64 {
-            return Err(ChangeError::Truncated);
-        }
-        let mut previous: Option<(RelationId, &[u8])> = None;
-        for _ in 0..count {
-            work.checkpoint()?;
-            let record = take(&mut rest, RECORD)?;
-            if record[0] > 1 {
-                return Err(ChangeError::InvalidKind);
-            }
-            let relation = RelationId(u32::from_be_bytes(record[1..5].try_into().unwrap()));
-            let len = usize::try_from(u64::from_be_bytes(record[5..13].try_into().unwrap()))
-                .map_err(|_| ChangeError::LengthOverflow)?;
-            let row = take(&mut rest, len)?;
-            crate::canonical::validate(writable_fields(schema, relation)?, row, work)?;
-            if let Some((prior_relation, prior_row)) = previous {
-                let order = if prior_relation == relation {
-                    compare_bytes(prior_row, row, work)?
-                } else {
-                    prior_relation.cmp(&relation)
-                };
-                if order != Ordering::Less {
-                    return Err(ChangeError::NonCanonicalOrder);
-                }
-            }
-            previous = Some((relation, row));
-        }
-        if !rest.is_empty() {
-            return Err(ChangeError::TrailingBytes);
-        }
+        let (identity, added) = validate_bytes(schema, bytes, work)?;
         let mut owned = Vec::new();
         owned
             .try_reserve_exact(bytes.len())
@@ -189,8 +190,83 @@ impl ChangeSet {
         Ok(Self(Arc::new(Payload {
             bytes: owned,
             schema: identity,
+            added,
         })))
     }
+
+    /// Check and retain an owned payload without a second byte copy.
+    /// Uses exactly the same canonical validator as `parse`.
+    /// # Errors
+    /// Rejects malformed, foreign-schema or noncanonical data, or cancellation.
+    pub fn from_bytes(
+        schema: &Schema,
+        bytes: Vec<u8>,
+        work: &WorkContext,
+    ) -> Result<Self, ChangeError> {
+        let (identity, added) = validate_bytes(schema, &bytes, work)?;
+        Ok(Self(Arc::new(Payload {
+            bytes,
+            schema: identity,
+            added,
+        })))
+    }
+}
+
+fn validate_bytes(
+    schema: &Schema,
+    bytes: &[u8],
+    work: &WorkContext,
+) -> Result<(SchemaFingerprint, u64), ChangeError> {
+    work.checkpoint()?;
+    if bytes.len() < HEADER {
+        return Err(ChangeError::Truncated);
+    }
+    if &bytes[..8] != MAGIC {
+        return Err(ChangeError::WrongFamily);
+    }
+    if u16::from_be_bytes(bytes[8..10].try_into().unwrap()) != VERSION {
+        return Err(ChangeError::WrongVersion);
+    }
+    let identity = fingerprint(schema);
+    if bytes[10..42] != identity.0 {
+        return Err(ChangeError::WrongSchema);
+    }
+    let count = u64::from_be_bytes(bytes[42..50].try_into().unwrap());
+    let mut rest = &bytes[HEADER..];
+    if count > (rest.len() / (RECORD + 2)) as u64 {
+        return Err(ChangeError::Truncated);
+    }
+    let mut previous: Option<(RelationId, &[u8])> = None;
+    let mut added = 0;
+    for _ in 0..count {
+        work.checkpoint()?;
+        let record = take(&mut rest, RECORD)?;
+        if record[0] > 1 {
+            return Err(ChangeError::InvalidKind);
+        }
+        added += u64::from(record[0] == 1);
+        let relation = RelationId(u32::from_be_bytes(record[1..5].try_into().unwrap()));
+        let len = usize::try_from(u64::from_be_bytes(record[5..13].try_into().unwrap()))
+            .map_err(|_| ChangeError::LengthOverflow)?;
+        let row = take(&mut rest, len)?;
+        crate::canonical::validate(writable_fields(schema, relation)?, row, work)?;
+        if let Some((prior_relation, prior_row)) = previous {
+            let order = if prior_relation == relation {
+                compare_bytes(prior_row, row, work)?
+            } else {
+                prior_relation.cmp(&relation)
+            };
+            if order != Ordering::Less {
+                return Err(ChangeError::NonCanonicalOrder);
+            }
+        }
+        previous = Some((relation, row));
+    }
+    if !rest.is_empty() {
+        return Err(ChangeError::TrailingBytes);
+    }
+    work.checkpoint()?;
+    Ok((identity, added))
 }
 
 /// Bridge-facing view of one accepted change record. Not embedding API.
@@ -208,31 +284,110 @@ impl ChangeSet {
     #[doc(hidden)]
     pub fn records(&self) -> impl Iterator<Item = ChangeRef<'_>> + Clone {
         let mut rest = &self.0.bytes[HEADER..];
-        std::iter::from_fn(move || {
-            if rest.is_empty() {
-                return None;
-            }
-            let header = take(&mut rest, RECORD).expect("sealed record");
-            let relation = RelationId(u32::from_be_bytes(
-                header[1..5].try_into().expect("sealed relation"),
-            ));
-            let kind = if header[0] == 1 {
-                ChangeKind::Add
-            } else {
-                ChangeKind::Remove
-            };
-            let length = usize::try_from(u64::from_be_bytes(
-                header[5..13].try_into().expect("sealed length"),
-            ))
-            .expect("sealed row fits memory");
-            let row = take(&mut rest, length).expect("sealed row");
-            Some(ChangeRef {
-                relation,
-                kind,
-                row,
-            })
-        })
+        std::iter::from_fn(move || next_record(&mut rest))
     }
+
+    /// Bridge-facing owned traversal. Cloning retains the same bytes at an
+    /// independent position, allowing preview/commit without copying rows.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn cursor(&self) -> ChangeCursor {
+        ChangeCursor {
+            changes: self.clone(),
+            offset: HEADER,
+        }
+    }
+}
+
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct ChangeCursor {
+    changes: ChangeSet,
+    offset: usize,
+}
+
+impl ChangeCursor {
+    /// Borrow the next checked record in O(1) framing work. No rescan or
+    /// decoded row cache; callers choose their own bounded delivery quantum.
+    pub fn next_record(&mut self) -> Option<ChangeRef<'_>> {
+        let mut rest = &self.changes.0.bytes[self.offset..];
+        let record = next_record(&mut rest)?;
+        self.offset = self.changes.0.bytes.len() - rest.len();
+        Some(record)
+    }
+}
+
+fn next_record<'a>(rest: &mut &'a [u8]) -> Option<ChangeRef<'a>> {
+    if rest.is_empty() {
+        return None;
+    }
+    let header = take(rest, RECORD).expect("sealed record");
+    let relation = RelationId(u32::from_be_bytes(
+        header[1..5].try_into().expect("sealed relation"),
+    ));
+    let kind = if header[0] == 1 {
+        ChangeKind::Add
+    } else {
+        ChangeKind::Remove
+    };
+    let length = usize::try_from(u64::from_be_bytes(
+        header[5..13].try_into().expect("sealed length"),
+    ))
+    .expect("sealed row fits memory");
+    let row = take(rest, length).expect("sealed row");
+    Some(ChangeRef {
+        relation,
+        kind,
+        row,
+    })
+}
+
+fn merge_records<'a>(
+    left: &'a ChangeSet,
+    right: &'a ChangeSet,
+    work: &'a WorkContext,
+) -> impl Iterator<Item = Result<ChangeRef<'a>, ChangeError>> + Clone {
+    let mut left = left.records().peekable();
+    let mut right = right.records().peekable();
+    let mut failed = false;
+    std::iter::from_fn(move || {
+        if failed {
+            return None;
+        }
+        let next = (|| {
+            work.checkpoint()?;
+            let (Some(a), Some(b)) = (left.peek(), right.peek()) else {
+                return Ok(left.next().or_else(|| right.next()));
+            };
+            let order = if a.relation == b.relation {
+                compare_bytes(a.row, b.row, work)?
+            } else {
+                a.relation.cmp(&b.relation)
+            };
+            Ok(match order {
+                Ordering::Less => left.next(),
+                Ordering::Greater => right.next(),
+                Ordering::Equal => {
+                    let kind = if a.kind == ChangeKind::Add || b.kind == ChangeKind::Add {
+                        ChangeKind::Add
+                    } else {
+                        ChangeKind::Remove
+                    };
+                    let record = ChangeRef { kind, ..*a };
+                    left.next();
+                    right.next();
+                    Some(record)
+                }
+            })
+        })();
+        match next {
+            Ok(record) => record.map(Ok),
+            Err(error) => {
+                failed = true;
+                Some(Err(error))
+            }
+        }
+    })
 }
 
 struct Pending {
@@ -322,10 +477,12 @@ impl ChangeSetBuilder<'_> {
             fingerprint(self.schema),
             unique as u64,
             size,
-            pending.iter().map(|entry| ChangeRef {
-                relation: entry.relation,
-                kind: entry.kind,
-                row: entry.row.as_bytes(),
+            pending.iter().map(|entry| {
+                Ok(ChangeRef {
+                    relation: entry.relation,
+                    kind: entry.kind,
+                    row: entry.row.as_bytes(),
+                })
             }),
             &self.work,
         )
@@ -338,7 +495,7 @@ fn seal_records<'a>(
     identity: SchemaFingerprint,
     count: u64,
     size: usize,
-    records: impl Iterator<Item = ChangeRef<'a>>,
+    records: impl Iterator<Item = Result<ChangeRef<'a>, ChangeError>>,
     work: &WorkContext,
 ) -> Result<ChangeSet, ChangeError> {
     work.checkpoint()?;
@@ -350,8 +507,11 @@ fn seal_records<'a>(
     bytes.extend_from_slice(&VERSION.to_be_bytes());
     bytes.extend_from_slice(&identity.0);
     bytes.extend_from_slice(&count.to_be_bytes());
+    let mut added = 0;
     for record in records {
         work.checkpoint()?;
+        let record = record?;
+        added += u64::from(record.kind == ChangeKind::Add);
         bytes.push(u8::from(record.kind == ChangeKind::Add));
         bytes.extend_from_slice(&record.relation.0.to_be_bytes());
         bytes.extend_from_slice(&(record.row.len() as u64).to_be_bytes());
@@ -361,6 +521,7 @@ fn seal_records<'a>(
     Ok(ChangeSet(Arc::new(Payload {
         bytes,
         schema: identity,
+        added,
     })))
 }
 

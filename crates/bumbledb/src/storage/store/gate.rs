@@ -509,7 +509,9 @@ mod tests {
         let changes = change_set(&schema(), &[(NOTE, note(2, "new"))], &[]);
         let prepared = match owner.prepare(&changes, &FirstFieldKey, &AdmitAll).unwrap() {
             Prepared::Admitted(prepared) => prepared,
-            Prepared::Rejected(never) => match never {},
+            Prepared::Rejected {
+                rejection: never, ..
+            } => match never {},
         };
         assert_eq!(
             cached_id(&store),

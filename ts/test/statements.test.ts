@@ -1,15 +1,14 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { Result } from "effect"
-
 import * as capacityModule from "#capacity.ts"
 import { duration, ref, weigh, within } from "#capacity.ts"
-import { closed } from "#closed.ts"
+import { closed, closedId } from "#closed.ts"
 import { on } from "#face.ts"
-import { bool, bytes, i64, interval, span, str, u64 } from "#fields.ts"
+import { bool, bytes, i64, interval, str, u64 } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
+import { select } from "#selection.ts"
 import { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
 
 function buildLedger() {
@@ -18,7 +17,7 @@ function buildLedger() {
 	const Account = relation("Account", {
 		id: u64,
 		holder: u64,
-		kind: Kind.id,
+		kind: closedId(Kind),
 		active: interval(i64)
 	})
 	const SavingsTerms = relation("SavingsTerms", { account: u64 })
@@ -28,7 +27,7 @@ function buildLedger() {
 		key(SavingsTerms, ["account"]),
 		contained(on(Account, "holder"), on(Holder, "id")),
 		contained(on(Account, "kind"), on(Kind, "id")),
-		mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account")),
+		mirrors(on(select(Account, { kind: "Savings" }), "id"), on(SavingsTerms, "account")),
 		capacity(on(Holder, "id"), { from: on(Account, "holder"), within: within(0n, 3n) })
 	]
 	const Ledger = schema("Ledger", { Kind, Holder, Account, SavingsTerms }, statements)
@@ -56,9 +55,9 @@ function buildMastery() {
 			DirectPass: { mastered: true, score: 2n }
 		}
 	)
-	const Certificate = relation("Certificate", { id: u64, grade: Grade.id })
-	const psiContainment = contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id"))
-	const psiCapacity = capacity(on(Grade.where({ mastered: true }), "id"), {
+	const Certificate = relation("Certificate", { id: u64, grade: closedId(Grade) })
+	const psiContainment = contained(on(Certificate, "grade"), on(select(Grade, { mastered: true }), "id"))
+	const psiCapacity = capacity(on(select(Grade, { mastered: true }), "id"), {
 		from: on(Certificate, "grade"),
 		within: within(0n, 1n)
 	})
@@ -315,8 +314,8 @@ describe("renderStatement", function describeRender() {
 
 	test("literal sets and interval literals render in macro notation", function probeSelectionRendering() {
 		const { Account, SavingsTerms } = buildLedger()
-		const setFace = on(Account.where({ kind: ["Checking", "Savings"] }), "id")
-		const spanFace = on(Account.where({ active: Result.getOrThrow(span(0n, 10n)) }), "id")
+		const setFace = on(select(Account, { kind: ["Checking", "Savings"] }), "id")
+		const spanFace = on(select(Account, { active: { start: 0n, end: 10n } }), "id")
 		const target = on(SavingsTerms, "account")
 		assert.equal(
 			renderStatement(contained(setFace, target)),
@@ -329,9 +328,9 @@ describe("renderStatement", function describeRender() {
 describe("the ban table, one row at a time — literal spellings are UNWRITABLE", function describeBanTable() {
 	test("the capacity mint vocabulary is exactly the roster — no sixth mint exists", function probeVocabulary() {
 		assert.deepStrictEqual(Object.keys(capacityModule).sort(), [
+			"capacityWeight",
+			"capacityWindow",
 			"duration",
-			"isCapacityWeight",
-			"isCapacityWindow",
 			"ref",
 			"unitWeight",
 			"weigh",
@@ -344,20 +343,20 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 		// Every refusal names the relation and field (`relation Account.kind:`)
 
 		assert.throws(function emptySet() {
-			Account.where({ kind: [] })
+			select(Account, { kind: [] })
 		}, /relation Account\.kind: an empty literal set selects nothing/)
 		assert.throws(function oneElementSet() {
-			Account.where({ kind: ["Checking"] })
+			select(Account, { kind: ["Checking"] })
 		}, /relation Account\.kind: a one-element literal set is the bare literal respelled/)
 		// A duplicate member is the banned one-element set respelled — refused
 
 		assert.throws(function duplicateMember() {
-			Account.where({ kind: ["Checking", "Checking"] })
+			select(Account, { kind: ["Checking", "Checking"] })
 		}, /relation Account\.kind: the literal set spells Checking twice — write it once/)
 
 		assert.throws(function duplicateOrdinary() {
 			const { Holder } = buildLedger()
-			Holder.where({ name: ["a", "b", "a"] })
+			select(Holder, { name: ["a", "b", "a"] })
 		}, /relation Holder\.name: the literal set spells "a" twice — write it once/)
 	})
 
@@ -368,7 +367,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 
 		assert.throws(function duplicateProjection() {
 			key(Holder, ["name", "name"])
-		}, /key\(Holder, \.\.\.\): the projection spells name twice — write it once \(the canonical-utterance law: one meaning, one spelling\)/)
+		}, /key\(Holder, \.\.\.\): the projection spells name twice/)
 	})
 
 	test("a plain u64 face never pairs a closed [id] face — closedness rides the descriptor (both tiers)", function probeRosterWall() {
@@ -387,7 +386,7 @@ describe("the ban table, one row at a time — literal spellings are UNWRITABLE"
 			capacity(on(Sev, "id"), { from: on(Limit, "cap"), within: within(0n, 1n) })
 		}, /Limit\.cap is a bare column but Sev\.id is a Sev reference/)
 
-		const Alert = relation("Alert", { sev: Sev.id })
+		const Alert = relation("Alert", { sev: closedId(Sev) })
 		assert.equal(renderStatement(contained(on(Alert, "sev"), on(Sev, "id"))), "Alert(sev) <= Sev(id)")
 	})
 
@@ -516,21 +515,21 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		// `{0..*}` (vacuous) and `{n..n}`/`{0..0}` are ACCEPTED canonical
 		// spellings now — normalization preserves the authored statement
 		// instead of policing the style (C01, chapter 34).
-		assert.deepEqual(within(computed(0n), "*").window, {
+		assert.deepEqual(within(computed(0n), "*"), {
 			kind: "floor",
 			lo: { kind: "lit", value: 0n }
 		})
-		assert.deepEqual(within(computed(2n), computed(2n)).window, {
+		assert.deepEqual(within(computed(2n), computed(2n)), {
 			kind: "exact",
 			n: { kind: "lit", value: 2n }
 		})
-		assert.deepEqual(within(computed(0n), computed(0n)).window, {
+		assert.deepEqual(within(computed(0n), computed(0n)), {
 			kind: "exact",
 			n: { kind: "lit", value: 0n }
 		})
 		assert.throws(function computedNegative() {
 			within(computed(-1n))
-		}, /capacity bounds are u64/)
+		}, /u64 bigint in range/)
 	})
 
 	test("an inverted window is unsatisfiable — bigint literals carry no type-level order", function probeInverted() {
@@ -565,7 +564,7 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		assert.throws(function unitDurationBound() {
 			// @ts-expect-error — a count of facts bounded by a span of time mixes dimensions (C18): the type tier's ban row, with the construction wall behind it
 			return capacity(on(Room, "id"), { from: on(Booking, "room"), within: within(0n, duration("span")) })
-		}, /mixes dimensions \(C18\) — weigh the source with weigh\(duration\(field\)\), or bound by a u64 field or literal/)
+		}, /mixes dimensions \(C18\)/)
 
 		const weighted = capacity(on(Room, "id"), {
 			from: on(Booking, "room"),
@@ -626,18 +625,28 @@ describe("the ban table's construction tier — computed bounds the type cannot 
 		}, /Pool\.supply is u64, not an interval — Duration\(\.\.\.\) bounds/)
 	})
 
-	test("a forged un-branded window or weight is refused — the mints are the only producers", function probeForgedMints() {
+	test("generated capacity values use the same validation as constructors", () => {
 		const { Pool, Device } = buildRacks()
-		const forgedWindow = { window: { kind: "range", lo: { kind: "lit", value: 0n }, hi: { kind: "lit", value: 3n } } }
-		assert.throws(function forgedWindowRefused() {
-			// @ts-expect-error — a structural window literal is not an admitted CapacityWindow (the brand forecloses it)
-			capacity(on(Pool, "id"), { from: on(Device, "pool"), within: forgedWindow })
-		}, /a capacity window is minted only by within\(\)/)
-		const forgedWeight = { weight: { kind: "field", field: "watts" } }
-		assert.throws(function forgedWeightRefused() {
-			// @ts-expect-error — a structural weight literal is not an admitted CapacityWeight (the brand forecloses it)
-			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: forgedWeight, within: within(0n, 3n) })
-		}, /a capacity weight is minted only by weigh\(\)/)
+		const window = { kind: "range", lo: { kind: "lit", value: 0n }, hi: { kind: "lit", value: 3n } } as const
+		const weight = { kind: "field", field: "watts" } as const
+		assert.deepEqual(
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight, within: window }),
+			capacity(on(Pool, "id"), { from: on(Device, "pool"), weight: weigh("watts"), within: within(0n, 3n) })
+		)
+		for (const invalid of [
+			{ ...window, lo: { kind: "lit", value: -1n } },
+			{ ...window, hi: { kind: "lit", value: 2n ** 64n } },
+			{ ...window, extra: true },
+			{ ...window, hi: { kind: "lit", value: -1n } }
+		])
+			assert.throws(() => capacity(on(Pool, "id"), { from: on(Device, "pool"), within: invalid as never }))
+		assert.throws(() =>
+			capacity(on(Pool, "id"), {
+				from: on(Device, "pool"),
+				weight: { ...weight, extra: true } as never,
+				within: window
+			})
+		)
 	})
 })
 
@@ -650,12 +659,24 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		}, /relation Holder is not declared in this schema — Account\(holder\) <= Holder\(id\)/)
 	})
 
-	test("a same-named but different relation value is rejected", function probeIdentity() {
-		const impostor = relation("Holder", { id: u64 })
+	test("same-named relations resolve structurally, including field order", () => {
 		const declared = relation("Holder", { id: u64 })
-		assert.throws(function differentValue() {
-			schema("Broken", { Holder: declared }, [key(declared, ["id"]), contained(on(impostor, "id"), on(declared, "id"))])
-		}, /different relation value named Holder/)
+		const equivalent = relation("Holder", { id: u64 })
+		assert.doesNotThrow(() =>
+			schema("Equivalent", { Holder: declared }, [
+				key(declared, ["id"]),
+				contained(on(equivalent, "id"), on(declared, "id"))
+			])
+		)
+		const conflicting = relation("Holder", { id: u64, other: u64 })
+		assert.throws(
+			() =>
+				schema("Broken", { Holder: declared }, [
+					key(declared, ["id"]),
+					contained(on(conflicting, "id"), on(declared, "id"))
+				]),
+			/different relation declaration named Holder/
+		)
 	})
 
 	test("declared id keys are ordinary statements now — the fresh-implied key is deleted (E-NO-RESERVE)", function probeDeclaredIdKey() {
@@ -695,25 +716,34 @@ describe("schema() construction boundary", function describeSchemaBoundary() {
 		assert.throws(function unresolvedHandleSelection() {
 			schema("Broken", { Kind, Holder, Account, SavingsTerms }, [
 				key(SavingsTerms, ["account"]),
-				mirrors(on(Account.where({ kind: "Savings" }), "id"), on(SavingsTerms, "account"))
+				mirrors(on(select(Account, { kind: "Savings" }), "id"), on(SavingsTerms, "account"))
 			])
 		}, /no declared containment resolves the closed reference/)
 	})
 
-	test("a forged structural statement is refused at BOTH tiers — the admission brand (062)", function probeForgery() {
+	test("generated statements are checked semantically without an admission token", () => {
 		const { Kind, Holder, Account, SavingsTerms } = buildLedger()
-
-		const forgedData = {
-			kind: "containment" as const,
-			source: on(Account, "holder").data,
-			target: on(Kind, "id").data
-		}
-		assert.throws(function forgedIntoSchema() {
-			schema("Forge", { Kind, Holder, Account, SavingsTerms }, [
-				// @ts-expect-error — 062: Statement carries the module-private admission brand, so a structural literal is not a Statement
-				{ data: forgedData }
-			])
-		}, /a statement is minted only by key\/contained\/mirrors\/capacity/)
+		const valid = { kind: "containment", source: on(Account, "holder"), target: on(Holder, "id") } as const
+		assert.deepEqual(
+			lower(schema("Generated", { Kind, Holder, Account, SavingsTerms }, [key(Holder, ["id"]), valid])),
+			lower(
+				schema("Built", { Kind, Holder, Account, SavingsTerms }, [
+					key(Holder, ["id"]),
+					contained(valid.source, valid.target)
+				])
+			)
+		)
+		assert.throws(
+			() =>
+				schema("WrongRoster", { Kind, Holder, Account, SavingsTerms }, [
+					{ kind: "containment", source: on(Account, "holder"), target: on(Kind, "id") }
+				]),
+			/closedness rides the descriptor/
+		)
+		assert.throws(
+			() => schema("Extra", { Holder }, [{ ...key(Holder, ["id"]), extra: true }]),
+			/only the declared fields/
+		)
 	})
 })
 
@@ -756,11 +786,11 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	test("the closed where() speaks the ordinary selection vocabulary — literal sets and written order", function probePsiVocabulary() {
 		const { Grade, Certificate } = buildMastery()
 		assert.equal(
-			renderStatement(contained(on(Certificate, "grade"), on(Grade.where({ score: [0n, 2n] }), "id"))),
+			renderStatement(contained(on(Certificate, "grade"), on(select(Grade, { score: [0n, 2n] }), "id"))),
 			"Certificate(grade) <= Grade(id | score == {0, 2})"
 		)
 		assert.deepStrictEqual(
-			Grade.where({ score: 2n, mastered: true }).selection.map(function fieldOf(binding) {
+			select(Grade, { score: 2n, mastered: true }).selection.map(function fieldOf(binding) {
 				return binding.field
 			}),
 			["score", "mastered"]
@@ -770,7 +800,7 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 	test("the empty ψ is the bare closed relation respelled and rejected (canonical utterance)", function probeEmptyPsi() {
 		const { Grade } = buildMastery()
 		assert.throws(function emptySelection() {
-			Grade.where({})
+			select(Grade, {})
 		}, /an empty selection is the bare relation respelled/)
 	})
 
@@ -778,26 +808,27 @@ describe("ψ statements over closed relations — closed().where() as a face sou
 		const { Grade } = buildMastery()
 		assert.throws(function unknownColumn() {
 			// @ts-expect-error — Grade has no column `nope` (the runtime twin of the compile wall)
-			Grade.where({ nope: true })
+			select(Grade, { nope: true })
 		}, /relation Grade has no field nope/)
 		assert.throws(function idExcluded() {
-			// @ts-expect-error — the synthetic id is not selectable through where() (handle literals on the referencing side are the spelling)
-			Grade.where({ id: 0n })
-		}, /relation Grade has no field id/)
+			// @ts-expect-error — synthetic ids use the roster handle, never its encoded ordinal
+			select(Grade, { id: 0n })
+		}, /a Grade handle/)
 		assert.throws(function wrongLiteral() {
 			// @ts-expect-error — mastered is a bool column: a bigint literal is out of shape
-			Grade.where({ mastered: 1n })
+			select(Grade, { mastered: 1n })
 		}, /expected boolean/)
 	})
 
 	test("a handle named `where` is ordinary roster data — NO name is reserved, both tiers", function probeNoReservedNames() {
 		const bare = closed("Fine", ["where"])
-		assert.deepEqual(bare.data.handles, ["where"])
+		assert.deepEqual(bare.handles, ["where"])
 		const payload = closed("AlsoFine", ["where"], { pages: bool }, { where: { pages: true } })
-		assert.deepEqual(payload.data.handles, ["where"])
+		assert.deepEqual(payload.handles, ["where"])
 		assert.equal(payload.axioms.where.pages, true)
-		const selected = payload.where({ pages: true })
-		assert.equal(selected.relation, payload, "the ψ surface is the value's own method, untouched by roster data")
+		const selected = select(payload, { pages: true })
+		assert.deepEqual(selected.relation, payload)
+		assert.ok(Object.isFrozen(selected.relation), "immutable declarations may be shared")
 	})
 })
 
@@ -846,7 +877,7 @@ function facesArePairedStructurally(): unknown[] {
 function closedPayloadColumnsPairStructurally(): unknown[] {
 	const { Sev, Limit } = buildSeverity()
 	const { Holder, Account } = buildLedger()
-	const Alert = relation("Alert", { sev: Sev.id })
+	const Alert = relation("Alert", { sev: closedId(Sev) })
 	return [
 		contained(on(Sev, "level"), on(Limit, "level")),
 		contained(on(Limit, "level"), on(Sev, "level")),
@@ -864,14 +895,14 @@ function closedPayloadColumnsPairStructurally(): unknown[] {
 function selectionsAreTyped(): unknown[] {
 	const { Account } = buildLedger()
 	return [
-		Account.where({ kind: "Savings" }),
-		Account.where({ kind: ["Checking", "Savings"] }),
+		select(Account, { kind: "Savings" }),
+		select(Account, { kind: ["Checking", "Savings"] }),
 		// @ts-expect-error — "Nope" is not a handle of Kind's vocabulary (the union refuses)
-		Account.where({ kind: "Nope" }),
+		select(Account, { kind: "Nope" }),
 		// @ts-expect-error — a closed reference selects by handle name, never by raw id: bigint left the closed surface
-		Account.where({ kind: 1n }),
+		select(Account, { kind: 1n }),
 		// @ts-expect-error — Account has no field `nope` to select on
-		Account.where({ nope: 1n })
+		select(Account, { nope: 1n })
 	]
 }
 
@@ -879,29 +910,28 @@ function closedSelectionsAreTyped(): unknown[] {
 	const { Kind } = buildLedger()
 	const { Grade } = buildMastery()
 	return [
-		Grade.where({ mastered: true }),
-		Grade.where({ score: [0n, 2n] }),
-		// @ts-expect-error — the bare tier has no payload columns: `.where` does not exist there
-		Kind.where({}),
+		select(Grade, { mastered: true }),
+		select(Grade, { score: [0n, 2n] }),
+		select(Kind, { id: "Checking" }),
 		// @ts-expect-error — Grade has no column `nope`
-		Grade.where({ nope: true }),
+		select(Grade, { nope: true }),
 		// @ts-expect-error — mastered is a bool column: a bigint literal is out of shape
-		Grade.where({ mastered: 1n }),
-		// @ts-expect-error — the synthetic id is not selectable through where(): spell handle literals on the referencing side
-		Grade.where({ id: 0n })
+		select(Grade, { mastered: 1n }),
+		// @ts-expect-error — a synthetic id selects by named handle, never by ordinal
+		select(Grade, { id: 0n })
 	]
 }
 
 function psiFacesArePairedStructurally(): unknown[] {
 	const { Grade, Certificate } = buildMastery()
 	return [
-		contained(on(Certificate, "grade"), on(Grade.where({ mastered: true }), "id")),
-		capacity(on(Grade.where({ mastered: true }), "id"), { from: on(Certificate, "grade"), within: within(0n, 1n) }),
-		contained(on(Grade.where({ mastered: true }), "score"), on(Certificate, "id")),
+		contained(on(Certificate, "grade"), on(select(Grade, { mastered: true }), "id")),
+		capacity(on(select(Grade, { mastered: true }), "id"), { from: on(Certificate, "grade"), within: within(0n, 1n) }),
+		contained(on(select(Grade, { mastered: true }), "score"), on(Certificate, "id")),
 		// @ts-expect-error — a ψ face's projected shapes still hold the wall: bool never pairs u64
-		contained(on(Grade.where({ score: 2n }), "mastered"), on(Certificate, "grade")),
+		contained(on(select(Grade, { score: 2n }), "mastered"), on(Certificate, "grade")),
 		// @ts-expect-error — an unknown field is not projectable through a ψ-selected closed source
-		on(Grade.where({ mastered: true }), "nope")
+		on(select(Grade, { mastered: true }), "nope")
 	]
 }
 

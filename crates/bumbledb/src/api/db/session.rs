@@ -22,7 +22,7 @@ use crate::storage::GenerationId;
 use crate::storage::store::{
     self, HostChanges, HostSealError, SchemaJudge, StoreError, UnindexedRows,
 };
-use crate::{Admission, ChangeError, ChangeSet, Error, WorkContext, WorkError};
+use crate::{ChangeError, ChangeSet, Error, Violations, WorkContext, WorkError};
 
 /// Net application-fact changes of one candidate (C04's `AppliedChanges`,
 /// exported under the integration seam's historical name).
@@ -92,6 +92,17 @@ pub struct PreparedWrite<'owner, 'db, S> {
     marker: PhantomData<fn() -> S>,
 }
 
+/// The private candidate's decision. Rejection retains the net proposed
+/// changes as evidence, but exposes no commit capability.
+#[must_use]
+pub enum Preparation<'owner, 'db, S> {
+    Accepted(PreparedWrite<'owner, 'db, S>),
+    Rejected {
+        violations: Violations,
+        application: ApplicationChanges,
+    },
+}
+
 pub struct SealedWrite<'owner, 'db, S> {
     inner: store::SealedWrite<'owner, 'db>,
     marker: PhantomData<fn() -> S>,
@@ -138,7 +149,7 @@ impl<'db, S> WriterSession<'db, S> {
     pub fn prepare<'owner>(
         &'owner mut self,
         changes: &ChangeSet,
-    ) -> Result<Admission<PreparedWrite<'owner, 'db, S>>, IntegrationError> {
+    ) -> Result<Preparation<'owner, 'db, S>, IntegrationError> {
         self.work.checkpoint()?;
         let schema = self.db.schema_arc();
         let judge = SchemaJudge::new(schema.as_ref());
@@ -147,13 +158,19 @@ impl<'db, S> WriterSession<'db, S> {
             .prepare_incremental(LawfulParent::established(), changes, &UnindexedRows, &judge)
             .map_err(integration_error)?
         {
-            store::Prepared::Rejected(judged) => {
+            store::Prepared::Rejected {
+                rejection: judged,
+                application,
+            } => {
                 let violations =
                     super::violations::violations_from_judged(schema.as_ref(), judged, &self.work)
                         .map_err(IntegrationError::Core)?;
-                Ok(Admission::Rejected(violations))
+                Ok(Preparation::Rejected {
+                    violations,
+                    application,
+                })
             }
-            store::Prepared::Admitted(inner) => Ok(Admission::Accepted(PreparedWrite {
+            store::Prepared::Admitted(inner) => Ok(Preparation::Accepted(PreparedWrite {
                 inner,
                 marker: PhantomData,
             })),

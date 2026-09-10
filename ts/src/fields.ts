@@ -1,9 +1,8 @@
 import { regex } from "arkregex"
-import { Result } from "effect"
 import { AuthoringError } from "#errors.ts"
-import { DbError } from "#runtime-errors.ts"
 import type { LiteralSpec } from "#spec.ts"
-import { Uuid } from "#uuid.ts"
+import type { Uuid } from "#uuid.ts"
+import { arrayValue, fieldValue, recordValue, taggedValueOf, U64_MAX } from "#values.ts"
 
 const INTEGER_INDEX_NAME = regex("^(?:0|[1-9][0-9]*)$")
 
@@ -23,52 +22,13 @@ interface IntervalValue {
 /**
  * A half-open dense float interval `[start, end)` as a plain value object:
  * two canonical binary64 bounds on the dense numeric line.
- * NaN is never an endpoint, signed zero is normalized at the checked
- * constructor and again by the native boundary, and strict `start < end`
- * makes empty spans unrepresentable through {@link span}. Infinite bounds
- * denote a missing bound, not a member point.
+ * Field-directed validation rejects NaN endpoints and empty intervals and
+ * normalizes signed zero. Infinite bounds denote a missing bound, not a
+ * member point; a plain object alone is not evidence of validation.
  */
 interface FloatIntervalValue {
 	readonly start: number
 	readonly end: number
-}
-
-/**
- * Constructs a checked interval literal — the `start..end` spelling.
- * Half-open and nonempty by construction. Fallible pure parsing
- * returns `Result` (use `Effect.fromResult(span(...))` inside a generator),
- * never hidden I/O and never a thrown domain outcome.
- *
- * Two element domains, selected by argument type: `span(0n, 60n)` is a
- * discrete integer interval; `span(0.5, 1.5)` is a dense float interval
- * with canonical endpoints (NaN refused, `-0` normalized to `+0`,
- * `-Infinity` legal only as the lower bound and `+Infinity` only as the
- * upper bound — both enforced by strict numeric `start < end`).
- */
-function span(start: bigint, end: bigint): Result.Result<IntervalValue, DbError>
-function span(start: number, end: number): Result.Result<FloatIntervalValue, DbError>
-function span(
-	start: bigint | number,
-	end: bigint | number
-): Result.Result<IntervalValue, DbError> | Result.Result<FloatIntervalValue, DbError> {
-	if (typeof start === "bigint" && typeof end === "bigint") {
-		if (start >= end) {
-			return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
-		}
-		return Result.succeed(Object.freeze({ start, end }))
-	}
-	if (typeof start === "number" && typeof end === "number") {
-		if (Number.isNaN(start) || Number.isNaN(end)) {
-			return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
-		}
-		const lo = Object.is(start, -0) ? 0 : start
-		const hi = Object.is(end, -0) ? 0 : end
-		if (!(lo < hi)) {
-			return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
-		}
-		return Result.succeed(Object.freeze({ start: lo, end: hi }))
-	}
-	return Result.fail(new DbError({ operation: "span", reason: { _tag: "InvalidArgument" } }))
 }
 
 /**
@@ -187,11 +147,11 @@ type Infer<F extends AnyField> = F extends { readonly kind: "bool" }
 							? Uuid
 							: F extends { readonly kind: "bytes" }
 								? Uint8Array
-								: F extends { readonly kind: "interval"; readonly element: "f64" }
-									? FloatIntervalValue
-									: F extends { readonly kind: "interval" }
-										? IntervalValue
-										: never
+								: F extends { readonly kind: "interval"; readonly element: infer Element }
+									? Element extends "f64"
+										? FloatIntervalValue
+										: IntervalValue
+									: never
 
 /**
  * The typed shape refusal shared by every literal machine — the selection
@@ -263,47 +223,10 @@ function isFloatIntervalValue(value: unknown): value is FloatIntervalValue {
 	)
 }
 
-function handleLiteral(closed: AnyClosedRoster, value: unknown): LiteralSpec {
-	if (typeof value !== "string") {
-		throw literalShapeError("selection literal", `a ${closed.name} handle name (string)`, value)
-	}
-	if (!closed.handles.includes(value)) {
-		throw new AuthoringError({
-			message: `"${value}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
-		})
-	}
-	return { kind: "handle", handle: value }
-}
-
-function intervalLiteral(element: IntervalElementKind, value: unknown): LiteralSpec {
-	if (element === "f64") {
-		if (!isFloatIntervalValue(value)) {
-			throw literalShapeError("selection literal", "float interval ({ start, end } numbers)", value)
-		}
-		if (Number.isNaN(value.start) || Number.isNaN(value.end) || !(value.start < value.end)) {
-			throw new AuthoringError({
-				message: "selection literal: a float interval is half-open and nonempty with non-NaN canonical endpoints"
-			})
-		}
-		return {
-			kind: "value",
-			value: {
-				kind: "intervalF64",
-				start: Object.is(value.start, -0) ? 0 : value.start,
-				end: Object.is(value.end, -0) ? 0 : value.end
-			}
-		}
-	}
-	if (!isIntervalValue(value)) {
-		throw literalShapeError("selection literal", "interval ({ start, end } bigints)", value)
-	}
-	if (element === "u64") {
-		return { kind: "value", value: { kind: "intervalU64", start: value.start, end: value.end } }
-	}
-	return { kind: "value", value: { kind: "intervalI64", start: value.start, end: value.end } }
-}
-
 function assertDeclarationOrderKey(where: string, name: string): void {
+	if (typeof name !== "string" || !name.isWellFormed()) {
+		throw new AuthoringError({ message: `${where}: expected a well-formed Unicode name` })
+	}
 	if (INTEGER_INDEX_NAME.test(name)) {
 		throw new AuthoringError({
 			message: `${where}: name ${name} is an integer index — JavaScript object keys re-order integer indices, breaking the declaration-order law; use a non-numeric name`
@@ -317,11 +240,91 @@ function assertDeclarationOrderKey(where: string, name: string): void {
 }
 
 function assertDeclarationRecord(where: string, record: object): void {
+	if (typeof record !== "object" || record === null) {
+		throw new AuthoringError({ message: `${where}: expected a plain declaration record` })
+	}
 	const proto = Object.getPrototypeOf(record)
 	if (proto !== Object.prototype && proto !== null) {
 		throw new AuthoringError({
 			message: `${where}: the declaration record's prototype was replaced — a plain \`__proto__: {...}\` entry is the prototype setter, so its key silently vanishes from the declaration; spell it computed (["__proto__"]: {...}) to declare it as data`
 		})
+	}
+	for (const key of Reflect.ownKeys(record)) {
+		const property = Object.getOwnPropertyDescriptor(record, key)
+		if (typeof key !== "string" || property?.enumerable !== true || !("value" in property)) {
+			throw new AuthoringError({ message: `${where}: declarations require enumerable own data fields` })
+		}
+	}
+}
+
+/** Own a checked roster; never freeze the caller's array. */
+function ownHandles<const H extends ClosedHandleTuple>(context: string, handles: H): H
+function ownHandles(context: string, handles: unknown): ClosedHandleTuple
+function ownHandles(context: string, handles: unknown): ClosedHandleTuple {
+	if (!Array.isArray(handles) || handles.length === 0) {
+		throw new AuthoringError({ message: `${context}: expected a nonempty handle tuple` })
+	}
+	const seen = new Set<string>()
+	const values = arrayValue(context, handles, (_, handle) => {
+		if (typeof handle !== "string") throw new AuthoringError({ message: `${context}: expected string handles` })
+		if (!handle.isWellFormed()) throw new AuthoringError({ message: `${context}: expected well-formed string handles` })
+		if (seen.has(handle)) throw new AuthoringError({ message: `${context}: duplicate handle ${handle}` })
+		seen.add(handle)
+		return handle
+	})
+	const first = values[0]
+	if (first === undefined) throw new AuthoringError({ message: `${context}: expected a nonempty handle tuple` })
+	return Object.freeze([first, ...values.slice(1)])
+}
+
+/** Checked structural field descriptors, shared by declaration boundaries. */
+function fieldDescriptor<F extends AnyField>(context: string, input: F): F
+function fieldDescriptor(context: string, input: unknown): AnyField
+function fieldDescriptor(context: string, input: unknown): AnyField {
+	if (typeof input !== "object" || input === null || !("kind" in input)) {
+		throw new AuthoringError({ message: `${context}: expected a field descriptor` })
+	}
+	assertDeclarationRecord(context, input)
+	switch (input.kind) {
+		case "bool":
+		case "str":
+		case "i64":
+		case "f64":
+		case "uuid":
+			recordValue(context, input, ["kind"])
+			return Object.freeze({ kind: input.kind })
+		case "u64": {
+			if (!("closed" in input)) {
+				recordValue(context, input, ["kind"])
+				return u64
+			}
+			recordValue(context, input, ["kind", "closed"])
+			const roster = recordValue(context, input.closed, ["name", "handles"])
+			if (typeof roster.name !== "string") throw new AuthoringError({ message: `${context}: expected a roster name` })
+			assertDeclarationOrderKey(context, roster.name)
+			return Object.freeze({
+				kind: "u64",
+				closed: Object.freeze({ name: roster.name, handles: ownHandles(context, roster.handles) })
+			})
+		}
+		case "bytes": {
+			const value = recordValue(context, input, ["kind", "width"])
+			if (typeof value.width !== "number") throw new AuthoringError({ message: `${context}: expected a bytes width` })
+			return bytes(value.width)
+		}
+		case "interval": {
+			const value = recordValue(context, input, ["kind", "element", "width"])
+			if (value.element !== "u64" && value.element !== "i64" && value.element !== "f64") {
+				throw new AuthoringError({ message: `${context}: expected an interval element kind` })
+			}
+			if (value.width === undefined) return interval({ kind: value.element })
+			if (value.element === "f64" || typeof value.width !== "bigint") {
+				throw new AuthoringError({ message: `${context}: only discrete intervals accept a bigint width` })
+			}
+			return interval({ kind: value.element }, value.width)
+		}
+		default:
+			throw new AuthoringError({ message: `${context}: unknown field kind` })
 	}
 }
 
@@ -371,69 +374,19 @@ function interval(
 				"interval(f64) takes no width — a fixed-width float interval is unrepresentable (rounded start + width is not an exact fixed length on the dense line); applications supply two checked bounds"
 		})
 	}
-	if (width !== undefined && width < 1n) {
+	if (width !== undefined && (typeof width !== "bigint" || width < 1n || width > U64_MAX)) {
 		throw new AuthoringError({
-			message: `interval width must be >= 1 (got ${width}) — w >= 1 is pinned at declaration`
+			message: "interval width must be a bigint in 1..=u64::MAX"
 		})
 	}
 	return Object.freeze({ kind: "interval", element: elementKind, width })
 }
 
 function literalOf(field: AnyField, value: unknown): LiteralSpec {
-	const roster = rosterOf(field)
-	if (roster !== undefined) {
-		return handleLiteral(roster, value)
+	if ("closed" in field) {
+		return { kind: "handle", handle: fieldValue("selection literal", field, value) }
 	}
-	switch (field.kind) {
-		case "bool": {
-			if (typeof value !== "boolean") {
-				throw literalShapeError("selection literal", "boolean", value)
-			}
-			return { kind: "value", value: { kind: "bool", value } }
-		}
-		case "u64": {
-			if (typeof value !== "bigint") {
-				throw literalShapeError("selection literal", "bigint", value)
-			}
-			return { kind: "value", value: { kind: "u64", value } }
-		}
-		case "i64": {
-			if (typeof value !== "bigint") {
-				throw literalShapeError("selection literal", "bigint", value)
-			}
-			return { kind: "value", value: { kind: "i64", value } }
-		}
-		case "str": {
-			if (typeof value !== "string") {
-				throw literalShapeError("selection literal", "string", value)
-			}
-
-			if (!value.isWellFormed()) {
-				throw literalShapeError("selection literal", "well-formed string", value)
-			}
-			return { kind: "value", value: { kind: "string", value } }
-		}
-		case "f64": {
-			if (typeof value !== "number") {
-				throw literalShapeError("selection literal", "number", value)
-			}
-			return { kind: "value", value: { kind: "f64", value } }
-		}
-		case "uuid": {
-			if (!Uuid.isUuid(value)) {
-				throw literalShapeError("selection literal", "a UUID (canonical UUID text)", value)
-			}
-			return { kind: "value", value: { kind: "uuid", value } }
-		}
-		case "bytes": {
-			if (!(value instanceof Uint8Array)) {
-				throw literalShapeError("selection literal", "Uint8Array", value)
-			}
-			return { kind: "value", value: { kind: "fixedBytes", value } }
-		}
-		case "interval":
-			return intervalLiteral(field.element, value)
-	}
+	return { kind: "value", value: taggedValueOf("selection literal", field, value) }
 }
 
 export type {
@@ -463,16 +416,17 @@ export {
 	bool,
 	bytes,
 	f64,
+	fieldDescriptor,
 	i64,
 	interval,
 	isFloatIntervalValue,
 	isIntervalValue,
 	literalOf,
 	literalShapeError,
+	ownHandles,
 	rosterOf,
 	rostersAgree,
 	signaturesAgree,
-	span,
 	str,
 	u64,
 	uuid

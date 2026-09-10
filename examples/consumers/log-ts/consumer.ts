@@ -43,6 +43,7 @@ import { convert, migrationIntent } from "@bjornpagen/bumbledb-log/schema"
 import { Effect, Option, Result, Schema } from "effect"
 import {
 	Attempt,
+	AttemptById,
 	incrementUnits,
 	Learning,
 	makeConsumerRuntime,
@@ -136,7 +137,7 @@ export const correctAttempt = (
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
 					const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
-					const previous = yield* snapshot.get(Attempt, { id: intent.attemptId })
+					const previous = yield* snapshot.get(AttemptById, { id: intent.attemptId })
 					if (Option.isNone(previous)) {
 						return yield* new AttemptMissing({})
 					}

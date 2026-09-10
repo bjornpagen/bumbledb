@@ -10,11 +10,20 @@ use bumbledb::work::WorkContext;
 
 use crate::runtime::{Output, RuntimeError};
 
-use super::{ApplyOutcomeOwned, DbInspectionOwned, ExpectedOwned, change_error, engine_error};
+use super::{
+    ApplyOutcomeOwned, DbInspectionOwned, ExpectedOwned, JudgeOutcomeOwned, change_error,
+    engine_error,
+};
 
-struct ApplyWriterFlag(Arc<crate::DbInner>);
+#[derive(Clone, Copy)]
+pub(crate) enum WriteMode {
+    Apply,
+    Judge,
+}
 
-impl Drop for ApplyWriterFlag {
+struct WriterFlag(Arc<crate::DbInner>);
+
+impl Drop for WriterFlag {
     fn drop(&mut self) {
         self.0.writing.store(false, Ordering::Release);
     }
@@ -29,16 +38,38 @@ pub(crate) fn apply_change_set(
     expected: &ExpectedOwned,
     context: &WorkContext,
 ) -> Result<Output, RuntimeError> {
+    decide_change_set(lease, changes, expected, context, WriteMode::Apply)
+}
+
+/// Judge the same private candidate as apply, then abort it on this worker.
+/// Neither the exclusive session nor a commit capability escapes to JS.
+pub(crate) fn judge_change_set(
+    lease: &crate::runtime::owners::DbLease,
+    changes: &ChangeSet,
+    expected: &ExpectedOwned,
+    context: &WorkContext,
+) -> Result<Output, RuntimeError> {
+    decide_change_set(lease, changes, expected, context, WriteMode::Judge)
+}
+
+fn decide_change_set(
+    lease: &crate::runtime::owners::DbLease,
+    changes: &ChangeSet,
+    expected: &ExpectedOwned,
+    context: &WorkContext,
+    mode: WriteMode,
+) -> Result<Output, RuntimeError> {
     context.checkpoint()?;
     let store_hex = lease.db().integration_store().identity().store.to_string();
     if lease.writing.swap(true, Ordering::AcqRel) {
         return Err(RuntimeError::WriterBusy);
     }
-    let _flag = ApplyWriterFlag(lease.inner_arc());
+    let _flag = WriterFlag(lease.inner_arc());
     let mut session = lease
         .db()
         .integration_writer(context)
         .map_err(integration_error)?;
+    let base = session.generation().map_err(integration_error)?.value();
     if let ExpectedOwned::Exact { store, generation } = expected {
         if *store != store_hex {
             return Err(RuntimeError::Engine {
@@ -46,22 +77,48 @@ pub(crate) fn apply_change_set(
                 message: "expected-state witness names a different store".into(),
             });
         }
-        let current = session.generation().map_err(integration_error)?;
-        if current.value() != *generation {
-            return Ok(Output::Apply(ApplyOutcomeOwned::Moved {
-                store: store_hex,
-                witnessed: *generation,
-                current: current.value(),
-            }));
+        if base != *generation {
+            return Ok(match mode {
+                WriteMode::Apply => Output::Apply(ApplyOutcomeOwned::Moved {
+                    store: store_hex,
+                    witnessed: *generation,
+                    current: base,
+                }),
+                WriteMode::Judge => Output::Judge(JudgeOutcomeOwned::Moved {
+                    store: store_hex,
+                    witnessed: *generation,
+                    current: base,
+                }),
+            });
         }
     }
     match session.prepare(changes).map_err(integration_error)? {
-        bumbledb::Admission::Rejected(violations) => {
-            Ok(Output::Apply(ApplyOutcomeOwned::Rejected(
-                crate::violations_wire(&lease.sealed.descriptor, &violations),
-            )))
+        bumbledb::integration::Preparation::Rejected {
+            violations,
+            application,
+        } => {
+            let violations = crate::violations_wire(&lease.sealed.descriptor, &violations);
+            Ok(match mode {
+                WriteMode::Apply => Output::Apply(ApplyOutcomeOwned::Rejected(violations)),
+                WriteMode::Judge => Output::Judge(JudgeOutcomeOwned::Rejected {
+                    store: store_hex,
+                    generation: base,
+                    application,
+                    violations,
+                }),
+            })
         }
-        bumbledb::Admission::Accepted(prepared) => {
+        bumbledb::integration::Preparation::Accepted(prepared) => {
+            if matches!(mode, WriteMode::Judge) {
+                let application = prepared.application_changes();
+                prepared.abort();
+                context.checkpoint()?;
+                return Ok(Output::Judge(JudgeOutcomeOwned::Admitted {
+                    store: store_hex,
+                    generation: base,
+                    application,
+                }));
+            }
             let sealed = prepared
                 .seal(bumbledb::integration::HostChanges {
                     records: &[],

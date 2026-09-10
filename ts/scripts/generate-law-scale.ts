@@ -1,6 +1,8 @@
 import * as fs from "node:fs"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { Effect } from "effect"
 
 /**
  * Regenerates `ts/test/fixtures/law-scale.ts` in the SUCCESSOR spelling:
@@ -31,11 +33,12 @@ function generate(): string {
 	lines.push(" */")
 	lines.push("")
 	lines.push('import { within } from "#capacity.ts"')
-	lines.push('import { closed } from "#closed.ts"')
+	lines.push('import { closed, closedId } from "#closed.ts"')
 	lines.push('import { on } from "#face.ts"')
 	lines.push('import { i64, interval, str, u64 } from "#fields.ts"')
 	lines.push('import { relation } from "#relation.ts"')
 	lines.push('import { schema } from "#schema.ts"')
+	lines.push('import { select } from "#selection.ts"')
 	lines.push('import { capacity, contained, key, mirrors } from "#statements.ts"')
 	lines.push("")
 	lines.push("/** The identity-strength equality probe (the standard dual-function trick). */")
@@ -47,7 +50,7 @@ function generate(): string {
 	lines.push("")
 	for (let i = 0; i < RELATIONS; i += 1) {
 		lines.push(
-			`const R${i} = relation("R${i}", { id: u64, ref: u64, kind: Vocab${i % VOCABS}.id, at: interval(u64), label: str, score: i64 })`
+			`const R${i} = relation("R${i}", { id: u64, ref: u64, kind: closedId(Vocab${i % VOCABS}), at: interval(u64), label: str, score: i64 })`
 		)
 	}
 	lines.push("")
@@ -95,7 +98,7 @@ function generate(): string {
 	}
 
 	for (let i = 0; i < 9; i += 1) {
-		statements.push(`contained(on(R${i}.where({ label: "hot" }), "id"), on(R${i}, "id"))`)
+		statements.push(`contained(on(select(R${i}, { label: "hot" }), "id"), on(R${i}, "id"))`)
 	}
 
 	lines.push("const LawScale = schema(")
@@ -121,6 +124,10 @@ function generate(): string {
 	return lines.join("\n")
 }
 
-const outPath = path.join(fileURLToPath(new URL("..", import.meta.url)), "test", "fixtures", "law-scale.ts")
-fs.writeFileSync(outPath, generate())
-console.log(`law-scale fixture written: ${outPath}`)
+NodeRuntime.runMain(
+	Effect.sync(() => {
+		const outPath = path.join(fileURLToPath(new URL("..", import.meta.url)), "test", "fixtures", "law-scale.ts")
+		fs.writeFileSync(outPath, generate())
+		console.log(`law-scale fixture written: ${outPath}`)
+	})
+)

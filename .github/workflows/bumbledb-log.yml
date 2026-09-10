@@ -133,11 +133,14 @@ jobs:
         run: |
           mkdir -p /tmp/grail-artifacts
           cp ts/npm/linux-arm64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-arm64.node
+          cp ts/npm/linux-arm64/.native-provenance.json /tmp/grail-artifacts/bumbledb.linux-arm64.provenance.json
           cp target/release/duty /tmp/grail-artifacts/bumbledb-log-duty
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.linux-arm64.node
-          path: /tmp/grail-artifacts/bumbledb.linux-arm64.node
+          path: |
+            /tmp/grail-artifacts/bumbledb.linux-arm64.node
+            /tmp/grail-artifacts/bumbledb.linux-arm64.provenance.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -269,11 +272,14 @@ jobs:
         run: |
           mkdir -p /tmp/grail-artifacts
           cp ts/npm/linux-x64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-x64.node
+          cp ts/npm/linux-x64/.native-provenance.json /tmp/grail-artifacts/bumbledb.linux-x64.provenance.json
           cp target/release/duty /tmp/grail-artifacts/bumbledb-log-duty-linux-x64
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.linux-x64.node
-          path: /tmp/grail-artifacts/bumbledb.linux-x64.node
+          path: |
+            /tmp/grail-artifacts/bumbledb.linux-x64.node
+            /tmp/grail-artifacts/bumbledb.linux-x64.provenance.json
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
@@ -366,10 +372,17 @@ jobs:
       - name: Put ts-log/ node_modules/.bin on PATH
         run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
       - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
+      - name: Stage macOS native provenance
+        run: |
+          mkdir -p /tmp/grail-artifacts
+          cp ts/npm/darwin-arm64/bumbledb.node /tmp/grail-artifacts/bumbledb.darwin-arm64.node
+          cp ts/npm/darwin-arm64/.native-provenance.json /tmp/grail-artifacts/bumbledb.darwin-arm64.provenance.json
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.darwin-arm64.node
-          path: ts/npm/darwin-arm64/bumbledb.node
+          path: |
+            /tmp/grail-artifacts/bumbledb.darwin-arm64.node
+            /tmp/grail-artifacts/bumbledb.darwin-arm64.provenance.json
           if-no-files-found: error
       - name: Gated S3 cell (NotRun without credentials)
         env:

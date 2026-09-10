@@ -25,7 +25,7 @@ import { NativeRuntime } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
 import { schema } from "#schema.ts"
-import { Attempt, Learning, runtimeOptions, Student, storeDir } from "#test/fixtures/learning.ts"
+import { Attempt, Learning, runtimeOptions, Student, StudentById, storeDir } from "#test/fixtures/learning.ts"
 import type { Uuid } from "#uuid.ts"
 
 const attemptsFor = query(Learning).rule((r) => {
@@ -153,9 +153,9 @@ test("create/apply/snapshot/get/execute — the whole chapter 34 core flow, one 
 				assert.equal(outcome.kind, "accepted")
 				const snapshot = yield* db.snapshot()
 				// Missing key is Option.none, never a fake I/O error.
-				const absent = yield* snapshot.get(Student, { id: attemptId })
+				const absent = yield* snapshot.get(StudentById, { id: attemptId })
 				assert.ok(Option.isNone(absent))
-				const present = yield* snapshot.get(Student, { id: studentId })
+				const present = yield* snapshot.get(StudentById, { id: studentId })
 				assert.ok(Option.isSome(present))
 				assert.deepEqual(present.value, { id: studentId, name: "Ada", budget: 10n })
 				const result = yield* snapshot.execute(attemptsFor, { student: studentId })
@@ -224,7 +224,7 @@ test("scoped preparation reuses parameters and closes independently of snapshots
 					const closed = yield* Effect.exit(first.execute({ student: studentId }))
 					assert.ok(Exit.isFailure(closed))
 					assert.ok(Exit.isFailure(yield* Effect.exit(first.releaseMemory())))
-					assert.ok(Option.isSome(yield* snapshot.get(Student, { id: studentId })))
+					assert.ok(Option.isSome(yield* snapshot.get(StudentById, { id: studentId })))
 					const late = yield* seeded(absentId, lateAttemptId)
 					assert.equal((yield* db.apply(late, { expected: { kind: "any" } })).kind, "accepted")
 					// A preparation shares the pinned version, not the snapshot's close authority.
@@ -245,7 +245,7 @@ test("scoped preparation reuses parameters and closes independently of snapshots
 					assert.equal(rows[0]?.id, attemptId)
 					// Ordinary scope release, not just explicit close, spends the plan.
 					const fresh = yield* db.snapshot()
-					assert.ok(Option.isSome(yield* fresh.get(Student, { id: absentId })))
+					assert.ok(Option.isSome(yield* fresh.get(StudentById, { id: absentId })))
 					const escaped = yield* Effect.scoped(fresh.prepare(attemptsFor))
 					const misuse = yield* Effect.exit(escaped.execute({ student: studentId }))
 					assert.ok(Exit.isFailure(misuse))
@@ -328,10 +328,10 @@ test("a snapshot is coherent: a later apply cannot move an open snapshot's facts
 					const outcome = yield* db.apply(lateChanges, { expected: { kind: "any" } })
 					assert.equal(outcome.kind, "accepted")
 					// The pinned snapshot still answers the OLD state.
-					const observed = yield* snapshot.get(Student, { id: lateId })
+					const observed = yield* snapshot.get(StudentById, { id: lateId })
 					assert.ok(Option.isNone(observed), "the open snapshot never observes the later apply")
 					const fresh = yield* db.snapshot()
-					const now = yield* fresh.get(Student, { id: lateId })
+					const now = yield* fresh.get(StudentById, { id: lateId })
 					assert.ok(Option.isSome(now))
 				})
 			)
@@ -359,14 +359,14 @@ test("methods are lazy: construction dispatches nothing, and a scope-escaped han
 					// Constructing an effect on a live handle runs NOTHING:
 					// dropping it unexecuted has no observable consequence.
 					void db.inspect()
-					void escapedSnapshot.get(Student, { id: studentId })
+					void escapedSnapshot.get(StudentById, { id: studentId })
 				})
 			)
 		)
 		assert.ok(escapedDb && escapedSnapshot)
 		// The scope closed both owners: late-constructed effects on the
 		// escaped handles fail with a typed DbError, never dangle natively.
-		const lateGet = await rt.runPromiseExit(escapedSnapshot.get(Student, { id: studentId }))
+		const lateGet = await rt.runPromiseExit(escapedSnapshot.get(StudentById, { id: studentId }))
 		assert.equal(lateGet._tag, "Failure")
 		if (lateGet._tag === "Failure") {
 			const reason = lateGet.cause.reasons.find(Cause.isFailReason)

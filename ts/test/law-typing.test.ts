@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-
 import { within } from "#capacity.ts"
-import { closed } from "#closed.ts"
+import { closed, closedId } from "#closed.ts"
 import { on } from "#face.ts"
 import { str, u64 } from "#fields.ts"
 import type { ClassWall, LawfulStatements } from "#law.ts"
 import { lower } from "#lower.ts"
 import { relation } from "#relation.ts"
 import { schema } from "#schema.ts"
+import { select } from "#selection.ts"
 import { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -16,8 +16,8 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 describe("the three class laws", function laws() {
 	test("generators name their classes; a 3-hop chain lands the whole chain in the generator's class; bare stays bare", function chainGolden() {
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
-		const A = relation("A", { x: Vocab.id, note: str })
-		const B = relation("B", { y: Vocab.id })
+		const A = relation("A", { x: closedId(Vocab), note: str })
+		const B = relation("B", { y: closedId(Vocab) })
 		const Chain = schema("Chain", { Vocab, A, B }, [
 			key(B, ["y"]),
 			contained(on(A, "x"), on(B, "y")),
@@ -67,9 +67,9 @@ describe("the three class laws", function laws() {
 			{ mastered: str },
 			{ Failed: { mastered: "no" }, DirectPass: { mastered: "yes" } }
 		)
-		const Certificate = relation("Certificate", { id: u64, grade: Grade.id })
+		const Certificate = relation("Certificate", { id: u64, grade: closedId(Grade) })
 		const Mastery = schema("Mastery", { Grade, Certificate }, [
-			contained(on(Certificate, "grade"), on(Grade.where({ mastered: "yes" }), "id"))
+			contained(on(Certificate, "grade"), on(select(Grade, { mastered: "yes" }), "id"))
 		])
 		const probeGrade: Equal<(typeof Mastery)["classes"]["Certificate"]["grade"], "Grade.id"> = true
 		// An id in no law is BARE now — the fresh generator authority is deleted.
@@ -86,7 +86,7 @@ describe("the three class laws", function laws() {
 		const Calendar = schema("Calendar", { Booking, CalendarEntry }, [
 			key(Booking, ["id"]),
 			key(CalendarEntry, ["booking"]),
-			mirrors(on(CalendarEntry.where({ label: "hold" }), "booking"), on(Booking, "id"))
+			mirrors(on(select(CalendarEntry, { label: "hold" }), "booking"), on(Booking, "id"))
 		])
 
 		const probeSource: Equal<
@@ -161,7 +161,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 	function buildFixture() {
 		const Vocab = closed("Vocab", ["Alpha", "Beta"])
 		const Holder = relation("Holder", { id: u64, name: str })
-		const Account = relation("Account", { id: u64, holder: u64, kind: Vocab.id, note: str })
+		const Account = relation("Account", { id: u64, holder: u64, kind: closedId(Vocab), note: str })
 		const Terms = relation("Terms", { account: u64 })
 		return schema("Agreement", { Vocab, Holder, Account, Terms }, [
 			key(Holder, ["id"]),
@@ -271,7 +271,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 		const litHandles = { __proto__: { pages: 1n }, Warn: { pages: 2n } }
 		assert.throws(function protoLiteralHandle() {
 			closed("Sev", ["__proto__", "Warn"], { pages: u64 }, litHandles)
-		}, /prototype was replaced/)
+		}, /expected a plain record/)
 
 		const Sev = closed(
 			"Sev",
@@ -279,7 +279,7 @@ describe("the runtime/type agreement and the wire", function agreement() {
 			{ pages: u64 },
 			{ ["__proto__"]: { pages: 1n }, Warn: { pages: 2n } }
 		)
-		assert.deepStrictEqual([...Sev.data.handles], ["__proto__", "Warn"])
+		assert.deepStrictEqual([...Sev.handles], ["__proto__", "Warn"])
 		assert.ok(Object.hasOwn(Sev.axioms, "__proto__"))
 		assert.deepStrictEqual(Object.getOwnPropertyDescriptor(Sev.axioms, "__proto__")?.value, { pages: 1n })
 	})

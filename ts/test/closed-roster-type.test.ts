@@ -15,7 +15,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { closed } from "#closed.ts"
+import { closed, closedId } from "#closed.ts"
 import { on } from "#face.ts"
 import {
 	type AnyClosedIdField,
@@ -41,13 +41,13 @@ const Method = closed("Method", ["DirectPass", "Manual"])
 const Certificate = relation("Certificate", {
 	id: u64,
 	student: u64,
-	kind: Kind.id
+	kind: closedId(Kind)
 })
 
 const wellTyped: Fact<typeof Certificate> = { id: 1n, student: 7n, kind: "DirectPass" }
 
 type Cases = [
-	Expect<Equal<Infer<typeof Kind.id>, "DirectPass" | "JudgedPass" | "Failed">>,
+	Expect<Equal<Infer<ReturnType<typeof closedId<typeof Kind>>>, "DirectPass" | "JudgedPass" | "Failed">>,
 	Expect<Equal<Fact<typeof Certificate>["kind"], "DirectPass" | "JudgedPass" | "Failed">>,
 	Expect<
 		Equal<
@@ -59,16 +59,31 @@ type Cases = [
 			}
 		>
 	>,
-	Expect<Equal<typeof Kind.id, ClosedIdField<"Kind", readonly ["DirectPass", "JudgedPass", "Failed"]>>>,
-	Expect<Equal<(typeof Kind.id)["closed"], ClosedRoster<"Kind", readonly ["DirectPass", "JudgedPass", "Failed"]>>>,
-	Expect<Equal<typeof Kind.id extends AnyClosedIdField ? true : false, true>>
+	Expect<
+		Equal<
+			ReturnType<typeof closedId<typeof Kind>>,
+			ClosedIdField<"Kind", readonly ["DirectPass", "JudgedPass", "Failed"]>
+		>
+	>,
+	Expect<
+		Equal<
+			ReturnType<typeof closedId<typeof Kind>>["closed"],
+			ClosedRoster<"Kind", readonly ["DirectPass", "JudgedPass", "Failed"]>
+		>
+	>,
+	Expect<Equal<ReturnType<typeof closedId<typeof Kind>> extends AnyClosedIdField ? true : false, true>>
 ]
 
 type OverlapCases = [
-	Expect<Equal<Extract<Infer<typeof Method.id>, Infer<typeof Kind.id>>, "DirectPass">>,
+	Expect<
+		Equal<
+			Extract<Infer<ReturnType<typeof closedId<typeof Method>>>, Infer<ReturnType<typeof closedId<typeof Kind>>>>,
+			"DirectPass"
+		>
+	>,
 	// the non-shared names do NOT cross vocabularies
-	Expect<Equal<"Manual" extends Infer<typeof Kind.id> ? true : false, false>>,
-	Expect<Equal<"Failed" extends Infer<typeof Method.id> ? true : false, false>>
+	Expect<Equal<"Manual" extends Infer<ReturnType<typeof closedId<typeof Kind>>> ? true : false, false>>,
+	Expect<Equal<"Failed" extends Infer<ReturnType<typeof closedId<typeof Method>>> ? true : false, false>>
 ]
 
 /**
@@ -99,15 +114,25 @@ const Tag = bytes(16)
 type SignatureCases = [
 	Expect<
 		Equal<
-			SignatureOf<typeof Kind.id>,
+			SignatureOf<ReturnType<typeof closedId<typeof Kind>>>,
 			readonly ["u64", undefined, undefined, readonly ["Kind", readonly ["DirectPass", "JudgedPass", "Failed"]]]
 		>
 	>,
 	Expect<Equal<SignatureOf<typeof Tag>, readonly ["bytes", 16, undefined, undefined]>>,
-	Expect<Equal<Same<SignatureOf<typeof Kind.id>, SignatureOf<typeof Method.id>>, false>>
+	Expect<
+		Equal<
+			Same<
+				SignatureOf<ReturnType<typeof closedId<typeof Kind>>>,
+				SignatureOf<ReturnType<typeof closedId<typeof Method>>>
+			>,
+			false
+		>
+	>
 ]
 
-function sharedHandleAssignsAcrossVocabularies(shared: "DirectPass"): [Infer<typeof Kind.id>, Infer<typeof Method.id>] {
+function sharedHandleAssignsAcrossVocabularies(
+	shared: "DirectPass"
+): [Infer<ReturnType<typeof closedId<typeof Kind>>>, Infer<ReturnType<typeof closedId<typeof Method>>>] {
 	return [shared, shared]
 }
 
@@ -122,7 +147,7 @@ function insertRefusals(): unknown[] {
 
 test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slot carries the name literal", function probeSameShapedVocabularies() {
 	const Answer = closed("Answer", ["DirectPass", "JudgedPass", "Failed"])
-	const Cert = relation("Cert", { k: Kind.id })
+	const Cert = relation("Cert", { k: closedId(Kind) })
 	assert.throws(function crossVocabularyPairing() {
 		// @ts-expect-error — 063: a Kind reference cannot pair with Answer's id — the type-tier roster slot compares [name, handles], matching the runtime's roster-identity judgment
 		contained(on(Cert, "k"), on(Answer, "id"))
@@ -132,7 +157,7 @@ test("two same-shaped vocabularies are distinct at BOTH tiers — the roster slo
 test("handle order is meaning at BOTH tiers — a reordered roster is a different vocabulary", function probeOrderCarriesMeaning() {
 	const Forward = closed("Palette", ["Red", "Green"])
 	const Reversed = closed("Palette", ["Green", "Red"])
-	const Paint = relation("Paint", { color: Forward.id })
+	const Paint = relation("Paint", { color: closedId(Forward) })
 	assert.throws(function reorderedPairing() {
 		// @ts-expect-error — the roster slot is a vector, not a set: [Red, Green] and [Green, Red] are different types, so the faces do not pair
 		contained(on(Paint, "color"), on(Reversed, "id"))
@@ -140,15 +165,15 @@ test("handle order is meaning at BOTH tiers — a reordered roster is a differen
 })
 
 test("the precise type's runtime twin is the same frozen declaration-order roster", function probeRuntimeTwin() {
-	assert.ok(Object.isFrozen(Kind.id))
-	assert.ok(Object.isFrozen(Kind.id.closed))
-	assert.ok(Object.isFrozen(Kind.id.closed.handles))
-	assert.ok(Object.hasOwn(Kind.id, "kind"))
-	assert.ok(Object.hasOwn(Kind.id, "closed"))
-	assert.ok(Object.hasOwn(Kind.id.closed, "name"))
-	assert.ok(Object.hasOwn(Kind.id.closed, "handles"))
+	assert.ok(Object.isFrozen(closedId(Kind)))
+	assert.ok(Object.isFrozen(closedId(Kind).closed))
+	assert.ok(Object.isFrozen(closedId(Kind).closed.handles))
+	assert.ok(Object.hasOwn(closedId(Kind), "kind"))
+	assert.ok(Object.hasOwn(closedId(Kind), "closed"))
+	assert.ok(Object.hasOwn(closedId(Kind).closed, "name"))
+	assert.ok(Object.hasOwn(closedId(Kind).closed, "handles"))
 
-	assert.deepStrictEqual(Kind.id, {
+	assert.deepStrictEqual(closedId(Kind), {
 		kind: "u64",
 		closed: { name: "Kind", handles: ["DirectPass", "JudgedPass", "Failed"] }
 	})

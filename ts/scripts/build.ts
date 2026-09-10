@@ -4,7 +4,8 @@ import { createRequire } from "node:module"
 import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
-import { Result } from "effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { Effect, Result } from "effect"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { ScriptError } from "./errors.ts"
 import { installNativeArtifact } from "./native-artifact.ts"
@@ -79,8 +80,6 @@ function build(): void {
 	rewriteDeclarationImports(distDir)
 	assertDeclarationsAreIsolated(distDir)
 
-	verifyPack(packageRoot, version)
-
 	const repoRoot = path.join(packageRoot, "..")
 	const stamp = spawnSync("node", ["scripts/release-results.mjs", "--write-native-provenance"], {
 		cwd: repoRoot,
@@ -94,6 +93,7 @@ function build(): void {
 			message: `native provenance stamp failed: ${stamp.stderr ?? stamp.stdout}`
 		})
 	}
+	verifyPack(packageRoot, version)
 }
 
 const VERSION_ROSTER = "scripts/version-roster.txt"
@@ -460,4 +460,4 @@ function verifyPack(packageRoot: string, version: string): void {
 	)
 }
 
-build()
+NodeRuntime.runMain(Effect.sync(build))

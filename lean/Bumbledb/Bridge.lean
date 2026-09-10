@@ -318,7 +318,7 @@ def ledger : List Obligation := [
 
   .row @wide_accumulator_exact `Bumbledb.wide_accumulator_exact
     "The wide-accumulator argument: fewer than two-to-the-64 terms of 64-bit values cannot overflow the 128-bit accumulator, so the only narrowing point is finalization."
-    "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); finalize.rs::finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
+    "fold_row.rs::fold_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); finalize.rs::finalize_acc (crates/bumbledb/src/exec/sink/aggregate/finalize.rs)"
     "aggregate_leaf_batches_match_the_scalar_fold_at_the_boundary (crates/bumbledb/src/exec/sink/tests/aggregate.rs)",
 
   .row @pack_canonical `Bumbledb.pack_canonical
@@ -358,7 +358,7 @@ def ledger : List Obligation := [
 
   .row @Query.agg_over_distinct_bindings `Bumbledb.Query.agg_over_distinct_bindings
     "Every aggregate folds the distinct binding set of its group — no fold can observe a duplicate, set semantics through aggregation."
-    "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
+    "fold_row.rs::fold_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs); exec/sink.rs::seen (crates/bumbledb/src/exec/sink.rs)"
     "dedup_constant_group_collapses_duplicates_before_folding (crates/bumbledb/src/exec/sink/tests/aggregate.rs)",
 
   .row @Query.empty_global_no_answer `Bumbledb.Query.empty_global_no_answer
@@ -637,7 +637,7 @@ def ledger : List Obligation := [
   .row @F64.Agg.merge_not_idempotent
     `Bumbledb.F64.Agg.merge_not_idempotent
     "The accumulator merge is NOT idempotent: merging one finite partial state with itself doubles its contribution and count, so exact set deduplication must precede accumulation — the accumulator carries no binding provenance to detect replay."
-    "fold_row.rs::fold_scratch_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs)"
+    "fold_row.rs::fold_row (crates/bumbledb/src/exec/sink/aggregate/fold_row.rs)"
     "partial_state_replay_is_not_idempotent (crates/bumbledb-bench/src/verify/f64_oracle/tests.rs)",
 
   .row @F64.Agg.sum_max_max_overflows

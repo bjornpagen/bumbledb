@@ -26,7 +26,15 @@ import type { Fact } from "#relation.ts"
 import { cellOf, hostCellCharge } from "#rows.ts"
 import { NativeRuntime } from "#runtime.ts"
 import { DbError } from "#runtime-errors.ts"
-import { Attempt, Learning, runtimeOptions, Student, storeDir } from "#test/fixtures/learning.ts"
+import {
+	Attempt,
+	AttemptById,
+	Learning,
+	runtimeOptions,
+	Student,
+	StudentById,
+	storeDir
+} from "#test/fixtures/learning.ts"
 import type { Uuid } from "#uuid.ts"
 
 function runtime() {
@@ -64,8 +72,8 @@ test("insert effects are lazy and rerunnable: each run reads the THEN-CURRENT ar
 					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 					assert.equal(outcome.kind, "accepted")
 					const snapshot = yield* db.snapshot()
-					const ada = yield* snapshot.get(Student, { id: first })
-					const bo = yield* snapshot.get(Student, { id: second })
+					const ada = yield* snapshot.get(StudentById, { id: first })
+					const bo = yield* snapshot.get(StudentById, { id: second })
 					assert.ok(Option.isSome(ada), "the first run's fact is in the final set")
 					assert.ok(Option.isSome(bo), "the rerun's fact is in the final set")
 				})
@@ -125,10 +133,10 @@ test("mutation AFTER successful ingestion cannot change the accepted native fact
 					const db = yield* Db.create(storeDir("accepted-independent"), Learning)
 					yield* db.apply(changes, { expected: { kind: "any" } })
 					const snapshot = yield* db.snapshot()
-					const stored = yield* snapshot.get(Student, { id: kept })
+					const stored = yield* snapshot.get(StudentById, { id: kept })
 					assert.ok(Option.isSome(stored))
 					assert.equal(stored.value.name, "Kept")
-					const forged = yield* snapshot.get(Student, { id: impostor })
+					const forged = yield* snapshot.get(StudentById, { id: impostor })
 					assert.ok(Option.isNone(forged))
 				})
 			)
@@ -194,7 +202,7 @@ test("draft ingestion has no cumulative quota and accepts larger single rows", a
 					const db = yield* Db.create(storeDir("large-draft"), Learning)
 					assert.equal((yield* db.apply(changes, { expected: { kind: "any" } })).kind, "accepted")
 					const snapshot = yield* db.snapshot()
-					const stored = yield* snapshot.get(Student, { id: row.id })
+					const stored = yield* snapshot.get(StudentById, { id: row.id })
 					assert.ok(Option.isSome(stored))
 					assert.deepEqual(stored.value, row)
 				})
@@ -267,7 +275,7 @@ test("same-command normalization: exact same-fact add wins over remove, independ
 					const outcome = yield* db.apply(changes, { expected: { kind: "any" } })
 					assert.equal(outcome.kind, "accepted")
 					const snapshot = yield* db.snapshot()
-					const stored = yield* snapshot.get(Attempt, { id: attemptId })
+					const stored = yield* snapshot.get(AttemptById, { id: attemptId })
 					assert.ok(Option.isSome(stored), "the identical fact's add won the one-command normalization")
 				})
 			)

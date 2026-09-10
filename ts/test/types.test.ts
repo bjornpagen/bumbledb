@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { type Axioms, closed } from "#closed.ts"
+import { type Axioms, closed, closedId } from "#closed.ts"
 import {
 	type BoolField,
 	bool,
@@ -46,7 +46,7 @@ const Holder = relation("Holder", { id: uuid, name: str })
 const Account = relation("Account", {
 	id: uuid,
 	holder: uuid,
-	kind: Kind.id,
+	kind: closedId(Kind),
 	active: ActiveDuring
 })
 
@@ -58,15 +58,15 @@ const Everything = relation("Everything", {
 	raw: u64,
 	score: i64,
 	weight: f64,
-	kind: Kind.id,
+	kind: closedId(Kind),
 	at: RawInterval,
 	stay: Stay,
 	sureness: Confidence
 })
 
 test("the minimal kernel loads and the roster is pure data at runtime", function probeCompiled() {
-	assert.deepEqual(Kind.data.handles, ["Checking", "Savings"])
-	assert.deepEqual(Grade.data.handles, ["DirectPass", "Failed"])
+	assert.deepEqual(Kind.handles, ["Checking", "Savings"])
+	assert.deepEqual(Grade.handles, ["DirectPass", "Failed"])
 	assert.equal(u64.kind, "u64")
 	assert.equal(uuid.kind, "uuid")
 	assert.equal(f64.kind, "f64")
@@ -130,8 +130,8 @@ type Cases = [
 	Expect<Equal<Infer<typeof Confidence>, FloatIntervalValue>>,
 	Expect<Equal<Infer<typeof Confidence> extends IntervalValue ? true : false, false>>,
 	Expect<Equal<Infer<typeof ActiveDuring> extends FloatIntervalValue ? true : false, false>>,
-	Expect<Equal<Infer<typeof Kind.id>, "Checking" | "Savings">>,
-	Expect<Equal<Infer<typeof Grade.id>, "DirectPass" | "Failed">>,
+	Expect<Equal<Infer<ReturnType<typeof closedId<typeof Kind>>>, "Checking" | "Savings">>,
+	Expect<Equal<Infer<ReturnType<typeof closedId<typeof Grade>>>, "DirectPass" | "Failed">>,
 	Expect<Equal<(typeof Tag)["width"], 32>>,
 	Expect<Equal<(typeof RawBytes)["width"], 4>>,
 	Expect<Equal<(typeof Stay)["width"], 7n>>,
@@ -149,14 +149,14 @@ type Cases = [
 	Expect<Equal<"fresh" extends keyof typeof str ? true : false, false>>,
 	Expect<Equal<"fresh" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"fresh" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<"fresh" extends keyof typeof Kind.id ? true : false, false>>,
+	Expect<Equal<"fresh" extends keyof ReturnType<typeof closedId<typeof Kind>> ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof bool ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof str ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"domain" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<"domain" extends keyof typeof Kind.id ? true : false, false>>,
+	Expect<Equal<"domain" extends keyof ReturnType<typeof closedId<typeof Kind>> ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof uuid ? true : false, false>>,
@@ -164,12 +164,12 @@ type Cases = [
 	Expect<Equal<"as" extends keyof typeof RawInterval ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof bool ? true : false, false>>,
 	Expect<Equal<"as" extends keyof typeof str ? true : false, false>>,
-	Expect<Equal<"as" extends keyof typeof Kind.id ? true : false, false>>,
+	Expect<Equal<"as" extends keyof ReturnType<typeof closedId<typeof Kind>> ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof u64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof i64 ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawBytes ? true : false, false>>,
 	Expect<Equal<"newtype" extends keyof typeof RawInterval ? true : false, false>>,
-	Expect<Equal<(typeof Kind.data.handles)[number], string>>,
+	Expect<Equal<(typeof Kind.handles)[number], "Checking" | "Savings">>,
 	Expect<
 		Equal<
 			Axioms<"DirectPass" | "Failed", { mastered: BoolField }>,
@@ -208,7 +208,7 @@ function asIsDeleted(): unknown[] {
 		// @ts-expect-error — str never carried `.as` (macro parity), and the property does not exist anywhere now
 		str.as("Note"),
 		// @ts-expect-error — a closed reference descriptor never carried `.as`
-		Kind.id.as("KindId")
+		closedId(Kind).as("KindId")
 	]
 }
 
@@ -221,7 +221,7 @@ function freshIsDeleted(): unknown[] {
 		// @ts-expect-error — the fresh mint died with the reservation authority (E-NO-RESERVE)
 		uuid.fresh,
 		// @ts-expect-error — a closed reference field was never minted, and no field mints now
-		Kind.id.fresh
+		closedId(Kind).fresh
 	]
 }
 

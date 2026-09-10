@@ -1,10 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { Result } from "effect"
-
-import { closed } from "#closed.ts"
-import { bool, bytes, i64, interval, literalOf, span, str, u64 } from "#fields.ts"
+import { closed, closedId } from "#closed.ts"
+import { bool, bytes, i64, interval, literalOf, str, u64 } from "#fields.ts"
 import { relation } from "#relation.ts"
+import { select } from "#selection.ts"
 
 function buildLedgerPieces() {
 	const Kind = closed("Kind", ["Checking", "Savings"])
@@ -21,7 +20,7 @@ function buildLedgerPieces() {
 	const Account = relation("Account", {
 		id: u64,
 		holder: u64,
-		kind: Kind.id,
+		kind: closedId(Kind),
 		active: interval(i64)
 	})
 	return { Kind, Grade, Holder, Account }
@@ -49,7 +48,7 @@ describe("field descriptors", function describeDescriptors() {
 			["interval(u64)", interval(u64)],
 			["interval(u64, 7n)", interval(u64, 7n)],
 			["interval(i64)", interval(i64)],
-			["Kind.id (closed reference)", Kind.id],
+			["Kind.id (closed reference)", closedId(Kind)],
 			["Grade.columns.mastered (payload column)", Grade.columns.mastered]
 		]
 		for (const [name, descriptor] of descriptors) {
@@ -77,14 +76,14 @@ describe("field descriptors", function describeDescriptors() {
 		assert.deepStrictEqual(general, { kind: "interval", element: "i64", width: undefined })
 		assert.throws(function zeroWidth() {
 			interval(u64, 0n)
-		}, /width must be >= 1/)
+		}, /width must be a bigint in 1\.\.=u64::MAX/)
 	})
 })
 
 describe("closed relations", function describeClosed() {
 	test("the id descriptor is pure structure plus the roster — no declared handle domain", function probeIdDescriptor() {
 		const { Kind } = buildLedgerPieces()
-		assert.deepStrictEqual(Kind.id, {
+		assert.deepStrictEqual(closedId(Kind), {
 			kind: "u64",
 			closed: { name: "Kind", handles: ["Checking", "Savings"] }
 		})
@@ -96,15 +95,11 @@ describe("closed relations", function describeClosed() {
 		assert.equal(Grade.axioms.Failed.mastered, false)
 	})
 
-	test("payload tier lowers columns and ground axioms eagerly in declaration order", function probePayloadLowering() {
+	test("payload declarations have one field record and one ground-fact record", function probePayloadLowering() {
 		const { Grade } = buildLedgerPieces()
-		assert.deepStrictEqual(Grade.data.handles, ["DirectPass", "Failed"])
-		assert.equal(Grade.data.columns.length, 1)
-		assert.equal(Grade.data.columns[0]?.name, "mastered")
-		assert.deepStrictEqual(Grade.data.rows, [
-			{ handle: "DirectPass", values: [{ kind: "value", value: { kind: "bool", value: true } }] },
-			{ handle: "Failed", values: [{ kind: "value", value: { kind: "bool", value: false } }] }
-		])
+		assert.deepStrictEqual(Grade.handles, ["DirectPass", "Failed"])
+		assert.deepEqual(Object.keys(Grade.columns), ["mastered"])
+		assert.deepStrictEqual(Grade.axioms, { DirectPass: { mastered: true }, Failed: { mastered: false } })
 	})
 
 	test("the minted value carries its columns at runtime — the typed carrier's honest twin", function probeColumnsCarrier() {
@@ -112,8 +107,7 @@ describe("closed relations", function describeClosed() {
 		assert.ok(Object.hasOwn(Grade, "columns"), "the payload tier's columns record is an own runtime property")
 		assert.ok(Object.isFrozen(Grade.columns))
 		assert.deepStrictEqual(Object.keys(Grade.columns), ["mastered"])
-		assert.equal(Grade.columns.mastered, bool, "the carrier holds the declared descriptor itself, by identity")
-		assert.equal(Grade.data.columns[0]?.field, Grade.columns.mastered, "the lowering reads the same descriptors")
+		assert.deepEqual(Grade.columns.mastered, bool, "the descriptor is structural")
 
 		assert.ok(Object.hasOwn(Kind, "columns"), "the bare tier carries the empty columns record")
 		assert.ok(Object.isFrozen(Kind.columns))
@@ -129,7 +123,7 @@ describe("closed relations", function describeClosed() {
 		}, /duplicate handle Checking/)
 
 		const bare = closed("Kind", ["Checking", "match"])
-		assert.deepStrictEqual(bare.data.handles, ["Checking", "match"])
+		assert.deepStrictEqual(bare.handles, ["Checking", "match"])
 		const payload = closed("Sev", ["where"], { pages: bool }, { where: { pages: true } })
 		assert.equal(payload.axioms.where.pages, true)
 	})
@@ -138,16 +132,20 @@ describe("closed relations", function describeClosed() {
 		assert.throws(function emptyAxioms() {
 			// @ts-expect-error — an empty handle vector is not a roster
 			closed("Sev", [], { pages: bool }, {})
-		}, /at least one handle/)
+		}, /nonempty handle tuple/)
 	})
 
-	test("integer-index column and handle names are rejected (declaration-order law)", function probeNumericNames() {
+	test("column order is protected; handles use their explicit tuple order", function probeNumericNames() {
 		assert.throws(function numericColumn() {
 			closed("Bad", ["X"], { "0": bool }, { X: { "0": true } })
 		}, /integer index/)
-		assert.throws(function numericHandle() {
-			closed("Bad", ["7"], { pages: bool }, { "7": { pages: true } })
-		}, /integer index/)
+		const numericHandles = closed(
+			"Numeric",
+			["7", "2"],
+			{ pages: bool },
+			{ "2": { pages: false }, "7": { pages: true } }
+		)
+		assert.deepEqual(numericHandles.handles, ["7", "2"])
 	})
 
 	test("axiom rows are minted as OWN properties for every admitted name", function probeProtoHandle() {
@@ -170,57 +168,65 @@ describe("closed relations", function describeClosed() {
 			Object.prototype,
 			"the __proto__ handle never rides the accessor — the record's prototype is untouched"
 		)
-		assert.deepStrictEqual(K.data.handles, [...handles], "the roster carries the names in declaration order")
+		assert.deepStrictEqual(K.handles, [...handles], "the roster carries the names in declaration order")
 	})
 })
 
 describe("intervals", function describeIntervals() {
-	test("span constructs half-open nonempty intervals and rejects the rest", function probeSpan() {
-		const active = Result.getOrThrow(span(0n, 10n))
-		assert.equal(active.start, 0n)
-		assert.equal(active.end, 10n)
-		for (const refused of [span(5n, 5n), span(6n, 5n)]) {
-			assert.ok(Result.isFailure(refused))
-			assert.equal(refused.failure.code, "InvalidArgument")
+	test("plain interval values are validated by their declared field", () => {
+		assert.deepEqual(literalOf(interval(i64), { start: 0n, end: 10n }), {
+			kind: "value",
+			value: { kind: "intervalI64", start: 0n, end: 10n }
+		})
+		for (const value of [
+			{ start: 5n, end: 5n },
+			{ start: 6n, end: 5n },
+			{ start: 7n, end: 2n ** 64n }
+		]) {
+			assert.throws(() => literalOf(interval(u64), value))
 		}
 	})
 
-	test("the ray is representable", function probeRay() {
-		const ray = Result.getOrThrow(span(7n, 2n ** 64n))
-		assert.equal(ray.end, 2n ** 64n)
+	test("the native ray endpoint is the element maximum, not maximum plus one", () => {
+		const end = 2n ** 64n - 1n
+		assert.deepEqual(literalOf(interval(u64), { start: 7n, end }), {
+			kind: "value",
+			value: { kind: "intervalU64", start: 7n, end }
+		})
+		assert.throws(() => literalOf(interval(u64, 1n), { start: end - 1n, end }))
 	})
 })
 
 describe("selection literal resolution", function describeSelections() {
 	test("the roster judges what the structural type cannot: an out-of-roster handle name", function probeRosterMiss() {
 		const { Kind } = buildLedgerPieces()
-		assert.deepStrictEqual(literalOf(Kind.id, "Savings"), { kind: "handle", handle: "Savings" })
+		assert.deepStrictEqual(literalOf(closedId(Kind), "Savings"), { kind: "handle", handle: "Savings" })
 		assert.throws(function outOfRoster() {
-			literalOf(Kind.id, "Frozen")
-		}, /"Frozen" is not a handle of Kind/)
+			literalOf(closedId(Kind), "Frozen")
+		}, /expected a Kind handle/)
 	})
 
 	test("shape mismatches are typed construction errors on the one literal machine", function probeShapeErrors() {
 		assert.throws(function stringOnU64() {
 			literalOf(u64, "x")
-		}, /expected bigint/)
+		}, /expected u64 bigint/)
 		assert.throws(function halfInterval() {
 			literalOf(interval(i64), { start: 1n })
-		}, /interval/)
+		}, /required own field/)
 	})
 
 	test("where() rides the same machine: an ill-typed forged spelling still faces the roster", function probeWhereRoster() {
 		const { Account } = buildLedgerPieces()
 		assert.throws(function bigintForged() {
 			// @ts-expect-error — H1: a closed field's selection literal is the handle union; a bigint no longer typechecks
-			Account.where({ kind: 7n })
-		}, /expected a Kind handle name \(string\), got bigint/)
+			select(Account, { kind: 7n })
+		}, /expected a Kind handle/)
 		assert.throws(function outOfRoster() {
 			// @ts-expect-error — H1: "Frozen" is off the Kind roster — a wrong string is a compile error
-			Account.where({ kind: "Frozen" })
-		}, /"Frozen" is not a handle of Kind/)
+			select(Account, { kind: "Frozen" })
+		}, /expected a Kind handle/)
 		assert.throws(function emptyWhere() {
-			Account.where({})
+			select(Account, {})
 		}, /bare relation respelled/)
 	})
 

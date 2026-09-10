@@ -6,6 +6,7 @@
 //! already contains complete authoritative state, so reopening needs no replay
 //! checkpoint. The linearization point is the durable LMDB commit.
 
+use bumbledb::integration::Preparation;
 use std::sync::Arc;
 
 use bumbledb::integration::{AttachmentChange, HostChanges};
@@ -84,8 +85,8 @@ impl<S> LocalHistory<S> {
             .finish()
             .map_err(|error| LogError::Core(error.into()))?;
         let prepared = match session.prepare(&empty)? {
-            bumbledb::Admission::Accepted(prepared) => prepared,
-            bumbledb::Admission::Rejected(_) => return Err(LogError::Corruption),
+            Preparation::Accepted(prepared) => prepared,
+            Preparation::Rejected { .. } => return Err(LogError::Corruption),
         };
         let sealed = prepared.seal(HostChanges {
             records: &[],

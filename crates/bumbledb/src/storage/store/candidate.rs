@@ -119,7 +119,10 @@ pub enum Judgment<R> {
 /// completed rejection with the writer session retained.
 pub enum Prepared<'owner, 'store, R> {
     Admitted(PreparedWrite<'owner, 'store>),
-    Rejected(R),
+    Rejected {
+        rejection: R,
+        application: AppliedChanges,
+    },
 }
 
 impl<R: std::fmt::Debug> std::fmt::Debug for Prepared<'_, '_, R> {
@@ -130,7 +133,14 @@ impl<R: std::fmt::Debug> std::fmt::Debug for Prepared<'_, '_, R> {
                 "Prepared::Admitted(generation {})",
                 prepared.proposed_generation()
             ),
-            Self::Rejected(rejection) => write!(f, "Prepared::Rejected({rejection:?})"),
+            Self::Rejected {
+                rejection,
+                application,
+            } => f
+                .debug_struct("Prepared::Rejected")
+                .field("rejection", rejection)
+                .field("application", application)
+                .finish(),
         }
     }
 }
@@ -260,7 +270,10 @@ impl<'store> WriteOwner<'store> {
                     match decide(&state, &self.work)? {
                         Judgment::Rejected(rejection) => {
                             drop(txn); // the losing candidate is never readable
-                            return Ok(Prepared::Rejected(rejection));
+                            return Ok(Prepared::Rejected {
+                                rejection,
+                                application,
+                            });
                         }
                         Judgment::Admitted => {
                             return Ok(Prepared::Admitted(PreparedWrite {

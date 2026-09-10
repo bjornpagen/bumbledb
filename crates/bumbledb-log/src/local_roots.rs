@@ -12,6 +12,7 @@
 //! unregistered directories only under the kernel directory lock — a merely
 //! paused owner keeps its lock and its in-flight export.
 
+use bumbledb::integration::Preparation;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
@@ -341,8 +342,8 @@ fn commit_registry_insert<S>(
         .finish()
         .map_err(|_| LocalRootError::Corrupt("empty delta refused"))?;
     let prepared = match session.prepare(&empty)? {
-        bumbledb::Admission::Accepted(prepared) => prepared,
-        bumbledb::Admission::Rejected(_) => {
+        Preparation::Accepted(prepared) => prepared,
+        Preparation::Rejected { .. } => {
             return Err(LocalRootError::Corrupt("empty delta rejected"));
         }
     };
@@ -389,8 +390,8 @@ pub fn release_restore_point<S>(
         .finish()
         .map_err(|_| LocalRootError::Corrupt("empty delta refused"))?;
     let prepared = match session.prepare(&empty)? {
-        bumbledb::Admission::Accepted(prepared) => prepared,
-        bumbledb::Admission::Rejected(_) => {
+        Preparation::Accepted(prepared) => prepared,
+        Preparation::Rejected { .. } => {
             return Err(LocalRootError::Corrupt("empty delta rejected"));
         }
     };

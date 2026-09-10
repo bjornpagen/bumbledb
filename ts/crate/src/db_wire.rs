@@ -33,13 +33,17 @@ use crate::runtime_wire::{
 };
 
 mod apply;
+pub mod changes;
 mod close;
 mod codec;
 mod delivery;
 mod draft;
 mod snapshot;
 
-pub(crate) use apply::{apply_change_set, changes_from_payload, inspect_db};
+pub(crate) use apply::{
+    WriteMode, apply_change_set, changes_from_payload, inspect_db, judge_change_set,
+};
+pub use changes::{ChangeRecordWire, ChangesCursorOpened};
 pub(crate) use close::{close_admitted, spawn_teardown};
 pub(crate) use codec::{decode_rows_values, encode_rows_bytes, parse_input_rows};
 pub(crate) use delivery::{
@@ -173,6 +177,26 @@ pub enum ApplyOutcomeOwned {
         generation: u64,
     },
     Rejected(Vec<marshal::ViolationWire>),
+    Moved {
+        store: String,
+        witnessed: u64,
+        current: u64,
+    },
+}
+
+/// A private candidate's judgment; generation is always the unchanged base.
+pub enum JudgeOutcomeOwned {
+    Admitted {
+        store: String,
+        generation: u64,
+        application: bumbledb::integration::ApplicationChanges,
+    },
+    Rejected {
+        store: String,
+        generation: u64,
+        application: bumbledb::integration::ApplicationChanges,
+        violations: Vec<marshal::ViolationWire>,
+    },
     Moved {
         store: String,
         witnessed: u64,
@@ -852,6 +876,8 @@ pub fn runtime_changes_take(
     match take_output(env, handle)? {
         Output::Changes(opened) => {
             let fingerprint = opened.fingerprint.clone();
+            let counts = opened.changes.counts();
+            let byte_length = opened.changes.as_bytes().len() as u64;
             let admission = RegistryAdmission::admit(
                 Arc::clone(&runtime),
                 NativeKind::Changes,
@@ -876,6 +902,11 @@ pub fn runtime_changes_take(
                 }),
             )?;
             object.set("fingerprint", fingerprint)?;
+            let mut counts_wire = Object::new(&env)?;
+            counts_wire.set("added", BigInt::from(counts.added))?;
+            counts_wire.set("removed", BigInt::from(counts.removed))?;
+            object.set("counts", counts_wire)?;
+            object.set("byteLength", BigInt::from(byte_length))?;
             Ok(object)
         }
         _ => Err(thrown(env, RuntimeError::InvalidArgument)),
@@ -930,6 +961,29 @@ pub fn runtime_db_apply(
     expected: Object,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
+    submit_change_set(env, db, changes, &expected, callback, WriteMode::Apply)
+}
+
+#[napi]
+#[allow(clippy::needless_pass_by_value)]
+pub fn runtime_db_judge(
+    env: Env,
+    db: &External<crate::DbHandle>,
+    changes: &External<ChangesHandle>,
+    expected: Object,
+    callback: Function<(), ()>,
+) -> napi::Result<External<OperationHandle>> {
+    submit_change_set(env, db, changes, &expected, callback, WriteMode::Judge)
+}
+
+fn submit_change_set(
+    env: Env,
+    db: &crate::DbHandle,
+    changes: &ChangesHandle,
+    expected: &Object,
+    callback: Function<(), ()>,
+    mode: WriteMode,
+) -> napi::Result<External<OperationHandle>> {
     let owner = db.owner();
     let runtime = Arc::clone(owner.runtime());
     if changes.identity != identity() {
@@ -939,14 +993,14 @@ pub fn runtime_db_apply(
         return Err(thrown(env, RuntimeError::ForeignRuntime));
     }
     let expected = {
-        let kind: String = marshal::req(&expected, "kind", "apply expected")?;
+        let kind: String = marshal::req(expected, "kind", "write expected")?;
         match kind.as_str() {
             "any" => ExpectedOwned::Any,
             "exact" => ExpectedOwned::Exact {
-                store: marshal::req::<String>(&expected, "store", "apply expected")?,
+                store: marshal::req::<String>(expected, "store", "write expected")?,
                 generation: marshal::u64_in(
-                    &marshal::req::<BigInt>(&expected, "generation", "apply expected")?,
-                    "apply expected",
+                    &marshal::req::<BigInt>(expected, "generation", "write expected")?,
+                    "write expected",
                 )?,
             },
             other => {
@@ -968,13 +1022,74 @@ pub fn runtime_db_apply(
                 Ok(Box::new(move |context, payload, _publication| {
                     let opened = changes_from_payload(payload)?;
                     context.checkpoint()?;
-                    apply_change_set(&lease, &opened.changes, &expected, context)
+                    match mode {
+                        WriteMode::Apply => {
+                            apply_change_set(&lease, &opened.changes, &expected, context)
+                        }
+                        WriteMode::Judge => {
+                            judge_change_set(&lease, &opened.changes, &expected, context)
+                        }
+                    }
                 }))
             },
         )
         .map_err(|error| thrown(env, error))?;
-    let _ = owner;
     Ok(operation_handle(&runtime, operation))
+}
+
+fn witness_wire(env: &Env, store: String, generation: u64) -> napi::Result<Object<'_>> {
+    let mut wire = Object::new(env)?;
+    wire.set("store", store)?;
+    wire.set("generation", BigInt::from(generation))?;
+    Ok(wire)
+}
+
+#[napi]
+pub fn runtime_judge_take(
+    env: Env,
+    handle: &External<OperationHandle>,
+) -> napi::Result<Object<'_>> {
+    let mut object = Object::new(&env)?;
+    let application = match take_output(env, handle)? {
+        Output::Judge(JudgeOutcomeOwned::Admitted {
+            store,
+            generation,
+            application,
+        }) => {
+            object.set("tag", "admitted")?;
+            object.set("base", witness_wire(&env, store, generation)?)?;
+            Some(application)
+        }
+        Output::Judge(JudgeOutcomeOwned::Rejected {
+            store,
+            generation,
+            application,
+            violations,
+        }) => {
+            object.set("tag", "invariant-rejected")?;
+            object.set("base", witness_wire(&env, store, generation)?)?;
+            object.set("violations", violations)?;
+            Some(application)
+        }
+        Output::Judge(JudgeOutcomeOwned::Moved {
+            store,
+            witnessed,
+            current,
+        }) => {
+            object.set("tag", "moved")?;
+            object.set("witnessed", witness_wire(&env, store.clone(), witnessed)?)?;
+            object.set("current", witness_wire(&env, store, current)?)?;
+            None
+        }
+        _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
+    };
+    if let Some(application) = application {
+        let mut changes = Object::new(&env)?;
+        changes.set("added", BigInt::from(application.added))?;
+        changes.set("removed", BigInt::from(application.removed))?;
+        object.set("changes", changes)?;
+    }
+    Ok(object)
 }
 
 #[napi]
@@ -983,20 +1098,14 @@ pub fn runtime_apply_take(
     handle: &External<OperationHandle>,
 ) -> napi::Result<Object<'_>> {
     let mut object = Object::new(&env)?;
-    let witness = |env: &Env, store: String, generation: u64| -> napi::Result<Object<'_>> {
-        let mut wire = Object::new(env)?;
-        wire.set("store", store)?;
-        wire.set("generation", BigInt::from(generation))?;
-        Ok(wire)
-    };
     match take_output(env, handle)? {
         Output::Apply(ApplyOutcomeOwned::Accepted { store, generation }) => {
             object.set("tag", "accepted")?;
-            object.set("witness", witness(&env, store, generation)?)?;
+            object.set("witness", witness_wire(&env, store, generation)?)?;
         }
         Output::Apply(ApplyOutcomeOwned::NoChange { store, generation }) => {
             object.set("tag", "no-change")?;
-            object.set("witness", witness(&env, store, generation)?)?;
+            object.set("witness", witness_wire(&env, store, generation)?)?;
         }
         Output::Apply(ApplyOutcomeOwned::Rejected(violations)) => {
             object.set("tag", "invariant-rejected")?;
@@ -1008,8 +1117,8 @@ pub fn runtime_apply_take(
             current,
         }) => {
             object.set("tag", "moved")?;
-            object.set("witnessed", witness(&env, store.clone(), witnessed)?)?;
-            object.set("current", witness(&env, store, current)?)?;
+            object.set("witnessed", witness_wire(&env, store.clone(), witnessed)?)?;
+            object.set("current", witness_wire(&env, store, current)?)?;
         }
         _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
     }
@@ -1120,15 +1229,25 @@ pub fn runtime_encode_rows(
                     crate::OpenOutcome::SchemaError(message)
                     | crate::OpenOutcome::NewtypeMismatch(message),
                 ) => {
-                    return Err(marshal::err(message));
+                    return Err(thrown(
+                        env,
+                        RuntimeError::Engine {
+                            kind: crate::tags::error_family::SCHEMA,
+                            message,
+                        },
+                    ));
                 }
             };
             let sealed = crate::seal(descriptor, attrs);
-            let schema = sealed
-                .descriptor
-                .clone()
-                .validate()
-                .map_err(|error| marshal::err(error.to_string()))?;
+            let schema = sealed.descriptor.clone().validate().map_err(|error| {
+                thrown(
+                    env,
+                    RuntimeError::Engine {
+                        kind: crate::tags::error_family::SCHEMA,
+                        message: error.to_string(),
+                    },
+                )
+            })?;
             Ok((schema, sealed))
         })();
         match prepared {
@@ -1186,12 +1305,24 @@ pub fn runtime_decode_rows(
                     crate::OpenOutcome::SchemaError(message)
                     | crate::OpenOutcome::NewtypeMismatch(message),
                 ) => {
-                    return Err(marshal::err(message));
+                    return Err(thrown(
+                        env,
+                        RuntimeError::Engine {
+                            kind: crate::tags::error_family::SCHEMA,
+                            message,
+                        },
+                    ));
                 }
             };
-            descriptor
-                .validate()
-                .map_err(|error| marshal::err(error.to_string()))
+            descriptor.validate().map_err(|error| {
+                thrown(
+                    env,
+                    RuntimeError::Engine {
+                        kind: crate::tags::error_family::SCHEMA,
+                        message: error.to_string(),
+                    },
+                )
+            })
         })();
         match staged {
             Ok(schema) => {

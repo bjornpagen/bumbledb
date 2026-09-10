@@ -1,19 +1,24 @@
-import type { AnyClosed, AnySelectedClosed, PayloadField } from "#closed.ts"
+import type { AnyClosed } from "#closed.ts"
+import { memberDescriptor, sealedFieldOf } from "#closed.ts"
 import { AuthoringError } from "#errors.ts"
-import type { AnyField, SignatureOf } from "#fields.ts"
+import { type AnyField, assertDeclarationRecord, type SignatureOf } from "#fields.ts"
 import type { Same } from "#judgment.ts"
-import type { AnyRelation, AnySelected, FieldsShape, RelationFields, SelectionBinding } from "#relation.ts"
+import type { AnyRelation, FieldsShape } from "#relation.ts"
+import { type AnySelected, type FieldsOf, type SelectionBinding, selectionBindings } from "#selection.ts"
 import { renderLiteralSet } from "#spec.ts"
+import { arrayValue, recordValue } from "#values.ts"
 
 const emptySelection: readonly SelectionBinding[] = Object.freeze([])
 
-type OwnerOf<S extends FaceSource> = S extends AnySelected | AnySelectedClosed ? S["relation"] : S
+type OwnerOf<S extends FaceSource> = S extends AnySelected ? S["relation"] : S
 
 function faceParts(source: FaceSource): {
 	readonly owner: FaceOwner
 	readonly selection: readonly SelectionBinding[]
 } {
+	assertDeclarationRecord("face source", source)
 	if ("relation" in source) {
+		recordValue("selected relation", source, ["relation", "selection"])
 		return { owner: source.relation, selection: source.selection }
 	}
 	return { owner: source, selection: emptySelection }
@@ -21,31 +26,17 @@ function faceParts(source: FaceSource): {
 
 type FaceOwner = AnyRelation | AnyClosed
 
-interface FaceData<O extends FaceOwner = FaceOwner, P extends readonly string[] = readonly string[]> {
+interface Face<O extends FaceOwner = FaceOwner, P extends readonly string[] = readonly string[]> {
 	readonly owner: O
 	readonly projection: P
 	readonly selection: readonly SelectionBinding[]
 }
 
-interface Face<S extends FaceSource, P extends readonly string[]> {
-	readonly source: S
-	readonly projection: P
-	readonly data: FaceData<OwnerOf<S>, P>
-}
+type AnyFace = Face<FaceOwner, readonly string[]>
 
-type AnyFace = Face<FaceSource, readonly string[]>
+type FaceSource = AnyRelation | AnyClosed | AnySelected
 
-type FaceSource = AnyRelation | AnyClosed | AnySelected | AnySelectedClosed
-
-type FaceFields<S extends FaceSource> = S extends AnySelected
-	? keyof RelationFields<S["relation"]> & string
-	: S extends AnySelectedClosed
-		? "id" | (keyof S["relation"]["columns"] & string)
-		: S extends AnyRelation
-			? keyof RelationFields<S> & string
-			: S extends { readonly axioms: Readonly<Record<string, infer Row>> }
-				? "id" | (keyof Row & string)
-				: never
+type FaceFields<S extends FaceSource> = keyof FieldsOf<OwnerOf<S>> & string
 
 /**
  * The wire shape a face projects: the field's {@link SignatureOf} with an
@@ -61,28 +52,13 @@ type ShapeIn<Fields extends FieldsShape, K extends string> = K extends keyof Fie
 	? ProjectedSignature<Fields[K]>
 	: undefined
 
-type ProjectedShape<S extends FaceSource, K extends string> = S extends AnySelected
-	? ShapeIn<RelationFields<S["relation"]>, K>
-	: S extends AnySelectedClosed
-		? K extends "id"
-			? ProjectedSignature<S["relation"]["id"]>
-			: ShapeIn<S["relation"]["columns"], K>
-		: S extends AnyRelation
-			? ShapeIn<RelationFields<S>, K>
-			: S extends {
-						readonly id: infer Id extends AnyField
-						readonly columns: infer Cols extends Record<string, PayloadField>
-					}
-				? K extends "id"
-					? ProjectedSignature<Id>
-					: ShapeIn<Cols, K>
-				: undefined
+type ProjectedShape<S extends FaceSource, K extends string> = ShapeIn<FieldsOf<OwnerOf<S>>, K>
 
 type ShapesOf<S extends FaceSource, P extends readonly string[]> = {
 	readonly [I in keyof P]: ProjectedShape<S, P[I] & string>
 }
 
-type FaceShapes<F extends AnyFace> = F extends Face<infer S, infer P> ? ShapesOf<S, P> : never
+type FaceShapes<F extends AnyFace> = ShapesOf<F["owner"], F["projection"]>
 
 type Arity<F extends AnyFace> = F["projection"]["length"]
 
@@ -106,50 +82,45 @@ interface FaceShapeMismatch<Left, Right> {
 type SameShapes<A extends AnyFace, B extends AnyFace> =
 	Same<FaceShapes<A>, FaceShapes<B>> extends true ? unknown : FaceShapeMismatch<FaceShapes<A>, FaceShapes<B>>
 
-function on<S extends FaceSource, const F extends FaceFields<S>>(source: S, field: F): Face<S, readonly [F]>
+function on<S extends FaceSource, const F extends FaceFields<S>>(source: S, field: F): Face<OwnerOf<S>, readonly [F]>
 function on<S extends FaceSource, const P extends readonly [FaceFields<S>, ...FaceFields<S>[]]>(
 	source: S,
 	fields: P
-): Face<S, P>
-function on<S extends FaceSource>(source: S, fields: string | readonly string[]): Face<S, readonly string[]> {
-	const projection: readonly string[] = Object.freeze(typeof fields === "string" ? [fields] : [...fields])
+): Face<OwnerOf<S>, P>
+function on(source: FaceSource, fields: string | readonly string[]): AnyFace {
 	const parts = faceParts(source)
-	const data: FaceData = Object.freeze({
+	return faceDescriptor({
 		owner: parts.owner,
-		projection,
+		projection: typeof fields === "string" ? [fields] : fields,
 		selection: parts.selection
 	})
-	const value = Object.freeze({ source, projection, data })
-	if (!faceMinted<S, readonly string[]>(value, source, projection)) {
-		throw new AuthoringError({ message: `face over ${parts.owner.name}: face construction incomplete` })
+}
+
+/** Own and check a structural face. No constructor-only admission token. */
+function faceDescriptor<F extends AnyFace>(input: F): F
+function faceDescriptor(input: unknown): AnyFace
+function faceDescriptor(raw: unknown): AnyFace {
+	const input = recordValue("face", raw, ["owner", "projection", "selection"])
+	const owner = memberDescriptor(input.owner)
+	const projection = arrayValue("face projection", input.projection, (_, value) => {
+		if (typeof value !== "string") throw new AuthoringError({ message: "face: expected a field name" })
+		return value
+	})
+	if (projection.length === 0) {
+		throw new AuthoringError({ message: "face: expected a nonempty projection" })
 	}
-	return value
+	const projected = new Set<string>()
+	for (const field of projection) {
+		if (typeof field !== "string" || sealedFieldOf(owner, field) === undefined)
+			throw new AuthoringError({ message: `face ${owner.name}: unknown field ${String(field)}` })
+		if (projected.has(field)) throw new AuthoringError({ message: `face ${owner.name}: duplicate field ${field}` })
+		projected.add(field)
+	}
+	const selection = selectionBindings(owner, input.selection)
+	return Object.freeze({ owner, projection, selection })
 }
 
-/**
- * The trusted admission seam of the face mint (the pattern's home is
- * `isTypedScope` in query/lower.ts): the
- * checkable facts — the value carries exactly the source and projection it
- * was built from, and `data.owner` is exactly the owner {@link faceParts}
- * resolves for that source — are verified before the wide construction is
- * admitted at the exact {@link Face} type (whose `data` claims the owner at
- * its precise type, the carrier the schema-level law-typing reads).
- */
-function faceMinted<S extends FaceSource, P extends readonly string[]>(
-	value: { readonly source: FaceSource; readonly projection: readonly string[]; readonly data: FaceData },
-	source: S,
-	projection: P
-): value is Face<S, P> {
-	const owner = "relation" in source ? source.relation : source
-	return (
-		value.source === source &&
-		value.projection === projection &&
-		value.data.owner === owner &&
-		value.data.projection === projection
-	)
-}
-
-function renderFace(face: FaceData): string {
+function renderFace(face: AnyFace): string {
 	const projection = face.projection.join(", ")
 	if (face.selection.length === 0) {
 		return `${face.owner.name}(${projection})`
@@ -167,7 +138,6 @@ export type {
 	Arity,
 	Face,
 	FaceArityMismatch,
-	FaceData,
 	FaceFields,
 	FaceOwner,
 	FaceShapeMismatch,
@@ -178,4 +148,4 @@ export type {
 	SameArity,
 	SameShapes
 }
-export { on, renderFace }
+export { faceDescriptor, on, renderFace }

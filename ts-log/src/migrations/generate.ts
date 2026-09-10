@@ -20,9 +20,9 @@
  * schema lowering and the core row-cell codec are imported literally.
  */
 import * as path from "node:path"
-import type { AnyRelation, NativeRuntime, RelationData, SchemaRelations, SchemaSpec } from "@bjornpagen/bumbledb"
-import { cellOf, Uuid } from "@bjornpagen/bumbledb"
-import { lower } from "@bjornpagen/bumbledb/internal/log"
+import type { AnyField, NativeRuntime, SchemaRelations, SchemaSpec } from "@bjornpagen/bumbledb"
+import { Uuid } from "@bjornpagen/bumbledb"
+import { factCellsOf, lower, schemasAgree } from "@bjornpagen/bumbledb/internal/log"
 import type { Scope } from "effect"
 import { Effect } from "effect"
 import type { LogError } from "#errors.ts"
@@ -99,26 +99,10 @@ function deriveLabel(tokens: readonly string[]): string {
 // Read caller iterables once, yielding between bounded processing steps.
 // The generated document owns the lowered rows; no second chunk array is
 // necessary. This is incremental ingestion, not a streaming document codec.
-// Values lower through the core's one row-cell codec (`cellOf`).
+// Values lower through the core's exact row-shape and cell codec.
 // ---------------------------------------------------------------------------
 
-function isOrdinaryRelation(member: unknown): member is AnyRelation {
-	return (
-		typeof member === "object" &&
-		member !== null &&
-		"data" in member &&
-		typeof member.data === "object" &&
-		member.data !== null &&
-		"fields" in member.data
-	)
-}
-
-function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown): PlanValue {
-	const declared = relation.fields[ordinal]
-	if (declared === undefined) {
-		throw new Error(`relation ${relation.name}: cell ${ordinal} has no declared field`)
-	}
-	const field = declared.field
+function planValueOfCell(context: string, field: AnyField, cell: unknown): PlanValue {
 	switch (field.kind) {
 		case "bool":
 			return { bool: cell === true }
@@ -133,7 +117,7 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 			// canonical hyphenated UUID string — already the plan wire
 			// spelling.
 			if (!Uuid.isUuid(cell)) {
-				throw new Error(`relation ${relation.name}.${declared.name}: uuid cell did not lower to canonical hex`)
+				throw new Error(`${context}: uuid cell did not lower to canonical hex`)
 			}
 			return { uuid: cell }
 		}
@@ -141,13 +125,13 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 			return { string: String(cell) }
 		case "bytes": {
 			if (!(cell instanceof Uint8Array)) {
-				throw new Error(`relation ${relation.name}.${declared.name}: bytes cell did not lower to bytes`)
+				throw new Error(`${context}: bytes cell did not lower to bytes`)
 			}
 			return { fixedBytes: bytesHex(cell) }
 		}
 		case "interval": {
 			if (typeof cell !== "object" || cell === null || !("start" in cell) || !("end" in cell)) {
-				throw new Error(`relation ${relation.name}.${declared.name}: interval cell did not lower to endpoints`)
+				throw new Error(`${context}: interval cell did not lower to endpoints`)
 			}
 			if (field.element === "f64") {
 				return { intervalF64: [f64Bits(Number(cell.start)), f64Bits(Number(cell.end))] }
@@ -161,7 +145,7 @@ function planValueOfCell(relation: RelationData, ordinal: number, cell: unknown)
 }
 
 const lowerSeeds = Effect.fn("bumbledb-log.migrations.lowerSeeds")(function* (
-	relations: Readonly<Record<string, unknown>>,
+	relations: SchemaRelations,
 	intents: readonly MigrationIntentEntry[],
 	seedRelations: readonly string[]
 ) {
@@ -169,10 +153,10 @@ const lowerSeeds = Effect.fn("bumbledb-log.migrations.lowerSeeds")(function* (
 	const seedOps: PlanOperation[] = []
 	for (const relationName of seedRelations) {
 		const member = relations[relationName]
-		if (!isOrdinaryRelation(member)) {
+		if (member?.kind !== "relation") {
 			return yield* Effect.fail(unsupported(operation, `seed target ${relationName} is not an ordinary relation value`))
 		}
-		const data = member.data
+		const fields = Object.entries(member.fields)
 		const rows: Array<readonly PlanValue[]> = []
 		for (const intent of intents) {
 			if (intent.kind !== "seed" || intent.relation !== relationName) {
@@ -200,15 +184,11 @@ const lowerSeeds = Effect.fn("bumbledb-log.migrations.lowerSeeds")(function* (
 											break
 										}
 										const fact = next.value
+										const cells = factCellsOf(member, fact)
 										rows.push(
-											data.fields.map((declared, ordinal) => {
-												const cell = cellOf(
-													`seed ${relationName}.${declared.name}`,
-													declared.field,
-													fact[declared.name]
-												)
-												return planValueOfCell(data, ordinal, cell)
-											})
+											fields.map(([name, field], ordinal) =>
+												planValueOfCell(`seed ${relationName}.${name}`, field, cells[ordinal])
+											)
 										)
 									}
 								},
@@ -268,11 +248,11 @@ export function makeGenerator(codec: MigrationCodec, exclusion: RepositoryExclus
 		options: CheckOptions<Rels>
 	) {
 		const operation = "migrations.analyze"
-		if (options.intent !== undefined && options.intent.schema !== options.schema) {
+		if (options.intent !== undefined && !schemasAgree(options.intent.schema, options.schema)) {
 			return yield* Effect.fail(
 				unsupported(
 					operation,
-					"the migration intent was declared for a different schema value than the one being generated"
+					"the migration intent was declared for a different logical schema than the one being generated"
 				)
 			)
 		}

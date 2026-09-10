@@ -168,7 +168,9 @@ impl<S> Db<S> {
             .prepare_incremental(admitted_parent(), changes, &UnindexedRows, &judge)
             .map_err(Error::from_store)?
         {
-            Prepared::Rejected(judged) => Ok(ApplyOutcome::InvariantRejected {
+            Prepared::Rejected {
+                rejection: judged, ..
+            } => Ok(ApplyOutcome::InvariantRejected {
                 violations: super::violations::violations_from_judged(
                     self.schema.as_ref(),
                     judged,
@@ -229,7 +231,9 @@ impl<S> Db<S> {
             .prepare_incremental(admitted_parent(), &changes, &UnindexedRows, &judge)
             .map_err(Error::from_store)?
         {
-            Prepared::Rejected(judged) => Ok(ConditionalWrite::Rejected(
+            Prepared::Rejected {
+                rejection: judged, ..
+            } => Ok(ConditionalWrite::Rejected(
                 super::violations::violations_from_judged(self.schema.as_ref(), judged, &work)?,
             )),
             Prepared::Admitted(prepared) => {

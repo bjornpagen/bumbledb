@@ -97,28 +97,34 @@ describe("the comparison pairing walls", function suite() {
 	})
 
 	test("the order pair: literals type against their sibling — bool-vs-bigint and u64-vs-boolean are compile-refused", function literalPairs() {
-		const boolAgainstInteger = query(World).rule((r) => {
-			const { id, flag } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, flag })
-					// @ts-expect-error — a bigint literal against a bool var is check_const's conviction (R3 orders bool, it does not number it)
-					.where(r.lt(flag, 5n))
-					.find({ n: id })
-			)
-		})
-		assert.equal(boolAgainstInteger.data.rules.length, 1)
-		const numericAgainstBoolean = query(World).rule((r) => {
-			const { id, count } = v(Reading)
-			return (
-				r
-					.match(Reading, { id, count })
-					// @ts-expect-error — a boolean literal against a u64 var is the same conviction mirrored
-					.where(r.lt(count, true))
-					.find({ n: id })
-			)
-		})
-		assert.equal(numericAgainstBoolean.data.rules.length, 1)
+		assert.throws(
+			() =>
+				query(World).rule((r) => {
+					const { id, flag } = v(Reading)
+					return (
+						r
+							.match(Reading, { id, flag })
+							// @ts-expect-error — a bigint literal against a bool var is check_const's conviction (R3 orders bool, it does not number it)
+							.where(r.lt(flag, 5n))
+							.find({ n: id })
+					)
+				}),
+			/expected boolean/
+		)
+		assert.throws(
+			() =>
+				query(World).rule((r) => {
+					const { id, count } = v(Reading)
+					return (
+						r
+							.match(Reading, { id, count })
+							// @ts-expect-error — a boolean literal against a u64 var is the same conviction mirrored
+							.where(r.lt(count, true))
+							.find({ n: id })
+					)
+				}),
+			/expected u64 bigint/
+		)
 	})
 
 	test("the fold input: min/max over a bool var is refused (both tiers)", function boolFoldPair() {

@@ -197,7 +197,9 @@ fn judgment_sees_every_competing_proposal_in_the_same_exact_home() {
                 .commit()
                 .expect("commit"),
         ),
-        Prepared::Rejected(rows) => {
+        Prepared::Rejected {
+            rejection: rows, ..
+        } => {
             panic!("unrelated exact homes must admit: {rows:?}")
         }
     }
@@ -210,7 +212,9 @@ fn judgment_sees_every_competing_proposal_in_the_same_exact_home() {
         )
         .expect("prepare conflicting")
     {
-        Prepared::Rejected(rows) => assert_eq!(rows.len(), 2),
+        Prepared::Rejected {
+            rejection: rows, ..
+        } => assert_eq!(rows.len(), 2),
         Prepared::Admitted(_) => panic!("true duplicate id must reject without overwriting a row"),
     }
 }

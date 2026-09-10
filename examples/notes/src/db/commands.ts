@@ -16,7 +16,7 @@ import type { CommandRef, History, HistoryBorrow, SubmitOptions, SubmitOutcome }
 import { Command, RequestId } from "@bjornpagen/bumbledb-log"
 import { Effect } from "effect"
 import { rememberCommandRef, rememberSubmitOutcome } from "../requests.ts"
-import { App, Attachment, Note, Outbox } from "./schema.ts"
+import { App, Attachment, Note, NoteById, Outbox } from "./schema.ts"
 
 type Writer =
 	| Pick<History<typeof App>, "identity" | "receiptEpoch" | "submit" | "resolve">
@@ -107,7 +107,7 @@ export const setPinned = Effect.fn("commands.setPinned")(
 		const observed = yield* Effect.scoped(
 			Effect.gen(function* () {
 				const snapshot = yield* writer.snapshot({ consistency: { kind: "latest" } })
-				const previous = yield* snapshot.get(Note, { id: noteId })
+				const previous = yield* snapshot.get(NoteById, { id: noteId })
 				return { previous, at: snapshot.stateStamp }
 			})
 		)

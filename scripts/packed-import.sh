@@ -123,9 +123,6 @@ fi
 # D27: second isolated project — no platform overrides; optional native off.
 mkdir "$TMP/pure"
 node "$ROOT/scripts/packed-project.mjs" "$ROOT" "$TMP/pure" --pure
-cat > "$TMP/pure/.npmrc" <<EOF
-optional=false
-EOF
 cat > "$TMP/pure/pnpm-workspace.yaml" <<YAML
 packages:
   - "."

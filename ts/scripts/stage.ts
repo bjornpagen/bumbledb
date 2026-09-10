@@ -3,8 +3,10 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
-import { Result } from "effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { Effect, Result } from "effect"
 import { ScriptError } from "./errors.ts"
+import { assertNativeProvenance } from "./native-artifact.ts"
 import { packedMainManifest, packedPlatformManifest } from "./pin.ts"
 import { PUBLISH_PLATFORMS } from "./platform.ts"
 
@@ -222,10 +224,12 @@ function stagePlatformPackage(
 		})
 	}
 
+	const provenance = packProvenance(`@bjornpagen/bumbledb-${platform}`, version)
+	assertNativeProvenance(binary, platform, provenance)
 	const staged = path.join(stagingDir, `bumbledb-${platform}`)
 	fs.mkdirSync(staged, { recursive: true })
 	writeManifest(path.join(staged, "package.json"), manifest)
-	writePackProvenance(staged, packProvenance(`@bjornpagen/bumbledb-${platform}`, version))
+	writePackProvenance(staged, provenance)
 	fs.copyFileSync(path.join(sourceDir, "LICENSE"), path.join(staged, "LICENSE"))
 	fs.copyFileSync(binary, path.join(staged, "bumbledb.node"))
 
@@ -273,7 +277,7 @@ function main(): void {
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 
 if (invokedDirectly) {
-	main()
+	NodeRuntime.runMain(Effect.sync(main))
 }
 
 export {

@@ -18,6 +18,7 @@ import {
 	closed,
 	contained,
 	Db,
+	describeQuery,
 	duration,
 	f64,
 	i64,
@@ -29,11 +30,11 @@ import {
 	NativeRuntime,
 	on,
 	query,
+	queryFromDescription,
 	ref,
 	relation,
 	Scalar,
 	schema,
-	span,
 	str,
 	u64,
 	v,
@@ -44,6 +45,8 @@ import type {
 	ApplyOutcome,
 	CompleteResult,
 	Fact,
+	FloatIntervalValue,
+	IntervalValue,
 	QueryReader
 } from "@bjornpagen/bumbledb"
 
@@ -163,18 +166,83 @@ const applyOnce = Effect.scoped(
 void applyOnce
 ```
 
+For a noncommitting check, `db.judge` runs the same admission procedure and
+aborts its private candidate on the native worker. It briefly takes the
+writer; it does not hold a writer session open in JavaScript. Admitted and
+rejected judgments include the actual base and net proposed fact counts.
+Operational errors stay in the Effect error channel.
+
+```ts
+const judgeOnce = Effect.scoped(
+	Effect.gen(function* () {
+		const db = yield* Db.open(localPath, Tasks)
+		const draft = yield* ChangeSet.builder(Tasks)
+		const id = yield* Effect.sync(() => crypto.randomUUID())
+		yield* draft.insert(Task, [{ id, title: "inspect a candidate", done: 0n }])
+		return yield* db.judge(yield* draft.finish(), { expected: { kind: "any" } })
+	})
+)
+void judgeOnce
+```
+
+Judgment is optional: `apply` always judges for itself. To act on a judgment,
+use its base as an exact expected witness and handle `moved`; do not assume
+another writer could not change the database between these operations.
+
+Change sets also work as inspectable values without a database. Their
+`counts` report distinct requested additions/removals, not the net change
+against any store. `records()` yields `{ relation, kind, fact }` records;
+the relation name narrows the fact type. Every traversal opens an independent
+cursor over the shared native bytes. Early termination, failure and interruption
+close it, without consuming the change set. Delivery is bounded to 256 records
+and a 64 KiB canonical-byte target per batch; a larger individual row is allowed.
+
+`toBytes()` explicitly copies the complete canonical payload. `fromBytes`
+checks its schema fingerprint, framing, scalar values, order and uniqueness;
+it refuses malformed bytes instead of silently normalizing them. Input bytes
+must remain stable until the Effect exits, and returned bytes are independently
+owned. Native byte order is canonical encoding order, not insertion order.
+
+```ts
+const inspectAndCompose = Effect.scoped(
+	Effect.gen(function* () {
+		const draft = yield* ChangeSet.builder(Tasks)
+		const id = yield* Effect.sync(() => crypto.randomUUID())
+		yield* draft.insert(Task, [{ id, title: "inspect typed changes", done: 0n }])
+		const changes = yield* draft.finish()
+		const bytes = yield* changes.toBytes()
+		const decoded = yield* ChangeSet.fromBytes(Tasks, bytes)
+		const combined = yield* changes.compose(decoded)
+		const preview = yield* Stream.runCollect(combined.records().pipe(Stream.take(10)))
+		return { counts: combined.counts, byteLength: combined.byteLength,
+			titles: preview.map((record) => record.fact.title) }
+	})
+)
+void inspectAndCompose
+```
+
+`compose` performs a native linear merge without decoding/re-encoding rows.
+It is commutative, associative and idempotent: the identical fact's add wins
+over its removal within the combined command. Two distinct rows sharing a key
+both survive composition and can still be rejected by admission. Applying two
+commands sequentially has different semantics: a later removal removes a
+previously added fact. Neither input is consumed by composition.
+
 ## 4. Keyed reads are Options
 
-`get` reads through the relation's primary declared key. A missing key is
+`get` takes the exact key descriptor used in the schema and its complete
+projected value. Every declared key is usable; there is no implicit primary key.
+A missing key is
 `Option.none` — never a fake I/O error, never a nullable row.
 
 ```ts
 const Person = relation("Person", { id: uuid, name: str })
-const People = schema("People", { Person }, [key(Person, ["id"])])
+const PersonById = key(Person, ["id"])
+const People = schema("People", { Person }, [PersonById])
 
 const lookup = (reader: QueryReader<typeof People>, personId: Uuid) =>
 	Effect.gen(function* () {
-		const found = yield* reader.get(Person, { id: personId })
+		const found = yield* reader.get(PersonById, { id: personId })
 		return Option.isSome(found) ? found.value.name : "unknown"
 	})
 void lookup
@@ -244,6 +312,39 @@ const readTwoAuthors = (reader: QueryReader<typeof Library>) =>
 	)
 void readTwoAuthors
 ```
+
+Generated queries use the same checked rule, scalar, and execution machinery.
+`describeQuery` exposes the logical IR and its names as owned data. Its relation
+ordinals refer to the supplied schema's declaration order; variables are local
+to each rule. Intermediate names are local labels. The result-field record
+passed to `queryFromDescription` must match the actual derived head, including
+closed vocabularies, and determines the returned row type. Parameters supplied
+to a generated query are checked against their uses during execution.
+
+```ts
+const Event = relation("Event", { id: uuid, amount: u64 })
+const Events = schema("Events", { Event }, [key(Event, ["id"])])
+const countEvents = query(Events).rule((r) =>
+	r.match(Event, {}).find({ count: r.count() })
+)
+const description = describeQuery(countEvents)
+const totalEvents = queryFromDescription(
+	Events,
+	{ ...description, columns: ["total"] },
+	{ total: u64 }
+)
+const readTotal = (reader: QueryReader<typeof Events>) =>
+	Effect.scoped(Effect.gen(function* () {
+		const result = yield* reader.execute(totalEvents, {})
+		const rows: readonly { readonly total: bigint }[] = yield* result.collect()
+		return rows
+	}))
+void readTotal
+```
+
+Descriptions contain bigint and byte values, so they are not a JSON wire format.
+An accepted description is an authored query; native preparation still checks
+engine semantics. It carries no snapshot, prepared handle, or result rows.
 
 ## 6. Grouped exact aggregates
 
@@ -358,7 +459,8 @@ the apply instead of silently overwriting.
 
 ```ts
 const Account = relation("Account", { id: uuid, balance: i64 })
-const Bank = schema("Bank", { Account }, [key(Account, ["id"])])
+const AccountById = key(Account, ["id"])
+const Bank = schema("Bank", { Account }, [AccountById])
 
 const correct = (accountId: Uuid) =>
 	Effect.scoped(
@@ -367,7 +469,7 @@ const correct = (accountId: Uuid) =>
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
 					const snapshot = yield* db.snapshot()
-					const previous = yield* snapshot.get(Account, { id: accountId })
+					const previous = yield* snapshot.get(AccountById, { id: accountId })
 					if (Option.isNone(previous)) {
 						return yield* Effect.fail({ missing: accountId })
 					}
@@ -389,16 +491,17 @@ void correct
 `f64` is a real schema scalar: NaN canonicalizes to the one quiet NaN,
 `-0` to `+0`, and the relational order is total. `interval(f64)` is the
 parameterized dense interval — half-open, NaN-free, strictly ordered.
-`span` builds checked interval values as `Result`s.
+Interval values are structural records. Their field descriptor validates
+endpoint ranges, nonemptiness and fixed width at the boundary. Integer rays
+end at the element's maximum; fixed-width intervals cannot be rays.
 
 ```ts
 const Window = relation("Window", { id: uuid, confidence: interval(f64), during: interval(i64) })
 const Windows = schema("Windows", { Window }, [key(Window, ["id"])])
 
-const discrete = span(0n, 60n)
-const dense = span(0.25, 1.5)
-const bothChecked: boolean = Result.isSuccess(discrete) && Result.isSuccess(dense)
-void [Windows, bothChecked]
+const discrete: IntervalValue = { start: 0n, end: 60n }
+const dense: FloatIntervalValue = { start: 0.25, end: 1.5 }
+void [Windows, discrete, dense]
 ```
 
 ## 12. Scoped ownership and honest close

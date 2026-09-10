@@ -12,6 +12,7 @@ import {
 	Learning,
 	attemptsFor,
 	coreProgram,
+	describedAttempts,
 	drainPages,
 	incrementUnits,
 	incrementUnitsAsF64,
@@ -90,6 +91,8 @@ try {
 				const snapshot = yield* db.snapshot()
 				const rows = yield* readAttempts(snapshot, studentId)
 				assert.ok(rows.length >= 1)
+				const described = yield* snapshot.prepare(describedAttempts)
+				assert.deepEqual(yield* (yield* described.execute({ student: studentId })).collect(), rows)
 				const paged = yield* drainPages(snapshot, studentId)
 				assert.equal(paged, rows.length, "D07: pages and collect must agree on admitted rows")
 				assert.deepEqual(yield* readPublishedAttempts(snapshot, studentId), rows)

@@ -29,8 +29,8 @@ import { productionCodec } from "#migrations/native.ts"
 import type { LocalBinding } from "#options.ts"
 
 const Note = relation("Note", { id: u64, body: str })
-// `get` reads through the primary (first-declared) key — declare it.
-const Journal = schema("Journal", { Note }, [key(Note, ["id"])])
+const NoteById = key(Note, ["id"])
+const Journal = schema("Journal", { Note }, [NoteById])
 
 const runtimeOptions: NativeRuntimeOptions = {
 	workers: 2,
@@ -128,7 +128,7 @@ test("same-schema cross-origin caches refuse before serving or mutating anything
 					// Tenant A's data is untouched and still served to A.
 					const reopened = yield* LocalHistory.open(binding(dirA, tenantA), Journal)
 					const snapshot = yield* reopened.snapshot(readOptions)
-					const stillThere = yield* snapshot.get(Note, { id: 1n })
+					const stillThere = yield* snapshot.get(NoteById, { id: 1n })
 					assert.ok(stillThere._tag === "Some", "the refused attack mutated nothing")
 					yield* reopened.close()
 					return true

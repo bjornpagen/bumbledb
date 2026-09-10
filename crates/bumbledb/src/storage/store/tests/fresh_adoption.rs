@@ -52,7 +52,7 @@ fn metadata_only_destination_refuses_adoption() {
             .expect("prepare")
         {
             Prepared::Admitted(p) => p,
-            Prepared::Rejected(v) => panic!("{v:?}"),
+            Prepared::Rejected { rejection: v, .. } => panic!("{v:?}"),
         };
         prepared
             .seal(HostChanges {
@@ -117,7 +117,7 @@ fn commit_row(store: &Store, schema: &Schema, work: &WorkContext, id: u64) {
         .expect("prepare")
     {
         Prepared::Admitted(p) => p,
-        Prepared::Rejected(v) => panic!("{v:?}"),
+        Prepared::Rejected { rejection: v, .. } => panic!("{v:?}"),
     };
     prepared
         .seal(HostChanges {
@@ -152,7 +152,9 @@ fn attach_receipt(store: &Store, schema: &Schema, context: &WorkContext, attachm
     let empty = change_set(schema, &[], &[]);
     let prepared = match owner.prepare(&empty, &NoIndex, &AdmitAll).expect("prepare") {
         Prepared::Admitted(prepared) => prepared,
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     };
     prepared
         .seal(HostChanges {

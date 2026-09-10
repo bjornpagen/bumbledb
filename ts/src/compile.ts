@@ -1,22 +1,24 @@
 import { Effect } from "effect"
-import { isClosedMember } from "#closed.ts"
+import { isClosedMember, membersAgree } from "#closed.ts"
 import { dbNative } from "#db-native.ts"
 import { SdkInvariantError } from "#errors.ts"
+import { isImmutable, snapshotData } from "#immutable.ts"
 import type { SchemaClasses } from "#law.ts"
 import { lower } from "#lower.ts"
 import type { SealedDescriptor } from "#native.ts"
+import type { AnyRelation } from "#relation.ts"
 import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
+import { argumentError } from "#runtime-errors.ts"
 import type { AnySchema, Schema as SchemaDeclaration, SchemaRelations } from "#schema.ts"
-import type { Statement } from "#statements.ts"
+import { schemaDescriptor } from "#schema.ts"
+import { type KeyStatement, type Statement, statementDescriptor } from "#statements.ts"
 
 /**
  * `SchemaId` — the engine's canonical schema fingerprint as lowercase hex.
- * Independent of database identity; a branded string so arbitrary text does
- * not typecheck where a schema identity is required.
+ * Independent of database identity; ordinary structural text. Native
+ * boundaries verify the fingerprint wherever it grants admission.
  */
-declare const schemaIdBrand: unique symbol
-
-type SchemaId = string & { readonly [schemaIdBrand]: "bumbledb.SchemaId" }
+type SchemaId = string
 
 /**
  * `CompiledSchema<S>` — bounded detached immutable descriptor data plus the
@@ -36,44 +38,35 @@ interface CompiledSchema<S extends AnySchema> {
  * ids (declaration order = ids), materialized statement ids (closed
  * relations' auto-handle keys FIRST in relation-declaration order, then
  * declared statements in declaration order with `mirrors` occupying two
- * consecutive slots, source-first — the theory's `StatementId` law), and
- * each relation's primary key (a closed relation's synthetic `(id)`,
- * otherwise its FIRST declared `key` statement).
+ * consecutive slots, source-first — the theory's `StatementId` law).
+ * Every declared statement retains its own native identity; no key is
+ * privileged by its position in the declaration.
  */
-interface PrimaryKey {
-	readonly statementId: number
-	readonly projection: readonly string[]
-}
-
 interface SchemaTables {
 	readonly relationIds: ReadonlyMap<string, number>
-	readonly primaryKeys: ReadonlyMap<string, PrimaryKey>
+	readonly statementIds: ReadonlyMap<Statement, number>
 }
 
 function declaredWidth(statement: Statement): number {
-	return statement.data.kind === "mirrors" ? 2 : 1
+	return statement.kind === "mirrors" ? 2 : 1
 }
 
 function tablesOf(theory: AnySchema): SchemaTables {
 	const relationIds = new Map<string, number>()
-	const primaryKeys = new Map<string, PrimaryKey>()
+	const statementIds = new Map<Statement, number>()
 	let autoKeys = 0
 	Object.entries(theory.relations).forEach(function assignRelation([name, member], ordinal) {
 		relationIds.set(name, ordinal)
 		if (isClosedMember(member)) {
-			primaryKeys.set(name, Object.freeze({ statementId: autoKeys, projection: Object.freeze(["id"]) }))
 			autoKeys += 1
 		}
 	})
 	let offset = autoKeys
 	for (const statement of theory.statements) {
-		const data = statement.data
-		if (data.kind === "key" && !primaryKeys.has(data.owner.name)) {
-			primaryKeys.set(data.owner.name, Object.freeze({ statementId: offset, projection: data.projection }))
-		}
+		statementIds.set(statement, offset)
 		offset += declaredWidth(statement)
 	}
-	return Object.freeze({ relationIds, primaryKeys })
+	return Object.freeze({ relationIds, statementIds })
 }
 
 const compiledCache = new WeakMap<AnySchema, SchemaTables>()
@@ -85,15 +78,37 @@ function schemaTables(theory: AnySchema): SchemaTables {
 		return cached
 	}
 	const built = tablesOf(theory)
-	compiledCache.set(theory, built)
+	if (isImmutable(theory)) compiledCache.set(theory, built)
 	return built
 }
 
+/** Resolve a logical key declaration, never an opaque constructor token. */
+function declaredKey<R extends AnyRelation>(
+	theory: AnySchema,
+	input: KeyStatement<R>
+): { readonly key: KeyStatement<R>; readonly statementId: number } | undefined
+function declaredKey(
+	theory: AnySchema,
+	input: KeyStatement
+): { readonly key: KeyStatement; readonly statementId: number } | undefined {
+	const key = statementDescriptor(input)
+	for (const [candidate, statementId] of schemaTables(theory).statementIds) {
+		if (
+			candidate.kind === "key" &&
+			membersAgree(candidate.owner, key.owner) &&
+			candidate.projection.length === key.projection.length &&
+			candidate.projection.every((field) => key.projection.includes(field))
+		)
+			return { key: candidate, statementId }
+	}
+	return undefined
+}
+
 function admitSchemaId(fingerprint: string): SchemaId {
-	if (typeof fingerprint !== "string" || fingerprint.length === 0) {
+	if (typeof fingerprint !== "string" || !/^[0-9a-f]{64}$/.test(fingerprint)) {
 		throw new SdkInvariantError({ message: "Schema.compile: the engine returned no canonical fingerprint" })
 	}
-	return fingerprint as SchemaId
+	return fingerprint
 }
 
 /**
@@ -105,18 +120,27 @@ function admitSchemaId(fingerprint: string): SchemaId {
  * native finalizer is created.
  */
 const compile = Effect.fn("Schema.compile")(function* <S extends AnySchema>(schema: S) {
+	const owned = yield* Effect.try({
+		try: () => schemaDescriptor(schema),
+		catch: (cause) => argumentError("Schema.compile", cause)
+	})
+	const spec = yield* Effect.try({ try: () => lower(owned), catch: (cause) => argumentError("Schema.compile", cause) })
 	const handle = yield* runtimeHandle()
-	const spec = lower(schema)
 	const descriptor = yield* nativeOperationWith(
 		"Schema.compile",
 		(callback) => dbNative.runtimeSchemaCompile(handle, spec, callback),
 		dbNative.runtimeSchemaTake,
 		(value) => value
 	)
+	const ownedDescriptor = snapshotData(descriptor)
 	const compiled: CompiledSchema<S> = Object.freeze({
-		schema,
+		get schema() {
+			return snapshotData(owned)
+		},
 		schemaId: admitSchemaId(descriptor.fingerprint),
-		descriptor
+		get descriptor() {
+			return snapshotData(ownedDescriptor)
+		}
 	})
 	return compiled
 })
@@ -143,5 +167,5 @@ type Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = Schema
  */
 const Schema = Object.freeze({ compile })
 
-export type { CompiledSchema, PrimaryKey, SchemaId, SchemaTables }
-export { Schema, schemaTables }
+export type { CompiledSchema, SchemaId, SchemaTables }
+export { declaredKey, Schema, schemaTables }

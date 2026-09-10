@@ -58,7 +58,7 @@ import { AuthoringError } from "#errors.ts"
 
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember, sealedFieldsOf } from "#closed.ts"
-import type { FaceData } from "#face.ts"
+import type { AnyFace } from "#face.ts"
 import type { Same } from "#judgment.ts"
 import type { AnyRelation, RelationFields } from "#relation.ts"
 import type { SchemaRelation, SchemaRelations } from "#schema.ts"
@@ -104,9 +104,9 @@ type ZipCoords<
 		: Acc
 	: Acc
 
-type StatementPairs<St extends Statement> = St["data"] extends {
-	readonly source: infer S extends FaceData
-	readonly target: infer T extends FaceData
+type StatementPairs<St extends Statement> = St extends {
+	readonly source: infer S extends AnyFace
+	readonly target: infer T extends AnyFace
 }
 	? string extends S["owner"]["name"]
 		? []
@@ -208,7 +208,7 @@ type DeclaredKeysOf<Stmts extends readonly Statement[], Acc extends readonly Key
 	infer H extends Statement,
 	...infer T extends readonly Statement[]
 ]
-	? H["data"] extends {
+	? H extends {
 			readonly kind: "key"
 			readonly owner: infer O extends AnyRelation
 			readonly projection: infer P extends readonly string[]
@@ -295,8 +295,8 @@ type DecidableRoster<Stmts extends readonly Statement[]> = [true] extends [IsMul
 		: [Stmts] extends [readonly [infer H extends Statement, ...infer T extends readonly Statement[]]]
 			? [true] extends [IsMulti<H>]
 				? false
-				: "key" extends H["data"]["kind"]
-					? [DecidableKeyData<H["data"]>] extends [true]
+				: "key" extends H["kind"]
+					? [DecidableKeyData<H>] extends [true]
 						? DecidableRoster<T>
 						: false
 					: DecidableRoster<T>
@@ -322,7 +322,7 @@ type DeclaredKeyMatch<N extends string, PU extends string, Keys extends readonly
 		: DeclaredKeyMatch<N, PU, T>
 	: TargetKeyWall<N, PU>
 
-type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = string extends F["owner"]["name"]
+type JudgeTargetFace<F extends AnyFace, Keys extends readonly KeyEntry[]> = string extends F["owner"]["name"]
 	? true
 	: string extends F["projection"][number]
 		? true
@@ -334,9 +334,9 @@ type JudgeTargetFace<F extends FaceData, Keys extends readonly KeyEntry[]> = str
 				? DeclaredKeyMatch<F["owner"]["name"], F["projection"][number], Keys>
 				: true
 
-type JudgeStatement<St extends Statement, Keys extends readonly KeyEntry[]> = St["data"] extends {
-	readonly source: FaceData
-	readonly target: infer Tg extends FaceData
+type JudgeStatement<St extends Statement, Keys extends readonly KeyEntry[]> = St extends {
+	readonly source: AnyFace
+	readonly target: infer Tg extends AnyFace
 }
 	? JudgeTargetFace<Tg, Keys>
 	: true
@@ -452,8 +452,8 @@ function makeUnionFind(): UnionFind {
 	}
 }
 
-function statementFaces(statement: Statement): readonly [FaceData, FaceData] | undefined {
-	const data = statement.data
+function statementFaces(statement: Statement): readonly [AnyFace, AnyFace] | undefined {
+	const data = statement
 	if (data.kind === "key") {
 		return undefined
 	}

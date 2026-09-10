@@ -27,7 +27,7 @@ test("every ts fence in README.md type-checks against src at HEAD", function rea
 	// the @bjornpagen/bumbledb peer) resolve through the package's own
 	// node_modules exactly as they do for src; only the self-name needs a
 	// paths mapping (a package does not resolve itself through node_modules).
-	const projectDir = fs.mkdtempSync(path.join(packageRoot, "test", ".readme-fences-"))
+	const projectDir = fs.mkdtempSync(path.join(packageRoot, "test", "readme-fences-"))
 	try {
 		const files = fences.map(function writeFence(body, index) {
 			const file = path.join(projectDir, `fence-${index}.ts`)

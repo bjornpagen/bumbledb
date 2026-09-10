@@ -11,6 +11,7 @@
 //! (`LocalHistory::open`) never initializes or migrates and `status` writes
 //! nothing.
 
+use bumbledb::integration::Preparation;
 use std::path::Path;
 
 use crate::recovery::{StagedPopulation, begin_staged};
@@ -18,7 +19,7 @@ use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange};
 use bumbledb::scalar::ScalarEvaluator;
 use bumbledb::schema::RelationId;
 use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
-use bumbledb::{Admission, ChangeSet, Db, Violations, WorkContext, WorkError};
+use bumbledb::{ChangeSet, Db, Violations, WorkContext, WorkError};
 
 use crate::history::authority::{
     Access, ActivateOutcome, Activation, ActivationCause, DeleteOutcome, DeletedReason,
@@ -1265,8 +1266,10 @@ fn with_authority<S, T>(
                 .finish()
                 .map_err(|error| MigrationError::Log(LogError::Core(error.into())))?;
             let prepared = match session.prepare(&empty)? {
-                Admission::Accepted(prepared) => prepared,
-                Admission::Rejected(_) => return Err(MigrationError::Log(LogError::Corruption)),
+                Preparation::Accepted(prepared) => prepared,
+                Preparation::Rejected { .. } => {
+                    return Err(MigrationError::Log(LogError::Corruption));
+                }
             };
             let sealed = prepared.seal(HostChanges {
                 records: &[],

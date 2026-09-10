@@ -161,7 +161,9 @@ fn map_full_during_seal_dispatches_nothing_and_growth_recovers() {
             .expect("prepare")
         {
             Prepared::Admitted(prepared) => prepared,
-            Prepared::Rejected(never) => match never {},
+            Prepared::Rejected {
+                rejection: never, ..
+            } => match never {},
         };
         prepared
             .seal(HostChanges {
@@ -195,7 +197,9 @@ fn map_full_during_seal_dispatches_nothing_and_growth_recovers() {
         .expect("prepare replay")
     {
         Prepared::Admitted(prepared) => prepared,
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     };
     let commit = prepared
         .seal(HostChanges {

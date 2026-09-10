@@ -1,364 +1,211 @@
 import { AuthoringError } from "#errors.ts"
 import {
-	type AnyClosedIdField,
 	type AnyField,
 	assertDeclarationOrderKey,
 	assertDeclarationRecord,
 	type ClosedHandleTuple,
 	type ClosedIdField,
-	type ClosedRoster,
 	type Infer,
-	literalOf
+	ownHandles,
+	signaturesAgree
 } from "#fields.ts"
-import type { AnyRelation, RelationField } from "#relation.ts"
-import { resolveSelection, type SelectionBinding, type SelectionInput } from "#relation.ts"
-import type { LiteralSpec } from "#spec.ts"
+import { descriptorCache } from "#immutable.ts"
+import {
+	type AnyRelation,
+	type FieldsShape,
+	ownFields,
+	type RelationField,
+	relationDescriptor,
+	relationFields
+} from "#relation.ts"
+import { fieldValue, recordValue } from "#values.ts"
 
 type PayloadField = AnyField
+type PayloadColumns = FieldsShape & { readonly id?: never }
+type AxiomRow<Cols extends FieldsShape> = { readonly [C in keyof Cols]: Infer<Cols[C]> }
+type Axioms<Handles extends string, Cols extends FieldsShape> = { readonly [H in Handles]: AxiomRow<Cols> }
 
-type PayloadColumns = Record<string, PayloadField> & { readonly id?: never }
-
-interface ClosedColumn {
-	readonly name: string
-	readonly field: PayloadField
-}
-
-interface ClosedRow {
-	readonly handle: string
-	readonly values: readonly LiteralSpec[]
-}
-
-interface ClosedData {
-	readonly name: string
-	readonly handles: readonly string[]
-	readonly columns: readonly ClosedColumn[]
-	readonly rows: readonly ClosedRow[]
-}
-
-type AxiomRow<Cols extends Record<string, PayloadField>> = { readonly [C in keyof Cols]: Infer<Cols[C]> }
-
-type Axioms<Handles extends string, Cols extends Record<string, PayloadField>> = {
-	readonly [H in Handles]: AxiomRow<Cols>
-}
-
-interface ClosedCore<
-	Name extends string,
-	Handles extends ClosedHandleTuple,
-	Cols extends Record<string, PayloadField>
+/** Closed relations declare their finite roster and its complete, typed ground facts. */
+interface Closed<
+	Name extends string = string,
+	Handles extends ClosedHandleTuple = ClosedHandleTuple,
+	Cols extends FieldsShape = FieldsShape
 > {
+	readonly kind: "closed"
 	readonly name: Name
-
-	readonly id: ClosedIdField<Name, Handles>
-	readonly data: ClosedData
-
-	readonly axioms: Axioms<Handles[number], Cols>
-
+	readonly handles: Handles
 	readonly columns: Cols
+	readonly axioms: Axioms<Handles[number], Cols>
 }
-
-type ClosedSelectionInput<Cols extends Record<string, PayloadField>> = SelectionInput<Cols>
-
-interface SelectedClosed<
-	Name extends string,
-	Handles extends ClosedHandleTuple,
-	Cols extends Record<string, PayloadField>
-> {
-	readonly relation: Closed<Name, Handles, Cols>
-	readonly selection: readonly SelectionBinding[]
-}
-
-interface AnySelectedClosed {
-	readonly relation: AnyClosed
-	readonly selection: readonly SelectionBinding[]
-}
-
-interface ClosedSelectable<
-	Name extends string,
-	Handles extends ClosedHandleTuple,
-	Cols extends Record<string, PayloadField>
-> {
-	where(selection: ClosedSelectionInput<Cols>): SelectedClosed<Name, Handles, Cols>
-}
-
-type Closed<Name extends string, Handles extends ClosedHandleTuple, Cols extends Record<string, PayloadField>> = [
-	keyof Cols
-] extends [never]
-	? ClosedCore<Name, Handles, Cols>
-	: ClosedCore<Name, Handles, Cols> & ClosedSelectable<Name, Handles, Cols>
-
-interface AnyClosed {
-	readonly name: string
-	readonly id: AnyClosedIdField
-	readonly data: ClosedData
-	readonly axioms: Readonly<Record<string, object>>
-	readonly columns: Readonly<Record<string, PayloadField>>
-}
+type AnyClosed = Closed
 
 function isClosedMember(member: AnyRelation | AnyClosed): member is AnyClosed {
-	return "handles" in member.data
+	return member.kind === "closed"
 }
 
-function sealedFieldsOf(member: AnyRelation | AnyClosed): readonly RelationField[] {
-	if (isClosedMember(member)) {
-		return Object.freeze([Object.freeze({ name: "id", field: member.id }), ...member.data.columns])
-	}
-	return member.data.fields
-}
-
-function sealedFieldOf(member: AnyRelation | AnyClosed, fieldName: string): AnyField | undefined {
-	const declared = sealedFieldsOf(member).find(function byName(candidate) {
-		return candidate.name === fieldName
-	})
-	return declared?.field
-}
-
-function isHandleTuple(shape: unknown): shape is ClosedHandleTuple {
-	return (
-		Array.isArray(shape) &&
-		shape.length > 0 &&
-		shape.every(function stringHandle(handle) {
-			return typeof handle === "string"
-		})
-	)
-}
-
-/**
- * The trusted seam of the payload tier: the handle tuple and the axioms
- * record are the same finite set — every tuple name is an own key, and
- * every own key is in the tuple.
- */
-function handleKeysOwn<Handles extends string>(
-	axioms: { readonly [H in Handles]: object },
-	names: readonly Handles[]
-): boolean {
-	const listed = new Set<string>(names)
-	return (
-		names.every(function ownHandle(name) {
-			return Object.hasOwn(axioms, name)
-		}) &&
-		Object.keys(axioms).every(function listedHandle(name) {
-			return listed.has(name)
-		})
-	)
-}
-
-/**
- * The trusted seam of the axiom-readback mint: every handle carries an own
- * frozen row and every row carries every declared column as an own
- * property — verified before the record is admitted as the typed
- * {@link Axioms} (the trusted-admission-seam pattern — its home is
- * `isTypedScope` in query/lower.ts).
- */
-function axiomsMinted<Handles extends string, Cols extends Record<string, PayloadField>>(
-	record: Readonly<Record<string, object>>,
-	handles: readonly Handles[],
-	cols: readonly ClosedColumn[]
-): record is Axioms<Handles, Cols> & Readonly<Record<string, object>> {
-	return handles.every(function rowMinted(handle) {
-		const row = record[handle]
-		return (
-			row !== undefined &&
-			cols.every(function columnMinted(column) {
-				return Object.hasOwn(row, column.name)
-			})
-		)
+/** The synthetic id is an ordinary field descriptor, derived from the declared roster. */
+function closedId<C extends AnyClosed>(member: C): ClosedIdField<C["name"], C["handles"]> {
+	recordValue("closed relation", member, ["kind", "name", "handles", "columns", "axioms"])
+	assertDeclarationOrderKey("closed relation", member.name)
+	return Object.freeze({
+		kind: "u64",
+		closed: Object.freeze({ name: member.name, handles: ownHandles(`closed relation ${member.name}`, member.handles) })
 	})
 }
 
-function mintAxioms<Handles extends string, Cols extends Record<string, PayloadField>>(
-	name: string,
-	handles: readonly Handles[],
-	cols: readonly ClosedColumn[],
-	axioms: Axioms<Handles, Cols>
-): Axioms<Handles, Cols> {
-	const out: Record<string, object> = {}
-	for (const handle of handles) {
-		const row = Object.freeze({ ...axioms[handle] })
-		Object.defineProperty(out, handle, { value: row, enumerable: true })
-	}
-	Object.freeze(out)
-	if (!axiomsMinted<Handles, Cols>(out, handles, cols)) {
-		throw new AuthoringError({ message: `closed relation ${name}: axiom-row minting incomplete` })
-	}
-	return out
+function closedDescriptor<C extends AnyClosed>(input: C): C
+function closedDescriptor(input: unknown): AnyClosed
+function closedDescriptor(input: unknown): AnyClosed {
+	return checkedClosed(input)
 }
+
+const checkedClosed = descriptorCache((input): AnyClosed => {
+	const raw = recordValue("closed relation", input, ["kind", "name", "handles", "columns", "axioms"])
+	if (raw.kind !== "closed" || typeof raw.name !== "string")
+		throw new AuthoringError({ message: "closed relation: expected a closed declaration" })
+	assertDeclarationOrderKey("closed relation", raw.name)
+	const handles = ownHandles(`closed relation ${raw.name}`, raw.handles)
+	const columns = ownFields(`closed relation ${raw.name} columns`, raw.columns)
+	if (Object.hasOwn(columns, "id"))
+		throw new AuthoringError({
+			message: `closed relation ${raw.name}: payload column id collides with the synthetic id`
+		})
+	const axioms = recordValue(`closed relation ${raw.name} axioms`, raw.axioms, handles)
+	const names = Object.keys(columns)
+	const owned = Object.fromEntries(
+		handles.map((handle) => {
+			const row = recordValue(`closed relation ${raw.name}.${handle}`, axioms[handle], names)
+			return [
+				handle,
+				Object.freeze(
+					Object.fromEntries(
+						Object.entries(columns).map(([name, field]) => [
+							name,
+							fieldValue(`closed relation ${raw.name}.${handle}.${name}`, field, row[name])
+						])
+					)
+				)
+			]
+		})
+	)
+	return Object.freeze({ kind: "closed", name: raw.name, handles, columns, axioms: Object.freeze(owned) })
+})
 
 function closed<const Name extends string, const Handles extends ClosedHandleTuple>(
 	name: Name,
 	handles: Handles
 ): Closed<Name, Handles, Record<never, never>>
-
 function closed<const Name extends string, const Handles extends ClosedHandleTuple, const Cols extends PayloadColumns>(
 	name: Name,
 	handles: Handles,
 	columns: Cols,
 	axioms: Axioms<Handles[number], Cols>
 ): Closed<Name, Handles, Cols>
-
-function closed<Name extends string, Handles extends ClosedHandleTuple, Cols extends PayloadColumns>(
-	name: Name,
-	handles: Handles,
-	columns?: Cols,
-	axioms?: Axioms<Handles[number], Cols>
-): Closed<Name, Handles, Record<never, never>> | Closed<Name, Handles, Cols> {
-	if (!Array.isArray(handles)) {
+function closed(
+	name: string,
+	handles: ClosedHandleTuple,
+	columns?: PayloadColumns,
+	axioms?: Axioms<string, FieldsShape>
+): AnyClosed {
+	if (columns === undefined && axioms === undefined) {
+		const roster = ownHandles(`closed relation ${name}`, handles)
+		return closedDescriptor({
+			kind: "closed",
+			name,
+			handles: roster,
+			columns: {},
+			axioms: Object.fromEntries(roster.map((handle) => [handle, {}]))
+		})
+	}
+	if (columns === undefined || axioms === undefined)
 		throw new AuthoringError({
-			message: `closed relation ${name}: payload columns declared without ground axioms — the payload tier is spelled closed(name, handles, columns, axioms)`
+			message: `closed relation ${name}: payload columns and ground axioms must be supplied together`
 		})
+	return closedDescriptor({ kind: "closed", name, handles, columns, axioms })
+}
+
+function memberDescriptor<M extends AnyRelation | AnyClosed>(input: M): M
+function memberDescriptor(input: unknown): AnyRelation | AnyClosed
+function memberDescriptor(input: unknown): AnyRelation | AnyClosed {
+	if (typeof input !== "object" || input === null)
+		throw new AuthoringError({ message: "relation: expected a declaration record" })
+	assertDeclarationRecord("relation", input)
+	if ("kind" in input && input.kind === "closed") return closedDescriptor(input)
+	return relationDescriptor(input)
+}
+
+function sealedFieldsOf(member: AnyRelation | AnyClosed): readonly RelationField[] {
+	return isClosedMember(member)
+		? [
+				{ name: "id", field: closedId(member) },
+				...Object.entries(member.columns).map(([name, field]) => ({ name, field }))
+			]
+		: relationFields(member)
+}
+function sealedFieldOf(member: AnyRelation | AnyClosed, name: string): AnyField | undefined {
+	if (isClosedMember(member)) {
+		if (name === "id") return closedId(member)
+		return Object.hasOwn(member.columns, name) ? member.columns[name] : undefined
 	}
-	if (!isHandleTuple(handles)) {
-		throw new AuthoringError({
-			message: `closed relation ${name}: at least one handle is required (an empty vocabulary declares nothing)`
+	return Object.hasOwn(member.fields, name) ? member.fields[name] : undefined
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+	if (Object.is(a, b)) return true
+	if (a instanceof Uint8Array && b instanceof Uint8Array)
+		return a.length === b.length && a.every((byte, i) => byte === b[i])
+	if (
+		typeof a === "object" &&
+		a !== null &&
+		typeof b === "object" &&
+		b !== null &&
+		"start" in a &&
+		"end" in a &&
+		"start" in b &&
+		"end" in b
+	)
+		return Object.is(a.start, b.start) && Object.is(a.end, b.end)
+	return false
+}
+
+/** Equal names must denote equal ordered declarations, never constructor identities. */
+function membersAgree(left: AnyRelation | AnyClosed | undefined, right: AnyRelation | AnyClosed): boolean {
+	if (left === undefined) return false
+	const a = memberDescriptor(left)
+	const b = memberDescriptor(right)
+	if (a === b) return true
+	if (a.kind !== b.kind || a.name !== b.name) return false
+	const af = sealedFieldsOf(a)
+	const bf = sealedFieldsOf(b)
+	if (
+		af.length !== bf.length ||
+		!af.every((field, i) => {
+			const other = bf[i]
+			return other !== undefined && field.name === other.name && signaturesAgree(field.field, other.field)
 		})
+	)
+		return false
+	if (isClosedMember(a) && isClosedMember(b)) {
+		return (
+			a.handles.length === b.handles.length &&
+			a.handles.every(
+				(handle, i) =>
+					handle === b.handles[i] &&
+					Object.keys(a.columns).every((name) => sameValue(a.axioms[handle]?.[name], b.axioms[handle]?.[name]))
+			)
+		)
 	}
-	if (columns === undefined) {
-		if (axioms !== undefined) {
-			throw new AuthoringError({
-				message: `closed relation ${name}: the bare tier declares no columns, so ground axioms are inadmissible`
-			})
-		}
-		return closedBare(name, handles)
-	}
-	if (axioms === undefined) {
-		throw new AuthoringError({
-			message: `closed relation ${name}: payload columns declared without ground axioms — the payload tier is spelled closed(name, handles, columns, axioms)`
-		})
-	}
-	return closedPayload(name, handles, columns, axioms)
+	return true
 }
 
-function closedBare<Name extends string, const Hs extends ClosedHandleTuple>(
-	name: Name,
-	handles: Hs
-): Closed<Name, Hs, Record<never, never>> {
-	const empty: Record<string, object> = {}
-	for (const handle of handles) {
-		/** A duplicated name mints one row; the roster's own duplicate refusal in {@link mintClosed} stays the judge. */
-		if (!Object.hasOwn(empty, handle)) {
-			Object.defineProperty(empty, handle, { value: Object.freeze({}), enumerable: true })
-		}
-	}
-	Object.freeze(empty)
-	if (!axiomsMinted<Hs[number], Record<never, never>>(empty, handles, [])) {
-		throw new AuthoringError({ message: `closed relation ${name}: bare-tier axiom-row minting incomplete` })
-	}
-	return mintClosed(name, handles, {}, empty)
+export type { AnyClosed, AxiomRow, Axioms, Closed, PayloadField }
+export {
+	closed,
+	closedDescriptor,
+	closedId,
+	isClosedMember,
+	memberDescriptor,
+	membersAgree,
+	sealedFieldOf,
+	sealedFieldsOf
 }
-
-function closedPayload<Name extends string, Handles extends ClosedHandleTuple, Cols extends PayloadColumns>(
-	name: Name,
-	handles: Handles,
-	columns: Cols,
-	axioms: Axioms<Handles[number], Cols>
-): Closed<Name, Handles, Cols> {
-	assertDeclarationRecord(`closed relation ${name} columns`, columns)
-	for (const columnName of Object.keys(columns)) {
-		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
-	}
-	assertDeclarationRecord(`closed relation ${name} axioms`, axioms)
-	for (const handle of handles) {
-		assertDeclarationOrderKey(`closed relation ${name} handle`, handle)
-	}
-	if (!handleKeysOwn(axioms, handles)) {
-		throw new AuthoringError({ message: `closed relation ${name}: handle enumeration incomplete` })
-	}
-	return mintClosed(name, handles, columns, axioms)
-}
-
-function surfaceMinted<
-	Name extends string,
-	Handles extends ClosedHandleTuple,
-	Cols extends Record<string, PayloadField>
->(
-	value: ClosedCore<Name, Handles, Cols>,
-	cols: readonly ClosedColumn[]
-): value is ClosedCore<Name, Handles, Cols> & Closed<Name, Handles, Cols> {
-	const selectable = "where" in value && typeof value.where === "function"
-	return cols.length > 0 ? selectable : !selectable
-}
-
-function mintClosed<Name extends string, Handles extends ClosedHandleTuple, Cols extends Record<string, PayloadField>>(
-	name: Name,
-	handles: Handles,
-	columns: Cols,
-	axioms: Axioms<Handles[number], Cols>
-): Closed<Name, Handles, Cols> {
-	assertDeclarationOrderKey("closed relation", name)
-	const seen = new Set<string>()
-	for (const handle of handles) {
-		if (seen.has(handle)) {
-			throw new AuthoringError({ message: `closed relation ${name}: duplicate handle ${handle}` })
-		}
-		seen.add(handle)
-	}
-	const handleList = Object.freeze(handles)
-	const roster: ClosedRoster<Name, Handles> = Object.freeze({ name, handles: handleList })
-	const cols: ClosedColumn[] = []
-	for (const [columnName, field] of Object.entries(columns)) {
-		assertDeclarationOrderKey(`closed relation ${name} column`, columnName)
-		if (columnName === "id") {
-			throw new AuthoringError({
-				message: `closed relation ${name}: the payload column id collides with the sealed shape's synthetic id (the relation mints its own id at ordinal 0; name the column something else)`
-			})
-		}
-		cols.push(Object.freeze({ name: columnName, field }))
-	}
-	Object.freeze(cols)
-	const rows: ClosedRow[] = handleList.map(function lowerRow(handle: Handles[number]) {
-		const row: Readonly<Record<string, unknown>> = axioms[handle]
-		const values = cols.map(function lowerAxiomLiteral(column) {
-			return Object.freeze(literalOf(column.field, row[column.name]))
-		})
-		return Object.freeze({ handle, values: Object.freeze(values) })
-	})
-	const data: ClosedData = Object.freeze({
-		name,
-		handles: roster.handles,
-		columns: cols,
-		rows: Object.freeze(rows)
-	})
-	const id: ClosedIdField<Name, Handles> = Object.freeze({ kind: "u64", closed: roster })
-
-	const axiomsOut = mintAxioms<Handles[number], Cols>(name, handleList, cols, axioms)
-	const columnsOut: Cols = { ...columns }
-	Object.freeze(columnsOut)
-	const holder: { value: Closed<Name, Handles, Cols> | undefined } = { value: undefined }
-
-	function where(selection: ClosedSelectionInput<Cols>): SelectedClosed<Name, Handles, Cols> {
-		const owner = holder.value
-		if (owner === undefined) {
-			throw new AuthoringError({
-				message: `closed relation ${name}: self-reference read before construction completed`
-			})
-		}
-		return Object.freeze({
-			relation: owner,
-			selection: resolveSelection(name, cols, Object.entries(selection))
-		})
-	}
-	const core = { name, id, data, axioms: axiomsOut, columns: columnsOut }
-	const value: ClosedCore<Name, Handles, Cols> =
-		cols.length > 0 ? Object.freeze({ ...core, where }) : Object.freeze(core)
-	if (!surfaceMinted(value, cols)) {
-		throw new AuthoringError({ message: `closed relation ${name}: ergonomic-surface minting incomplete` })
-	}
-	holder.value = value
-	return value
-}
-
-export type {
-	AnyClosed,
-	AnySelectedClosed,
-	AxiomRow,
-	Axioms,
-	Closed,
-	ClosedColumn,
-	ClosedCore,
-	ClosedData,
-	ClosedRow,
-	ClosedSelectable,
-	ClosedSelectionInput,
-	PayloadField,
-	SelectedClosed
-}
-export { closed, isClosedMember, sealedFieldOf, sealedFieldsOf }

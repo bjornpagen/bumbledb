@@ -1254,7 +1254,9 @@ mod tests {
                 .unwrap()
             {
                 Prepared::Admitted(prepared) => prepared.seal(NO_HOST).unwrap().commit().unwrap(),
-                Prepared::Rejected(never) => match never {},
+                Prepared::Rejected {
+                    rejection: never, ..
+                } => match never {},
             };
             drop(owner);
             assert_eq!(indexer.calls.get(), 2, "one failed attempt and one replay");

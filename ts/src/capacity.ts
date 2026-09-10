@@ -1,55 +1,15 @@
 import { AuthoringError } from "#errors.ts"
-/**
- * Capacity-law mints — the window, weight, and dependent-bound vocabulary
- * the one `capacity` statement constructor consumes
- * § the canonical-utterance law, restated
- * around the aggregate form). `within` is the ONE window spelling —
- * `within(n)` exact (`within(0n)` IS the exclusion's one spelling),
- * `within(lo, hi)` range (`within(0n, hi)` the canonical ceiling),
- * `within(lo, "*")` floor — `weigh` names the measure on the SOURCE row
- * (`weigh("watts")` a u64 field, `weigh(duration("booked"))` an interval's
- * measure), and `ref`/`duration` read a dependent bound from the
- * TARGET row (hi slot only — ruled 2026-07-24, C6). The ban table is
- * enforced REPRESENTATIONALLY in two tiers, split per-aggregate where
- * weight-sensitive (design § 6: a ban is canonical-utterance policing when
- * it is weight-independent, semantic deduplication when it is not):
- *
- * - **The type tier**: a banned spelling written as a LITERAL does not
- * compile — every negative bound, `within(n, n)`, `within(0n, 0n)`, and
- * `within(0n, "*")` are type errors naming the canonical form. The
- * weight-SENSITIVE row rides the `capacity` overloads themselves:
- * `within(1n, "*")` is banned on the unit overload only (`{1..*}` on the
- * count instance is the bare containment respelled —
- * `window_floor_containment`), and LEGAL on the weighted one ("positive
- * total" is not an existence claim over rows).
- * - **The construction tier**: a bound the type level cannot judge — a
- * COMPUTED `bigint`, or an inverted `within(lo, hi)` order — is judged at
- * construction with the same canonical-naming errors; and past both
- * tiers the engine's own spec validation remains the law for a hostile
- * FFI caller (the standing two-tier ban enforcement).
- *
- * The weight vocabulary is closed at the row (ruled 2026-07-24, ruling 6):
- * a path weight (`weigh("model.watts")`) is a typed refusal at BOTH tiers
- * whose diagnostic names the pinned-column idiom — the two-column
- * containment IS the join, stated as a law. Bounds are `bigint` (u64
- * crosses as bigint always, PRD-04's law); the witnessed measure comes
- * back as `bigint` too (u128-wide engine accumulator, C3).
- */
+/** Structural capacity measures and windows. Constructors and generated
+ * descriptions share the same checked representation. Bounds are u64;
+ * dependent bounds read the target row, measures read the source row. */
 
 import type { AnyFace, FaceFields, FaceSource, ProjectedShape } from "#face.ts"
 import type { CapacityBoundSpec, CapacityWindowSpec, WeightSpec } from "#spec.ts"
+import { integerValue, recordValue } from "#values.ts"
 
-const admitted: unique symbol = Symbol("bumbledb.capacity.admitted")
+type CapacityWindow<S extends CapacityWindowSpec = CapacityWindowSpec> = S
 
-interface CapacityWindow<S extends CapacityWindowSpec = CapacityWindowSpec> {
-	readonly window: S
-	readonly [admitted]: true
-}
-
-interface CapacityWeight<S extends WeightSpec = WeightSpec> {
-	readonly weight: S
-	readonly [admitted]: true
-}
+type CapacityWeight<S extends WeightSpec = WeightSpec> = S
 
 interface FieldRef<F extends string = string> {
 	readonly kind: "field"
@@ -59,14 +19,6 @@ interface FieldRef<F extends string = string> {
 interface DurationRef<F extends string = string> {
 	readonly kind: "durationField"
 	readonly field: F
-}
-
-function isCapacityWindow(value: unknown): value is CapacityWindow {
-	return typeof value === "object" && value !== null && admitted in value && "window" in value
-}
-
-function isCapacityWeight(value: unknown): value is CapacityWeight {
-	return typeof value === "object" && value !== null && admitted in value && "weight" in value
 }
 
 interface BannedWindow<Canonical extends string> {
@@ -129,7 +81,7 @@ type RangeBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
  * only: Duration weights pair with Duration-capable bounds, so the
  * weighted overload takes the same window freely.
  */
-type UnitDimensionBan<W extends CapacityWindow> = W["window"] extends {
+type UnitDimensionBan<W extends CapacityWindow> = W extends {
 	readonly hi: { readonly kind: "durationField" }
 }
 	? BannedWindow<"a count of facts bounded by a span of time mixes dimensions (C18) — weigh the source with weigh(duration(field)), or bound by a u64 field or literal">
@@ -154,17 +106,17 @@ interface BoundKindMismatch<K, Want> {
 
 type BoundOnTarget<K extends string, Want extends "u64" | "interval", B extends AnyFace> = string extends K
 	? unknown
-	: K extends FaceFields<B["source"]>
-		? KindAt<B["source"], K> extends Want
+	: K extends FaceFields<B["owner"]>
+		? KindAt<B["owner"], K> extends Want
 			? unknown
 			: BoundKindMismatch<K, Want>
-		: BoundOffTargetRoster<K, FaceFields<B["source"]>>
+		: BoundOffTargetRoster<K, FaceFields<B["owner"]>>
 
-type BoundsOnTarget<W extends CapacityWindow, B extends AnyFace> = W["window"] extends {
+type BoundsOnTarget<W extends CapacityWindow, B extends AnyFace> = W extends {
 	readonly hi: FieldRef<infer K>
 }
 	? BoundOnTarget<K, "u64", B>
-	: W["window"] extends { readonly hi: DurationRef<infer K> }
+	: W extends { readonly hi: DurationRef<infer K> }
 		? BoundOnTarget<K, "interval", B>
 		: unknown
 
@@ -189,30 +141,32 @@ interface WeightKindMismatch<K, Want> {
  * position. Checked at the `capacity` call where the source face is
  * inferred — the proven constrain-after-inference pattern.
  */
-type WeightOnSource<M extends CapacityWeight, A extends AnyFace> = M["weight"] extends {
+type WeightOnSource<M extends CapacityWeight, A extends AnyFace> = M extends {
 	readonly kind: "field"
 	readonly field: infer K extends string
 }
 	? string extends K
 		? unknown
-		: K extends FaceFields<A["source"]>
-			? KindAt<A["source"], K> extends "u64"
+		: K extends FaceFields<A["owner"]>
+			? KindAt<A["owner"], K> extends "u64"
 				? unknown
 				: WeightKindMismatch<K, "u64">
-			: WeightOffSourceRoster<K, FaceFields<A["source"]>>
-	: M["weight"] extends { readonly kind: "durationField"; readonly field: infer K extends string }
+			: WeightOffSourceRoster<K, FaceFields<A["owner"]>>
+	: M extends { readonly kind: "durationField"; readonly field: infer K extends string }
 		? string extends K
 			? unknown
-			: K extends FaceFields<A["source"]>
-				? KindAt<A["source"], K> extends "interval"
+			: K extends FaceFields<A["owner"]>
+				? KindAt<A["owner"], K> extends "interval"
 					? unknown
 					: WeightKindMismatch<K, "interval">
-				: WeightOffSourceRoster<K, FaceFields<A["source"]>>
+				: WeightOffSourceRoster<K, FaceFields<A["owner"]>>
 		: unknown
 
 const unitWeight: WeightSpec = Object.freeze({ kind: "unit" })
 
-function assertRowLocal(field: string, role: string): string {
+function assertRowLocal<F extends string>(field: F, role: string): F {
+	if (typeof field !== "string" || !field.isWellFormed())
+		throw new AuthoringError({ message: `${role}: expected a well-formed field name` })
 	if (field.includes(".")) {
 		throw new AuthoringError({
 			message: `${role} \`${field}\` walks a reference — the vocabulary is closed at the row (ruling 6): pin the column with a two-column containment (Source(ref, f) <= Catalog(id, f)) and name the local field`
@@ -222,8 +176,8 @@ function assertRowLocal(field: string, role: string): string {
 }
 
 function admitWindow<S extends CapacityWindowSpec>(window: S): CapacityWindow<S> {
-	const value: CapacityWindow<S> = { window, [admitted]: true }
-	return Object.freeze(value)
+	capacityWindow(window)
+	return Object.freeze(window)
 }
 
 function lit(value: bigint): CapacityBoundSpec {
@@ -265,6 +219,8 @@ function within<const Lo extends bigint, const Hi extends bigint>(
 	| { readonly kind: "exact"; readonly n: { readonly kind: "lit"; readonly value: Lo } }
 >
 function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): CapacityWindow {
+	integerValue("capacity lower bound", "u64", lo)
+	if (typeof hi === "bigint") integerValue("capacity upper bound", "u64", hi)
 	if (lo < 0n) {
 		throw new AuthoringError({
 			message: `capacity bounds are u64: within(${lo}${hi === undefined ? "" : ", …"}) is out of domain`
@@ -302,8 +258,8 @@ function within(lo: bigint, hi?: bigint | "*" | FieldRef | DurationRef): Capacit
 }
 
 function admitWeight<S extends WeightSpec>(weight: S): CapacityWeight<S> {
-	const value: CapacityWeight<S> = { weight, [admitted]: true }
-	return Object.freeze(value)
+	capacityWeight(weight)
+	return Object.freeze(weight)
 }
 
 /**
@@ -326,7 +282,7 @@ function weigh(measure: string | DurationRef): CapacityWeight {
 }
 
 function ref<const F extends string>(field: F & PathBan<F>): FieldRef<F> {
-	return Object.freeze({ kind: "field", field: assertRowLocal(field, "dependent bound") }) as FieldRef<F>
+	return Object.freeze({ kind: "field", field: assertRowLocal(field, "dependent bound") })
 }
 
 /**
@@ -336,8 +292,62 @@ function ref<const F extends string>(field: F & PathBan<F>): FieldRef<F> {
  * (Duration weights pair with Duration-capable bounds — C18).
  */
 function duration<const F extends string>(field: F & PathBan<F>): DurationRef<F> {
-	return Object.freeze({ kind: "durationField", field: assertRowLocal(field, "Duration measure") }) as DurationRef<F>
+	return Object.freeze({ kind: "durationField", field: assertRowLocal(field, "Duration measure") })
 }
 
 export type { BoundsOnTarget, CapacityWeight, CapacityWindow, DurationRef, FieldRef, UnitDimensionBan, WeightOnSource }
-export { duration, isCapacityWeight, isCapacityWindow, ref, unitWeight, weigh, within }
+
+/** Read a checked bound without retaining a caller-owned record. */
+function capacityBound(input: unknown): CapacityBoundSpec {
+	const kind = typeof input === "object" && input !== null && "kind" in input ? input.kind : undefined
+	if (kind === "lit") {
+		const bound = recordValue("capacity bound", input, ["kind", "value"])
+		return Object.freeze({ kind, value: integerValue("capacity bound", "u64", bound.value) })
+	}
+	if (kind === "field" || kind === "durationField") {
+		const bound = recordValue("capacity bound", input, ["kind", "field"])
+		if (typeof bound.field !== "string") throw new AuthoringError({ message: "capacity bound: expected a field name" })
+		return Object.freeze({ kind, field: assertRowLocal(bound.field, "dependent bound") })
+	}
+	throw new AuthoringError({ message: "capacity bound: unknown kind" })
+}
+
+function literalBound(input: unknown): CapacityBoundSpec & { readonly kind: "lit" } {
+	const bound = capacityBound(input)
+	if (bound.kind !== "lit")
+		throw new AuthoringError({ message: "dependent bounds are allowed only at a range's upper bound" })
+	return bound
+}
+
+function capacityWindow(input: unknown): CapacityWindow {
+	const kind = typeof input === "object" && input !== null && "kind" in input ? input.kind : undefined
+	if (kind === "exact") {
+		const window = recordValue("capacity window", input, ["kind", "n"])
+		return Object.freeze({ kind, n: literalBound(window.n) })
+	}
+	if (kind === "floor") {
+		const window = recordValue("capacity window", input, ["kind", "lo"])
+		return Object.freeze({ kind, lo: literalBound(window.lo) })
+	}
+	if (kind === "range") {
+		const window = recordValue("capacity window", input, ["kind", "lo", "hi"])
+		const lo = literalBound(window.lo)
+		const hi = capacityBound(window.hi)
+		if (hi.kind === "lit" && hi.value < lo.value) throw new AuthoringError({ message: "capacity window is inverted" })
+		return Object.freeze({ kind, lo, hi })
+	}
+	throw new AuthoringError({ message: "capacity window: unknown kind" })
+}
+
+function capacityWeight(input: unknown): CapacityWeight {
+	const kind = typeof input === "object" && input !== null && "kind" in input ? input.kind : undefined
+	if (kind === "unit") {
+		recordValue("capacity weight", input, ["kind"])
+		return unitWeight
+	}
+	const weight = capacityBound(input)
+	if (weight.kind === "lit") throw new AuthoringError({ message: "capacity weight: expected unit or a source field" })
+	return weight
+}
+
+export { capacityWeight, capacityWindow, duration, ref, unitWeight, weigh, within }

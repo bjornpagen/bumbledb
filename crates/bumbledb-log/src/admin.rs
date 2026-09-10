@@ -14,6 +14,7 @@
 //! LocalHistory retires in one transaction — control and exactly the retired
 //! rows together.
 
+use bumbledb::integration::Preparation;
 use bumbledb::integration::{
     AttachmentChange, HostChanges, HostRecordChange, HostSealError, IntegrationError,
 };
@@ -815,8 +816,8 @@ fn local_transition<S, T>(
                 .finish()
                 .map_err(|_| AdminError::Corruption("empty delta refused"))?;
             let prepared = match session.prepare(&empty)? {
-                bumbledb::Admission::Accepted(prepared) => prepared,
-                bumbledb::Admission::Rejected(_) => {
+                Preparation::Accepted(prepared) => prepared,
+                Preparation::Rejected { .. } => {
                     return Err(AdminError::Corruption("empty delta rejected"));
                 }
             };

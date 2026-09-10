@@ -27,6 +27,7 @@ import {
 import { Effect, Option } from "effect"
 import {
 	Attempt,
+	AttemptById,
 	attemptsFor,
 	incrementUnits,
 	Learning,
@@ -133,7 +134,7 @@ export const witnessedPin = (
 			const observed = yield* Effect.scoped(
 				Effect.gen(function* () {
 					const snapshot = yield* history.snapshot({ consistency: { kind: "latest" } })
-					const row = yield* snapshot.get(Attempt, { id: attemptId })
+					const row = yield* snapshot.get(AttemptById, { id: attemptId })
 					if (Option.isNone(row)) {
 						return yield* Effect.fail({ kind: "missing" as const })
 					}

@@ -25,9 +25,8 @@
 
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Result } from "effect"
 import { closed } from "#closed.ts"
-import { interval, span, str, u64 } from "#fields.ts"
+import { interval, str, u64 } from "#fields.ts"
 import { ALLEN } from "#query/atom.ts"
 import type { QueryParams } from "#query/lower.ts"
 import { lowerQuery, query } from "#query/lower.ts"
@@ -48,7 +47,7 @@ test("CONTROL: allen() accepts a literal interval side (sibling is interval-type
 		const { active } = v(Session)
 		return r
 			.match(Session, { active })
-			.where(r.allen(Result.getOrThrow(span(0n, 12n)), ALLEN.intersects, active))
+			.where(r.allen({ start: 0n, end: 12n }, ALLEN.intersects, active))
 			.find({ iv: active })
 	})
 	assert.doesNotThrow(function lowerIt() {
@@ -71,7 +70,7 @@ test("pointIn() with a literal interval operand lowers to PointIn (interval-left
 		const { holder, at } = v(Session)
 		return r
 			.match(Session, { holder, at })
-			.where(r.pointIn(at, Result.getOrThrow(span(0n, 10n))))
+			.where(r.pointIn(at, { start: 0n, end: 10n }))
 			.find({ h: holder, t: at })
 	})
 	const ir = lowerQuery(q)
@@ -120,7 +119,7 @@ test("a param value no rule places never registers — the query lowers under it
 test("closed() admits every legal handle name as pure roster data", function protoHandle() {
 	const handles = ["Alpha", "__proto__"] as const
 	const K = closed("K", handles)
-	assert.deepEqual(K.data.handles, handles, "the roster carries every handle in declaration order")
+	assert.deepEqual(K.handles, handles, "the roster carries every handle in declaration order")
 	assert.deepEqual(
 		Object.keys(K.axioms).toSorted(),
 		[...handles].toSorted(),

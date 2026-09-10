@@ -24,7 +24,8 @@ import { DatabaseId, IncarnationId, OperationId, ReceiptEpoch, RequestId } from 
 import { productionCodec } from "#migrations/native.ts"
 
 const Entry = relation("Entry", { id: u64, body: str })
-const Ledger = schema("Ledger", { Entry }, [key(Entry, ["id"])])
+const EntryById = key(Entry, ["id"])
+const Ledger = schema("Ledger", { Entry }, [EntryById])
 
 const runtimeOptions: NativeRuntimeOptions = {
 	workers: 2,
@@ -110,7 +111,7 @@ test("create → seal → submit(decided) → receipt → resolve after reopen, 
 							assert.deepEqual(resolved.receipt.decisionAt, receipt.decisionAt)
 						}
 						const snapshot = yield* history.snapshot(readOptions)
-						const fact = yield* snapshot.get(Entry, { id: 42n })
+						const fact = yield* snapshot.get(EntryById, { id: 42n })
 						assert.ok(fact._tag === "Some", "the committed fact reads back after reopen")
 						if (fact._tag === "Some") {
 							assert.equal(fact.value.body, "round trip")

@@ -206,3 +206,155 @@ fn sorting_cancellation_returns_no_payload() {
         Err(ChangeError::Work(WorkError::Cancelled))
     ));
 }
+
+fn command(schema: &Schema, actions: &[(bool, u64)]) -> ChangeSet {
+    let mut draft = ChangeSet::builder(schema, work());
+    for &(add, value) in actions {
+        let row = [Value::U64(value)];
+        if add {
+            draft.insert(RelationId(0), &row).unwrap();
+        } else {
+            draft.delete(RelationId(0), &row).unwrap();
+        }
+    }
+    draft.finish().unwrap()
+}
+
+#[test]
+fn composition_matches_one_command_and_is_commutative_associative_idempotent() {
+    let schema = schema();
+    let actions = [
+        (true, 1),
+        (false, 1),
+        (false, 2),
+        (true, 3),
+        (true, 1),
+        (false, 3),
+    ];
+    let expected = command(&schema, &actions);
+    assert_eq!(
+        expected.counts(),
+        ChangeCounts {
+            added: 2,
+            removed: 1
+        }
+    );
+    let empty = command(&schema, &[]);
+    permutations(&mut [0, 1, 2, 3, 4, 5], 0, &mut |order| {
+        let a = command(&schema, &[actions[order[0]], actions[order[1]]]);
+        let b = command(&schema, &[actions[order[2]], actions[order[3]]]);
+        let c = command(&schema, &[actions[order[4]], actions[order[5]]]);
+        let ab = a.compose(&b, &work()).unwrap();
+        assert_eq!(ab.as_bytes(), b.compose(&a, &work()).unwrap().as_bytes());
+        let left = ab.compose(&c, &work()).unwrap();
+        let right = a
+            .compose(&b.compose(&c, &work()).unwrap(), &work())
+            .unwrap();
+        assert_eq!(left.as_bytes(), right.as_bytes());
+        assert_eq!(left.as_bytes(), expected.as_bytes());
+        assert_eq!(left.counts(), expected.counts());
+        let parsed = ChangeSet::parse(&schema, left.as_bytes(), &work()).unwrap();
+        assert_eq!(parsed.counts(), left.counts());
+        assert_eq!(
+            left.compose(&parsed, &work()).unwrap().as_bytes(),
+            left.as_bytes()
+        );
+        assert!(Arc::ptr_eq(
+            &left.0,
+            &left.compose(&left, &work()).unwrap().0
+        ));
+        assert!(Arc::ptr_eq(
+            &left.0,
+            &left.compose(&empty, &work()).unwrap().0
+        ));
+        assert!(Arc::ptr_eq(
+            &left.0,
+            &empty.compose(&left, &work()).unwrap().0
+        ));
+    });
+}
+
+#[test]
+fn composition_refuses_foreign_schema_and_cancelled_identity_fast_paths() {
+    let schema = schema();
+    let a = command(&schema, &[(true, 1)]);
+    let other = SchemaDescriptor {
+        relations: vec![],
+        statements: vec![],
+    }
+    .validate()
+    .unwrap();
+    let empty = command(&other, &[]);
+    assert!(matches!(
+        a.compose(&empty, &work()),
+        Err(ChangeError::WrongSchema)
+    ));
+    let cancelled = work();
+    cancelled.cancel();
+    assert!(matches!(
+        a.compose(&a, &cancelled),
+        Err(ChangeError::Work(WorkError::Cancelled))
+    ));
+    assert!(matches!(
+        a.compose(&command(&schema, &[]), &cancelled),
+        Err(ChangeError::Work(WorkError::Cancelled))
+    ));
+}
+
+#[test]
+fn owned_record_cursor_shares_bytes_and_clones_an_independent_position() {
+    let schema = schema();
+    let actions: Vec<_> = (0..1025).map(|i| (i % 2 == 0, i)).collect();
+    let changes = command(&schema, &actions);
+    let expected: Vec<_> = changes
+        .records()
+        .map(|r| (r.kind, r.row.to_vec()))
+        .collect();
+    let mut cursor = changes.cursor();
+    assert!(Arc::ptr_eq(&cursor.changes.0, &changes.0));
+    drop(changes);
+    for (index, (kind, row)) in expected.iter().enumerate() {
+        let mut preview = cursor.clone();
+        let next = preview.next_record().unwrap();
+        assert_eq!((next.kind, next.row), (*kind, row.as_slice()));
+        if index % 256 == 0 {
+            let retry = cursor.next_record().unwrap();
+            assert_eq!((retry.kind, retry.row), (*kind, row.as_slice()));
+        }
+        cursor = preview;
+    }
+    assert!(cursor.next_record().is_none());
+    assert!(cursor.next_record().is_none());
+}
+
+#[test]
+fn owned_parsing_reuses_allocation_and_has_identical_refusals() {
+    let schema = schema();
+    let changes = command(&schema, &[(true, 1), (false, 2)]);
+    let bytes = changes.as_bytes().to_vec();
+    let pointer = bytes.as_ptr();
+    let parsed = ChangeSet::from_bytes(&schema, bytes, &work()).unwrap();
+    assert_eq!(parsed.as_bytes().as_ptr(), pointer);
+    assert_eq!(parsed.counts(), changes.counts());
+    let mut corruptions: Vec<_> = (0..changes.as_bytes().len())
+        .map(|end| changes.as_bytes()[..end].to_vec())
+        .collect();
+    for offset in [0, 9, 10, HEADER, HEADER + 1, HEADER + 24] {
+        let mut bytes = changes.as_bytes().to_vec();
+        bytes[offset] ^= 255;
+        corruptions.push(bytes);
+    }
+    for bytes in corruptions {
+        let copied = ChangeSet::parse(&schema, &bytes, &work()).unwrap_err();
+        assert_eq!(
+            ChangeSet::from_bytes(&schema, bytes, &work()).unwrap_err(),
+            copied
+        );
+    }
+    let stopped = work();
+    stopped.cancel();
+    assert!(matches!(
+        ChangeSet::from_bytes(&schema, parsed.as_bytes().to_vec(), &stopped),
+        Err(ChangeError::Work(WorkError::Cancelled))
+    ));
+}

@@ -675,8 +675,10 @@ fn malformed_evidence_bytes_refuse_typed_never_an_empty_rejection() {
         .unwrap();
     let violating = violating.finish().unwrap();
     let rejected = match session.prepare(&violating).expect("prepare") {
-        bumbledb::Admission::Rejected(violations) => violations,
-        bumbledb::Admission::Accepted(_) => panic!("the double-key rows must reject"),
+        bumbledb::integration::Preparation::Rejected { violations, .. } => violations,
+        bumbledb::integration::Preparation::Accepted(_) => {
+            panic!("the double-key rows must reject")
+        }
     };
     let evidence = bumbledb::schema::evidence::encode_violations(
         &pair_schema,

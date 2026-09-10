@@ -17,6 +17,7 @@ import { bool, contained, uuid, key, on, relation, schema, str, u64 } from "@bjo
 
 /** A user's note. `text` was renamed from `body` in plan 0003. */
 export const Note = relation("Note", { id: uuid, text: str, pinned: bool })
+export const NoteById = key(Note, ["id"])
 
 /** Fixed labels, seeded declaratively in plan 0002. */
 export const Tag = relation("Tag", { id: uuid, name: str })
@@ -44,7 +45,7 @@ export const Attachment = relation("Attachment", {
 })
 
 export const App = schema("App", { Note, Tag, Outbox, Attachment }, [
-	key(Note, ["id"]),
+	NoteById,
 	key(Tag, ["id"]),
 	key(Outbox, ["id"]),
 	key(Attachment, ["id"]),

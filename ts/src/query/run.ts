@@ -4,7 +4,8 @@ import type { FindColumn } from "#query/atom.ts"
 import { taggedCmpLiteral } from "#query/lower.ts"
 import type { ParamEntry } from "#query/scope.ts"
 import type { CellValue } from "#rows.ts"
-import { decodeCell, handleOf } from "#rows.ts"
+import { decodeCell, handleOf, setOwnField } from "#rows.ts"
+import { arrayValue, recordValue } from "#values.ts"
 
 function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedValue {
 	if (entry.anchor === undefined) {
@@ -16,22 +17,24 @@ function wireValue(entry: ParamEntry, context: string, value: unknown): TaggedVa
 }
 
 function wireParams(entries: readonly ParamEntry[], supplied: Readonly<Record<string, unknown>>): QueryParam[] {
+	const input = recordValue(
+		"query parameters",
+		supplied,
+		entries.filter((entry) => entry.membership === undefined).map((entry) => entry.name)
+	)
 	return entries.map(function wireOne(entry): QueryParam {
 		if (entry.membership !== undefined) {
 			return entry.membership
 		}
-		const value = supplied[entry.name]
+		const value = input[entry.name]
 		if (value === undefined) {
 			throw new AuthoringError({ message: `execute params object is missing param ${entry.name}` })
 		}
 		if (entry.shape === "set") {
-			if (!Array.isArray(value)) {
-				throw new AuthoringError({ message: `param ${entry.name}: a set param binds a readonly array of values` })
-			}
 			return {
 				kind: "set",
-				values: value.map(function wireElement(element, index) {
-					return wireValue(entry, `param ${entry.name}[${index}]`, element)
+				values: arrayValue(`param ${entry.name}`, value, function wireElement(context, element) {
+					return wireValue(entry, context, element)
 				})
 			}
 		}
@@ -71,11 +74,14 @@ function decodeAnswers<Row>(finds: readonly FindColumn[], rows: readonly (readon
 				throw new SdkInvariantError({ message: `query answer cell ${ordinal} (${column.name}) is absent` })
 			}
 			if (column.slot !== undefined) {
-				decoded[column.name] = decodeCell(`query answer column ${column.name}`, column.slot.field, cell)
+				setOwnField(decoded, column.name, decodeCell(`query answer column ${column.name}`, column.slot.field, cell))
 				return
 			}
-			decoded[column.name] =
+			setOwnField(
+				decoded,
+				column.name,
 				column.closed === undefined ? cell : handleOf(`query answer column ${column.name}`, column.closed, cell)
+			)
 		})
 		Object.freeze(decoded)
 		if (!isAnswerRow<Row>(finds, decoded)) {

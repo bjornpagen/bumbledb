@@ -1,19 +1,22 @@
 import type { Scope } from "effect"
-import { Effect, Exit } from "effect"
+import { Effect, Exit, Option, Stream } from "effect"
 import { drainClose, releaseOwner } from "#close.ts"
+import { isClosedMember, membersAgree } from "#closed.ts"
 import type { SchemaId } from "#compile.ts"
 import { Schema as CoreSchema, schemaTables } from "#compile.ts"
-import type { ChangesHandle, DraftHandle } from "#db-native.ts"
+import type { ChangeRecordWire, ChangesHandle, ChangesWire, DraftHandle } from "#db-native.ts"
 import { dbNative } from "#db-native.ts"
+import { SdkInvariantError } from "#errors.ts"
 import { lower } from "#lower.ts"
-import type { AnyRelation, Fact } from "#relation.ts"
+import { type AnyRelation, type Fact, relationFields } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
-import { cellOf, hostCellCharge, recordOf } from "#rows.ts"
+import { factCellsOf, factOfCells, hostCellCharge } from "#rows.ts"
 import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import type { CloseReport } from "#runtime-errors.ts"
-import { DbError } from "#runtime-errors.ts"
-import type { AnySchema } from "#schema.ts"
+import { argumentError, DbError } from "#runtime-errors.ts"
+import type { AnySchema, SchemaRelation } from "#schema.ts"
 import type { Rel } from "#shape.ts"
+import { bytesValue, recordValue } from "#values.ts"
 
 /**
  * `ChangeSet` — the engine's checked immutable delta:
@@ -22,10 +25,32 @@ import type { Rel } from "#shape.ts"
  * add-wins. Immutable and reusable while open; sealing/submitting it later
  * retains the SAME native value — no second JS row walk ever happens.
  */
+/** Counts of distinct fact additions and removals, never input events. */
+interface ChangeCounts {
+	readonly added: bigint
+	readonly removed: bigint
+}
+
+/** A relation-name-discriminated union of plain, fully typed facts. */
+type ChangeRecord<S extends AnySchema> = {
+	[N in keyof S["relations"]]: S["relations"][N] extends AnyRelation
+		? { readonly relation: N; readonly kind: "add" | "remove"; readonly fact: Fact<S["relations"][N]> }
+		: never
+}[keyof S["relations"]]
+
 interface ChangeSet<S extends AnySchema> {
 	readonly schemaId: SchemaId
+	/** Distinct requested actions; use judge for effective counts against a store. */
+	readonly counts: ChangeCounts
+	readonly byteLength: bigint
 	/** Phantom schema brand: a ChangeSet is only ever applied to its own S. */
 	readonly schema?: S
+	/** Independent scoped traversal, delivered in bounded native batches. Reusable. */
+	records(): Stream.Stream<ChangeRecord<S>, DbError>
+	/** Explicit full byte materialization. Mutating returned bytes cannot alter this value. */
+	toBytes(): Effect.Effect<Uint8Array, DbError>
+	/** Commutative add-wins composition into one command, not sequential replay. */
+	compose(other: ChangeSet<S>): Effect.Effect<ChangeSet<S>, DbError, Scope.Scope>
 	close(): Effect.Effect<CloseReport>
 }
 
@@ -97,29 +122,13 @@ function eventLoopTurn(): Effect.Effect<void> {
 }
 
 function hostFactCharge(relation: AnyRelation, record: Readonly<Record<string, unknown>>): bigint {
-	const data = relation.data
+	const fields = relationFields(relation)
 	let bytes = 0n
-	for (const declared of data.fields) {
+	for (const declared of fields) {
 		const value = record[declared.name]
-		if (value === undefined) {
-			throw refusal("ChangeDraft.ingest", "InvalidArgument")
-		}
 		bytes += hostCellCharge(value)
 	}
 	return bytes
-}
-
-function projectFact(relation: AnyRelation, record: Readonly<Record<string, unknown>>): readonly CellValue[] {
-	const data = relation.data
-	const cells: CellValue[] = []
-	for (const declared of data.fields) {
-		const value = record[declared.name]
-		if (value === undefined) {
-			throw refusal("ChangeDraft.ingest", "InvalidArgument")
-		}
-		cells.push(cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value))
-	}
-	return cells
 }
 
 /**
@@ -141,13 +150,17 @@ function pullChunk(relation: AnyRelation, iterator: Iterator<object>, pending: o
 			}
 			current = next.value
 		}
-		const record = recordOf(current)
+		const record = recordValue(
+			`relation ${relation.name}`,
+			current,
+			relationFields(relation).map((field) => field.name)
+		)
 		const charge = hostFactCharge(relation, record)
 		if (rows > 0n && bytes + charge > CHUNK_BYTES) {
 			leftover = current
 			break
 		}
-		for (const cell of projectFact(relation, record)) cells.push(cell)
+		for (const cell of factCellsOf(relation, record)) cells.push(cell)
 		bytes += charge
 		rows += 1n
 		current = undefined
@@ -185,7 +198,7 @@ function ingest(
 			yield* spendAndDrain(state, operation)
 			return yield* Effect.fail(refusal(operation, "SpentHandle"))
 		}
-		if (state.theory.relations[relation.name] !== relation) {
+		if (!membersAgree(state.theory.relations[relation.name], relation)) {
 			return yield* Effect.fail(refusal(operation, "InvalidArgument"))
 		}
 		const tables = schemaTables(state.theory)
@@ -197,7 +210,7 @@ function ingest(
 		const body = Effect.gen(function* () {
 			const iterator = yield* Effect.try({
 				try: () => rows[Symbol.iterator](),
-				catch: () => refusal(operation, "InvalidArgument")
+				catch: (cause) => argumentError(operation, cause)
 			})
 			let leftover: object | undefined
 			let done = false
@@ -205,7 +218,7 @@ function ingest(
 				while (!done) {
 					const chunk = yield* Effect.try({
 						try: () => pullChunk(relation, iterator, leftover),
-						catch: (cause) => (cause instanceof DbError ? cause : refusal(operation, "InvalidArgument"))
+						catch: (cause) => argumentError(operation, cause)
 					}).pipe(Effect.catch((error) => spendAndDrain(state, operation).pipe(Effect.andThen(Effect.fail(error)))))
 					leftover = chunk.leftover
 					done = chunk.done && leftover === undefined
@@ -244,19 +257,126 @@ function ingest(
 	})
 }
 
-function makeChangeSet<S extends AnySchema>(handle: ChangesHandle, schemaId: SchemaId): ChangeSet<S> {
+function decodeChangeRecord<S extends AnySchema>(
+	relations: readonly SchemaRelation[],
+	record: ChangeRecordWire
+): ChangeRecord<S> {
+	const relation = relations[record.relation]
+	if (relation === undefined || isClosedMember(relation) || (record.kind !== "add" && record.kind !== "remove")) {
+		throw new SdkInvariantError({ message: "ChangeSet.records: invalid native record descriptor" })
+	}
+	// Relation id resolves through this schema's own ordered roster. The
+	// shared projector validates all field values before this union seam.
+	return Object.freeze({
+		relation: relation.name,
+		kind: record.kind,
+		fact: factOfCells(relation, record.values)
+	}) as ChangeRecord<S>
+}
+
+function changeRecords<S extends AnySchema>(
+	handle: ChangesHandle,
+	relations: readonly SchemaRelation[]
+): Stream.Stream<ChangeRecord<S>, DbError> {
+	return Stream.unwrap(
+		Effect.gen(function* () {
+			const cursor = yield* Effect.acquireRelease(
+				nativeOperationWith(
+					"ChangeSet.records",
+					(callback) => dbNative.runtimeChangesCursor(handle, callback),
+					dbNative.runtimeChangesCursorTake,
+					(value) => value
+				),
+				(value) =>
+					releaseOwner("ChangeCursor.close", (callback) => dbNative.runtimeChangesCursorClose(value, callback)),
+				{ interruptible: true }
+			)
+			return Stream.paginate(undefined, () =>
+				nativeOperationWith(
+					"ChangeSet.records",
+					(callback) => dbNative.runtimeChangesCursorNext(cursor, callback),
+					dbNative.runtimeChangePageTake,
+					(page) => page
+				).pipe(
+					Effect.map((page) =>
+						page === null
+							? ([[], Option.none<undefined>()] as const)
+							: ([page.map((record) => decodeChangeRecord<S>(relations, record)), Option.some(undefined)] as const)
+					)
+				)
+			)
+		})
+	)
+}
+
+function acquireChanges<S extends AnySchema>(
+	theory: S,
+	schemaId: SchemaId,
+	acquire: Effect.Effect<ChangesWire, DbError>
+): Effect.Effect<ChangeSet<S>, DbError, Scope.Scope> {
+	return Effect.acquireRelease(
+		acquire.pipe(Effect.map((wire) => makeChangeSet(theory, wire, schemaId))),
+		(changes) =>
+			Effect.suspend(() => {
+				const internal = changesInternals.get(changes)
+				if (internal === undefined) return Effect.void
+				internal.closed = true
+				return releaseOwner("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(internal.handle, callback))
+			}),
+		{ interruptible: true }
+	)
+}
+
+function makeChangeSet<S extends AnySchema>(theory: S, wire: ChangesWire, schemaId: SchemaId): ChangeSet<S> {
+	const handle = wire.changes
+	const relations = Object.values(theory.relations)
+	const internal: ChangesInternal = { handle, schemaId, closed: false }
 	const value: ChangeSet<S> = {
 		schemaId,
+		counts: Object.freeze({ ...wire.counts }),
+		byteLength: wire.byteLength,
+		records() {
+			return changeRecords<S>(handle, relations)
+		},
+		toBytes() {
+			return nativeOperationWith(
+				"ChangeSet.toBytes",
+				(callback) => dbNative.runtimeChangesBytes(handle, callback),
+				dbNative.runtimeBytesTake,
+				(bytes) => bytes
+			)
+		},
+		compose(other) {
+			return Effect.suspend(() => {
+				const right = internalChanges(other)
+				if (right === undefined || right.schemaId !== schemaId)
+					return Effect.fail(refusal("ChangeSet.compose", "InvalidArgument"))
+				if (internal.closed || right.closed) return Effect.fail(refusal("ChangeSet.compose", "ClosedHandle"))
+				return acquireChanges(
+					theory,
+					schemaId,
+					nativeOperationWith(
+						"ChangeSet.compose",
+						(callback) => dbNative.runtimeChangesCompose(handle, right.handle, callback),
+						dbNative.runtimeChangesTake,
+						(result) => result
+					)
+				)
+			})
+		},
 		close() {
-			return drainClose("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(handle, callback))
+			return Effect.suspend(() => {
+				internal.closed = true
+				return drainClose("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(handle, callback))
+			})
 		}
 	}
 	Object.freeze(value)
-	changesInternals.set(value, { handle, schemaId, closed: false })
+	changesInternals.set(value, internal)
 	return value
 }
 
-function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): ChangeDraft<S> {
+function makeDraft<S extends AnySchema>(theory: S, state: DraftState, schemaId: SchemaId): ChangeDraft<S> {
 	const draft: ChangeDraft<S> = {
 		insert(relation, rows) {
 			return ingest(state, "ChangeDraft.insert", relation, rows)
@@ -265,7 +385,9 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 			return ingest(state, "ChangeDraft.delete", relation, rows)
 		},
 		finish() {
-			return Effect.acquireRelease(
+			return acquireChanges(
+				theory,
+				schemaId,
 				Effect.gen(function* () {
 					if (state.spent) {
 						return yield* Effect.fail(refusal("ChangeDraft.finish", "SpentHandle"))
@@ -276,26 +398,13 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 					}
 					// Finish CONSUMES the draft, success or failure.
 					state.spent = true
-					const wire = yield* nativeOperationWith(
+					return yield* nativeOperationWith(
 						"ChangeDraft.finish",
 						(callback) => dbNative.runtimeDraftFinish(state.handle, callback),
 						dbNative.runtimeChangesTake,
 						(value) => value
 					)
-					return makeChangeSet<S>(wire.changes, schemaId)
-				}),
-				(changes) =>
-					Effect.suspend(() => {
-						const internal = changesInternals.get(changes)
-						if (internal === undefined || internal.closed) {
-							return Effect.void
-						}
-						internal.closed = true
-						return releaseOwner("ChangeSet.close", (callback) =>
-							dbNative.runtimeChangesClose(internal.handle, callback)
-						)
-					}),
-				{ interruptible: true }
+				})
 			)
 		},
 		close() {
@@ -318,7 +427,7 @@ function makeDraft<S extends AnySchema>(state: DraftState, schemaId: SchemaId): 
 const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(schema: S) {
 	const handle = yield* runtimeHandle()
 	const compiled = yield* CoreSchema.compile(schema)
-	const spec = lower(schema)
+	const spec = lower(compiled.schema)
 	return yield* Effect.acquireRelease(
 		Effect.gen(function* () {
 			const draftHandle = yield* nativeOperationWith(
@@ -329,11 +438,11 @@ const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(s
 			)
 			const state: DraftState = {
 				handle: draftHandle,
-				theory: schema,
+				theory: compiled.schema,
 				spent: false,
 				inFlight: false
 			}
-			const draft = makeDraft<S>(state, compiled.schemaId)
+			const draft = makeDraft(compiled.schema, state, compiled.schemaId)
 			draftStates.set(draft, state)
 			return draft
 		}),
@@ -357,7 +466,27 @@ const builder = Effect.fn("ChangeSet.builder")(function* <S extends AnySchema>(s
 // native handle without exposing it on the public capability.
 const draftStates = new WeakMap<object, DraftState>()
 
-const ChangeSet = Object.freeze({ builder })
+/** Parse canonical native bytes, owning the input when the Effect starts. */
+const fromBytes = Effect.fn("ChangeSet.fromBytes")(function* <S extends AnySchema>(schema: S, bytes: Uint8Array) {
+	const ownedBytes = yield* Effect.try({
+		try: () => bytesValue("ChangeSet.fromBytes", bytes),
+		catch: (cause) => argumentError("ChangeSet.fromBytes", cause)
+	})
+	const handle = yield* runtimeHandle()
+	const compiled = yield* CoreSchema.compile(schema)
+	return yield* acquireChanges(
+		compiled.schema,
+		compiled.schemaId,
+		nativeOperationWith(
+			"ChangeSet.fromBytes",
+			(callback) => dbNative.runtimeChangesParse(handle, lower(compiled.schema), ownedBytes, callback),
+			dbNative.runtimeChangesTake,
+			(wire) => wire
+		)
+	)
+})
 
-export type { ChangeDraft }
+const ChangeSet = Object.freeze({ builder, fromBytes })
+
+export type { ChangeCounts, ChangeDraft, ChangeRecord }
 export { ChangeSet, internalChanges }

@@ -92,7 +92,8 @@ pub use scalar::{NumericCast, ScalarError, ScalarEvaluator, ScalarExpr};
 #[doc(hidden)]
 pub mod integration {
     pub use crate::api::db::session::{
-        ApplicationChanges, CoreCommit, IntegrationError, PreparedWrite, SealedWrite, WriterSession,
+        ApplicationChanges, CoreCommit, IntegrationError, Preparation, PreparedWrite, SealedWrite,
+        WriterSession,
     };
     pub use crate::storage::store::{
         AttachmentChange, HostChanges, HostRecordChange, HostSealError,

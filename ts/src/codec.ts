@@ -1,18 +1,20 @@
 import { Effect, Schema as EffectSchema, Result } from "effect"
+import { membersAgree } from "#closed.ts"
 import { schemaTables } from "#compile.ts"
 import { dbNative } from "#db-native.ts"
+import { AuthoringError } from "#errors.ts"
 import type { AnyField } from "#fields.ts"
-import { isFloatIntervalValue, isIntervalValue, rosterOf } from "#fields.ts"
 import { lower } from "#lower.ts"
-import type { AnyRelation, Fact } from "#relation.ts"
+import { type AnyRelation, type Fact, relationDescriptor, relationFields } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
 import { factOfCells, flatRowsOf } from "#rows.ts"
 import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
-import { DbError } from "#runtime-errors.ts"
+import { argumentError, DbError } from "#runtime-errors.ts"
 import type { AnySchema } from "#schema.ts"
+import { schemaDescriptor } from "#schema.ts"
 import type { Rel } from "#shape.ts"
 import { f64BitsHex } from "#spec.ts"
-import { Uuid } from "#uuid.ts"
+import { fieldValue, recordValue } from "#values.ts"
 
 /**
  * Boundary row codecs, derived from the core relation descriptors — never a
@@ -43,14 +45,27 @@ interface RowShape<R extends AnyRelation> {
 }
 
 function rowShape<S extends AnySchema, R extends Rel<S>>(schema: S, relation: R): RowShape<R> {
-	return Object.freeze({ schema, relation })
+	const ownedSchema = schemaDescriptor(schema)
+	const ownedRelation = relationDescriptor(relation)
+	return Object.freeze({ schema: ownedSchema, relation: ownedRelation })
+}
+
+function checkedRowShape<R extends AnyRelation>(operation: string, input: RowShape<R>) {
+	recordValue(`${operation} shape`, input, ["schema", "relation"])
+	const schema = schemaDescriptor(input.schema)
+	const relation = relationDescriptor(input.relation)
+	const relationId = schemaTables(schema).relationIds.get(relation.name)
+	if (relationId === undefined || !membersAgree(schema.relations[relation.name], relation)) {
+		throw new AuthoringError({ message: `${operation}: relation is not declared in the schema` })
+	}
+	return { relation, relationId, spec: lower(schema) }
 }
 
 function invalid(operation: string): DbError {
 	return new DbError({ operation, reason: { _tag: "InvalidArgument" } })
 }
 
-const DECIMAL = /^-?(?:0|[1-9][0-9]*)$/
+const DECIMAL = /^(?:0|-?[1-9][0-9]*)$/
 const HEX16 = /^[0-9a-f]{16}$/
 const LOWER_HEX = /^(?:[0-9a-f]{2})*$/
 
@@ -88,146 +103,71 @@ function f64OfHex(text: unknown): number | undefined {
 	return value
 }
 
-/** One host value to its schema-tagged JSON form (pure, bounded). */
-function encodeBoundaryValue(field: AnyField, value: unknown): unknown {
-	const roster = rosterOf(field)
-	if (roster !== undefined) {
-		if (typeof value !== "string" || !roster.handles.includes(value)) {
-			throw invalid("encodeBoundaryRows")
-		}
-		return value
-	}
+/** One host value to its canonical, field-directed JSON representation. */
+function encodeBoundaryValue(context: string, field: AnyField, input: unknown): unknown {
+	if ("closed" in field) return fieldValue(context, field, input)
 	switch (field.kind) {
-		case "bool": {
-			if (typeof value !== "boolean") {
-				throw invalid("encodeBoundaryRows")
-			}
-			return value
-		}
+		case "bool":
+		case "str":
+		case "uuid":
+			return fieldValue(context, field, input)
 		case "u64":
-		case "i64": {
-			if (typeof value !== "bigint") {
-				throw invalid("encodeBoundaryRows")
-			}
-			return value.toString(10)
-		}
-		case "f64": {
-			if (typeof value !== "number") {
-				throw invalid("encodeBoundaryRows")
-			}
-			return { $f64: f64BitsHex(value) }
-		}
-		case "uuid": {
-			if (!Uuid.isUuid(value)) {
-				throw invalid("encodeBoundaryRows")
-			}
-			return value
-		}
-		case "str": {
-			if (typeof value !== "string" || !value.isWellFormed()) {
-				throw invalid("encodeBoundaryRows")
-			}
-			return value
-		}
-		case "bytes": {
-			if (!(value instanceof Uint8Array) || value.byteLength !== field.width) {
-				throw invalid("encodeBoundaryRows")
-			}
-			return hexOfBytes(value)
-		}
+		case "i64":
+			return fieldValue(context, field, input).toString(10)
+		case "f64":
+			return { $f64: f64BitsHex(fieldValue(context, field, input)) }
+		case "bytes":
+			return hexOfBytes(fieldValue(context, field, input))
 		case "interval": {
 			if (field.element === "f64") {
-				if (!isFloatIntervalValue(value)) {
-					throw invalid("encodeBoundaryRows")
-				}
+				const value = fieldValue(context, { ...field, element: "f64" }, input)
 				return { start: { $f64: f64BitsHex(value.start) }, end: { $f64: f64BitsHex(value.end) } }
 			}
-			if (!isIntervalValue(value)) {
-				throw invalid("encodeBoundaryRows")
-			}
+			const value = fieldValue(context, { ...field, element: field.element }, input)
 			return { start: value.start.toString(10), end: value.end.toString(10) }
 		}
 	}
 }
 
-const U64_MAX = 0xffffffffffffffffn
-const I64_MIN = -0x8000000000000000n
-const I64_MAX = 0x7fffffffffffffffn
-
-function decodeInteger(kind: "u64" | "i64", value: unknown): bigint | undefined {
-	if (typeof value !== "string" || !DECIMAL.test(value)) {
-		return undefined
-	}
-	const parsed = BigInt(value)
-	if (kind === "u64" && (parsed < 0n || parsed > U64_MAX)) {
-		return undefined
-	}
-	if (kind === "i64" && (parsed < I64_MIN || parsed > I64_MAX)) {
-		return undefined
-	}
-	// Canonical decimal only (no leading zeros, no "-0") — DECIMAL enforces.
-	return parsed
+function decodeInteger(value: unknown): bigint | undefined {
+	// No accepted integer spelling is longer than 20 ASCII characters.
+	if (typeof value !== "string" || value.length > 20 || !DECIMAL.test(value)) return undefined
+	return BigInt(value)
 }
 
 function decodeTaggedF64(value: unknown): number | undefined {
-	if (typeof value !== "object" || value === null || !("$f64" in value)) {
-		return undefined
-	}
-	const keys = Object.keys(value)
-	if (keys.length !== 1) {
-		return undefined
-	}
-	return f64OfHex((value as { readonly $f64: unknown }).$f64)
+	const record = recordValue("binary64 image", value, ["$f64"])
+	return f64OfHex(record.$f64)
 }
 
-/** One schema-tagged JSON form back to the host value (strict, pure). */
-function decodeBoundaryValue(field: AnyField, value: unknown): unknown | undefined {
-	const roster = rosterOf(field)
-	if (roster !== undefined) {
-		return typeof value === "string" && roster.handles.includes(value) ? value : undefined
-	}
+/** Decode representation, then judge the value through the shared interpreter. */
+function decodeBoundaryValue(context: string, field: AnyField, input: unknown): unknown {
+	if ("closed" in field) return fieldValue(context, field, input)
+	let decoded: unknown = input
 	switch (field.kind) {
-		case "bool":
-			return typeof value === "boolean" ? value : undefined
 		case "u64":
 		case "i64":
-			return decodeInteger(field.kind, value)
+			decoded = decodeInteger(input)
+			break
 		case "f64":
-			return decodeTaggedF64(value)
-		case "uuid":
-			return Uuid.isUuid(value) ? value : undefined
-		case "str":
-			return typeof value === "string" && value.isWellFormed() ? value : undefined
-		case "bytes": {
-			if (typeof value !== "string" || value.length !== field.width * 2) {
-				return undefined
-			}
-			return bytesOfHex(value)
-		}
+			decoded = decodeTaggedF64(input)
+			break
+		case "bytes":
+			decoded = typeof input === "string" && input.length === field.width * 2 ? bytesOfHex(input) : undefined
+			break
 		case "interval": {
-			if (typeof value !== "object" || value === null || !("start" in value) || !("end" in value)) {
-				return undefined
-			}
-			const raw = value as { readonly start: unknown; readonly end: unknown }
-			if (field.element === "f64") {
-				const start = decodeTaggedF64(raw.start)
-				const end = decodeTaggedF64(raw.end)
-				if (start === undefined || end === undefined || Number.isNaN(start) || Number.isNaN(end) || !(start < end)) {
-					return undefined
-				}
-				return Object.freeze({ start, end })
-			}
-			const start = decodeInteger(field.element, raw.start)
-			const end = decodeInteger(field.element, raw.end)
-			if (start === undefined || end === undefined || start >= end) {
-				return undefined
-			}
-			return Object.freeze({ start, end })
+			const record = recordValue(context, input, ["start", "end"])
+			decoded =
+				field.element === "f64"
+					? { start: decodeTaggedF64(record.start), end: decodeTaggedF64(record.end) }
+					: { start: decodeInteger(record.start), end: decodeInteger(record.end) }
+			break
 		}
 	}
+	return fieldValue(context, field, decoded)
 }
 
-/** Pure schema-tagged JSON encoding of owned rows (bounded per call). */
+/** Pure schema-tagged JSON encoding of complete rows. */
 function encodeBoundaryRows<R extends AnyRelation>(
 	relation: R,
 	rows: Iterable<Fact<R>>
@@ -235,78 +175,68 @@ function encodeBoundaryRows<R extends AnyRelation>(
 	return Result.try({
 		try: () => {
 			const out: Array<Readonly<Record<string, unknown>>> = []
+			const fields = relationFields(relation)
+			const names = fields.map((declared) => declared.name)
 			for (const row of rows) {
-				const record: Record<string, unknown> = {}
-				for (const declared of relation.data.fields) {
-					record[declared.name] = encodeBoundaryValue(
-						declared.field,
-						(row as Readonly<Record<string, unknown>>)[declared.name]
+				const input = recordValue(`relation ${relation.name}`, row, names)
+				out.push(
+					Object.freeze(
+						Object.fromEntries(
+							fields.map((declared) => [
+								declared.name,
+								encodeBoundaryValue(`relation ${relation.name}.${declared.name}`, declared.field, input[declared.name])
+							])
+						)
 					)
-				}
-				out.push(Object.freeze(record))
+				)
 			}
 			return Object.freeze(out)
 		},
-		catch: (cause) => (cause instanceof DbError ? cause : invalid("encodeBoundaryRows"))
+		catch: (cause) => argumentError("encodeBoundaryRows", cause)
 	})
 }
 
-/** Pure strict decoding of schema-tagged JSON rows; any refusal is typed. */
+/** Pure strict decoding; malformed records, getters and values fail as data. */
 function decodeBoundaryRows<R extends AnyRelation>(
 	relation: R,
 	input: unknown
 ): Result.Result<ReadonlyArray<Fact<R>>, DbError> {
-	if (!Array.isArray(input)) {
-		return Result.fail(invalid("decodeBoundaryRows"))
-	}
-	const out: Array<Fact<R>> = []
-	for (const raw of input) {
-		if (typeof raw !== "object" || raw === null) {
-			return Result.fail(invalid("decodeBoundaryRows"))
-		}
-		const record: Record<string, unknown> = {}
-		for (const declared of relation.data.fields) {
-			const decoded = decodeBoundaryValue(declared.field, (raw as Readonly<Record<string, unknown>>)[declared.name])
-			if (decoded === undefined) {
-				return Result.fail(invalid("decodeBoundaryRows"))
-			}
-			record[declared.name] = decoded
-		}
-		// Unknown extra keys refuse: wrong-schema values never pass.
-		for (const key of Object.keys(raw)) {
-			if (!(key in record)) {
-				return Result.fail(invalid("decodeBoundaryRows"))
-			}
-		}
-		out.push(Object.freeze(record) as Fact<R>)
-	}
-	return Result.succeed(Object.freeze(out))
-}
-
-/**
- * An Effect Schema for one relation's typed row, DERIVED from the core
- * descriptors (a validation-only declaration; the canonical `$f64`/decimal
- * wire form stays this module's explicit codec — Effect Schema's generic
- * JSON number encoding is not Bumbledb's `$f64` codec).
- */
-function rowSchema<R extends AnyRelation>(relation: R) {
-	return EffectSchema.declare((value: unknown): value is Fact<R> => {
-		if (typeof value !== "object" || value === null) {
-			return false
-		}
-		const record = value as Readonly<Record<string, unknown>>
-		return relation.data.fields.every(function checkField(declared) {
-			const cell = record[declared.name]
-			if (cell === undefined) {
-				return false
-			}
-			return Result.isSuccess(
-				Result.try({
-					try: () => encodeBoundaryValue(declared.field, cell),
-					catch: () => invalid("rowSchema")
+	return Result.try({
+		try: () => {
+			if (!Array.isArray(input)) throw invalid("decodeBoundaryRows")
+			const fields = relationFields(relation)
+			const names = fields.map((declared) => declared.name)
+			return Object.freeze(
+				input.map((row) => {
+					const raw = recordValue(`relation ${relation.name}`, row, names)
+					return Object.freeze(
+						Object.fromEntries(
+							fields.map((declared) => [
+								declared.name,
+								decodeBoundaryValue(`relation ${relation.name}.${declared.name}`, declared.field, raw[declared.name])
+							])
+						)
+					) as Fact<R>
 				})
 			)
-		})
+		},
+		catch: (cause) => argumentError("decodeBoundaryRows", cause)
+	})
+}
+
+/** An Effect Schema derived from the same complete-row value interpreter. */
+function rowSchema<R extends AnyRelation>(relation: R) {
+	const fields = relationFields(relation)
+	const names = fields.map((declared) => declared.name)
+	return EffectSchema.declare((value: unknown): value is Fact<R> => {
+		try {
+			const record = recordValue(`relation ${relation.name}`, value, names)
+			for (const declared of fields)
+				fieldValue(`relation ${relation.name}.${declared.name}`, declared.field, record[declared.name])
+			return true
+		} catch {
+			return false
+		}
 	})
 }
 
@@ -322,16 +252,14 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 	rows: Iterable<Fact<R>>
 ) {
 	const runtime = yield* runtimeHandle()
-	const tables = schemaTables(shape.schema)
-	const relationId = tables.relationIds.get(shape.relation.name)
-	if (relationId === undefined || shape.schema.relations[shape.relation.name] !== shape.relation) {
-		return yield* Effect.fail(invalid("encodeRows"))
-	}
-	const flat = yield* Effect.try({
-		try: () => flatRowsOf(shape.relation.data, rows as Iterable<object>),
-		catch: (cause) => (cause instanceof DbError ? cause : invalid("encodeRows"))
+	const { relation, relationId, spec } = yield* Effect.try({
+		try: () => checkedRowShape("encodeRows", shape),
+		catch: (cause) => argumentError("encodeRows", cause)
 	})
-	const spec = lower(shape.schema)
+	const flat = yield* Effect.try({
+		try: () => flatRowsOf(relation, rows as Iterable<object>),
+		catch: (cause) => argumentError("encodeRows", cause)
+	})
 	return yield* nativeOperationWith(
 		"encodeRows",
 		(callback) => dbNative.runtimeEncodeRows(runtime, spec, relationId, flat.rows, flat.cells, callback),
@@ -342,20 +270,18 @@ const encodeRows = Effect.fn("encodeRows")(function* <R extends AnyRelation>(
 
 const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(shape: RowShape<R>, input: Uint8Array) {
 	const runtime = yield* runtimeHandle()
-	const tables = schemaTables(shape.schema)
-	const relationId = tables.relationIds.get(shape.relation.name)
-	if (relationId === undefined || shape.schema.relations[shape.relation.name] !== shape.relation) {
-		return yield* Effect.fail(invalid("decodeRows"))
-	}
+	const { relation, relationId, spec } = yield* Effect.try({
+		try: () => checkedRowShape("decodeRows", shape),
+		catch: (cause) => argumentError("decodeRows", cause)
+	})
 	if (!(input instanceof Uint8Array) || !(input.buffer instanceof ArrayBuffer)) {
 		return yield* Effect.fail(invalid("decodeRows"))
 	}
-	const spec = lower(shape.schema)
 	return yield* nativeOperationWith(
 		"decodeRows",
 		(callback) => dbNative.runtimeDecodeRows(runtime, spec, relationId, input, callback),
 		dbNative.runtimeRowsTake,
-		(rows) => Object.freeze(rows.map((row) => factOfCells(shape.relation, row as readonly CellValue[])))
+		(rows) => Object.freeze(rows.map((row) => factOfCells(relation, row as readonly CellValue[])))
 	)
 })
 

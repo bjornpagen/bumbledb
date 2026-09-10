@@ -22,6 +22,7 @@
 //! Gate families: E-ADMIT (incremental half), G15/PERF-001 (structural
 //! judge work), Q-COLLISION (exact verdicts under forced collisions).
 
+use bumbledb::integration::Preparation;
 use bumbledb::schema::judge::{
     CandidateFacts, JudgeBudget, JudgedViolation, Judgment as SchemaJudgment, judge_final_state,
 };
@@ -270,7 +271,10 @@ fn compare_and_commit(
                 .expect("commit");
             true
         }
-        Prepared::Rejected(violations) => {
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => {
             assert!(!violations.is_empty(), "a rejection names its statements");
             false
         }
@@ -445,7 +449,7 @@ fn measured_one_row_judgment(db: &bumbledb::Db<SchemaDescriptor>, id: u64) -> u6
     let mut session = db.integration_writer(&context).expect("writer");
     let before = bumbledb::alloc_counter::count();
     let prepared = session.prepare(&changes).expect("prepare");
-    assert!(matches!(prepared, bumbledb::Admission::Accepted(_)));
+    assert!(matches!(prepared, Preparation::Accepted(_)));
     bumbledb::alloc_counter::count() - before
 }
 

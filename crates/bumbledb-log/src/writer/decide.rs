@@ -20,12 +20,13 @@
 //! local, so each borrow's region stays existential and the rejected arm may
 //! prepare the empty replacement delta.
 
+use bumbledb::integration::Preparation;
 use bumbledb::integration::{
     AttachmentChange, HostChanges, HostRecordChange, PreparedWrite, SealedWrite, WriterSession,
 };
 use bumbledb::schema::Schema;
 use bumbledb::schema::evidence::{self, EvidenceError};
-use bumbledb::{Admission, ChangeSet, Violations, WorkContext};
+use bumbledb::{ChangeSet, Violations, WorkContext};
 
 use crate::history::authority::HeadAuthority;
 use crate::history::command::{Command, Limits, UnverifiedOutcome};
@@ -109,7 +110,7 @@ pub fn prepare_real<'owner, 'db, S>(
 ) -> Result<RealPrepared<'owner, 'db, S>, LogError> {
     work.checkpoint()?;
     match session.prepare(command.changes())? {
-        Admission::Accepted(prepared) => {
+        Preparation::Accepted(prepared) => {
             let counts = prepared.application_changes();
             let judged = match ChangeSummary::new(counts.added, counts.removed) {
                 Some(changed) => Judged::Committed { changed },
@@ -117,7 +118,7 @@ pub fn prepare_real<'owner, 'db, S>(
             };
             Ok(RealPrepared::Admitted { prepared, judged })
         }
-        Admission::Rejected(violations) => {
+        Preparation::Rejected { violations, .. } => {
             let evidence = encode_rejection_evidence(schema, &violations, limits, work)?;
             Ok(RealPrepared::Rejected { evidence })
         }
@@ -139,9 +140,9 @@ pub fn prepare_empty<'owner, 'db, S>(
         .finish()
         .map_err(|error| LogError::Core(error.into()))?;
     match session.prepare(&empty)? {
-        Admission::Accepted(prepared) => Ok(prepared),
+        Preparation::Accepted(prepared) => Ok(prepared),
         // The empty delta cannot violate a law that the current state satisfies.
-        Admission::Rejected(_) => Err(LogError::Corruption),
+        Preparation::Rejected { .. } => Err(LogError::Corruption),
     }
 }
 

@@ -3,7 +3,8 @@ import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { fileURLToPath } from "node:url"
-import { Result } from "effect"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import { Effect, Result } from "effect"
 import { assertDeclarationsAreIsolated, assertPackedImports, rewriteDeclarationImports } from "./declarations.ts"
 import { BuildInputError, BuildOperationError } from "./errors.ts"
 import { stageLogPackage, tarballFile, tarballFiles } from "./stage.ts"
@@ -108,4 +109,4 @@ function assertEntry(exports: Record<string, unknown>, entry: string, types: str
 	}
 }
 
-build()
+NodeRuntime.runMain(Effect.sync(build))

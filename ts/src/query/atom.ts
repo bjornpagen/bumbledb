@@ -582,6 +582,7 @@ type CondParamsShape<C> = ShapeOf<CondParams<C>>
 export type {
 	AggData,
 	AnyCond,
+	AnyTreeChild,
 	AtomData,
 	BindingEntry,
 	BindingInput,

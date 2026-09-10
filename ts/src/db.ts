@@ -1,14 +1,16 @@
 import type { Scope } from "effect"
 import { Effect, Option } from "effect"
-import type { ChangeSet } from "#changes.ts"
+import type { ChangeCounts, ChangeSet } from "#changes.ts"
 import { internalChanges } from "#changes.ts"
 import { drainClose, releaseOwner } from "#close.ts"
+import { membersAgree } from "#closed.ts"
 import type { CompiledSchema, SchemaId } from "#compile.ts"
-import { Schema as CoreSchema, schemaTables } from "#compile.ts"
+import { Schema as CoreSchema, declaredKey, schemaTables } from "#compile.ts"
 import type {
 	ApplyOutcomeWire,
 	DbInspectionWire,
 	ExpectedWire,
+	JudgeOutcomeWire,
 	PreparedHandle,
 	SnapshotHandle,
 	WitnessWire
@@ -28,11 +30,14 @@ import { factOfCells, keyCellsOf } from "#rows.ts"
 import type { NativeRuntime } from "#runtime.ts"
 import { nativeOperationWith, runtimeHandle } from "#runtime.ts"
 import type { CloseReport } from "#runtime-errors.ts"
-import { DbError } from "#runtime-errors.ts"
+import { argumentError, DbError } from "#runtime-errors.ts"
 import type { DirectoryHandle } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
 import type { AnySchema } from "#schema.ts"
+import { schemaDescriptor, schemasAgree } from "#schema.ts"
 import type { Key, QueryTemplate, Rel } from "#shape.ts"
+import type { KeyStatement } from "#statements.ts"
+import { integerValue, recordValue } from "#values.ts"
 
 /**
  * The core surface: `Db.create`/`Db.open`, scoped coherent
@@ -57,15 +62,28 @@ interface CoreWitness {
 	readonly generation: bigint
 }
 
-type ApplyExpected = { readonly kind: "any" } | { readonly kind: "exact"; readonly at: CoreWitness }
+type WriteExpected = { readonly kind: "any" } | { readonly kind: "exact"; readonly at: CoreWitness }
 
-/** Expected-state intent for an atomic apply. */
-type ApplyOptions = { readonly expected: ApplyExpected }
+/** Expected-state intent shared by judgment and application. */
+type WriteOptions = { readonly expected: WriteExpected }
 
 type ApplyOutcome =
 	| { readonly kind: "accepted"; readonly witness: CoreWitness }
 	| { readonly kind: "no-change"; readonly witness: CoreWitness }
 	| { readonly kind: "invariant-rejected"; readonly violations: readonly Violation[] }
+	| { readonly kind: "moved"; readonly witnessed: CoreWitness; readonly current: CoreWitness }
+
+/** A judgment against the actual current base, not a promise about a later apply.
+ * A moved witness is unjudged and therefore carries no made-up change counts.
+ */
+type JudgeOutcome =
+	| { readonly kind: "admitted"; readonly base: CoreWitness; readonly changes: ChangeCounts }
+	| {
+			readonly kind: "invariant-rejected"
+			readonly base: CoreWitness
+			readonly changes: ChangeCounts
+			readonly violations: readonly Violation[]
+	  }
 	| { readonly kind: "moved"; readonly witnessed: CoreWitness; readonly current: CoreWitness }
 
 /** Storage measurements, not heap usage or mapped-page residency. */
@@ -96,7 +114,10 @@ interface DbInspection {
  * no writable authority — never a `Db`, an `apply`, or a raw transaction.
  */
 interface QueryReader<S extends AnySchema> {
-	get<R extends Rel<S>>(relation: R, key: Key<R>): Effect.Effect<Option.Option<Fact<R>>, DbError>
+	get<K extends KeyStatement<Rel<S>, readonly string[]>>(
+		key: K,
+		value: NoInfer<Key<K>>
+	): Effect.Effect<Option.Option<Fact<K["owner"]>>, DbError>
 	execute<P extends ParamsRecord, A>(
 		query: QueryTemplate<S, P, A>,
 		params: P
@@ -124,7 +145,9 @@ interface PreparedQuery<P extends ParamsRecord, A> {
 interface Db<S extends AnySchema> {
 	readonly schemaId: SchemaId
 	snapshot(): Effect.Effect<Snapshot<S>, DbError, Scope.Scope>
-	apply(changes: ChangeSet<S>, options: ApplyOptions): Effect.Effect<ApplyOutcome, DbError>
+	apply(changes: ChangeSet<S>, options: WriteOptions): Effect.Effect<ApplyOutcome, DbError>
+	/** Briefly acquires the writer, judges and aborts. Stores no facts or generation. */
+	judge(changes: ChangeSet<S>, options: WriteOptions): Effect.Effect<JudgeOutcome, DbError>
 	inspect(): Effect.Effect<DbInspection, DbError>
 	/** Clear shared query caches without invalidating live snapshots or results. */
 	clearCache(): Effect.Effect<void, DbError>
@@ -152,9 +175,60 @@ function outcomeOf(wire: ApplyOutcomeWire): ApplyOutcome {
 	}
 }
 
+function judgmentOf(wire: JudgeOutcomeWire): JudgeOutcome {
+	switch (wire.tag) {
+		case "admitted":
+			return Object.freeze({ kind: "admitted", base: witnessOf(wire.base), changes: Object.freeze(wire.changes) })
+		case "invariant-rejected":
+			return Object.freeze({
+				kind: "invariant-rejected",
+				base: witnessOf(wire.base),
+				changes: Object.freeze(wire.changes),
+				violations: wire.violations
+			})
+		case "moved":
+			return Object.freeze({ kind: "moved", witnessed: witnessOf(wire.witnessed), current: witnessOf(wire.current) })
+	}
+}
+
+function writeInputs(state: DbState, changes: object, options: WriteOptions, operation: string) {
+	return Effect.try({
+		try: () => {
+			const internal = internalChanges(changes)
+			if (internal === undefined || internal.schemaId !== state.schemaId) {
+				throw refusal(operation, "InvalidArgument")
+			}
+			const record = recordValue("write options", options, ["expected"])
+			const intent = recordValue(
+				"expected state",
+				record.expected,
+				options.expected.kind === "any" ? ["kind"] : ["kind", "at"]
+			)
+			let expected: ExpectedWire
+			if (intent.kind === "any") {
+				expected = { kind: "any" }
+			} else if (intent.kind === "exact") {
+				const at = recordValue("expected witness", intent.at, ["store", "generation"])
+				if (typeof at.store !== "string" || !/^[0-9a-f]{32}$/.test(at.store)) {
+					throw refusal(operation, "InvalidArgument")
+				}
+				expected = {
+					kind: "exact",
+					store: at.store,
+					generation: integerValue("expected generation", "u64", at.generation)
+				}
+			} else {
+				throw refusal(operation, "InvalidArgument")
+			}
+			return { handle: internal.handle, expected }
+		},
+		catch: (cause) => argumentError(operation, cause)
+	})
+}
+
 /**
- * Validates the query template's schema binding (identity, the membership
- * rule) and lowers it to IR plus wire params. Pure host preparation; the
+ * Validates the query template's ordered logical schema and lowers it to
+ * IR plus wire params. Pure host preparation; the
  * engine's IR validation remains the authority.
  */
 function preparedOf<S extends AnySchema>(
@@ -166,7 +240,7 @@ function preparedOf<S extends AnySchema>(
 	readonly wire: ReturnType<typeof wireParams>
 	readonly finds: AnyQuery["data"]["finds"]
 } {
-	if (query.schema !== theory) {
+	if (!schemasAgree(query.schema, theory)) {
 		throw refusal("QueryReader.execute", "InvalidArgument")
 	}
 	const ir = lowerQuery(query)
@@ -188,7 +262,7 @@ function executeOn<S extends AnySchema, A>(
 		Effect.gen(function* () {
 			const prepared = yield* Effect.try({
 				try: () => preparedOf(state.theory, query, params),
-				catch: (cause) => (cause instanceof DbError ? cause : refusal("QueryReader.execute", "InvalidArgument"))
+				catch: (cause) => argumentError("QueryReader.execute", cause)
 			})
 			const handle = yield* nativeOperationWith(
 				"QueryReader.execute",
@@ -220,33 +294,41 @@ function internalResultHandle(result: object) {
 	return internalResult(result)?.handle
 }
 
-function getOn<S extends AnySchema, R extends Rel<S>>(
+function getOn<S extends AnySchema, K extends KeyStatement<Rel<S>, readonly string[]>>(
 	state: SnapshotState<S>,
-	relation: R,
-	key: Key<R>
-): Effect.Effect<Option.Option<Fact<R>>, DbError> {
+	key: K,
+	value: Key<K>
+): Effect.Effect<Option.Option<Fact<K["owner"]>>, DbError> {
 	return Effect.gen(function* () {
-		if (state.theory.relations[relation.name] !== relation) {
+		const tables = schemaTables(state.theory)
+		const resolved = yield* Effect.try({
+			try: () => declaredKey(state.theory, key),
+			catch: (cause) => argumentError("QueryReader.get", cause)
+		})
+		if (resolved === undefined || key.kind !== "key") {
 			return yield* Effect.fail(refusal("QueryReader.get", "InvalidArgument"))
 		}
-		const tables = schemaTables(state.theory)
+		const { statementId } = resolved
+		const relation = resolved.key.owner
+		if (!membersAgree(state.theory.relations[relation.name], relation)) {
+			return yield* Effect.fail(refusal("QueryReader.get", "InvalidArgument"))
+		}
 		const relationId = tables.relationIds.get(relation.name)
-		const primary = tables.primaryKeys.get(relation.name)
-		if (relationId === undefined || primary === undefined) {
+		if (relationId === undefined) {
 			return yield* Effect.fail(refusal("QueryReader.get", "InvalidArgument"))
 		}
 		const cells = yield* Effect.try({
-			try: () => keyCellsOf(relation.data, primary.projection, key as Readonly<Record<string, unknown>>),
-			catch: (cause) => (cause instanceof DbError ? cause : refusal("QueryReader.get", "InvalidArgument"))
+			try: () => keyCellsOf(relation, resolved.key.projection, value),
+			catch: (cause) => argumentError("QueryReader.get", cause)
 		})
 		const row = yield* nativeOperationWith(
 			"QueryReader.get",
-			(callback) => dbNative.runtimeSnapshotGet(state.handle, relationId, primary.statementId, cells, callback),
+			(callback) => dbNative.runtimeSnapshotGet(state.handle, relationId, statementId, cells, callback),
 			dbNative.runtimeRowTake,
 			(value) => value
 		)
 		if (row === null) {
-			return Option.none<Fact<R>>()
+			return Option.none<Fact<K["owner"]>>()
 		}
 		return Option.some(factOfCells(relation, row as readonly CellValue[]))
 	})
@@ -271,7 +353,7 @@ function makePrepared<P extends ParamsRecord, A>(
 				Effect.gen(function* () {
 					const args = yield* Effect.try({
 						try: () => wireParams(definitions, params),
-						catch: () => refusal("PreparedQuery.execute", "InvalidArgument")
+						catch: (cause) => argumentError("PreparedQuery.execute", cause)
 					})
 					const result = yield* nativeOperationWith(
 						"PreparedQuery.execute",
@@ -296,12 +378,12 @@ function prepareOn<S extends AnySchema, P extends ParamsRecord, A>(
 	return Effect.gen(function* () {
 		const ir = yield* Effect.try({
 			try: () => {
-				if (query.schema !== state.theory) {
+				if (!schemasAgree(query.schema, state.theory)) {
 					throw refusal("QueryReader.prepare", "InvalidArgument")
 				}
 				return lowerQuery(query)
 			},
-			catch: () => refusal("QueryReader.prepare", "InvalidArgument")
+			catch: (cause) => argumentError("QueryReader.prepare", cause)
 		})
 		const handle = yield* Effect.acquireRelease(
 			nativeOperationWith(
@@ -321,8 +403,8 @@ function makeSnapshot<S extends AnySchema>(theory: S, handle: SnapshotHandle, wi
 	const state: SnapshotState<S> = { theory, handle }
 	const snapshot: Snapshot<S> = {
 		witness,
-		get(relation, key) {
-			return getOn(state, relation, key)
+		get(key, value) {
+			return getOn(state, key, value)
 		},
 		execute(query, params) {
 			return executeOn(state, query, params)
@@ -376,24 +458,23 @@ function makeDb<S extends AnySchema>(theory: S, state: DbState): Db<S> {
 		},
 		apply(changes, options) {
 			return Effect.gen(function* () {
-				const internal = internalChanges(changes)
-				if (internal === undefined) {
-					// A foreign object supplied dynamically refuses before
-					// any native dispatch.
-					return yield* Effect.fail(refusal("Db.apply", "InvalidArgument"))
-				}
-				if (internal.schemaId !== state.schemaId) {
-					return yield* Effect.fail(refusal("Db.apply", "InvalidArgument"))
-				}
-				const expected: ExpectedWire =
-					options.expected.kind === "any"
-						? { kind: "any" }
-						: { kind: "exact", store: options.expected.at.store, generation: options.expected.at.generation }
+				const input = yield* writeInputs(state, changes, options, "Db.apply")
 				return yield* nativeOperationWith(
 					"Db.apply",
-					(callback) => dbNative.runtimeDbApply(state.db, internal.handle, expected, callback),
+					(callback) => dbNative.runtimeDbApply(state.db, input.handle, input.expected, callback),
 					dbNative.runtimeApplyTake,
 					outcomeOf
+				)
+			})
+		},
+		judge(changes, options) {
+			return Effect.gen(function* () {
+				const input = yield* writeInputs(state, changes, options, "Db.judge")
+				return yield* nativeOperationWith(
+					"Db.judge",
+					(callback) => dbNative.runtimeDbJudge(state.db, input.handle, input.expected, callback),
+					dbNative.runtimeJudgeTake,
+					judgmentOf
 				)
 			})
 		},
@@ -446,7 +527,7 @@ function openDatabase<S extends AnySchema>(
 	return Effect.gen(function* () {
 		const runtime = yield* runtimeHandle()
 		const compiled: CompiledSchema<S> = yield* CoreSchema.compile(schema)
-		const spec = lower(schema)
+		const spec = lower(compiled.schema)
 		// Compound acquisition: register the directory owner and
 		// its finalizer BEFORE any interruptible child-open step.
 		const directory = yield* Effect.acquireRelease(
@@ -482,8 +563,8 @@ function openDatabase<S extends AnySchema>(
 					)
 					return yield* Effect.fail(refusal(operation, "InvalidArgument"))
 				}
-				const state: DbState = { theory: schema, db: outcome.db, directory, schemaId: compiled.schemaId }
-				const db = makeDb(schema, state)
+				const state: DbState = { theory: compiled.schema, db: outcome.db, directory, schemaId: compiled.schemaId }
+				const db = makeDb(compiled.schema, state)
 				dbStates.set(db, state)
 				return db
 			}),
@@ -542,10 +623,10 @@ function internalPublishedReader<S extends AnySchema>(
 	readonly execute: QueryReader<S>["execute"]
 	readonly prepare: QueryReader<S>["prepare"]
 } {
-	const state: SnapshotState<S> = { theory, handle: core as SnapshotHandle }
+	const state: SnapshotState<S> = { theory: schemaDescriptor(theory), handle: core as SnapshotHandle }
 	return Object.freeze({
-		get<R extends Rel<S>>(relation: R, key: Key<R>) {
-			return getOn(state, relation, key)
+		get<K extends KeyStatement<Rel<S>, readonly string[]>>(key: K, value: NoInfer<Key<K>>) {
+			return getOn(state, key, value)
 		},
 		execute<P extends ParamsRecord, A>(queryValue: QueryTemplate<S, P, A>, params: P) {
 			return executeOn<S, A>(state, queryValue as AnyQuery, params)
@@ -557,14 +638,15 @@ function internalPublishedReader<S extends AnySchema>(
 }
 
 export type {
-	ApplyExpected,
-	ApplyOptions,
 	ApplyOutcome,
 	CoreWitness,
 	DbInspection,
+	JudgeOutcome,
 	PreparedQuery,
 	QueryReader,
 	Snapshot,
-	StorageInspection
+	StorageInspection,
+	WriteExpected,
+	WriteOptions
 }
 export { Db, internalPublishedReader }

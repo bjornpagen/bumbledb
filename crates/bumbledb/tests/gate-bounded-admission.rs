@@ -3,9 +3,10 @@
 //! Allocation windows are meaningful with `alloc-counter` under nextest's
 //! one-process-per-test execution; they are not RSS or physical-read counters.
 
+use bumbledb::integration::Preparation;
 use bumbledb::integration::{AttachmentChange, HostChanges, IntegrationError};
 use bumbledb::work::WorkContext;
-use bumbledb::{Admission, Db, RelationId, Value, WorkError};
+use bumbledb::{Db, RelationId, Value, WorkError};
 
 mod common;
 
@@ -92,8 +93,10 @@ fn small_change_to_a_large_relation_avoids_relation_sized_allocations() {
     #[cfg(feature = "alloc-counter")]
     let before_alloc = bumbledb::alloc_counter::snapshot().window.alloc_bytes;
     let prepared = match session.prepare(&changes).expect("prepare") {
-        Admission::Accepted(prepared) => prepared,
-        Admission::Rejected(violations) => panic!("a lawful change rejected: {violations}"),
+        Preparation::Accepted(prepared) => prepared,
+        Preparation::Rejected { violations, .. } => {
+            panic!("a lawful change rejected: {violations}")
+        }
     };
     assert_eq!(prepared.application_changes().added, 1);
     assert_eq!(prepared.application_changes().removed, 0);
@@ -147,8 +150,8 @@ fn rejection_diagnostics_include_both_competitors_and_exact_truncation() {
     let changes = small_change(&db, &work, rows + 9, &duplicate);
     let mut session = db.integration_writer(&work).expect("writer");
     let violations = match session.prepare(&changes).expect("prepare completes") {
-        Admission::Rejected(violations) => violations,
-        Admission::Accepted(_) => panic!("a key conflict admitted"),
+        Preparation::Rejected { violations, .. } => violations,
+        Preparation::Accepted(_) => panic!("a key conflict admitted"),
     };
     assert_eq!(violations.len(), 1, "exactly the text key is violated");
     assert!(!violations.examples_truncated(0), "two rows, budget four");
@@ -209,7 +212,7 @@ fn cancellation_leaves_no_partial_state() {
     let changes = small_change(&db, &fresh, rows + 1, &body(rows + 1));
     let mut session = db.integration_writer(&fresh).expect("writer");
     match session.prepare(&changes).expect("prepare") {
-        Admission::Accepted(prepared) => {
+        Preparation::Accepted(prepared) => {
             prepared
                 .seal(HostChanges {
                     records: &[],
@@ -219,7 +222,7 @@ fn cancellation_leaves_no_partial_state() {
                 .commit()
                 .expect("commit");
         }
-        Admission::Rejected(violations) => panic!("lawful change rejected: {violations}"),
+        Preparation::Rejected { violations, .. } => panic!("lawful change rejected: {violations}"),
     }
     assert_ne!(db.generation(common::work()).expect("generation"), before);
 }
@@ -318,7 +321,10 @@ fn ordinary_admission_child_helper() {
         .unwrap()
     {
         bumbledb::store::Prepared::Admitted(prepared) => prepared.abort(),
-        bumbledb::store::Prepared::Rejected(violations) => {
+        bumbledb::store::Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => {
             panic!("lawful update rejected: {violations:?}")
         }
     }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
-import { closed } from "#closed.ts"
+import { closed, closedId } from "#closed.ts"
 import { on } from "#face.ts"
 import { i64, str, u64 } from "#fields.ts"
 import { not } from "#query/atom.ts"
@@ -18,7 +18,7 @@ type Expect<T extends true> = T extends true ? true : never
 
 const Kind = closed("Kind", ["Checking", "Savings"])
 const Holder = relation("Holder", { id: u64, name: str, rank: u64 })
-const Account = relation("Account", { id: u64, holder: u64, kind: Kind.id, balance: i64 })
+const Account = relation("Account", { id: u64, holder: u64, kind: closedId(Kind), balance: i64 })
 const Parent = relation("Parent", { child: u64, parent: u64 })
 
 const Ledger = schema("Ledger", { Kind, Holder, Account, Parent }, [

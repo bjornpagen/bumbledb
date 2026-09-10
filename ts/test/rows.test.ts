@@ -14,7 +14,7 @@ test("flat projection keeps only row count and owned cells, without obsolete quo
 		pulls += 1
 		yield { id: 2n, name: "second", payload }
 	}
-	const flat = flatRowsOf(Item.data, facts())
+	const flat = flatRowsOf(Item, facts())
 	payload.fill(0)
 	assert.equal(pulls, 2)
 	assert.deepEqual(flat, {
@@ -35,6 +35,6 @@ test("flat projection closes the source iterator when a row is invalid", () => {
 			closed += 1
 		}
 	}
-	assert.throws(() => flatRowsOf(Item.data, facts()))
+	assert.throws(() => flatRowsOf(Item, facts()))
 	assert.equal(closed, 1)
 })

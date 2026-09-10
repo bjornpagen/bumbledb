@@ -770,7 +770,7 @@ mod tests {
                     }
                 )
                 .unwrap(),
-            Prepared::Rejected(())
+            Prepared::Rejected { rejection: (), .. }
         ));
     }
 
@@ -1029,7 +1029,7 @@ mod tests {
                     assert!(preserved);
                     prepared.seal(NO_HOST).unwrap().commit().unwrap();
                 }
-                Prepared::Rejected(_) => assert!(!preserved),
+                Prepared::Rejected { .. } => assert!(!preserved),
             }
             assert_eq!(judge.calls.get(), 1);
         }
@@ -1132,7 +1132,7 @@ mod tests {
             owner
                 .prepare(&empty, &UnindexedRows, &CompleteOnly(&schema))
                 .unwrap(),
-            Prepared::Rejected(_)
+            Prepared::Rejected { .. }
         ));
     }
 

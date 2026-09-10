@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 /**
  * `schema` — assembles relations and statements into a theory value (the
@@ -17,13 +18,15 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  */
 
 import type { AnyClosed } from "#closed.ts"
-import { isClosedMember, sealedFieldOf } from "#closed.ts"
-import type { FaceData } from "#face.ts"
+import { isClosedMember, memberDescriptor, membersAgree, sealedFieldOf } from "#closed.ts"
+import type { AnyFace } from "#face.ts"
 import { assertDeclarationOrderKey, assertDeclarationRecord, rosterOf } from "#fields.ts"
+import { descriptorCache, isImmutable } from "#immutable.ts"
 import { type ClassesOf, classesComplete, computeClasses, type LawfulStatements, type SchemaClasses } from "#law.ts"
 import type { AnyRelation } from "#relation.ts"
 import type { LiteralSetSpec, LiteralSpec } from "#spec.ts"
-import { isStatement, renderStatement, type Statement } from "#statements.ts"
+import { renderStatement, type Statement, statementDescriptor } from "#statements.ts"
+import { arrayValue, recordValue } from "#values.ts"
 
 interface ImpliedKeys {
 	readonly rendered: ReadonlySet<string>
@@ -54,7 +57,7 @@ function collectImplied(name: string, relations: SchemaRelations): ImpliedKeys {
 }
 
 function statementOwners(statement: Statement): readonly SchemaRelation[] {
-	const data = statement.data
+	const data = statement
 	if (data.kind === "key") {
 		return [data.owner]
 	}
@@ -69,9 +72,9 @@ function verifyMembership(name: string, relations: SchemaRelations, statement: S
 				message: `schema ${name}: relation ${owner.name} is not declared in this schema — ${rendered}`
 			})
 		}
-		if (member !== owner) {
+		if (!membersAgree(member, owner)) {
 			throw new AuthoringError({
-				message: `schema ${name}: statement references a different relation value named ${owner.name} than the one this schema declares — ${rendered}`
+				message: `schema ${name}: statement references a different relation declaration named ${owner.name} than the one this schema declares — ${rendered}`
 			})
 		}
 	}
@@ -86,7 +89,7 @@ function bindingLiterals(set: LiteralSetSpec): readonly LiteralSpec[] {
 
 function verifyBindingHandles(
 	name: string,
-	face: FaceData,
+	face: AnyFace,
 	binding: { readonly field: string; readonly set: LiteralSetSpec },
 	rendered: string
 ): void {
@@ -109,7 +112,7 @@ function verifyBindingHandles(
 }
 
 function verifyHandles(name: string, statement: Statement, rendered: string): void {
-	const data = statement.data
+	const data = statement
 	if (data.kind === "key") {
 		return
 	}
@@ -122,11 +125,11 @@ function verifyHandles(name: string, statement: Statement, rendered: string): vo
 
 function closedTargetOf(statements: readonly Statement[], owner: string, field: string): string | undefined {
 	for (const statement of statements) {
-		const data = statement.data
+		const data = statement
 		if (data.kind !== "containment" && data.kind !== "mirrors") {
 			continue
 		}
-		const pairs: Array<readonly [FaceData, FaceData]> = [[data.source, data.target]]
+		const pairs: Array<readonly [AnyFace, AnyFace]> = [[data.source, data.target]]
 		if (data.kind === "mirrors") {
 			pairs.push([data.target, data.source])
 		}
@@ -148,7 +151,7 @@ function closedTargetOf(statements: readonly Statement[], owner: string, field: 
 
 function verifyClosedReferences(name: string, statements: readonly Statement[]): void {
 	for (const statement of statements) {
-		const data = statement.data
+		const data = statement
 		if (data.kind === "key") {
 			continue
 		}
@@ -164,7 +167,7 @@ function verifyClosedReferences(name: string, statements: readonly Statement[]):
 function verifyClosedReferenceBinding(
 	name: string,
 	statements: readonly Statement[],
-	face: FaceData,
+	face: AnyFace,
 	binding: { readonly field: string; readonly set: LiteralSetSpec },
 	rendered: string
 ): void {
@@ -213,7 +216,7 @@ function verifyTargetKeys(
 ): void {
 	const declared = new Map<string, Array<readonly string[]>>()
 	for (const statement of statements) {
-		const data = statement.data
+		const data = statement
 		if (data.kind !== "key") {
 			continue
 		}
@@ -225,7 +228,7 @@ function verifyTargetKeys(
 		}
 	}
 	for (const statement of statements) {
-		const data = statement.data
+		const data = statement
 		if (data.kind === "key") {
 			continue
 		}
@@ -251,7 +254,7 @@ function verifyTargetKeys(
  */
 function verifyTargetKeyFace(
 	name: string,
-	face: FaceData,
+	face: AnyFace,
 	implied: ReadonlyMap<string, ReadonlyArray<readonly string[]>>,
 	declared: ReadonlyMap<string, ReadonlyArray<readonly string[]>>,
 	rendered: string
@@ -310,25 +313,92 @@ interface Schema<Rels extends SchemaRelations, Classes extends SchemaClasses = S
 
 type AnySchema = Schema<SchemaRelations>
 
+/**
+ * Logical schema equivalence, including the ordered native ordinals and
+ * host decoding domains. Schema display names do not change the theory.
+ * A database/snapshot still has its own resource identity and lifetime.
+ */
+function schemasAgree(leftInput: AnySchema, rightInput: AnySchema): boolean {
+	const left = schemaDescriptor(leftInput)
+	const right = schemaDescriptor(rightInput)
+	if (left === right) return true
+	const cacheable = isImmutable(left) && isImmutable(right)
+	const cached = schemaComparisons.get(left)?.get(right)
+	if (cacheable && cached !== undefined) return cached
+	const names = Object.keys(left.relations)
+	const otherNames = Object.keys(right.relations)
+	const equal =
+		names.length === otherNames.length &&
+		names.every((name, index) => {
+			const member = right.relations[name]
+			return name === otherNames[index] && member !== undefined && membersAgree(left.relations[name], member)
+		}) &&
+		isDeepStrictEqual(left.statements, right.statements) &&
+		isDeepStrictEqual(left.classes, right.classes)
+	if (cacheable) {
+		let comparisons = schemaComparisons.get(left)
+		if (comparisons === undefined) {
+			comparisons = new WeakMap()
+			schemaComparisons.set(left, comparisons)
+		}
+		comparisons.set(right, equal)
+	}
+	return equal
+}
+
+const schemaComparisons = new WeakMap<AnySchema, WeakMap<AnySchema, boolean>>()
+
+function schemaDescriptor<S extends AnySchema>(input: S): S
+function schemaDescriptor(input: unknown): AnySchema
+function schemaDescriptor(input: unknown): AnySchema {
+	return checkedSchema(input)
+}
+
+const checkedSchema = descriptorCache((input): AnySchema => {
+	const raw = recordValue("schema", input, ["name", "relations", "statements", "classes"])
+	if (typeof raw.name !== "string") throw new AuthoringError({ message: "schema: expected a name" })
+	const relations = ownRelations(raw.name, raw.relations)
+	const statements = arrayValue("schema statements", raw.statements, (_, statement) => statementDescriptor(statement))
+	const result = schema(raw.name, relations, statements)
+	const classes = recordValue("schema classes", raw.classes, Object.keys(result.classes))
+	for (const [name, fields] of Object.entries(result.classes)) {
+		const supplied = recordValue(`schema classes.${name}`, classes[name], Object.keys(fields))
+		for (const [field, value] of Object.entries(fields)) {
+			if (supplied[field] !== value)
+				throw new AuthoringError({ message: `schema classes.${name}.${field}: incorrect class` })
+		}
+	}
+	return result
+})
+
 type EvaluatedClasses<C extends SchemaClasses> = C extends SchemaClasses
 	? { readonly [N in keyof C]: { readonly [F in keyof C[N]]: C[N][F] } }
 	: never
+
+function ownRelations<R extends SchemaRelations>(name: string, input: R): R
+function ownRelations(name: string, input: unknown): SchemaRelations
+function ownRelations(name: string, input: unknown): SchemaRelations {
+	if (typeof input !== "object" || input === null)
+		throw new AuthoringError({ message: `schema ${name}: expected relations` })
+	assertDeclarationRecord(`schema ${name} relations`, input)
+	return Object.freeze(
+		Object.fromEntries(Object.entries(input).map(([name, member]) => [name, memberDescriptor(member)]))
+	)
+}
 
 function schema<const Rels extends SchemaRelations, const Stmts extends readonly Statement[]>(
 	name: string,
 	relations: Rels,
 	statements: Stmts & LawfulStatements<Rels, Stmts>
 ): Schema<Rels, EvaluatedClasses<ClassesOf<Rels, Stmts>>> {
-	const implied = collectImplied(name, relations)
+	assertDeclarationOrderKey("schema", name)
+	const ownedRelations = ownRelations(name, relations)
+	const ownedStatements = arrayValue("schema statements", statements, (_, statement) => statementDescriptor(statement))
+	const implied = collectImplied(name, ownedRelations)
 	const seen = new Set<string>()
-	for (const statement of statements) {
-		if (!isStatement(statement)) {
-			throw new AuthoringError({
-				message: `schema ${name}: a statement is minted only by key/contained/mirrors/capacity — a structural literal skips the construction-time arity and roster walls`
-			})
-		}
+	for (const statement of ownedStatements) {
 		const rendered = renderStatement(statement)
-		verifyMembership(name, relations, statement, rendered)
+		verifyMembership(name, ownedRelations, statement, rendered)
 		if (implied.rendered.has(rendered)) {
 			throw new AuthoringError({
 				message: `schema ${name}: ${rendered} is redundant here (closedness already implies it) — and rejected as a duplicate`
@@ -340,14 +410,14 @@ function schema<const Rels extends SchemaRelations, const Stmts extends readonly
 		seen.add(rendered)
 		verifyHandles(name, statement, rendered)
 	}
-	verifyClosedReferences(name, statements)
-	verifyTargetKeys(name, statements, implied.roster)
-	const classes = computeClasses(name, relations, statements)
-	if (!classesComplete<EvaluatedClasses<ClassesOf<Rels, Stmts>>>(classes, relations)) {
+	verifyClosedReferences(name, ownedStatements)
+	verifyTargetKeys(name, ownedStatements, implied.roster)
+	const classes = computeClasses(name, ownedRelations, ownedStatements)
+	if (!classesComplete<EvaluatedClasses<ClassesOf<Rels, Stmts>>>(classes, ownedRelations)) {
 		throw new SdkInvariantError({ message: `schema ${name}: class-map construction incomplete` })
 	}
-	return Object.freeze({ name, relations, statements: Object.freeze([...statements]), classes })
+	return Object.freeze({ name, relations: ownedRelations, statements: Object.freeze(ownedStatements), classes })
 }
 
 export type { AnySchema, Schema, SchemaRelation, SchemaRelations }
-export { schema }
+export { schema, schemaDescriptor, schemasAgree }

@@ -1,5 +1,5 @@
 import type { AnyClosed } from "#closed.ts"
-import { sealedFieldsOf } from "#closed.ts"
+import { memberDescriptor, sealedFieldsOf } from "#closed.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
 import type { AnyField, Infer, SignatureOf } from "#fields.ts"
 import { rosterOf, signaturesAgree } from "#fields.ts"
@@ -7,7 +7,8 @@ import type { Same, SameLen } from "#judgment.ts"
 import type { ClassLookup, ClassRecordOf, SchemaClasses } from "#law.ts"
 import type { QueryParam } from "#native.ts"
 import type { FindColumn } from "#query/atom.ts"
-import type { AnyRelation, RelationFields } from "#relation.ts"
+import type { AnyRelation } from "#relation.ts"
+import type { FieldsOf } from "#selection.ts"
 
 const term: unique symbol = Symbol("bumbledb.query.term")
 
@@ -15,11 +16,7 @@ const inferred: unique symbol = Symbol("bumbledb.query.inferred")
 
 type MatchOwner = AnyRelation | AnyClosed
 
-type MatchFields<R extends MatchOwner> = R extends AnyClosed
-	? { readonly id: R["id"] } & R["columns"]
-	: R extends AnyRelation
-		? RelationFields<R>
-		: never
+type MatchFields<R extends MatchOwner> = FieldsOf<R>
 
 interface Var<F extends AnyField, RN extends string, K extends string> {
 	readonly [term]: "var"
@@ -157,7 +154,7 @@ function importFacadeOf(source: ImportedSource): ImportFacade {
 	importOrdinal += 1
 	const name = importLabels.get(source) ?? `\u0000import:${importOrdinal}`
 	const columns = new Map<string, FindColumn>()
-	const fields: Array<{ readonly name: string; readonly field: AnyField }> = []
+	const fields: Array<readonly [string, AnyField]> = []
 	for (const column of source.data.finds) {
 		if (column.slot === undefined) {
 			throw new AuthoringError({
@@ -165,18 +162,13 @@ function importFacadeOf(source: ImportedSource): ImportFacade {
 			})
 		}
 		columns.set(column.name, column)
-		fields.push(Object.freeze({ name: column.name, field: column.slot.field }))
+		fields.push([column.name, column.slot.field])
 	}
-	const data = Object.freeze({ name, fields: Object.freeze(fields) })
 	const owner = Object.freeze({
+		kind: "relation" as const,
 		name,
-		data,
-		where(): never {
-			throw new AuthoringError({
-				message: `imported query ${name}: an imported relation expression takes no selection — filter through where() in the consuming rule`
-			})
-		}
-	}) as unknown as MatchOwner & { readonly name: string }
+		fields: Object.freeze(Object.fromEntries(fields))
+	})
 	const facade: ImportFacade = Object.freeze({ owner, source, columns })
 	facadeBySource.set(source, facade)
 	facadeByOwner.set(owner, facade)
@@ -210,7 +202,7 @@ function v(owner: MatchOwner | ImportedSource): Readonly<Record<string, AnyVar>>
 		}
 		return Object.freeze(record)
 	}
-	const member = owner as MatchOwner
+	const member = memberDescriptor(owner as MatchOwner)
 	const record: Record<string, AnyVar> = {}
 	for (const declared of sealedFieldsOf(member)) {
 		const variable: AnyVar = Object.freeze({

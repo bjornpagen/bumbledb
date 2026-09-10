@@ -32,6 +32,7 @@
 //! holding the machine behind an `Arc` needs per-call bounds that can only
 //! narrow the machine's own).
 
+use bumbledb::integration::Preparation;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1095,8 +1096,8 @@ where
             .finish()
             .map_err(|e| LogError::Core(e.into()))?;
         let prepared = match session.prepare(&empty)? {
-            bumbledb::Admission::Accepted(prepared) => prepared,
-            bumbledb::Admission::Rejected(_) => return Err(LogError::Corruption),
+            Preparation::Accepted(prepared) => prepared,
+            Preparation::Rejected { .. } => return Err(LogError::Corruption),
         };
         prepared
             .seal(bumbledb::integration::HostChanges {
@@ -1339,8 +1340,8 @@ fn write_local_genesis<S>(
         .finish()
         .map_err(|error| LogError::Core(error.into()))?;
     let prepared = match session.prepare(&empty)? {
-        bumbledb::Admission::Accepted(prepared) => prepared,
-        bumbledb::Admission::Rejected(_) => return Err(LogError::Corruption),
+        Preparation::Accepted(prepared) => prepared,
+        Preparation::Rejected { .. } => return Err(LogError::Corruption),
     };
     prepared
         .seal(HostChanges {

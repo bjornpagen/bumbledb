@@ -66,7 +66,9 @@ fn the_judge_sees_the_proposed_final_state_not_the_parent() {
                 .commit()
                 .expect("commit");
         }
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
     drop(owner);
     // Meanwhile the committed parent had exactly one row until commit.
@@ -119,7 +121,9 @@ fn a_prepared_candidate_is_invisible_to_committed_readers() {
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => prepared,
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     };
     // While the candidate is prepared: neither the pinned snapshot nor a
     // fresh one can see it.
@@ -174,7 +178,9 @@ fn a_judge_rejection_retains_the_session_for_the_receipt_transaction() {
         .prepare(&conflicting, &FirstFieldKey, &UniqueNoteId)
         .expect("prepare")
     {
-        Prepared::Rejected(rows) => rows,
+        Prepared::Rejected {
+            rejection: rows, ..
+        } => rows,
         Prepared::Admitted(_) => panic!("the key law must reject the second note-1 row"),
     };
     assert_eq!(rejection.len(), 2, "both competing proposals are evidence");
@@ -239,7 +245,9 @@ fn one_command_replacement_judges_the_final_state_not_statement_order() {
                 .commit()
                 .expect("commit");
         }
-        Prepared::Rejected(rows) => {
+        Prepared::Rejected {
+            rejection: rows, ..
+        } => {
             panic!("replacement is legal in the final state, got rejection {rows:?}")
         }
     }
@@ -273,7 +281,9 @@ fn a_failed_seal_drops_facts_and_host_prefix_and_dispatches_nothing() {
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => prepared,
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     };
     let records = [
         HostRecordChange::Put {

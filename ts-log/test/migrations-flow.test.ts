@@ -15,6 +15,7 @@ import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
 import type { NativeRuntime } from "@bjornpagen/bumbledb"
+import { bool, key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { Effect, Exit, Fiber } from "effect"
 import { ProtocolError } from "#errors.ts"
 import { decodeGeneratedMigrations } from "#migrations/decode.ts"
@@ -373,7 +374,64 @@ describe("generate / check flow", function suite() {
 		)
 	})
 
-	test("intent declared for a different schema value refuses before any work", async function foreignIntent() {
+	test("intent accepts independently declared equivalent schemas", async () => {
+		const directory = await repoDir()
+		await run(gen.generateMigrations({ schema: App1, repository: { directory } }))
+		const Note = relation("Note", { id: u64, body: str, pinned: bool })
+		const Tag = relation("Tag", { id: u64, name: str })
+		const equivalent = schema("Another display name", { Note, Tag }, [key(Note, ["id"]), key(Tag, ["id"])])
+		const report = await run(
+			gen.generateMigrations({
+				schema: equivalent,
+				intent: evolution2,
+				repository: { directory }
+			})
+		)
+		assert.equal(report.status, "generated")
+		const generated = await loadGenerated(directory)
+		const rows = generated.plans.at(-1)?.operations.find((op) => op.kind === "seed")
+		assert.deepEqual(rows?.rows, [
+			[{ u64: "1" }, { string: "inbox" }],
+			[{ u64: "2" }, { string: "archive" }]
+		])
+	})
+
+	test("seed row shape refuses extras, absent fields, and getters without publishing", async () => {
+		const directory = await repoDir()
+		await run(gen.generateMigrations({ schema: App1, repository: { directory } }))
+		const before = await repoFiles(directory)
+		let invoked = 0
+		const getter = {
+			id: 1n,
+			get name() {
+				invoked += 1
+				return "inbox"
+			}
+		}
+		for (const row of [{ id: 1n, name: "inbox", extra: true }, { id: 1n }, getter]) {
+			let closed = false
+			function* source() {
+				try {
+					yield row
+				} finally {
+					closed = true
+				}
+			}
+			const exit = await runExit(
+				gen.generateMigrations({
+					schema: App2,
+					intent: migrationIntent(App2, [{ kind: "seed", relation: "Tag", rows: source() }]),
+					repository: { directory }
+				})
+			)
+			assert.ok(Exit.hasFails(exit))
+			assert.equal(closed, true)
+			assert.deepEqual(await repoFiles(directory), before)
+		}
+		assert.equal(invoked, 0)
+	})
+
+	test("intent declared for a different logical schema refuses before any work", async function foreignIntent() {
 		const directory = await repoDir()
 		const exit = await runExit(gen.generateMigrations({ schema: App0, intent: evolution1, repository: { directory } }))
 		assert.ok(Exit.isFailure(exit) && Exit.hasFails(exit))

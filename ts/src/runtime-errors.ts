@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { AuthoringDiagnostic, AuthoringError } from "#errors.ts"
 import { runtimeErrorCodes } from "#runtime-codes.ts"
 
 export { runtimeErrorCodes } from "#runtime-codes.ts"
@@ -12,7 +13,18 @@ const ResourceLimit = Schema.Struct({
 })
 const PlainReason = Schema.Struct({
 	_tag: Schema.Literals(
-		runtimeErrorCodes.filter((code) => code !== "ResourceLimit" && code !== "Io" && code !== "Engine")
+		runtimeErrorCodes.filter(
+			(code) => code !== "ResourceLimit" && code !== "Io" && code !== "Engine" && code !== "InvalidArgument"
+		)
+	)
+})
+const InvalidArgument = Schema.Struct({
+	_tag: Schema.Literal("InvalidArgument"),
+	detail: Schema.optional(
+		Schema.Struct({
+			message: Schema.String,
+			diagnostic: Schema.optional(AuthoringDiagnostic)
+		})
 	)
 })
 const Io = Schema.Struct({
@@ -26,7 +38,7 @@ const Engine = Schema.Struct({
 	kind: Schema.String,
 	message: Schema.String
 })
-export const DbReason = Schema.Union([ResourceLimit, Io, Engine, PlainReason])
+export const DbReason = Schema.Union([ResourceLimit, Io, Engine, InvalidArgument, PlainReason])
 export class DbError extends Schema.TaggedError<DbError>()("DbError", {
 	operation: Schema.String,
 	reason: DbReason
@@ -34,12 +46,44 @@ export class DbError extends Schema.TaggedError<DbError>()("DbError", {
 	get code() {
 		return this.reason._tag
 	}
+	/** Safe default display; callers explicitly inspect structured detail. */
+	override get message(): string {
+		return `${this.operation}: ${this.code}`
+	}
 }
 
 const decodeReason = Schema.decodeUnknownOption(DbReason)
 export function dbError(operation: string, cause: unknown): DbError {
+	if (cause instanceof DbError) return cause
+	if (cause instanceof AuthoringError) return argumentError(operation, cause)
 	const decoded = decodeReason(cause)
-	return new DbError({ operation, reason: decoded._tag === "Some" ? decoded.value : { _tag: "Internal" } })
+	if (decoded._tag === "Some") return new DbError({ operation, reason: decoded.value })
+	// Synchronous native schema/marshalling refusals precede the executor's
+	// tagged error wire. Preserve their engine family instead of losing it.
+	if (
+		typeof cause === "object" &&
+		cause !== null &&
+		"kind" in cause &&
+		typeof cause.kind === "string" &&
+		"message" in cause &&
+		typeof cause.message === "string"
+	) {
+		return new DbError({ operation, reason: { _tag: "Engine", kind: cause.kind, message: cause.message } })
+	}
+	return new DbError({ operation, reason: { _tag: "Internal" } })
+}
+
+/** Host input failures retain authoring details without displaying values. */
+export function argumentError(operation: string, cause: unknown): DbError {
+	if (cause instanceof DbError) return cause
+	if (cause instanceof AuthoringError) {
+		const detail =
+			cause.diagnostic === undefined
+				? { message: cause.message }
+				: { message: cause.message, diagnostic: cause.diagnostic }
+		return new DbError({ operation, reason: { _tag: "InvalidArgument", detail } })
+	}
+	return new DbError({ operation, reason: { _tag: "InvalidArgument" } })
 }
 
 const Outstanding = Schema.Struct({

@@ -994,6 +994,142 @@ fn apply_is_witnessed_judged_and_refuses_a_second_writer() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+fn assert_judge_refusals(
+    lease: &crate::runtime::owners::DbLease,
+    changes: &ChangeSet,
+    expected: &ExpectedOwned,
+    ctx: &WorkContext,
+) {
+    let generation = lease.db().generation(work()).unwrap().value();
+    lease
+        .writing
+        .store(true, std::sync::atomic::Ordering::Release);
+    assert!(matches!(
+        judge_change_set(lease, changes, expected, ctx),
+        Err(RuntimeError::WriterBusy)
+    ));
+    lease
+        .writing
+        .store(false, std::sync::atomic::Ordering::Release);
+    let stopped = work();
+    stopped.cancel();
+    assert!(matches!(
+        judge_change_set(lease, changes, expected, &stopped),
+        Err(RuntimeError::Work(WorkError::Cancelled))
+    ));
+    assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
+    assert!(matches!(
+        judge_change_set(
+            lease,
+            changes,
+            &ExpectedOwned::Exact {
+                store: "00".repeat(16),
+                generation
+            },
+            ctx
+        ),
+        Err(RuntimeError::Engine { .. })
+    ));
+    assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
+}
+
+#[test]
+fn judge_aborts_both_outcomes_and_releases_writer_on_every_exit() {
+    let runtime = Runtime::start(options()).unwrap();
+    let base = unique_dir("judge");
+    std::fs::create_dir_all(&base).unwrap();
+    let owner = acquire(&runtime, &base.join("tenant"));
+    let descriptor = Mini.descriptor();
+    let db = attach(&owner, &descriptor);
+    let schema = {
+        use bumbledb::schema::ValidateDescriptor as _;
+        descriptor.validate().unwrap()
+    };
+    let ctx = work();
+    let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
+    for (a, b) in [(1, 10), (2, 20)] {
+        builder
+            .insert(RelationId(0), &[Value::U64(a), Value::U64(b)])
+            .unwrap();
+    }
+    let changes = builder.finish().unwrap();
+    let lease = db.access().unwrap();
+    let generation = lease.db().generation(work()).unwrap().value();
+    let store = lease.db().integration_store().identity().store.to_string();
+    let expected = ExpectedOwned::Exact {
+        store: store.clone(),
+        generation,
+    };
+    for _ in 0..3 {
+        match judge_change_set(&lease, &changes, &expected, &ctx).unwrap() {
+            Output::Judge(JudgeOutcomeOwned::Admitted {
+                store: observed,
+                generation: observed_generation,
+                application,
+            }) => {
+                assert_eq!(observed, store);
+                assert_eq!(observed_generation, generation);
+                assert_eq!(application.added, 2);
+                assert_eq!(application.removed, 0);
+            }
+            _ => panic!("must admit without committing"),
+        }
+        assert_eq!(lease.db().generation(work()).unwrap().value(), generation);
+        assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
+    }
+    assert_judge_refusals(&lease, &changes, &expected, &ctx);
+
+    assert!(matches!(
+        apply_change_set(&lease, &changes, &expected, &ctx).unwrap(),
+        Output::Apply(ApplyOutcomeOwned::Accepted { .. })
+    ));
+    let landed = lease.db().generation(work()).unwrap().value();
+    assert!(
+        matches!(judge_change_set(&lease, &changes, &expected, &ctx).unwrap(), Output::Judge(JudgeOutcomeOwned::Moved { current, witnessed, .. }) if current == landed && witnessed == generation)
+    );
+    match judge_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).unwrap() {
+        Output::Judge(JudgeOutcomeOwned::Admitted { application, .. }) => assert_eq!(
+            application,
+            bumbledb::integration::ApplicationChanges::default()
+        ),
+        _ => panic!("existing additions are a no-op"),
+    }
+    let mut builder = bumbledb::ChangeSet::builder(&schema, ctx.clone());
+    builder
+        .insert(RelationId(0), &[Value::U64(1), Value::U64(11)])
+        .unwrap();
+    builder
+        .delete(RelationId(0), &[Value::U64(2), Value::U64(20)])
+        .unwrap();
+    let conflicting = builder.finish().unwrap();
+    match judge_change_set(&lease, &conflicting, &ExpectedOwned::Any, &ctx).unwrap() {
+        Output::Judge(JudgeOutcomeOwned::Rejected {
+            application,
+            violations,
+            generation,
+            ..
+        }) => {
+            assert_eq!(generation, landed);
+            assert_eq!(application.added, 1);
+            assert_eq!(application.removed, 1);
+            assert!(!violations.is_empty());
+        }
+        _ => panic!("key conflict must reject"),
+    }
+    assert_eq!(lease.db().generation(work()).unwrap().value(), landed);
+    assert!(!lease.writing.load(std::sync::atomic::Ordering::Acquire));
+    assert!(matches!(
+        apply_change_set(&lease, &changes, &ExpectedOwned::Any, &ctx).unwrap(),
+        Output::Apply(ApplyOutcomeOwned::NoChange { .. })
+    ));
+
+    drop(lease);
+    drop(db);
+    drop(owner);
+    assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 #[test]
 fn the_row_codec_borrows_decoded_values_and_refuses_foreign_records() {
     let ctx = work();

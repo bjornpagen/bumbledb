@@ -21,6 +21,7 @@ export {
 	nativeBindingIsLoaded
 } from "#native.ts"
 export type { CompleteResult } from "#result.ts"
+export { factCellsOf } from "#rows.ts"
 export type { NativeRuntimeOptions, RepositoryLock } from "#runtime.ts"
 export {
 	finalizeClose,
@@ -44,3 +45,4 @@ export type {
 	RuntimeHandle
 } from "#runtime-native.ts"
 export { runtimeNative } from "#runtime-native.ts"
+export { schemasAgree } from "#schema.ts"

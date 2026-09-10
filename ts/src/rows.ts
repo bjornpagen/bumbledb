@@ -17,9 +17,9 @@ import { AuthoringError, SdkInvariantError } from "#errors.ts"
  * scans and byte copies.
  */
 import type { AnyClosedRoster, AnyField } from "#fields.ts"
-import { isFloatIntervalValue, isIntervalValue, literalShapeError, rosterOf } from "#fields.ts"
-import type { AnyRelation, Fact, RelationData } from "#relation.ts"
-import { Uuid } from "#uuid.ts"
+import { literalShapeError, rosterOf } from "#fields.ts"
+import { type AnyRelation, type Fact, relationFields } from "#relation.ts"
+import { fieldValue, recordValue } from "#values.ts"
 
 /**
  * One owned cell at the private bridge boundary. The declared sealed field
@@ -44,18 +44,10 @@ interface FlatRows {
 }
 
 function recordOf(fact: object): Readonly<Record<string, unknown>> {
-	if (typeof fact !== "object" && typeof fact !== "function") {
-		throw new AuthoringError({ message: "fact object is not string-indexable" })
+	if (typeof fact !== "object" || fact === null) {
+		throw new AuthoringError({ message: "expected a fact record" })
 	}
 	return fact as Readonly<Record<string, unknown>>
-}
-
-function refuseShared(context: string, value: Uint8Array): void {
-	if (!(value.buffer instanceof ArrayBuffer)) {
-		throw new AuthoringError({
-			message: `${context}: SharedArrayBuffer-backed views are refused — make a synchronized stable copy into ordinary unshared input first`
-		})
-	}
 }
 
 /**
@@ -81,26 +73,11 @@ function hostCellCharge(value: unknown): bigint {
 	return 0n
 }
 
-/**
- * The write half of the closed bijection: one handle NAME to its u64 row
- * id (declaration order = row ids). An unknown name is a pointed refusal
- * naming the vocabulary and its roster.
- */
-function closedCellOf(context: string, closed: AnyClosedRoster, name: string): CellValue {
-	const id = closed.handles.indexOf(name)
-	if (id === -1) {
-		throw new AuthoringError({
-			message: `${context}: "${name}" is not a handle of ${closed.name} — the roster is ${closed.handles.join(", ")}`
-		})
-	}
-	return BigInt(id)
-}
-
 function handleOf(context: string, closed: AnyClosedRoster, cell: unknown): string {
 	if (typeof cell !== "bigint") {
 		throw literalShapeError(context, `a ${closed.name} handle id (bigint)`, cell)
 	}
-	const handle = closed.handles[Number(cell)]
+	const handle = cell < 0n || cell >= BigInt(closed.handles.length) ? undefined : closed.handles[Number(cell)]
 	if (handle === undefined) {
 		throw new AuthoringError({
 			message: `${context}: id ${cell} is outside the ${closed.name} roster (${closed.handles.join(", ")})`
@@ -110,86 +87,21 @@ function handleOf(context: string, closed: AnyClosedRoster, cell: unknown): stri
 }
 
 function cellOf(context: string, field: AnyField, value: unknown): CellValue {
-	const roster = rosterOf(field)
-	if (roster !== undefined) {
-		if (typeof value !== "string") {
-			throw literalShapeError(context, `a ${roster.name} handle name (string)`, value)
-		}
-		return closedCellOf(context, roster, value)
+	if ("closed" in field) {
+		return BigInt(field.closed.handles.indexOf(fieldValue(context, field, value)))
 	}
-	switch (field.kind) {
-		case "bool": {
-			if (typeof value !== "boolean") {
-				throw literalShapeError(context, "boolean", value)
-			}
-			return value
-		}
-		case "u64":
-		case "i64": {
-			if (typeof value !== "bigint") {
-				throw literalShapeError(context, "bigint", value)
-			}
-			return value
-		}
-		case "str": {
-			if (typeof value !== "string") {
-				throw literalShapeError(context, "string", value)
-			}
-			if (!value.isWellFormed()) {
-				throw literalShapeError(context, "well-formed string", value)
-			}
-			return value
-		}
-		case "f64": {
-			if (typeof value !== "number") {
-				throw literalShapeError(context, "number", value)
-			}
-			return value
-		}
-		case "uuid": {
-			if (!Uuid.isUuid(value)) {
-				throw literalShapeError(context, "a UUID (canonical UUID text)", value)
-			}
-			// UUIDs cross as canonical hyphenated text, not raw bytes.
-			return value
-		}
-		case "bytes": {
-			if (!(value instanceof Uint8Array)) {
-				throw literalShapeError(context, "Uint8Array", value)
-			}
-			refuseShared(context, value)
-			if (value.byteLength !== field.width) {
-				throw new AuthoringError({
-					message: `${context}: bytes<${field.width}> takes exactly ${field.width} bytes (got ${value.byteLength})`
-				})
-			}
-			// Owned copy at the ownership boundary: later caller mutation
-			// cannot change an accepted cell.
-			return Uint8Array.from(value)
-		}
-		case "interval": {
-			if (field.element === "f64") {
-				if (!isFloatIntervalValue(value)) {
-					throw literalShapeError(context, "float interval ({ start, end } numbers)", value)
-				}
-				if (Number.isNaN(value.start) || Number.isNaN(value.end)) {
-					throw new AuthoringError({ message: `${context}: a float interval endpoint cannot be NaN` })
-				}
-				const start = Object.is(value.start, -0) ? 0 : value.start
-				const end = Object.is(value.end, -0) ? 0 : value.end
-				if (!(start < end)) {
-					throw new AuthoringError({
-						message: `${context}: a float interval is half-open and nonempty (start < end strictly)`
-					})
-				}
-				return { start, end }
-			}
-			if (!isIntervalValue(value)) {
-				throw literalShapeError(context, "interval ({ start, end } bigints)", value)
-			}
-			return { start: value.start, end: value.end }
-		}
-	}
+	return fieldValue(context, field, value)
+}
+
+function factCellsOf(data: AnyRelation, fact: unknown): CellValue[] {
+	const record = recordValue(
+		`relation ${data.name}`,
+		fact,
+		relationFields(data).map((declared) => declared.name)
+	)
+	return relationFields(data).map((declared) =>
+		cellOf(`relation ${data.name} field ${declared.name}`, declared.field, record[declared.name])
+	)
 }
 
 /**
@@ -198,115 +110,39 @@ function cellOf(context: string, field: AnyField, value: unknown): CellValue {
  * Missing-field refusal and per-cell judgment are
  * {@link cellOf}'s, byte for byte.
  */
-function flatRowsOf(data: RelationData, facts: Iterable<object>): FlatRows {
+function flatRowsOf(data: AnyRelation, facts: Iterable<object>): FlatRows {
 	const cells: CellValue[] = []
 	let rows = 0n
 	for (const fact of facts) {
+		for (const cell of factCellsOf(data, fact)) cells.push(cell)
 		rows += 1n
-		const record = recordOf(fact)
-		for (const declared of data.fields) {
-			const value = record[declared.name]
-			if (value === undefined) {
-				throw new AuthoringError({ message: `relation ${data.name}: fact is missing field ${declared.name}` })
-			}
-			const cell = cellOf(`relation ${data.name} field ${declared.name}`, declared.field, value)
-			cells.push(cell)
-		}
 	}
 	return { rows, cells }
 }
 
 function keyCellsOf(
-	data: RelationData,
+	data: AnyRelation,
 	projection: readonly string[],
-	key: Readonly<Record<string, unknown>>
+	input: Readonly<Record<string, unknown>>
 ): CellValue[] {
-	for (const supplied of Object.keys(key)) {
-		if (key[supplied] !== undefined && !projection.includes(supplied)) {
-			throw new AuthoringError({
-				message: `relation ${data.name}: key object carries field ${supplied} outside the primary key projection (${projection.join(", ")})`
-			})
-		}
-	}
+	const key = recordValue(`relation ${data.name} key`, input, projection)
 	return projection.map(function marshalKeyCell(fieldName) {
-		const declared = data.fields.find(function byName(candidate) {
-			return candidate.name === fieldName
-		})
+		const declared = relationFields(data).find((candidate) => candidate.name === fieldName)
 		if (declared === undefined) {
-			throw new AuthoringError({
-				message: `relation ${data.name}: key projection cites unknown field ${fieldName}`
-			})
+			throw new AuthoringError({ message: `relation ${data.name}: key projection cites unknown field ${fieldName}` })
 		}
-		const value = key[fieldName]
-		if (value === undefined) {
-			throw new AuthoringError({
-				message: `relation ${data.name}: key object is missing field ${fieldName} — get reads through the primary (first-declared) key, whose projection is (${projection.join(", ")})`
-			})
-		}
-		return cellOf(`relation ${data.name} key field ${fieldName}`, declared.field, value)
+		return cellOf(`relation ${data.name} key field ${fieldName}`, declared.field, key[fieldName])
 	})
 }
 
 function decodeCell(context: string, field: AnyField, cell: unknown): unknown {
 	const roster = rosterOf(field)
-	if (roster !== undefined) {
-		return handleOf(context, roster, cell)
-	}
-	switch (field.kind) {
-		case "bool": {
-			if (typeof cell !== "boolean") {
-				throw new SdkInvariantError({ message: `${context}: expected boolean cell` })
-			}
-			return cell
-		}
-		case "u64":
-		case "i64": {
-			if (typeof cell !== "bigint") {
-				throw new SdkInvariantError({ message: `${context}: expected bigint cell` })
-			}
-			return cell
-		}
-		case "f64": {
-			if (typeof cell !== "number") {
-				throw new SdkInvariantError({ message: `${context}: expected number cell` })
-			}
-			return cell
-		}
-		case "str": {
-			if (typeof cell !== "string") {
-				throw new SdkInvariantError({ message: `${context}: expected string cell` })
-			}
-			return cell
-		}
-		case "uuid": {
-			// The native renderer spells uuid as the canonical
-			// canonical hyphenated UUID string (marshal.rs `uuid_hex`); the read
-			// side revalidates the spelling and keeps the string value.
-			if (!Uuid.isUuid(cell)) {
-				throw new SdkInvariantError({
-					message: `${context}: expected an uuid cell (canonical UUID text)`
-				})
-			}
-			return cell
-		}
-		case "bytes": {
-			if (!(cell instanceof Uint8Array)) {
-				throw new SdkInvariantError({ message: `${context}: expected owned bytes` })
-			}
-			return cell
-		}
-		case "interval": {
-			if (field.element === "f64") {
-				if (!isFloatIntervalValue(cell)) {
-					throw new SdkInvariantError({ message: `${context}: expected a float interval cell` })
-				}
-				return Object.freeze({ start: cell.start, end: cell.end })
-			}
-			if (!isIntervalValue(cell)) {
-				throw new SdkInvariantError({ message: `${context}: expected an integer interval cell` })
-			}
-			return Object.freeze({ start: cell.start, end: cell.end })
-		}
+	if (roster !== undefined) return handleOf(context, roster, cell)
+	try {
+		return fieldValue(context, field, cell)
+	} catch (cause) {
+		if (cause instanceof AuthoringError) throw new SdkInvariantError({ message: cause.message })
+		throw cause
 	}
 }
 
@@ -314,7 +150,7 @@ function isCompleteFact<R extends AnyRelation>(
 	relation: R,
 	decoded: Readonly<Record<string, unknown>>
 ): decoded is Readonly<Record<string, unknown>> & Fact<R> {
-	return relation.data.fields.every(function present(declared) {
+	return relationFields(relation).every(function present(declared) {
 		return decoded[declared.name] !== undefined
 	})
 }
@@ -324,21 +160,22 @@ function isCompleteFact<R extends AnyRelation>(
  * declared field order: stable field names and shapes, no Proxy or per-cell closures.
  */
 function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]): Fact<R> {
-	const data = relation.data
-	if (row.length !== data.fields.length) {
+	const data = relation
+	if (row.length !== relationFields(data).length) {
 		throw new SdkInvariantError({
-			message: `relation ${data.name}: row arity ${row.length} does not match the ${data.fields.length} declared fields`
+			message: `relation ${data.name}: row arity ${row.length} does not match the ${relationFields(data).length} declared fields`
 		})
 	}
 	const decoded: Record<string, unknown> = {}
-	data.fields.forEach(function decodeOne(declared, ordinal) {
+	relationFields(data).forEach(function decodeOne(declared, ordinal) {
 		const cell = row[ordinal]
 		if (cell === undefined) {
 			throw new SdkInvariantError({
 				message: `relation ${data.name}: row cell ${ordinal} (${declared.name}) is absent`
 			})
 		}
-		decoded[declared.name] = decodeCell(`relation ${data.name} field ${declared.name}`, declared.field, cell)
+		const value = decodeCell(`relation ${data.name} field ${declared.name}`, declared.field, cell)
+		setOwnField(decoded, declared.name, value)
 	})
 	Object.freeze(decoded)
 	if (!isCompleteFact(relation, decoded)) {
@@ -347,5 +184,25 @@ function factOfCells<R extends AnyRelation>(relation: R, row: readonly unknown[]
 	return decoded
 }
 
+/** Preserve every declared name as data, including JavaScript's prototype setter. */
+function setOwnField(record: Record<string, unknown>, name: string, value: unknown): void {
+	if (name === "__proto__") {
+		Object.defineProperty(record, name, { value, enumerable: true, writable: true, configurable: true })
+	} else {
+		record[name] = value
+	}
+}
+
 export type { CellValue, FlatRows }
-export { cellOf, decodeCell, factOfCells, flatRowsOf, handleOf, hostCellCharge, keyCellsOf, recordOf }
+export {
+	cellOf,
+	decodeCell,
+	factCellsOf,
+	factOfCells,
+	flatRowsOf,
+	handleOf,
+	hostCellCharge,
+	keyCellsOf,
+	recordOf,
+	setOwnField
+}

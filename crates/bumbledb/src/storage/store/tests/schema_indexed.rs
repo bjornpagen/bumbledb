@@ -137,7 +137,10 @@ fn judged_commit(store: &Store, schema: &Schema, changes: &ChangeSet) -> StoreCo
             .expect("seal")
             .commit()
             .expect("commit"),
-        Prepared::Rejected(violations) => panic!("unexpected rejection: {violations:?}"),
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => panic!("unexpected rejection: {violations:?}"),
     }
 }
 
@@ -590,7 +593,9 @@ fn judgment_enumeration_sees_all_competitors_without_scanning_the_relation() {
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => prepared.abort(),
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
 
     let seen = capture.seen.borrow();
@@ -810,7 +815,9 @@ fn forced_collisions_widen_buckets_but_never_answers() {
         .expect("prepare")
     {
         Prepared::Admitted(prepared) => prepared.abort(),
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
     let seen = capture.seen.borrow();
     assert_eq!(

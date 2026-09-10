@@ -6,7 +6,7 @@
 import type { Uuid, QueryReader } from "@bjornpagen/bumbledb"
 import { Effect, Option, Stream } from "effect"
 import { allNotes, attachmentsFor, noteById, pendingOutbox } from "./queries.ts"
-import { App, Note } from "./schema.ts"
+import { App, NoteById } from "./schema.ts"
 
 export const listNotes = Effect.fn("reads.listNotes")(
 	function* (reader: QueryReader<typeof App>) {
@@ -26,7 +26,7 @@ export const pageNotes = Effect.fn("reads.pageNotes")(
 
 export const getNote = Effect.fn("reads.getNote")(
 	function* (reader: QueryReader<typeof App>, id: Uuid) {
-		return yield* reader.get(Note, { id })
+		return yield* reader.get(NoteById, { id })
 	}
 )
 

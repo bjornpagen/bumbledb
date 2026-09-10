@@ -20,7 +20,9 @@ fn commit_with_attachment(store: &Store, changes: &ChangeSet, attachment: &[u8])
             .expect("seal")
             .commit()
             .expect("commit"),
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
 }
 
@@ -285,7 +287,9 @@ fn export_uses_the_selected_nonleading_scalar_key_not_canonical_row_order() {
         Prepared::Admitted(prepared) => {
             prepared.seal(NO_HOST).unwrap().commit().unwrap();
         }
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
     drop(owner);
     let snapshot = store.snapshot(&context).unwrap();
@@ -394,7 +398,9 @@ fn census_and_page_stats_read_one_coherent_snapshot() {
                 .commit()
                 .expect("commit");
         }
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
     drop(owner);
     let pinned = store.snapshot(&work()).expect("pinned");

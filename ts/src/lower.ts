@@ -15,10 +15,10 @@ import { AuthoringError } from "#errors.ts"
 
 import type { AnyClosed } from "#closed.ts"
 import { isClosedMember } from "#closed.ts"
-import type { FaceData } from "#face.ts"
-import type { AnyField } from "#fields.ts"
+import type { AnyFace } from "#face.ts"
+import { type AnyField, literalOf } from "#fields.ts"
 import type { RelationClasses } from "#law.ts"
-import type { AnyRelation } from "#relation.ts"
+import { type AnyRelation, relationFields } from "#relation.ts"
 import type { AnySchema } from "#schema.ts"
 import type {
 	FieldSpec,
@@ -60,7 +60,7 @@ function lowerField(name: string, field: AnyField, newtype: string | undefined):
 	}
 }
 
-function lowerFace(face: FaceData): SideSpec {
+function lowerFace(face: AnyFace): SideSpec {
 	return {
 		relation: face.owner.name,
 		projection: [...face.projection],
@@ -71,7 +71,7 @@ function lowerFace(face: FaceData): SideSpec {
 }
 
 function lowerStatement(statement: Statement): StatementSpec {
-	const data = statement.data
+	const data = statement
 	switch (data.kind) {
 		case "key":
 			return { kind: "fd", relation: data.owner.name, projection: [...data.projection] }
@@ -101,18 +101,21 @@ function lowerStatement(statement: Statement): StatementSpec {
 }
 
 function lowerRelation(relation: AnyRelation, classes: RelationClasses): RelationSpec {
-	const fields: FieldSpec[] = relation.data.fields.map(function lowerDeclared(declared) {
+	const fields: FieldSpec[] = relationFields(relation).map(function lowerDeclared(declared) {
 		return lowerField(declared.name, declared.field, classes[declared.name])
 	})
 	return { name: relation.name, fields, closed: undefined }
 }
 
 function lowerClosed(member: AnyClosed, classes: RelationClasses): RelationSpec {
-	const fields: FieldSpec[] = member.data.columns.map(function lowerColumn(column) {
-		return lowerField(column.name, column.field, classes[column.name])
+	const fields: FieldSpec[] = Object.entries(member.columns).map(function lowerColumn([name, field]) {
+		return lowerField(name, field, classes[name])
 	})
-	const rows = member.data.rows.map(function lowerRow(row) {
-		return { handle: row.handle, values: row.values }
+	const rows = member.handles.map(function lowerRow(handle) {
+		return {
+			handle,
+			values: Object.entries(member.columns).map(([name, field]) => literalOf(field, member.axioms[handle]?.[name]))
+		}
 	})
 	const newtype = classes.id
 	if (newtype === undefined) {

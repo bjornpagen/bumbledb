@@ -16,40 +16,35 @@ export type {
 	WeightOnSource
 } from "#capacity.ts"
 export { duration, ref, weigh, within } from "#capacity.ts"
-export type { ChangeDraft } from "#changes.ts"
+export type { ChangeCounts, ChangeDraft, ChangeRecord } from "#changes.ts"
 export { ChangeSet } from "#changes.ts"
 export type {
 	AnyClosed,
-	AnySelectedClosed,
 	AxiomRow,
 	Axioms,
 	Closed,
-	ClosedColumn,
-	ClosedCore,
-	ClosedData,
-	ClosedRow,
-	ClosedSelectionInput,
-	PayloadField,
-	SelectedClosed
+	PayloadField
 } from "#closed.ts"
-export { closed } from "#closed.ts"
+export { closed, closedId } from "#closed.ts"
 export type { RowShape } from "#codec.ts"
 export { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowSchema, rowShape } from "#codec.ts"
 export type { CompiledSchema, SchemaId } from "#compile.ts"
 export { Schema } from "#compile.ts"
 export type {
-	ApplyExpected,
-	ApplyOptions,
 	ApplyOutcome,
 	CoreWitness,
 	DbInspection,
+	JudgeOutcome,
 	PreparedQuery,
 	QueryReader,
 	Snapshot,
-	StorageInspection
+	StorageInspection,
+	WriteExpected,
+	WriteOptions
 } from "#db.ts"
 export { Db } from "#db.ts"
 export {
+	AuthoringDiagnostic,
 	AuthoringError,
 	NativeLoadError,
 	NativeOperationError,
@@ -61,7 +56,6 @@ export type {
 	Arity,
 	Face,
 	FaceArityMismatch,
-	FaceData,
 	FaceFields,
 	FaceOwner,
 	FaceShapeMismatch,
@@ -94,14 +88,32 @@ export type {
 	U64Field,
 	UuidField
 } from "#fields.ts"
-export { bool, bytes, f64, i64, interval, span, str, u64, uuid } from "#fields.ts"
+export { bool, bytes, f64, i64, interval, str, u64, uuid } from "#fields.ts"
 export type { Same, SameLen } from "#judgment.ts"
 export type { ClassesOf, ClassWall, LawfulStatements, RelationClasses, SchemaClasses } from "#law.ts"
-export type { Violation, ViolationFact } from "#native.ts"
+export type {
+	AtomIr,
+	AtomSourceIr,
+	CmpOpIr,
+	ComparisonIr,
+	ConditionTreeIr,
+	FindTermIr,
+	HeadTermIr,
+	InteriorIr,
+	QueryIr,
+	RecIr,
+	RuleIr,
+	ScalarExprIr,
+	TermIr,
+	Violation,
+	ViolationFact
+} from "#native.ts"
 export type { FindColumn } from "#query/atom.ts"
 export { ALLEN } from "#query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"
 export { Compute } from "#query/compute.ts"
+export type { DescriptionParameter, DescriptionRow, DescriptionTable, QueryDescription } from "#query/description.ts"
+export { describeQuery, queryFromDescription } from "#query/description.ts"
 export type { Agg, RowOfFind } from "#query/find.ts"
 export type {
 	AnyQuery,
@@ -136,16 +148,11 @@ export type {
 export { v } from "#query/scope.ts"
 export type {
 	AnyRelation,
-	AnySelected,
 	Fact,
 	FieldsShape,
 	Relation,
-	RelationData,
 	RelationField,
-	RelationFields,
-	Selected,
-	SelectionBinding,
-	SelectionInput
+	RelationFields
 } from "#relation.ts"
 export { relation } from "#relation.ts"
 export type { CompleteResult } from "#result.ts"
@@ -169,6 +176,8 @@ export type {
 export { Scalar } from "#scalar.ts"
 export type { AnySchema, Schema as SchemaDeclaration, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"
+export type { AnySelected, FieldsOf, Selected, SelectionBinding, SelectionInput } from "#selection.ts"
+export { select } from "#selection.ts"
 export type { Key, QueryTemplate, Rel } from "#shape.ts"
 export type {
 	CapacityBoundSpec,
@@ -185,14 +194,11 @@ export type {
 	ValueTypeSpec
 } from "#spec.ts"
 export type {
-	CapacityData,
 	CapacityStatement,
-	ContainedStatement,
-	ContainmentData,
-	KeyData,
+	ContainmentStatement,
 	KeyStatement,
-	Statement,
-	StatementData
+	MirrorsStatement,
+	Statement
 } from "#statements.ts"
 export { capacity, contained, key, mirrors, renderStatement } from "#statements.ts"
 export { Uuid } from "#uuid.ts"

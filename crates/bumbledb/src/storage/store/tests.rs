@@ -281,7 +281,9 @@ pub(super) fn try_commit_changes(
     let mut owner = store.writer(&context)?;
     match owner.prepare(changes, &FirstFieldKey, &AdmitAll)? {
         Prepared::Admitted(prepared) => prepared.seal(NO_HOST)?.commit(),
-        Prepared::Rejected(never) => match never {},
+        Prepared::Rejected {
+            rejection: never, ..
+        } => match never {},
     }
 }
 

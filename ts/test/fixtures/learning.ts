@@ -24,9 +24,12 @@ export const Attempt = relation("Attempt", {
 	active: interval(i64)
 })
 
+export const StudentById = key(Student, ["id"])
+export const AttemptById = key(Attempt, ["id"])
+
 export const Learning = schema("Learning", { Student, Attempt }, [
-	key(Student, ["id"]),
-	key(Attempt, ["id"]),
+	StudentById,
+	AttemptById,
 	contained(on(Attempt, "student"), on(Student, "id")),
 	capacity(on(Student, "id"), {
 		from: on(Attempt, "student"),

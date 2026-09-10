@@ -32,6 +32,7 @@ pub enum NativeKind {
     Cursor,
     Draft,
     Changes,
+    ChangesCursor,
     RepositoryLock,
 }
 
@@ -95,6 +96,7 @@ pub(crate) enum Payload {
         schema: Arc<bumbledb::schema::Schema>,
         fingerprint: String,
     },
+    ChangesCursor(crate::db_wire::ChangesCursorOpened),
     /// Kernel repository exclusion. Capability.kind is `RepositoryLock`.
     RepositoryLock {
         _lock: bumbledb_log::store::fence::RepositoryLock,

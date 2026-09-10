@@ -4,14 +4,25 @@
  * native runtime. Framework runners stay at this executable-test boundary.
  */
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { describe, test } from "node:test"
+import { fileURLToPath } from "node:url"
 import { Effect, Exit } from "effect"
 import { CLI_USAGE, loadAuthoring, parseCliArguments } from "#migrations/cli.ts"
 
 describe("CLI refusals", function suite() {
+	test("the shipped executable reports usage and preserves exit code 2", () => {
+		const result = spawnSync(process.execPath, [fileURLToPath(new URL("../dist/migrations/bin.js", import.meta.url))], {
+			encoding: "utf8"
+		})
+		assert.equal(result.error, undefined)
+		assert.equal(result.status, 2)
+		assert.equal(result.stdout, "")
+		assert.equal(result.stderr.trim(), CLI_USAGE.trim())
+	})
 	test("unknown commands and malformed flags print usage and exit 2", function usage() {
 		for (const argv of [
 			[],

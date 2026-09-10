@@ -291,7 +291,10 @@ fn the_global_re_judgment_convicts_a_state_the_writer_never_judged() {
             .expect("prepare")
         {
             crate::storage::store::Prepared::Admitted(prepared) => prepared,
-            crate::storage::store::Prepared::Rejected(impossible) => match impossible {},
+            crate::storage::store::Prepared::Rejected {
+                rejection: impossible,
+                ..
+            } => match impossible {},
         };
         let sealed = prepared
             .seal(crate::storage::store::HostChanges {

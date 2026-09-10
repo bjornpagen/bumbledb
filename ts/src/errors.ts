@@ -1,4 +1,4 @@
-import { Data } from "effect"
+import { Data, Schema } from "effect"
 
 /**
  * Pure authoring failures, SDK-invariant defects and internal native-boundary
@@ -8,8 +8,23 @@ import { Data } from "effect"
  */
 
 /** A pure schema, query, parameter, or value-authoring refusal. */
+export const AuthoringDiagnostic = Schema.Struct({
+	code: Schema.Literals([
+		"InvalidValue",
+		"InvalidRecord",
+		"UnknownField",
+		"MissingField",
+		"InvalidDeclaration",
+		"InvalidQuery"
+	]),
+	context: Schema.String,
+	expected: Schema.String
+})
+export type AuthoringDiagnostic = typeof AuthoringDiagnostic.Type
+
 export class AuthoringError extends Data.TaggedError("AuthoringError")<{
 	readonly message: string
+	readonly diagnostic?: AuthoringDiagnostic
 }> {}
 
 /** A contradiction in an SDK/native result, not an application refusal. */

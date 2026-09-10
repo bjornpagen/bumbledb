@@ -6,6 +6,8 @@
  * and joins any of them. Close verbs report the real drain outcome through
  * `CloseWire`.
  */
+
+import type { ChangeCounts } from "#changes.ts"
 import type { DbHandle, ParsedQuery, QueryParam, SealedDescriptor, Violation } from "#native.ts"
 import { native } from "#native.ts"
 import type { CellValue } from "#rows.ts"
@@ -30,6 +32,9 @@ export interface DraftHandle {
 export interface ChangesHandle {
 	readonly __changes: unique symbol
 }
+export interface ChangesCursorHandle {
+	readonly __changesCursor: unique symbol
+}
 
 /** The core-local witness: catalog/store identity plus generation, never a StateStamp. */
 export interface WitnessWire {
@@ -47,6 +52,16 @@ export type ApplyOutcomeWire =
 	| { readonly tag: "invariant-rejected"; readonly violations: readonly Violation[] }
 	| { readonly tag: "moved"; readonly witnessed: WitnessWire; readonly current: WitnessWire }
 
+export type JudgeOutcomeWire =
+	| { readonly tag: "admitted"; readonly base: WitnessWire; readonly changes: ChangeCounts }
+	| {
+			readonly tag: "invariant-rejected"
+			readonly base: WitnessWire
+			readonly changes: ChangeCounts
+			readonly violations: readonly Violation[]
+	  }
+	| { readonly tag: "moved"; readonly witnessed: WitnessWire; readonly current: WitnessWire }
+
 /** Bounded database diagnostics: measurements, never retained row payloads. */
 export interface DbInspectionWire {
 	readonly generation: bigint
@@ -62,6 +77,14 @@ export interface SnapshotWire {
 export interface ChangesWire {
 	readonly changes: ChangesHandle
 	readonly fingerprint: string
+	readonly counts: ChangeCounts
+	readonly byteLength: bigint
+}
+
+export interface ChangeRecordWire {
+	readonly relation: number
+	readonly kind: "add" | "remove"
+	readonly values: readonly CellValue[]
 }
 
 export interface MutationReportWire {
@@ -158,10 +181,29 @@ interface DbBridge {
 	runtimeChangesTake(operation: OperationHandle): ChangesWire
 	runtimeDraftClose(draft: DraftHandle, callback: (report: CloseWire) => void): void
 	runtimeChangesClose(changes: ChangesHandle, callback: (report: CloseWire) => void): void
+	/** Owned immutable bytes; parsing checks canonical order and the supplied schema. */
+	runtimeChangesBytes(changes: ChangesHandle, callback: () => void): OperationHandle
+	runtimeChangesParse(
+		runtime: RuntimeHandle,
+		spec: SchemaSpec,
+		bytes: Uint8Array,
+		callback: () => void
+	): OperationHandle
+	/** One command's add-wins composition, not sequential application. */
+	runtimeChangesCompose(left: ChangesHandle, right: ChangesHandle, callback: () => void): OperationHandle
+	/** Independent bounded traversal; never spends the immutable source. */
+	runtimeChangesCursor(changes: ChangesHandle, callback: () => void): OperationHandle
+	runtimeChangesCursorTake(operation: OperationHandle): ChangesCursorHandle
+	runtimeChangesCursorNext(cursor: ChangesCursorHandle, callback: () => void): OperationHandle
+	runtimeChangePageTake(operation: OperationHandle): readonly ChangeRecordWire[] | null
+	runtimeChangesCursorClose(cursor: ChangesCursorHandle, callback: (report: CloseWire) => void): void
 
 	/** One immutable final-state admission/commit under the managed owner. */
 	runtimeDbApply(db: DbHandle, changes: ChangesHandle, expected: ExpectedWire, callback: () => void): OperationHandle
 	runtimeApplyTake(operation: OperationHandle): ApplyOutcomeWire
+	/** Same candidate admission as apply, aborted on its worker before returning. */
+	runtimeDbJudge(db: DbHandle, changes: ChangesHandle, expected: ExpectedWire, callback: () => void): OperationHandle
+	runtimeJudgeTake(operation: OperationHandle): JudgeOutcomeWire
 
 	runtimeDbInspect(db: DbHandle, callback: () => void): OperationHandle
 	runtimeDbClearCache(db: DbHandle, callback: () => void): OperationHandle

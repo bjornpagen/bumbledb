@@ -217,7 +217,7 @@ fn d06_zero_row_host_metadata_is_not_fresh() {
             .expect("prepare")
         {
             Prepared::Admitted(prepared) => prepared,
-            Prepared::Rejected(v) => panic!("{v:?}"),
+            Prepared::Rejected { rejection: v, .. } => panic!("{v:?}"),
         };
         prepared
             .seal(HostChanges {
@@ -272,7 +272,10 @@ fn ordinary_admitted_write_uses_prepare_incremental_under_lawful_parent() {
                     .commit()
                     .expect("commit");
             }
-            Prepared::Rejected(violations) => panic!("{violations:?}"),
+            Prepared::Rejected {
+                rejection: violations,
+                ..
+            } => panic!("{violations:?}"),
         }
     }
     let snap = store.snapshot(&work).expect("snap");
@@ -304,7 +307,10 @@ fn ordinary_admitted_write_uses_prepare_incremental_under_lawful_parent() {
                 "empty delta under a lawful parent is a no-op"
             );
         }
-        Prepared::Rejected(violations) => panic!("{violations:?}"),
+        Prepared::Rejected {
+            rejection: violations,
+            ..
+        } => panic!("{violations:?}"),
     }
 }
 

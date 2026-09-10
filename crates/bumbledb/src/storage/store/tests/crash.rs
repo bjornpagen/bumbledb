@@ -48,7 +48,9 @@ fn child_role() {
                 .expect("prepare")
             {
                 Prepared::Admitted(prepared) => prepared,
-                Prepared::Rejected(never) => match never {},
+                Prepared::Rejected {
+                    rejection: never, ..
+                } => match never {},
             };
             // Sealed but never committed: death must erase it.
             let sealed = prepared.seal(NO_HOST).expect("seal");

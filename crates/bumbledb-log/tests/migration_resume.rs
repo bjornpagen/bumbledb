@@ -10,11 +10,12 @@
 #[path = "migration_support/mod.rs"]
 mod support;
 
+use bumbledb::integration::Preparation;
 use std::sync::Arc;
 
 use bumbledb::integration::{AttachmentChange, HostChanges, HostRecordChange};
 use bumbledb::schema::SchemaDescriptor;
-use bumbledb::{Admission, ChangeSet, Db, RelationId, Uuid, Value};
+use bumbledb::{ChangeSet, Db, RelationId, Uuid, Value};
 
 use bumbledb_log::history::command::{Command, CommandMetadata};
 use bumbledb_log::history::{CommandId, CommandResult, Condition, ReceiptEpoch, RequestId};
@@ -178,8 +179,8 @@ fn conflicting_completed_output_refuses_instead_of_overwriting() {
             .unwrap();
         let changes = draft.finish().unwrap();
         let prepared = match session.prepare(&changes).unwrap() {
-            Admission::Accepted(prepared) => prepared,
-            Admission::Rejected(violations) => panic!("tamper admits: {violations}"),
+            Preparation::Accepted(prepared) => prepared,
+            Preparation::Rejected { violations, .. } => panic!("tamper admits: {violations}"),
         };
         prepared
             .seal(HostChanges {
@@ -354,8 +355,8 @@ fn hostile_history_rows_are_corruption_evidence_not_a_guess() {
             .finish()
             .unwrap();
         let prepared = match session.prepare(&empty).unwrap() {
-            Admission::Accepted(prepared) => prepared,
-            Admission::Rejected(violations) => panic!("{violations}"),
+            Preparation::Accepted(prepared) => prepared,
+            Preparation::Rejected { violations, .. } => panic!("{violations}"),
         };
         let key = history_key(0);
         prepared
