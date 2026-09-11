@@ -38,6 +38,33 @@ const ACCOUNT_ID = 2
 function countQueryOf<Rels extends SchemaRelations, R extends QueryRelation<Rels>>(theory: Schema<Rels>, rel: R) {
 	return query(theory).rule((r) => r.match(rel, v(rel)).find({ n: r.count() }))
 }
+function projectionOf<Rels extends SchemaRelations, R extends QueryRelation<Rels>>(theory: Schema<Rels>, rel: R) {
+	return query(theory).rule((r) => {
+		const row = v(rel)
+		return r.match(rel, row).find(row)
+	})
+}
+test("generic identity projections preserve precise fields and the ordinary query lowering", () => {
+	const projected = projectionOf(Ledger, Account)
+	const concrete = query(Ledger).rule((r) => {
+		const row = v(Account)
+		return r.match(Account, row).find(row)
+	})
+	type RowPin = Expect<
+		Equal<
+			QueryRow<typeof projected>,
+			{ readonly id: bigint; readonly holder: bigint; readonly kind: "Checking" | "Savings"; readonly balance: bigint }
+		>
+	>
+	type ParamsPin = Expect<Equal<keyof QueryParams<typeof projected>, never>>
+	const pins: [RowPin, ParamsPin] = [true, true]
+	assert.equal(pins.length, 2)
+	assert.deepEqual(lowerQuery(projected), lowerQuery(concrete))
+	const vocabulary = projectionOf(Ledger, Kind)
+	type ClosedPin = Expect<Equal<QueryRow<typeof vocabulary>, { readonly id: "Checking" | "Savings" }>>
+	const pin: ClosedPin = true
+	assert.ok(pin)
+})
 
 describe("the generic full-binding law", function suite() {
 	test("the generic schema helper compiles and lowers to the concrete spelling's IR", function genericShape() {

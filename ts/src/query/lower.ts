@@ -227,6 +227,11 @@ interface QueryRuleChain<
 		bindings: B & CheckInteriorBindings<B>
 	): QueryRuleChain<Rels, P, Classes>
 
+	/** A record of variables is already a valid projection, including v(rel)
+	 * for a generic relation. Aggregate judgments remain on the general form. */
+	find<const F extends Readonly<Record<string, AnyVar>>>(
+		entries: F
+	): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 	find<const F extends FindShape>(entries: F & CheckFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
@@ -294,6 +299,9 @@ interface InteriorRuleChain<
 	 * Nonrecursive derived stages emit aggregate/computed outputs too
 	 * (C05): only the RECURSIVE head stays projection-only.
 	 */
+	find<const F extends Readonly<Record<string, AnyVar>>>(
+		entries: F
+	): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 	find<const F extends FindShape>(entries: F & CheckFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
@@ -357,6 +365,9 @@ interface RecRuleChain<
 		name: string,
 		bindings: B & CheckInteriorBindings<B>
 	): RecRuleChain<Rels, P, Classes>
+	find<const F extends Readonly<Record<string, AnyVar>>>(
+		entries: F
+	): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 	find<const F extends FindShape>(entries: F & CheckRecFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
