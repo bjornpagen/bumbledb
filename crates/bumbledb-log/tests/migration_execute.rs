@@ -25,6 +25,7 @@ use bumbledb_log::migration::executor::{
     activate_target, initialize,
 };
 use bumbledb_log::migration::history::{AppliedSource, HistoryRecord};
+use bumbledb_log::migration::lock::TargetNamespace;
 use bumbledb_log::migration::manifest::Manifest;
 use bumbledb_log::migration::plan::{FieldMap, Operation, Plan, PlanExpr};
 use bumbledb_log::migration::state::StateError;
@@ -194,12 +195,9 @@ fn whole_suffix_executes_into_one_frozen_verified_target() {
 
     // The published target is complete, still frozen, and carries the
     // transformed rows plus the seed exactly once.
-    let target_dir: PathBuf = bumbledb_log::migration::lock::TargetNamespace::new(
-        &root.join("targets"),
-        incarnation(0xe1),
-    )
-    .unwrap()
-    .target_dir();
+    let target_dir: PathBuf = TargetNamespace::new(&root.join("targets"), incarnation(0xe1))
+        .unwrap()
+        .target_dir();
     {
         // (Scoped so the handle closes before any later open of this env.)
         let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
@@ -436,12 +434,9 @@ fn initialization_runs_the_chain_and_seeds_exactly_once() {
         &work(),
     )
     .unwrap();
-    let target_dir = bumbledb_log::migration::lock::TargetNamespace::new(
-        &root.join("targets"),
-        incarnation(0xe5),
-    )
-    .unwrap()
-    .target_dir();
+    let target_dir = TargetNamespace::new(&root.join("targets"), incarnation(0xe5))
+        .unwrap()
+        .target_dir();
     let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     assert_eq!(scan_all(&target, RelationId(1)).len(), 1, "one seed row");
     assert_eq!(
@@ -500,12 +495,9 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
         &work(),
     )
     .unwrap();
-    let mid_dir = bumbledb_log::migration::lock::TargetNamespace::new(
-        &root_b.join("targets"),
-        incarnation(0xe7),
-    )
-    .unwrap()
-    .target_dir();
+    let mid_dir = TargetNamespace::new(&root_b.join("targets"), incarnation(0xe7))
+        .unwrap()
+        .target_dir();
     let mid: Arc<Db<SchemaDescriptor>> =
         Arc::new(Db::open(&mid_dir, pinned_schema(), work()).unwrap());
     let mid_history = LocalHistory::open(Arc::clone(&mid), LIMITS).unwrap();
@@ -528,18 +520,13 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
     };
 
     // Same final application facts either way.
-    let fused_dir = bumbledb_log::migration::lock::TargetNamespace::new(
-        &root_a.join("targets"),
-        fused_ref.target.incarnation_id,
-    )
-    .unwrap()
-    .target_dir();
-    let stepwise_dir = bumbledb_log::migration::lock::TargetNamespace::new(
-        &root_b.join("targets"),
-        second_ref.target.incarnation_id,
-    )
-    .unwrap()
-    .target_dir();
+    let fused_dir = TargetNamespace::new(&root_a.join("targets"), fused_ref.target.incarnation_id)
+        .unwrap()
+        .target_dir();
+    let stepwise_dir =
+        TargetNamespace::new(&root_b.join("targets"), second_ref.target.incarnation_id)
+            .unwrap()
+            .target_dir();
     let fused: Db<SchemaDescriptor> = Db::open(&fused_dir, tagged_schema(), work()).unwrap();
     let stepwise: Db<SchemaDescriptor> = Db::open(&stepwise_dir, tagged_schema(), work()).unwrap();
     assert_eq!(
@@ -602,12 +589,9 @@ fn history_chain_flattens_to_the_exact_manifest_prefix() {
     .unwrap();
     // The target's chain is the inherited (empty) history plus ONE Applied
     // record whose flattened steps equal the whole manifest.
-    let target_dir = bumbledb_log::migration::lock::TargetNamespace::new(
-        &root.join("targets"),
-        incarnation(0xea),
-    )
-    .unwrap()
-    .target_dir();
+    let target_dir = TargetNamespace::new(&root.join("targets"), incarnation(0xea))
+        .unwrap()
+        .target_dir();
     let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     let mut chain_rows = Vec::new();
     target

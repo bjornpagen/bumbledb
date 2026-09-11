@@ -1895,7 +1895,7 @@ fn open_migration_db(
         directory: binding.directory.clone(),
         identity: binding.identity,
         backend: BackendSpec::Local,
-        descriptor: Some((descriptor, Default::default())),
+        descriptor: Some((descriptor, Vec::new())),
     };
     open_admin_db(runtime, &probe, context)
 }
