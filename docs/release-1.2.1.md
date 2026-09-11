@@ -27,7 +27,7 @@ All three supported-platform builds and full correctness batteries must pass
 on the release commit. Static Linux ARM64 and Miri remain supplemental checks,
 outside the publication gate. See the [publishing procedure](../ts/PUBLISHING.md).
 
-The [full benchmark results](perf/results.md) measured 1.1.0 source;
+The [full benchmark results available for this release](https://github.com/bjornpagen/bumbledb/blob/v1.1.0/docs/perf/results.md) measured 1.1.0 source;
 this release makes no new performance claim. Real-S3/IAM, Graviton performance,
 and larger-than-memory workloads have not been qualified. Hosted generated
 migration orchestration is unsupported through the TypeScript/native bridge.

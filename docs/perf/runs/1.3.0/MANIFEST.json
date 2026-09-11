@@ -1,0 +1,325 @@
+{
+  "format": 1,
+  "started": "2026-09-11T17:32:01.746315+00:00",
+  "binary_sha256": "1953305d464b4d0cc43fc54fc9333e1caabd44ded90905c33452326b874378b7",
+  "source_revision": "a022bfacdff3dba6903284767e302ed6eb9f5a3f",
+  "runner_sha256": "114ac041be4b94ed3dc9fbae146089d6d1f8952a73deba49c9cc7c05df4a8390",
+  "workers": 1,
+  "scheduler_sha256": "5b0b107e9dc6d812b0252ddaa1264896c3c2cdcc507283971e408ac5d8393814",
+  "scheduler": {
+    "worker_limit": 8,
+    "cpu_ids": null,
+    "placement": "P-core-count cap; QoS steering, NOT CPU affinity",
+    "priority": "qos-user-interactive (relative priority 0)",
+    "hard_affinity": false
+  },
+  "shared_machine": true,
+  "full": true,
+  "status": "REPORTS-VERIFIED",
+  "not_run_prerequisites": {
+    "correspondence-oracles": "cargo test -p bumbledb-bench correspondence",
+    "conformance-replay": "cargo test -p bumbledb-bench the_corpus_replays_byte_identical",
+    "hosted-decision": "real S3/IAM required",
+    "large-populated": ">40 GiB allocated blocks + cgroup memory.max required",
+    "graviton-arm64": "real Graviton Linux ARM64 performance host required",
+    "x86-node": "Linux x64 Node application timing required"
+  },
+  "finished": "2026-09-11T18:09:36.973808+00:00",
+  "run_status": "LOCAL-LANES-COMPLETE",
+  "run_directory": "release-1.3.0-20260911.pcxa6o0b/full",
+  "lanes": {
+    "scorecard-plan": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "app-perf",
+        "--plan"
+      ],
+      "started": "2026-09-11T17:32:01.766478+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T17:32:01.975860+00:00"
+    },
+    "verify": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "verify",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/reads"
+      ],
+      "started": "2026-09-11T17:32:01.978191+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T17:32:58.657664+00:00",
+      "log": "verify.log",
+      "log_sha256": "0bf8e5745df17c390c76a61d8a152e26b7614c51c682d8032298db72f7533628"
+    },
+    "curves": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "curves",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/curves",
+        "--scales",
+        "S,M,L",
+        "--warmth",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/curves"
+      ],
+      "started": "2026-09-11T17:32:58.661404+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T17:57:14.385660+00:00",
+      "artifact": "curves/curves-report.json",
+      "sha256": "d766ac1e57cb6748f2695f03fef4a5b99a95b219006d412c86711c1205be8292"
+    },
+    "reads": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "bench",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/reads",
+        "--read-batch",
+        "1",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/reads"
+      ],
+      "started": "2026-09-11T17:57:14.387771+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:01:22.035811+00:00",
+      "artifact": "reads/report.json",
+      "sha256": "6bb1ae3119782fea91c84c06a83d60a6963527437267951047e0d296c8eac05b"
+    },
+    "scenarios": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "scenarios",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/scenarios",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/scenarios"
+      ],
+      "started": "2026-09-11T18:01:22.038418+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:07:34.418454+00:00",
+      "artifact": "scenarios/scenarios.json",
+      "sha256": "5eea6b53347cf13d43f1043ea05c36a687d8110a9bf4021301fa73c7b723827d"
+    },
+    "writes": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "writes",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/writes",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/writes"
+      ],
+      "started": "2026-09-11T18:07:34.421261+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:08:05.938583+00:00",
+      "artifact": "writes/writes-report.json",
+      "sha256": "113642933d75968b093ba5c5da84a5452802cf4c60d98539873d0b8803917d36"
+    },
+    "storage": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "storage",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/storage",
+        "--scales",
+        "S,M",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/storage"
+      ],
+      "started": "2026-09-11T18:08:05.940834+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:12.120097+00:00",
+      "artifact": "storage/storage-report.json",
+      "sha256": "4b12f7ac410bf09a765335b5f97e02c4944b0d624503c32dd1e7e9a9d4080601"
+    },
+    "app-perf-warm": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/app-perf-warm",
+        "--regimes",
+        "warm",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/app-perf-warm"
+      ],
+      "started": "2026-09-11T18:09:12.122164+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:12.883542+00:00",
+      "artifact": "app-perf-warm/app-perf.json",
+      "sha256": "2b6cc3a0c06c2d13165b35417383fb01d73be4276efc2514dfe7d52e1adf5bd8"
+    },
+    "app-perf-cold": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/app-perf-cold",
+        "--regimes",
+        "cold-open,post-write",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/app-perf-cold"
+      ],
+      "started": "2026-09-11T18:09:12.885615+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:14.494336+00:00",
+      "artifact": "app-perf-cold/app-perf.json",
+      "sha256": "58e910973a547f7ac61012b2368460c60200f1e5d588811790bc6a42d87ef1a2"
+    },
+    "app-perf-large-result": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/app-perf-large-result",
+        "--regimes",
+        "large-result",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/app-perf-large-result"
+      ],
+      "started": "2026-09-11T18:09:14.496742+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:15.363639+00:00",
+      "artifact": "app-perf-large-result/app-perf.json",
+      "sha256": "e4344e6771cb4e6ae1b822735759527abe9e669cf9e8808911f256c791d467a7"
+    },
+    "app-perf-tenants": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "app-perf",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/app-perf-tenants",
+        "--regimes",
+        "tenant-churn",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/app-perf-tenants"
+      ],
+      "started": "2026-09-11T18:09:15.365742+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:16.765702+00:00",
+      "artifact": "app-perf-tenants/app-perf.json",
+      "sha256": "cff27770ef507eb0766c5ffd501fc98228524a8a99884df05ee18ff27db17d4a"
+    },
+    "hash-probe": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "hash-probe",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/hash-probe"
+      ],
+      "started": "2026-09-11T18:09:16.768379+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:22.307013+00:00",
+      "artifact": "hash-probe/hash-probe.json",
+      "sha256": "c313111a43132ac8b5b8e61df73f31e71cc08c097e326af1abdb50cce0fcc0e4"
+    },
+    "crud": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "crud",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/crud",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/crud"
+      ],
+      "started": "2026-09-11T18:09:22.309478+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:29.446943+00:00",
+      "artifact": "crud/crud.json",
+      "sha256": "4c8dcfe6c4bc4965154cdbec49c1638629a38752521425051892426ceb2266a0"
+    },
+    "lawful": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "lawful",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/lawful",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/lawful"
+      ],
+      "started": "2026-09-11T18:09:29.448783+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:31.264386+00:00",
+      "artifact": "lawful/lawful.json",
+      "sha256": "ca40b44dfc88e5bac32c40df2442a267d28f8c72b2d4e4c0bc129a197c8b4e37"
+    },
+    "heap": {
+      "status": "RUN-OK",
+      "command": [
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/frozen/bumbledb-bench",
+        "heap",
+        "--dir",
+        "/Users/bjorn/Documents/bumbledb/bench-data/release-1.3.0-20260911.pcxa6o0b/heap",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full/heap"
+      ],
+      "started": "2026-09-11T18:09:31.267313+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:32.139222+00:00",
+      "artifact": "heap/heap-report.json",
+      "sha256": "e4618f194d6ba81d9479bddfc3177db176281b95a73e6803b1668602f85614dc"
+    },
+    "charts": {
+      "status": "RUN-OK",
+      "command": [
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/python3",
+        "/Users/bjorn/Documents/bumbledb/scripts/bench_viz.py",
+        "--night",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full",
+        "--out",
+        "/Users/bjorn/Documents/bumbledb/bench-out/release-1.3.0-20260911.pcxa6o0b/full",
+        "--note",
+        "1 lane workers; P-core-count cap; QoS steering, NOT CPU affinity; qos-user-interactive (relative priority 0); shared CPU/I/O"
+      ],
+      "started": "2026-09-11T18:09:32.141451+00:00",
+      "exit_code": 0,
+      "finished": "2026-09-11T18:09:36.972734+00:00"
+    }
+  },
+  "source_artifact": "SOURCE.json",
+  "source_sha256": "6fc63e27650ff1b1a9a08f82dd0420bcf76c50317cc27ada6ca9ab5c90e1a2b6",
+  "chart_generation": {
+    "paths_relative_to": "repository root",
+    "renderer": "scripts/bench_viz.py",
+    "renderer_sha256": "ddd7cc678956c4b79c8d93789b10d9033ed6be5917e8a46f6b0695f13a853a26",
+    "note": "1.3.0 a022bfac | M2 Max | 2026-09-11 | serial/shared-host | macOS QoS; no hard affinity",
+    "artifacts": {
+      "assets/adversarial-dnf.svg": "c579ef997649f150201900aae9e9926e7342e77292f69746e64ada06b958c02e",
+      "assets/bench-curves.svg": "0f84f814090068da02d81befe6be064bb6165f32f514f8bccaa9557ffd5bd58c",
+      "assets/bench-scenarios.svg": "bc5bb6b7c2a0d6716d6a1178b3b6fcc0368feeea9550b50f0c5f20fe5e2959c1",
+      "assets/bench-speedup.svg": "c34cf746c13b339cb8c8dac8513c085e1b892e327006394ff6d3cf2f117562b6",
+      "assets/bench-storage.svg": "b9435d7092621f41983b4a0d9d568ebf9444912238cc367dae86ea371c1723b9",
+      "assets/bench-tails.svg": "64c82157acc0ce266daa3c00bb3335efee6f3dcec8a74a5b9e980ff991dbc9ec",
+      "assets/bench-vs-sqlite.svg": "35344a8339d72f2e85c931913ef9c489f7d09d24ab525ada3a1d159953d30ab6",
+      "assets/bench-warmth.svg": "2569313aea2cc4175b9e3ffd9e02978f1b2d26e10a11aede529e5841cd345207",
+      "assets/bench-writes-rates.svg": "f48fbb8b881d0c16fb21f7a842793ea1ec612aae0f09f547ef1773f82a30293d",
+      "assets/bench-writes.svg": "1495f5f2cf5b3b20692f3dea798ef3b9f667bb8becaa1ad851944395aff9c925",
+      "assets/ratio-waterfall.svg": "08419851226a8c8d96ce006d01232bb457b8ad06c6e1b8e10ad8cf8aa8e800e7",
+      "assets/tails-fan.svg": "5b39f1805d9432be881a2e6a58b7856ac2f88cda77d2ee9f1ef2bdbb2b309463",
+      "assets/world-crud.svg": "f2f6b09f3dc1d251969280cd89d5f37b99917d7bc909a0e8aade5ba1da6aae4a",
+      "assets/world-graph.svg": "fec22493b239a349f552b29036b9e2059475b45642d198f27dccbd7b1baac358",
+      "assets/world-joins.svg": "f0775a25bb2b894d1712a8980e11cbd988d14e4a5832583238f4aef1b50d2eed",
+      "assets/world-lawful.svg": "b8f0c772f6b2ffb927a69c2013be75f03c4fd0a2e174ccaf02d9bbdd48a06b14",
+      "assets/world-olap.svg": "fe1993894701f07fa2d32b225327f0a219a96d8c2dab773c0f4c08759e01482f",
+      "assets/world-points.svg": "0e42522efea64c6a99c5a0a8469a4454c6d5fa3d0cb6909ed2e079cc177afe9c",
+      "assets/world-rings.svg": "3fd16c76774456958ce53e39ada82e50e97355a4a9c2e449dc0574c6583993e1",
+      "assets/world-temporal.svg": "9eee784b4af9fc4c665efce7fca9d6b7ae22ab5e94eb6fcd4f27349ff77f1773",
+      "assets/write-throughput.svg": "9e3b2836f27416480d2a7b19169bd603701ab0343fa26ce3290b990997db5fec"
+    }
+  }
+}

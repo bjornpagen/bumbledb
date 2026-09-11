@@ -655,7 +655,7 @@ def paired_bars(ax, names, table, note_ratio=True):
     ax.set_xscale("log")
     ax.xaxis.set_major_formatter(FuncFormatter(fmt_us))
     ax.grid(axis="x", color=GRID, linewidth=0.6, zorder=0)
-    ax.legend(loc="lower right", facecolor=BG, edgecolor=GRID,
+    ax.legend(loc="upper right", facecolor=BG, edgecolor=GRID,
               labelcolor=FG, fontsize=9)
 
 def chart_vs_sqlite(inputs, out):

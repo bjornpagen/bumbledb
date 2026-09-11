@@ -52,7 +52,7 @@ The native bridge is version-matched, not a semver-stable binary ABI.
 
 ## Benchmarks and verification
 
-The [benchmark report](perf/results.md) contains the full 1.1.0 run, raw
+The [historical benchmark report](https://github.com/bjornpagen/bumbledb/blob/v1.1.0/docs/perf/results.md) contains the full 1.1.0 run, raw
 evidence, all charts, and the historical comparison. The runner measures
 one timed lane at a time, with verified user-interactive QoS on this M2 Max.
 macOS does not provide hard P-core affinity.

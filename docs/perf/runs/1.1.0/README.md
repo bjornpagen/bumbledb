@@ -1,7 +1,9 @@
 # Benchmark data
 
 The 13 JSON reports here are the original measurement outputs used by the
-[benchmark report](../../results.md). `MANIFEST.json` indexes their commands,
+[historical 1.1.0 report](https://github.com/bjornpagen/bumbledb/blob/v1.1.0/docs/perf/results.md)
+and the comparison in the [current report](../../results.md).
+`MANIFEST.json` indexes their commands,
 timing boundaries, scheduling policy and SHA-256 hashes. Paths in commands
 identify the original host's inputs; report paths are relative to this directory.
 

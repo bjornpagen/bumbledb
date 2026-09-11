@@ -1,0 +1,16 @@
+{
+  "revision": "a022bfacdff3dba6903284767e302ed6eb9f5a3f",
+  "version": "1.3.0",
+  "clean": true,
+  "run_purpose": "Complete ordinary local benchmark suite; one timed lane at a time",
+  "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t15.7.7\nBuildVersion:\t\t24G720",
+  "cpu": "Apple M2 Max",
+  "memory": "103079215104",
+  "page_size": "16384",
+  "power": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=21823587)\t99%; finishing charge; 0:07 remaining present: true",
+  "candidate_source_digest": "3d6e56eb37c110c5d332b2611dd67290cbc12bbdb84844c4102268e163ff790f",
+  "binary_sha256": "1953305d464b4d0cc43fc54fc9333e1caabd44ded90905c33452326b874378b7",
+  "built_at": "2026-09-11T17:32:01.538113+00:00",
+  "run_directory": "release-1.3.0-20260911.pcxa6o0b/full"
+}

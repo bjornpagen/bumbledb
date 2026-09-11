@@ -30,8 +30,11 @@ width: intersection emits at most one piece and difference at most two per
 binding. Multiple independent differences can emit up to `2^k` combinations;
 ordinary join, materialization, sorting, and collection costs still apply.
 `mulDiv` uses bounded native arithmetic. This is not a promise that arbitrary
-queries run in logarithmic time. See the [local structural measurements](perf/structural-algebra-20260911.md)
-for measured source provenance; a full 1.3.0 benchmark rerun has not been run.
+queries run in logarithmic time. The [local structural measurements](perf/structural-algebra-20260911.md)
+retain their own source inventory. The [full 1.3.0 benchmark report](perf/results.md)
+measured source `a022bfac` on September 11, 2026, after documentation cleanup.
+All 13 local benchmark lanes and the pre-timing oracle passed; the report
+includes all 21 measured charts, raw data, and comparisons with the prior run.
 
 Node 24+ and Effect 4.0.0-rc.112 are required. Supported native packages are
 macOS ARM64, Linux ARM64, and Linux x64. Linux targets the Amazon Linux 2023
