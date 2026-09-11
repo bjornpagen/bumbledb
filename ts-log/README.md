@@ -272,7 +272,11 @@ runtime:
   `migrationStatus`, `initialize`, `migrate`, `activateMigration`,
   `abortMigration` — execute generated plans through the one native
   executor, with `AdminOutcome` certainty (`completed` / `not-started` /
-  `outcome-unknown`).
+  `outcome-unknown`). Cold migration opens its source from the verified
+  generated snapshot chain; applications need not retain executable retired
+  schema modules. Published local targets use the standard tenant directory
+  containing `db/`. After activation, retrying the original migration returns
+  that target binding, so adopting a retry cannot reopen the frozen source.
 
   **Current limitation:** these generated migration runner verbs target local
   authorities only. The TypeScript/native bridge refuses hosted migration

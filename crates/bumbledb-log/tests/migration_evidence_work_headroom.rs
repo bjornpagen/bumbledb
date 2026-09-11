@@ -129,7 +129,9 @@ fn request<'a>(
 }
 
 fn target_dir(targets_root: &Path, target_inc: u8) -> PathBuf {
-    targets_root.join(hex_name(incarnation(target_inc).as_core().as_bytes()))
+    bumbledb_log::migration::lock::TargetNamespace::new(targets_root, incarnation(target_inc))
+        .unwrap()
+        .target_dir()
 }
 
 fn marker_path(targets_root: &Path, target_inc: u8) -> PathBuf {

@@ -24,7 +24,7 @@ use crate::history::{FrameError, IncarnationId};
 /// Namespace layout under one caller-supplied stable root:
 /// `<hex>.lock` (kernel lock), `<hex>.tombstone` (durable cancellation),
 /// `<hex>.activation` (durable one-time activation evidence),
-/// `<hex>/` (the published target), `~stage/` (private staging builds).
+/// `<hex>/db/` (the published materialization), `~stage/` (private staging builds).
 pub struct TargetNamespace {
     root: PathBuf,
     hex: String,
@@ -124,6 +124,13 @@ impl TargetNamespace {
 
     #[must_use]
     pub fn target_dir(&self) -> PathBuf {
+        self.deployment_dir().join("db")
+    }
+
+    /// Stable tenant directory containing the target's materialization. The
+    /// local history binding names this directory, never the raw LMDB files.
+    #[must_use]
+    pub fn deployment_dir(&self) -> PathBuf {
         self.root.join(&self.hex)
     }
 
@@ -317,11 +324,15 @@ impl TargetNamespace {
             return Err(NamespaceError::ForeignTombstone);
         }
         let target = self.target_dir();
+        let deployment = self.deployment_dir();
+        refuse_symlink(&deployment)?;
         refuse_symlink(&target)?;
         if target.exists() {
             return Err(NamespaceError::TargetExists);
         }
+        fs::create_dir_all(&deployment)?;
         fs::rename(staged, &target)?;
+        File::open(&deployment)?.sync_all()?;
         File::open(&self.root)?.sync_all()?;
         Ok(())
     }

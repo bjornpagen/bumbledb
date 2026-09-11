@@ -1324,7 +1324,9 @@ fn run_admin(
                 });
                 let report = match report {
                     Ok(report) => report,
-                    Err(error) => return Ok(AdminOwned::failed_after_dispatch(format!("{error:?}"))),
+                    Err(error) => {
+                        return Ok(AdminOwned::failed_after_dispatch(format!("{error:?}")));
+                    }
                 };
                 return Ok(AdminOwned::Completed(AdminValueOwned::Backup {
                     manifest_digest: report.manifest_digest,
@@ -1795,10 +1797,10 @@ fn migration_status(
     context: &WorkContext,
 ) -> MachineResult<AdminOwned> {
     require_local(binding)?;
-    let db = open_admin_db(runtime, binding, context)?;
-    let history = local_history_of(&db)?;
     let manifest = plans.manifest()?;
     plans.verify_compiled_chain(&manifest, context)?;
+    let db = open_migration_db(runtime, binding, plans, context)?;
+    let history = local_history_of(&db)?;
     let runner = LocalMigration::new(&history, &targets_root(&binding.directory), LIMITS);
     let status = runner
         .status(&manifest, context)
@@ -1864,6 +1866,40 @@ fn migration_status(
     Ok(AdminOwned::Report(AdminValueOwned::MigrationStatus(owned)))
 }
 
+/// Migration snapshots are the source schema authority after the application
+/// has advanced to a new typed schema. A cold migration must not require the
+/// caller to keep an executable copy of its retired schema module.
+/// Call only after verifying the complete generated chain.
+fn open_migration_db(
+    runtime: &Arc<Runtime>,
+    binding: &BindingSpec,
+    plans: &PlansSpec,
+    context: &WorkContext,
+) -> MachineResult<AdminDb> {
+    let mut source = None;
+    for descriptor in plans.descriptors()? {
+        let schema_id = bumbledb_log::schema_file::schema_id(&descriptor)
+            .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
+        if schema_id == binding.identity.schema_id {
+            source = Some(descriptor);
+            break;
+        }
+    }
+    let descriptor = source.ok_or_else(|| {
+        protocol(
+            "MigrationDrift",
+            "source binding schema is absent from the verified snapshot chain",
+        )
+    })?;
+    let probe = BindingSpec {
+        directory: binding.directory.clone(),
+        identity: binding.identity,
+        backend: BackendSpec::Local,
+        descriptor: Some((descriptor, Default::default())),
+    };
+    open_admin_db(runtime, &probe, context)
+}
+
 fn steps_of(
     plans: &PlansSpec,
     manifest: &Manifest,
@@ -1906,10 +1942,10 @@ fn migrate(
     context: &WorkContext,
 ) -> MachineResult<AdminOwned> {
     require_local(binding)?;
-    let db = open_admin_db(runtime, binding, context)?;
-    let history = local_history_of(&db)?;
     let manifest = plans.manifest()?;
     plans.verify_compiled_chain(&manifest, context)?;
+    let db = open_migration_db(runtime, binding, plans, context)?;
+    let history = local_history_of(&db)?;
     let root = targets_root(&binding.directory);
     let runner = LocalMigration::new(&history, &root, LIMITS);
     let status = runner
@@ -1974,19 +2010,61 @@ fn migrate(
         target_incarnation,
     };
     match runner.migrate(&request, context) {
-        // Already-activated retries and an up-to-date chain answer the same
-        // wire value: nothing to run, the tenant is on the target.
-        Ok(MigrateOutcome::UpToDate { .. } | MigrateOutcome::AlreadyActivated { .. }) => Ok(
-            AdminOwned::Completed(AdminValueOwned::Migrate(MigrateOwned::UpToDate {
+        Ok(MigrateOutcome::UpToDate { .. }) => Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
+            MigrateOwned::UpToDate {
                 directory: binding.directory.clone(),
                 identity: history.identity(),
-            })),
-        ),
-        Ok(MigrateOutcome::ReadyToSwitch { activation_ref, .. }) => {
-            let deployment = TargetNamespace::new(&root, activation_ref.target.incarnation_id)
+            },
+        ))),
+        Ok(MigrateOutcome::AlreadyActivated { .. }) => {
+            let deployment = TargetNamespace::new(&root, target_incarnation)
                 .map_err(MigrationError::from)
                 .map_err(fail_of_migration)?
-                .target_dir();
+                .deployment_dir();
+            Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
+                MigrateOwned::UpToDate {
+                    directory: deployment.to_string_lossy().into_owned(),
+                    identity: DatabaseIdentity {
+                        database_id: history.identity().database_id,
+                        incarnation_id: target_incarnation,
+                        schema_id: steps
+                            .last()
+                            .expect("nonempty migration suffix")
+                            .plan
+                            .to_schema,
+                    },
+                },
+            )))
+        }
+        Ok(MigrateOutcome::ReadyToSwitch { activation_ref, .. }) => {
+            let namespace = TargetNamespace::new(&root, activation_ref.target.incarnation_id)
+                .map_err(MigrationError::from)
+                .map_err(fail_of_migration)?;
+            let deployment = namespace.deployment_dir();
+            let deployed = BindingSpec {
+                directory: deployment.to_string_lossy().into_owned(),
+                identity: activation_ref.target,
+                backend: BackendSpec::Local,
+                descriptor: None,
+            };
+            let descriptor = &steps
+                .last()
+                .expect("nonempty migration suffix")
+                .to_descriptor;
+            let target =
+                bumbledb::Db::open(&namespace.target_dir(), descriptor.clone(), context.clone())
+                    .map_err(|error| {
+                        LogFail::Core(crate::runtime::session::engine_error(&error))
+                    })?;
+            bumbledb_log::admin::verify_local_identity(
+                &target,
+                activation_ref.target,
+                LIMITS.envelope_bytes,
+            )
+            .map_err(fail_of_admin)?;
+            recovery::write_binding(&target, &expected_binding(&deployed), context)
+                .map_err(super::fail_of_recovery)?;
+            drop(target);
             Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
                 MigrateOwned::ReadyToSwitch {
                     deployment_directory: deployment.to_string_lossy().into_owned(),

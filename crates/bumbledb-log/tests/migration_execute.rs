@@ -37,14 +37,7 @@ use support::{
 };
 
 /// Hex directory name of a 16-byte id, as the executor stages targets.
-fn hex_name(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    let mut hex = String::new();
-    for byte in bytes {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
-}
+
 fn open_history(db: &Arc<Db<SchemaDescriptor>>) -> LocalHistory<SchemaDescriptor> {
     LocalHistory::create(
         Arc::clone(db),
@@ -203,9 +196,12 @@ fn whole_suffix_executes_into_one_frozen_verified_target() {
 
     // The published target is complete, still frozen, and carries the
     // transformed rows plus the seed exactly once.
-    let target_dir: PathBuf = root
-        .join("targets")
-        .join(hex_name(incarnation(0xe1).as_core().as_bytes()));
+    let target_dir: PathBuf = bumbledb_log::migration::lock::TargetNamespace::new(
+        &root.join("targets"),
+        incarnation(0xe1),
+    )
+    .unwrap()
+    .target_dir();
     {
         // (Scoped so the handle closes before any later open of this env.)
         let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
@@ -442,9 +438,12 @@ fn initialization_runs_the_chain_and_seeds_exactly_once() {
         &work(),
     )
     .unwrap();
-    let target_dir = root
-        .join("targets")
-        .join(hex_name(incarnation(0xe5).as_core().as_bytes()));
+    let target_dir = bumbledb_log::migration::lock::TargetNamespace::new(
+        &root.join("targets"),
+        incarnation(0xe5),
+    )
+    .unwrap()
+    .target_dir();
     let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     assert_eq!(scan_all(&target, RelationId(1)).len(), 1, "one seed row");
     assert_eq!(
@@ -503,9 +502,12 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
         &work(),
     )
     .unwrap();
-    let mid_dir = root_b
-        .join("targets")
-        .join(hex_name(incarnation(0xe7).as_core().as_bytes()));
+    let mid_dir = bumbledb_log::migration::lock::TargetNamespace::new(
+        &root_b.join("targets"),
+        incarnation(0xe7),
+    )
+    .unwrap()
+    .target_dir();
     let mid: Arc<Db<SchemaDescriptor>> =
         Arc::new(Db::open(&mid_dir, pinned_schema(), work()).unwrap());
     let mid_history = LocalHistory::open(Arc::clone(&mid), LIMITS).unwrap();
@@ -528,12 +530,18 @@ fn ordered_step_meaning_matches_the_independent_two_pass_evaluation() {
     };
 
     // Same final application facts either way.
-    let fused_dir = root_a.join("targets").join(hex_name(
-        fused_ref.target.incarnation_id.as_core().as_bytes(),
-    ));
-    let stepwise_dir = root_b.join("targets").join(hex_name(
-        second_ref.target.incarnation_id.as_core().as_bytes(),
-    ));
+    let fused_dir = bumbledb_log::migration::lock::TargetNamespace::new(
+        &root_a.join("targets"),
+        fused_ref.target.incarnation_id,
+    )
+    .unwrap()
+    .target_dir();
+    let stepwise_dir = bumbledb_log::migration::lock::TargetNamespace::new(
+        &root_b.join("targets"),
+        second_ref.target.incarnation_id,
+    )
+    .unwrap()
+    .target_dir();
     let fused: Db<SchemaDescriptor> = Db::open(&fused_dir, tagged_schema(), work()).unwrap();
     let stepwise: Db<SchemaDescriptor> = Db::open(&stepwise_dir, tagged_schema(), work()).unwrap();
     assert_eq!(
@@ -596,9 +604,12 @@ fn history_chain_flattens_to_the_exact_manifest_prefix() {
     .unwrap();
     // The target's chain is the inherited (empty) history plus ONE Applied
     // record whose flattened steps equal the whole manifest.
-    let target_dir = root
-        .join("targets")
-        .join(hex_name(incarnation(0xea).as_core().as_bytes()));
+    let target_dir = bumbledb_log::migration::lock::TargetNamespace::new(
+        &root.join("targets"),
+        incarnation(0xea),
+    )
+    .unwrap()
+    .target_dir();
     let target: Db<SchemaDescriptor> = Db::open(&target_dir, tagged_schema(), work()).unwrap();
     let mut chain_rows = Vec::new();
     target
