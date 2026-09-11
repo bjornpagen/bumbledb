@@ -112,13 +112,21 @@ test("imported projections preserve signedness, interval descriptors and closed 
 		score: 1.5
 	}
 	assert.equal(value.kind, "One")
-	const packed = query(Theory).rule((r) =>
-		r.match(labels, row).find({ span: r.pack(row.span), count: r.count(), mean: r.mean(row.score) })
-	)
+	const packed = query(Theory).rule((r) => r.match(labels, row).find({ span: r.pack(row.span) }))
 	const packedRow = v(packed)
-	assert.equal(packedRow.span.field.width, 1n)
-	assert.equal(Compute.add(packedRow.count, Compute.u64(1n)).result, "u64")
-	assert.equal(Compute.add(packedRow.mean, Compute.f64(1)).result, "f64")
+	assert.equal(packedRow.span.field.width, undefined, "packing can merge fixed-width inputs into a longer interval")
+	const totals = query(Theory).rule((r) => r.match(labels, row).find({ count: r.count(), mean: r.mean(row.score) }))
+	const totalsRow = v(totals)
+	assert.equal(Compute.add(totalsRow.count, Compute.u64(1n)).result, "u64")
+	assert.equal(Compute.add(totalsRow.mean, Compute.f64(1)).result, "f64")
+	assert.throws(
+		() => query(Theory).rule((r) => r.match(labels, row).find({ span: r.pack(row.span), count: r.count() })),
+		/separate query stages/
+	)
+	assert.throws(
+		() => query(Theory).rule((r) => r.match(labels, row).find({ first: r.pack(row.span), second: r.pack(row.span) })),
+		/one interval column/
+	)
 	assert.throws(() => {
 		// @ts-expect-error Imported text remains nonnumeric.
 		Compute.add(row.text, Compute.u64(1n))

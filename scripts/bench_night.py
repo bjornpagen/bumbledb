@@ -21,7 +21,7 @@ from bench_scheduler import policy_for_host, worker_command
 REPO = Path(__file__).resolve().parent.parent
 PREREQUISITES = {
     "correspondence-oracles": "cargo test -p bumbledb-bench correspondence",
-    "three-way-conformance": "cargo test -p bumbledb-bench three_way_conformance -- --ignored",
+    "conformance-replay": "cargo test -p bumbledb-bench the_corpus_replays_byte_identical",
     "hosted-decision": "real S3/IAM required",
     "large-populated": ">40 GiB allocated blocks + cgroup memory.max required",
     "graviton-arm64": "real Graviton Linux ARM64 performance host required",

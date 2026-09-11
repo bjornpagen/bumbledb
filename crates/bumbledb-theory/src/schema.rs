@@ -82,10 +82,8 @@ pub enum ValueType {
         element: IntervalElement,
     },
 
-    /// `interval<E, w>` — width is the type; encoding stores only the start.
-    /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`. A width that merely
-    /// checks is refused, and the element domain is discrete by type:
-    /// no `FixedInterval<F64>` can be declared.
+    /// Fixed discrete interval: width is part of its type and storage contains
+    /// only the start. Dense floating intervals have no fixed-width form.
     FixedInterval {
         element: FixedIntervalElement,
         width: u64,
@@ -187,7 +185,7 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
             },
         ) => Ok(()),
 
-        // `lean/Bumbledb/Values.lean: FixedU64.not_ray`). A wide or
+        // Fixed intervals must end below the ray sentinel.
         (
             Value::IntervalU64(interval),
             ValueType::FixedInterval {
@@ -214,16 +212,14 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
     }
 }
 
-/// One σ binding's literal set. The selected field's value is a member of the spelled set.
-/// `lean/Bumbledb/Schema.lean: Selection`, `Selection.singleton_satisfies_iff`.
-/// `Many` is sorted, duplicate-free, at least two literals.
+/// One selection binding's literal set. A field satisfies it by membership.
+/// Many is sorted, duplicate-free, and contains at least two literals.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LiteralSet {
     /// One literal: the equality binding.
     One(Value),
 
     /// Two or more literals, read disjunctively.
-    /// `lean/Bumbledb/Countermodels.lean: disjunctive_window_not_literal_conjunction`.
     Many(Box<[Value]>),
 }
 
@@ -262,15 +258,10 @@ pub struct Side {
     pub selection: Box<[(FieldId, LiteralSet)]>,
 }
 
-/// The measure of one source fact — a capacity statement's weight, the
-/// TOTAL three-case sum (ruled 2026-07-24, C4: `Unit` is a case, not an
-/// absence, so the wire, the descriptor encoding, and this type agree
-/// that unit weight crosses explicitly;
-/// (`<={lo..hi}` — the utterance survives character for character);
-/// `Field` reads a u64-encoded SOURCE position (signed encodings are
-/// gate-refused — polarity: a negative weight would let an insert lower
-/// a sum); `DurationOf` reads a SOURCE interval position's measure (the
-/// `lean/Bumbledb/Schema.lean: Weight`). `Unit` is the count instance
+/// The contribution of one source fact to a capacity sum. Unit counts a
+/// fact, Field reads its unsigned scalar weight, and `DurationOf` measures
+/// its interval. Signed weights are refused because an insertion must not
+/// lower the total.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Weight {
     Unit,
@@ -280,15 +271,9 @@ pub enum Weight {
     DurationOf(FieldId),
 }
 
-/// A capacity ceiling: a literal, or a DEPENDENT bound read from the
-/// TARGET's row (per-group capacity — `{0..supply}`; ruled 2026-07-24,
-/// C1: the ident resolves by NAME against the target's whole field
-/// roster, never through the projection tuple;
-/// interval measure of a target interval position — the calendar law's
-/// `{0..Duration(span)}` ceiling. The floor is not a `Bound`: dependent
-/// bounds are hi-slot only (ruled 2026-07-24, C6 — a dependent floor
-/// has no use case, and inversion with idents is statically
-/// `lean/Bumbledb/Schema.lean: Bound`). `TargetDuration` is the
+/// Capacity ceiling: a literal, a target unsigned field, or the duration
+/// of a target interval. Field names resolve against the whole target row.
+/// The lower bound is always literal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Bound {
     Lit(u64),
@@ -315,7 +300,6 @@ pub enum StatementDescriptor {
         target: Side,
     },
 
-    /// `lean/Bumbledb/Capacity.lean: CapacityLaw`; `lean/Bumbledb/Schema.lean: Statement.capacity`.
     /// Field order is target, weight, window, source.
     Capacity {
         target: Side,

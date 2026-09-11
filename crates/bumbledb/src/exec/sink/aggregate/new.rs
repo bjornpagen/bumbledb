@@ -92,8 +92,7 @@ impl AggregateSink {
         Self::build(finds, slot_count, DedupRegime::Union, hint, &[])
     }
 
-    /// DNF union seen-set re-keys on the shared slot arrays
-    /// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+    /// DNF union deduplicates bindings using the shared slot arrays.
     #[must_use]
     pub fn for_dnf_union(
         finds: &[FindSpec],

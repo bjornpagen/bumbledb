@@ -8,6 +8,7 @@
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
+import { Scalar } from "@bjornpagen/bumbledb"
 import { planExpressionOf, planValueOf } from "#migrations/expr.ts"
 
 function ok(expression: unknown) {
@@ -96,6 +97,8 @@ describe("the frozen expression roster round-trips exactly", function suite() {
 	test("anything outside the frozen grammar refuses — no callback or eval escape", function outsideGrammar() {
 		assert.ok(bad(() => false).includes("functions, promises and plain hosts are not plan data"))
 		assert.ok(bad({ kind: "jsEval", source: "process.exit(1)" }).includes("unsupported expression node"))
+		for (const kind of ["__proto__", "toString", "constructor"])
+			assert.ok(bad({ kind }).includes("unsupported expression node"))
 		assert.ok(bad({ kind: "cast", cast: "toString", expr: { kind: "field", name: "x" } }).includes("unknown cast"))
 		assert.ok(bad({ kind: "field", name: "" }).includes("bounded source field name"))
 		assert.ok(bad(null).length > 0)
@@ -116,4 +119,25 @@ describe("the frozen expression roster round-trips exactly", function suite() {
 		// 64 doublings explode past 4096 nodes long before depth 128.
 		assert.ok(bad(wide).includes("larger than 4096 nodes"))
 	})
+})
+
+test("measurement and exact quotient share the core authoring AST and reject unknown fields", () => {
+	const expression = {
+		kind: "mulDiv",
+		a: { kind: "measure", expr: { kind: "field", name: "span" } },
+		b: { kind: "literal", value: { u64: "2" } },
+		divisor: { kind: "literal", value: { u64: "3" } },
+		rounding: "nearestTiesToEven"
+	} as const
+	const result = ok(expression)
+	assert.deepEqual(result.expression, expression)
+	assert.deepEqual(result.fields, ["span"])
+	for (const rounding of ["towardZero", "nearestTiesAwayFromZero", "nearestTiesToEven"] as const) {
+		const authored = Scalar.mulDiv(Scalar.measure(Scalar.field("span")), Scalar.u64(2n), Scalar.u64(3n), rounding)
+		assert.deepEqual(ok(authored), { ...result, expression: { ...expression, rounding } })
+		assert.deepEqual(ok({ ...authored }), ok(authored), "ordinary copied descriptors have identical meaning")
+	}
+	assert.match(bad({ ...expression, ignored: true }), /unknown/)
+	assert.match(bad({ ...expression, rounding: "future" }), /rounding/)
+	assert.match(bad({ ...expression, a: { ...expression.a, ignored: true } }), /unknown/)
 })

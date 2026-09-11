@@ -1038,7 +1038,7 @@ mod tests {
             match rel {
                 // The DU cluster commits together (either side alone
                 // violates one `==` direction) — the verify loader's
-                // rule, replicated lean.
+                // rule, replicated in the independent evaluator.
                 ids::JOURNAL_ENTRY => {
                     let entries = corpus_rows(&domains, ids::JOURNAL_ENTRY);
                     let batches = corpus_rows(&domains, ids::IMPORT_BATCH);

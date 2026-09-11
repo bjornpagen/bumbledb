@@ -1,4 +1,4 @@
-//! Shared typed scalar output language for queries and schema migrations.
+//! Shared typed scalar execution for queries and schema migrations.
 //! Partial operations are stage outputs, never speculative filter terms.
 use crate::exec::kernel::numeric::{NumericalGuard, environment};
 use crate::schema::ValueType;
@@ -12,6 +12,35 @@ pub enum NumericCast {
     ToU64Exact,
 }
 
+/// Exact integer quotient rounding, shared by every scalar binding scope.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rounding {
+    TowardZero,
+    NearestTiesAwayFromZero,
+    NearestTiesToEven,
+}
+
+impl Rounding {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::TowardZero => "towardZero",
+            Self::NearestTiesAwayFromZero => "nearestTiesAwayFromZero",
+            Self::NearestTiesToEven => "nearestTiesToEven",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "towardZero" => Some(Self::TowardZero),
+            "nearestTiesAwayFromZero" => Some(Self::NearestTiesAwayFromZero),
+            "nearestTiesToEven" => Some(Self::NearestTiesToEven),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ScalarExpr {
     Var(VarId),
@@ -21,7 +50,17 @@ pub enum ScalarExpr {
     Subtract(Box<Self>, Box<Self>),
     Multiply(Box<Self>, Box<Self>),
     Divide(Box<Self>, Box<Self>),
-    Cast { kind: NumericCast, expr: Box<Self> },
+    MulDiv {
+        a: Box<Self>,
+        b: Box<Self>,
+        divisor: Box<Self>,
+        rounding: Rounding,
+    },
+    Measure(Box<Self>),
+    Cast {
+        kind: NumericCast,
+        expr: Box<Self>,
+    },
     IsNaN(Box<Self>),
     IsFinite(Box<Self>),
 }
@@ -34,6 +73,8 @@ pub enum ScalarError {
     Cast(F64CastError),
     Overflow,
     DivisionByZero,
+    NonPositiveDivisor,
+    UnboundedMeasure,
     UnsupportedPlatform,
     TooDeep,
 }
@@ -53,7 +94,11 @@ impl ScalarExpr {
                 match expr {
                     Self::Var(var) => return Some(*var),
                     Self::Literal(_) => {}
-                    Self::Negate(value)
+                    Self::MulDiv { a, b, divisor, .. } => {
+                        pending.extend([divisor.as_ref(), b.as_ref(), a.as_ref()]);
+                    }
+                    Self::Measure(value)
+                    | Self::Negate(value)
                     | Self::Cast { expr: value, .. }
                     | Self::IsNaN(value)
                     | Self::IsFinite(value) => pending.push(value),
@@ -97,7 +142,33 @@ impl ScalarExpr {
             Self::Literal(Value::U64(_)) => Ok(ValueType::U64),
             Self::Literal(Value::F64(_)) => Ok(ValueType::F64),
             Self::Literal(Value::Bool(_)) => Ok(ValueType::Bool),
+            Self::Literal(Value::IntervalU64(_)) => Ok(ValueType::Interval {
+                element: crate::schema::IntervalElement::U64,
+            }),
+            Self::Literal(Value::IntervalI64(_)) => Ok(ValueType::Interval {
+                element: crate::schema::IntervalElement::I64,
+            }),
+            Self::Literal(Value::IntervalF64(_)) => Ok(ValueType::Interval {
+                element: crate::schema::IntervalElement::F64,
+            }),
             Self::Literal(_) => Err(ScalarError::NotNumeric),
+            Self::Measure(value) => match unary(value, variable)? {
+                ValueType::Interval {
+                    element: crate::schema::IntervalElement::F64,
+                } => Ok(ValueType::F64),
+                ValueType::Interval { .. } | ValueType::FixedInterval { .. } => Ok(ValueType::U64),
+                _ => Err(ScalarError::TypeMismatch),
+            },
+            Self::MulDiv { a, b, divisor, .. } => {
+                let a = unary(a, variable)?;
+                let b = unary(b, variable)?;
+                let d = unary(divisor, variable)?;
+                if a == b && a == d && matches!(a, ValueType::I64 | ValueType::U64) {
+                    Ok(a)
+                } else {
+                    Err(ScalarError::TypeMismatch)
+                }
+            }
             Self::Negate(value) => {
                 let ty = unary(value, variable)?;
                 if matches!(ty, ValueType::I64 | ValueType::F64) {
@@ -192,6 +263,34 @@ fn evaluate(
     match expr {
         ScalarExpr::Var(var) => variable(*var),
         ScalarExpr::Literal(value) => Ok(value.clone()),
+        ScalarExpr::Measure(value) => match eval(value, variable)? {
+            Value::IntervalU64(span) => span
+                .duration()
+                .map(Value::U64)
+                .ok_or(ScalarError::UnboundedMeasure),
+            Value::IntervalI64(span) => span
+                .duration()
+                .map(Value::U64)
+                .ok_or(ScalarError::UnboundedMeasure),
+            Value::IntervalF64(span) => {
+                span.length().map(Value::F64).map_err(|error| match error {
+                    bumbledb_theory::FloatMeasureError::Unbounded => ScalarError::UnboundedMeasure,
+                    bumbledb_theory::FloatMeasureError::Overflow => ScalarError::Overflow,
+                })
+            }
+            _ => Err(ScalarError::TypeMismatch),
+        },
+        ScalarExpr::MulDiv {
+            a,
+            b,
+            divisor,
+            rounding,
+        } => mul_div(
+            eval(a, variable)?,
+            eval(b, variable)?,
+            eval(divisor, variable)?,
+            *rounding,
+        ),
         ScalarExpr::Negate(value) => match eval(value, variable)? {
             Value::F64(value) => Ok(Value::F64(value.negated())),
             Value::I64(value) => value
@@ -285,5 +384,255 @@ fn cast(kind: NumericCast, value: Value) -> Result<Value, ScalarError> {
             .map(Value::U64)
             .map_err(|_| err(F64CastError::OutOfRange)),
         _ => Err(ScalarError::TypeMismatch),
+    }
+}
+
+/// Fixed-width product, exact quotient/remainder, one final public range check.
+fn mul_div(a: Value, b: Value, divisor: Value, rounding: Rounding) -> Result<Value, ScalarError> {
+    fn quotient(product: u128, divisor: u128, rounding: Rounding) -> u128 {
+        let q = product / divisor;
+        let r = product % divisor;
+        let increment = match rounding {
+            Rounding::TowardZero => false,
+            Rounding::NearestTiesAwayFromZero => r != 0 && r >= divisor - r,
+            Rounding::NearestTiesToEven => {
+                r > divisor - r || (r == divisor - r && !q.is_multiple_of(2))
+            }
+        };
+        // Products of two 64-bit values leave room for this one increment.
+        q + u128::from(increment)
+    }
+    match (a, b, divisor) {
+        (Value::U64(a), Value::U64(b), Value::U64(d)) => {
+            if d == 0 {
+                return Err(ScalarError::DivisionByZero);
+            }
+            let rounded = quotient(u128::from(a) * u128::from(b), u128::from(d), rounding);
+            u64::try_from(rounded)
+                .map(Value::U64)
+                .map_err(|_| ScalarError::Overflow)
+        }
+        (Value::I64(a), Value::I64(b), Value::I64(d)) => {
+            if d == 0 {
+                return Err(ScalarError::DivisionByZero);
+            }
+            if d < 0 {
+                return Err(ScalarError::NonPositiveDivisor);
+            }
+            let product = i128::from(a) * i128::from(b);
+            let magnitude = quotient(
+                product.unsigned_abs(),
+                u128::from(d.unsigned_abs()),
+                rounding,
+            );
+            // A signed 64-bit product magnitude is at most 2^126.
+            let rounded =
+                i128::try_from(magnitude).expect("64-bit product fits signed wide magnitude");
+            let signed = if product < 0 { -rounded } else { rounded };
+            i64::try_from(signed)
+                .map(Value::I64)
+                .map_err(|_| ScalarError::Overflow)
+        }
+        _ => Err(ScalarError::TypeMismatch),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[expect(
+        clippy::needless_pass_by_value,
+        reason = "test expression builder consumes temporary trees"
+    )]
+    fn run(expr: ScalarExpr) -> Result<Value, ScalarError> {
+        ScalarEvaluator::new()
+            .unwrap()
+            .evaluate(&expr, |v| Err(ScalarError::UnboundVariable(v)))
+    }
+
+    fn quotient(a: Value, b: Value, d: Value, rounding: Rounding) -> ScalarExpr {
+        ScalarExpr::MulDiv {
+            a: Box::new(ScalarExpr::Literal(a)),
+            b: Box::new(ScalarExpr::Literal(b)),
+            divisor: Box::new(ScalarExpr::Literal(d)),
+            rounding,
+        }
+    }
+
+    #[test]
+    fn rounded_quotient_uses_exact_wide_product_and_final_range() {
+        use Rounding::{
+            NearestTiesAwayFromZero as Away, NearestTiesToEven as Even, TowardZero as Zero,
+        };
+        for (a, mode, expected) in [
+            (5, Zero, 2),
+            (5, Away, 3),
+            (5, Even, 2),
+            (-5, Zero, -2),
+            (-5, Away, -3),
+            (-5, Even, -2),
+            (7, Even, 4),
+            (-7, Even, -4),
+        ] {
+            assert_eq!(
+                run(quotient(Value::I64(a), Value::I64(1), Value::I64(2), mode)),
+                Ok(Value::I64(expected))
+            );
+        }
+        for mode in [Zero, Away, Even] {
+            assert_eq!(
+                run(quotient(
+                    Value::U64(u64::MAX),
+                    Value::U64(2),
+                    Value::U64(2),
+                    mode
+                )),
+                Ok(Value::U64(u64::MAX))
+            );
+            assert_eq!(
+                run(quotient(
+                    Value::I64(i64::MIN),
+                    Value::I64(-1),
+                    Value::I64(2),
+                    mode
+                )),
+                Ok(Value::I64(1 << 62))
+            );
+            assert_eq!(
+                run(quotient(
+                    Value::I64(i64::MIN),
+                    Value::I64(-1),
+                    Value::I64(1),
+                    mode
+                )),
+                Err(ScalarError::Overflow)
+            );
+            assert_eq!(
+                run(quotient(
+                    Value::I64(i64::MIN),
+                    Value::I64(1),
+                    Value::I64(1),
+                    mode
+                )),
+                Ok(Value::I64(i64::MIN))
+            );
+            assert_eq!(
+                run(quotient(
+                    Value::U64(u64::MAX),
+                    Value::U64(u64::MAX),
+                    Value::U64(u64::MAX),
+                    mode
+                )),
+                Ok(Value::U64(u64::MAX))
+            );
+        }
+        assert_eq!(
+            run(quotient(Value::I64(1), Value::I64(1), Value::I64(-2), Zero)),
+            Err(ScalarError::NonPositiveDivisor)
+        );
+        assert_eq!(
+            run(quotient(Value::U64(1), Value::U64(1), Value::U64(0), Zero)),
+            Err(ScalarError::DivisionByZero)
+        );
+        assert_eq!(
+            run(quotient(Value::I64(1), Value::U64(1), Value::I64(2), Zero)),
+            Err(ScalarError::TypeMismatch)
+        );
+        assert_eq!(
+            run(ScalarExpr::Multiply(
+                Box::new(ScalarExpr::Literal(Value::U64(u64::MAX))),
+                Box::new(ScalarExpr::Literal(Value::U64(2)))
+            )),
+            Err(ScalarError::Overflow)
+        );
+    }
+
+    #[test]
+    fn small_signed_quotients_match_nearest_integer_distance_oracle() {
+        // Select among integers by distance to the rational; no production
+        // quotient/remainder rounding logic participates in this oracle.
+        for a in -15i64..=15 {
+            for b in -5i64..=5 {
+                for d in 1i64..=11 {
+                    for mode in [
+                        Rounding::TowardZero,
+                        Rounding::NearestTiesAwayFromZero,
+                        Rounding::NearestTiesToEven,
+                    ] {
+                        let product = a * b;
+                        let expected = if mode == Rounding::TowardZero {
+                            product / d
+                        } else {
+                            (-76i64..=76)
+                                .min_by_key(|q| {
+                                    (
+                                        (q * d - product).abs(),
+                                        match mode {
+                                            Rounding::NearestTiesAwayFromZero => -q.abs(),
+                                            Rounding::NearestTiesToEven => q.abs() % 2,
+                                            Rounding::TowardZero => unreachable!(),
+                                        },
+                                    )
+                                })
+                                .unwrap()
+                        };
+                        assert_eq!(
+                            run(quotient(Value::I64(a), Value::I64(b), Value::I64(d), mode)),
+                            Ok(Value::I64(expected))
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn measure_preserves_interval_domains_and_typechecks_without_rows() {
+        use crate::Interval;
+        let measure = |value| run(ScalarExpr::Measure(Box::new(ScalarExpr::Literal(value))));
+        assert_eq!(
+            measure(Value::IntervalI64(
+                Interval::new(i64::MIN, i64::MAX - 1).unwrap()
+            )),
+            Ok(Value::U64(u64::MAX - 1))
+        );
+        assert_eq!(
+            measure(Value::IntervalU64(Interval::ray(0).unwrap())),
+            Err(ScalarError::UnboundedMeasure)
+        );
+        assert_eq!(
+            measure(Value::IntervalF64(
+                Interval::new(F64::from(-1.5), F64::from(2.5)).unwrap()
+            )),
+            Ok(Value::F64(F64::from(4.0)))
+        );
+        assert_eq!(
+            measure(Value::IntervalF64(
+                Interval::new(F64::from(-f64::MAX), F64::from(f64::MAX)).unwrap()
+            )),
+            Err(ScalarError::Overflow)
+        );
+        assert_eq!(
+            measure(Value::IntervalF64(
+                Interval::new(F64::from(f64::NEG_INFINITY), F64::from(0.0)).unwrap()
+            )),
+            Err(ScalarError::UnboundedMeasure)
+        );
+        assert_eq!(
+            ScalarExpr::Measure(Box::new(ScalarExpr::Var(VarId(0))))
+                .result_type(|_| Some(ValueType::U64)),
+            Err(ScalarError::TypeMismatch)
+        );
+        assert_eq!(
+            quotient(
+                Value::F64(F64::from(1.0)),
+                Value::F64(F64::from(2.0)),
+                Value::F64(F64::from(3.0)),
+                Rounding::TowardZero
+            )
+            .result_type(|_| None),
+            Err(ScalarError::TypeMismatch)
+        );
     }
 }

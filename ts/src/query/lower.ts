@@ -1,6 +1,6 @@
 import { membersAgree, sealedFieldsOf } from "#closed.ts"
 import { AuthoringError, SdkInvariantError } from "#errors.ts"
-import type { AnyClosedRoster, AnyField } from "#fields.ts"
+import type { AnyClosedRoster, AnyField, IntervalField } from "#fields.ts"
 import {
 	assertDeclarationOrderKey,
 	f64 as f64Field,
@@ -87,7 +87,8 @@ import {
 	renderFieldKind,
 	term
 } from "#query/scope.ts"
-import { literalWireOf } from "#scalar.ts"
+import { difference, intersection, isSegments, segmentField } from "#query/segments.ts"
+import { scalarWire } from "#scalar.ts"
 import type { AnySchema, Schema, SchemaRelations } from "#schema.ts"
 import { schemaDescriptor, schemasAgree } from "#schema.ts"
 import { arrayValue, recordValue, taggedValueOf } from "#values.ts"
@@ -147,6 +148,8 @@ interface TermOps {
 	readonly mean: typeof mean
 	readonly min: typeof min
 	readonly max: typeof max
+	readonly intersection: typeof intersection
+	readonly difference: typeof difference
 	readonly pack: typeof pack
 }
 
@@ -476,7 +479,9 @@ const termOps: TermOps = Object.freeze({
 	mean,
 	min,
 	max,
-	pack
+	pack,
+	intersection,
+	difference
 })
 
 interface RuleBuildState {
@@ -865,6 +870,8 @@ function findColumnOf(name: string, entry: unknown): FindColumn {
 			message: `find ${name}: a ${entry[term]} is not projectable — find takes variables, aggregates or Compute expressions`
 		})
 	}
+	if (isSegments(entry))
+		return Object.freeze({ name, entry: Object.freeze({ ...entry }), closed: undefined, slot: undefined })
 	if (isComputeExpr(entry)) {
 		return Object.freeze({
 			name,
@@ -940,6 +947,7 @@ function assertNumeric(where: string, position: string, ref: AnyVar): void {
  */
 function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedField | undefined {
 	const entry = column.entry
+	if (entry.kind === "segments") return { field: segmentField(entry), class: undefined }
 	if (entry.kind === "var") {
 		return mintSlotOf(context, entry.over)
 	}
@@ -957,13 +965,21 @@ function findColumnSlotOf(context: ChainContext, column: FindColumn): ClassedFie
 			return { field: agg.over.field, class: undefined }
 		}
 		case "pack":
-			return { field: agg.over.field, class: undefined }
+			return {
+				field: { kind: "interval", element: (agg.over.field as IntervalField).element, width: undefined },
+				class: undefined
+			}
 	}
 }
 
 function validateColumn(context: ChainContext, bound: ReadonlySet<AnyVar>, column: FindColumn): void {
 	const where = `${contextLabel(context)} find ${column.name}`
 	const entry = column.entry
+	if (entry.kind === "segments") {
+		assertBound(where, bound, entry.left)
+		assertBound(where, bound, entry.right)
+		return
+	}
 	if (entry.kind === "var") {
 		assertBound(where, bound, entry.over)
 		return
@@ -1085,6 +1101,13 @@ function completeRule(context: ChainContext, state: RuleBuildState, rawColumns: 
 	if (rawColumns.length === 0) {
 		throw new AuthoringError({ message: `${label}: a find needs at least one entry` })
 	}
+	const aggregates = rawColumns.flatMap((column) => (column.entry.kind === "aggregate" ? [column.entry.agg] : []))
+	const packs = aggregates.filter((agg) => agg.op === "pack").length
+	if (packs > 1) throw new AuthoringError({ message: "a query stage can pack one interval column" })
+	if (packs !== 0 && aggregates.length !== packs)
+		throw new AuthoringError({ message: "pack intervals and compute numeric aggregates in separate query stages" })
+	if (rawColumns.some((c) => c.entry.kind === "segments") && aggregates.length !== 0)
+		throw new AuthoringError({ message: "aggregate generated segments in a following query stage" })
 	const columns = rawColumns.map(function enrichColumn(column): FindColumn {
 		assertDeclarationOrderKey(`${label} find column`, column.name)
 		validateColumn(context, state.bound, column)
@@ -1521,6 +1544,7 @@ function renderClosedSlice(closed: AnyClosedRoster | undefined): string {
 
 function headSignature(column: FindColumn): string {
 	const entry = column.entry
+	if (entry.kind === "segments") return `${column.name}:compute`
 	if (entry.kind === "var") {
 		return `${column.name}:var`
 	}
@@ -2186,34 +2210,15 @@ function lowerComputeNode(node: QueryNode, ids: VarIds): ScalarExprIr {
 }
 
 function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
-	switch (node.kind) {
-		case "var":
-			return { kind: "var", var: ids.of(node.ref as AnyVar) }
-		case "literal":
-			return { kind: "literal", value: literalWireOf(node.value) }
-		case "negate":
-		case "isNaN":
-		case "isFinite":
-			return { kind: node.kind, expr: lowerComputeGrammar(node.expr, ids) }
-		case "cast":
-			return { kind: "cast", cast: node.cast, expr: lowerComputeGrammar(node.expr, ids) }
-		case "add":
-		case "subtract":
-		case "multiply":
-		case "divide":
-			return {
-				kind: node.kind,
-				left: lowerComputeGrammar(node.left, ids),
-				right: lowerComputeGrammar(node.right, ids)
-			}
-		default:
-			throw new AuthoringError({
-				message: "query lowering: a query-var tree cannot carry a source-field leaf — use Compute over bound variables"
-			})
-	}
+	return scalarWire(node, (leaf) => {
+		if (leaf.kind !== "var") throw new AuthoringError({ message: "query expressions require bound variables" })
+		return ids.of(leaf.ref as AnyVar)
+	})
 }
 
 function lowerFind(entry: FindEntryData, ids: VarIds): FindTermIr {
+	if (entry.kind === "segments")
+		return { kind: entry.kind, op: entry.op, left: ids.of(entry.left), right: ids.of(entry.right) }
 	if (entry.kind === "var") {
 		return { kind: "var", var: ids.of(entry.over) }
 	}
@@ -2244,6 +2249,7 @@ function headOpOf(agg: AggData): HeadOpIr {
 
 function headTermOf(column: FindColumn): HeadTermIr {
 	const entry = column.entry
+	if (entry.kind === "segments") return { kind: "compute" }
 	if (entry.kind === "var") {
 		return { kind: "var" }
 	}

@@ -696,8 +696,6 @@ fn nullary_fact_layout_is_empty() {
     assert!(fact.is_empty());
 }
 
-// (`lean/Bumbledb/Values.lean: FixedU64.not_ray`).
-
 fn fixed_layout(element: FixedIntervalElement, width: u64) -> FactLayout {
     FactLayout::new(&[ValueType::U64, ValueType::FixedInterval { element, width }])
 }
@@ -812,10 +810,8 @@ fn fixed_interval_decode_rejects_a_start_at_the_q2_bound() {
     );
 }
 
-/// The fixed encoding is trivially the scalar embedding
-/// (`lean/Bumbledb/Values.lean: encode_fixed_order_u64`): the one stored word
-/// is `encode_u64`/`encode_i64` of the start, so the exhaustive scalar suites
-/// above ARE this family's order proof.
+/// Fixed-interval encoding stores `encode_u64`/`encode_i64` of the start.
+/// The scalar order tests therefore also exercise this representation.
 #[test]
 fn exhaustive_fixed_interval_start_word_preserves_start_order() {
     for width in [1u64, 2, 255, 1 << 32, u64::MAX - 2] {

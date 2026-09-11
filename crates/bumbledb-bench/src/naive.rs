@@ -54,8 +54,7 @@ pub enum Violation {
         direction: Direction,
     },
 
-    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). The twin carries
-    /// the WITNESSED measure (ruled 2026-07-24, C14 — measure parity in
+    /// The independent model carries the witnessed source measure.
     Capacity {
         statement: StatementId,
 
@@ -414,7 +413,7 @@ impl NaiveDb {
         (next, inserted)
     }
 
-    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`). Returns the
+    /// Return the independently computed capacity contribution.
     #[expect(
         clippy::too_many_arguments,
         reason = "the parameter list IS the capacity statement's descriptor, spelled flat"
@@ -628,9 +627,8 @@ impl NaiveDb {
     }
 }
 
-/// Does the fact satisfy a side's σ — per selected field, membership in the
-/// binding's literal set (a singleton set is plain equality —
-/// `lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff`)?
+/// Test every selected field for membership in its literal set.
+/// A singleton selection is equality.
 fn satisfies_selection(
     fact: &Tuple,
     selection: &[(bumbledb::FieldId, bumbledb::schema::LiteralSet)],

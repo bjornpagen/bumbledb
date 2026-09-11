@@ -1,5 +1,5 @@
-//! Each document is written only after Format in `lean/conformance/README.md` §
-//! complete-admission cases.
+//! Complete-admission fixtures compare populated candidate states against
+//! independent judgment without assuming a lawful parent.
 use bumbledb::Value;
 use bumbledb::schema::{
     Bound, FieldDescriptor, FieldId, RelationDescriptor, RelationId, Row, SchemaDescriptor, Side,

@@ -34,11 +34,72 @@ pub enum QueryError {
 /// binary64 operations canonicalized per node (`F64::from_bits`
 /// renormalizes every zero and NaN encoding), exact-or-refused casts, and
 /// no mixed-type promotion anywhere.
-fn eval_scalar(expr: &ScalarExpr, binding: &Tuple, find: usize) -> Result<Value, QueryError> {
+pub(super) fn eval_scalar(
+    expr: &ScalarExpr,
+    binding: &Tuple,
+    find: usize,
+) -> Result<Value, QueryError> {
     let refuse = QueryError::Scalar { find };
     match expr {
         ScalarExpr::Var(var) => Ok(binding.0[usize::from(var.0)].clone()),
         ScalarExpr::Literal(value) => Ok(value.clone()),
+        ScalarExpr::MulDiv {
+            a,
+            b,
+            divisor,
+            rounding,
+        } => {
+            let a = eval_scalar(a, binding, find)?;
+            let b = eval_scalar(b, binding, find)?;
+            let d = eval_scalar(divisor, binding, find)?;
+            let (magnitude, divisor, negative, signed) = match (a, b, d) {
+                (Value::U64(a), Value::U64(b), Value::U64(d)) if d > 0 => {
+                    (u128::from(a) * u128::from(b), u128::from(d), false, false)
+                }
+                (Value::I64(a), Value::I64(b), Value::I64(d)) if d > 0 => {
+                    let p = i128::from(a) * i128::from(b);
+                    (p.unsigned_abs(), u128::from(d.unsigned_abs()), p < 0, true)
+                }
+                _ => return Err(refuse),
+            };
+            let q = magnitude / divisor;
+            // Independent oracle: doubled remainder fits u128 for a 64-bit divisor.
+            let twice = 2 * (magnitude % divisor);
+            let step = match rounding {
+                bumbledb::Rounding::TowardZero => false,
+                bumbledb::Rounding::NearestTiesAwayFromZero => twice >= divisor,
+                bumbledb::Rounding::NearestTiesToEven => {
+                    twice > divisor || (twice == divisor && q & 1 == 1)
+                }
+            };
+            let q = q + u128::from(step);
+            if signed {
+                let q = i128::try_from(q).map_err(|_| refuse)?;
+                i64::try_from(if negative { -q } else { q })
+                    .map(Value::I64)
+                    .map_err(|_| refuse)
+            } else {
+                u64::try_from(q).map(Value::U64).map_err(|_| refuse)
+            }
+        }
+        ScalarExpr::Measure(value) => match eval_scalar(value, binding, find)? {
+            Value::IntervalU64(s) if s.end() != u64::MAX => Ok(Value::U64(s.end() - s.start())),
+            Value::IntervalI64(s) if s.end() != i64::MAX => {
+                u64::try_from(i128::from(s.end()) - i128::from(s.start()))
+                    .map(Value::U64)
+                    .map_err(|_| refuse)
+            }
+            Value::IntervalF64(s) => {
+                use crate::verify::finterval_oracle::{FInterval, Measure, measure};
+                let span =
+                    FInterval::new(s.start().to_bits(), s.end().to_bits()).map_err(|_| refuse)?;
+                match measure(span) {
+                    Measure::Length(bits) => Ok(Value::F64(F64::from_bits(bits))),
+                    Measure::Unbounded | Measure::Overflow => Err(refuse),
+                }
+            }
+            _ => Err(refuse),
+        },
         ScalarExpr::Negate(value) => match eval_scalar(value, binding, find)? {
             Value::F64(value) => Ok(canonical_float(-value.to_f64())),
             Value::I64(value) => i64::try_from(-i128::from(value))
@@ -270,9 +331,8 @@ enum SubstitutedTree {
     Or(Vec<SubstitutedTree>),
 }
 
-/// A derived table's facts ARE its answer tuples, read positionally:
-/// `FieldId(i)` is head position `i` (`lean/Bumbledb/Query/Denotation.lean:
-/// tupleFact` — the positional addressing interiors and rec share).
+/// A derived table's facts are its answer tuples. `FieldId(i)` reads head
+/// column i for both interiors and recursive relations.
 pub(super) struct DerivedWorld<'a> {
     sets: &'a [BTreeSet<Tuple>],
 
@@ -419,10 +479,9 @@ impl NaiveDb {
             .iter()
             .map(|find| match find {
                 FindTerm::Var(var) => var_is_interval(*var),
-                FindTerm::Pack { .. } => true,
-                // Computed heads finalize scalars (or booleans), never
-                // intervals — chapter 12 keeps arithmetic off intervals —
-                // and counts/folds are scalar outputs too.
+                FindTerm::Pack { .. } | FindTerm::Segments { .. } => true,
+                // Scalar expressions (including measurement) and numeric
+                // counts/folds have scalar outputs. Segments are separate.
                 FindTerm::Compute(_) | FindTerm::Count | FindTerm::Aggregate { .. } => false,
             })
             .collect()
@@ -518,6 +577,7 @@ impl NaiveDb {
                         | FindTerm::Aggregate { over: var, .. }
                         | FindTerm::Pack { over: var } => Ok(binding.0[usize::from(var.0)].clone()),
 
+                        FindTerm::Segments { .. } => unreachable!("segments do not mix with folds"),
                         FindTerm::Compute(expr) => eval_scalar(expr, binding, index),
 
                         FindTerm::Count => Ok(Value::Bool(false)),
@@ -548,7 +608,7 @@ impl NaiveDb {
                         .iter()
                         .enumerate()
                         .map(|(index, term)| match term {
-                            FindTerm::Var(_) | FindTerm::Compute(_) => {
+                            FindTerm::Var(_) | FindTerm::Compute(_) | FindTerm::Segments { .. } => {
                                 Ok(group[0].0[index].clone())
                             }
                             FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
@@ -567,7 +627,9 @@ impl NaiveDb {
                 .iter()
                 .enumerate()
                 .map(|(index, term)| match term {
-                    FindTerm::Var(_) | FindTerm::Compute(_) => Ok(group[0].0[index].clone()),
+                    FindTerm::Var(_) | FindTerm::Compute(_) | FindTerm::Segments { .. } => {
+                        Ok(group[0].0[index].clone())
+                    }
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
@@ -668,6 +730,10 @@ fn count_vars(rule: &Rule) -> usize {
                 for var in expr.variables() {
                     see(&mut count, var);
                 }
+            }
+            FindTerm::Segments { left, right, .. } => {
+                see(&mut count, *left);
+                see(&mut count, *right);
             }
             FindTerm::Count => {}
         }
@@ -995,6 +1061,7 @@ fn pack_group_rows(
             .enumerate()
             .map(|(index, find)| match find {
                 FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
+                FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                 FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
                 FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
@@ -1008,6 +1075,9 @@ fn pack_group_rows(
 }
 
 fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tuple>, QueryError> {
+    if finds.iter().any(|f| matches!(f, FindTerm::Segments { .. })) {
+        return project_segments(finds, bindings);
+    }
     let mut groups: BTreeMap<Tuple, Vec<&Tuple>> = BTreeMap::new();
     for binding in bindings {
         let mut key = Vec::new();
@@ -1016,6 +1086,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 FindTerm::Var(var) => key.push(binding.0[usize::from(var.0)].clone()),
                 // A computed head is a per-row output like a variable: its
                 // value distinguishes rows, so it joins the group key.
+                FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                 FindTerm::Compute(expr) => key.push(eval_scalar(expr, binding, index)?),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
             }
@@ -1033,6 +1104,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 .enumerate()
                 .map(|(index, find)| match find {
                     FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
+                    FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                     FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
@@ -1136,5 +1208,97 @@ fn fold(op: FoldOp, over: VarId, group: &[&Tuple], find: usize) -> Result<Value,
                 .expect("groups are nonempty");
             Ok(picked.clone())
         }
+    }
+}
+
+fn project_segments(
+    finds: &[FindTerm],
+    bindings: &BTreeSet<Tuple>,
+) -> Result<BTreeSet<Tuple>, QueryError> {
+    let mut output = BTreeSet::new();
+    for binding in bindings {
+        let mut choices = Vec::new();
+        let mut absent = false;
+        for term in finds {
+            if let FindTerm::Segments { op, left, right } = term {
+                let left = &binding.0[usize::from(left.0)];
+                let right = &binding.0[usize::from(right.0)];
+                // Independent endpoint partition: retain cells according to membership.
+                let (a, b) = endpoints(left);
+                let (c, d) = endpoints(right);
+                let mut cuts = vec![a, b, c, d];
+                cuts.sort_unstable();
+                cuts.dedup();
+                let mut pieces = Vec::new();
+                for cell in cuts.windows(2) {
+                    let within_a = cell[0] >= a && cell[1] <= b;
+                    let within_b = cell[0] >= c && cell[1] <= d;
+                    if within_a
+                        && match op {
+                            bumbledb::SegmentOp::Intersection => within_b,
+                            bumbledb::SegmentOp::Difference => !within_b,
+                        }
+                    {
+                        pieces.push(interval_value(left, cell[0], cell[1]));
+                    }
+                }
+                // Adjacent retained cells belong to one maximal piece.
+                let refs = pieces.iter().collect::<Vec<_>>();
+                let pieces = pack_segments(&refs);
+                absent |= pieces.is_empty();
+                choices.push(pieces);
+            } else {
+                choices.push(Vec::new());
+            }
+        }
+        if absent {
+            continue;
+        }
+        for (index, term) in finds.iter().enumerate() {
+            if choices[index].is_empty() {
+                choices[index].push(match term {
+                    FindTerm::Var(var) => binding.0[usize::from(var.0)].clone(),
+                    FindTerm::Compute(expr) => eval_scalar(expr, binding, index)?,
+                    _ => unreachable!("validated producer projection"),
+                });
+            }
+        }
+        let mut rows = vec![Vec::new()];
+        for alternatives in choices {
+            rows = rows
+                .into_iter()
+                .flat_map(|row| {
+                    alternatives.iter().map(move |value| {
+                        let mut row = row.clone();
+                        row.push(value.clone());
+                        row
+                    })
+                })
+                .collect();
+        }
+        output.extend(rows.into_iter().map(Tuple));
+    }
+    Ok(output)
+}
+
+fn interval_value(shape: &Value, start: i128, end: i128) -> Value {
+    match shape {
+        Value::IntervalU64(_) => Value::IntervalU64(
+            bumbledb::Interval::new(u64::try_from(start).unwrap(), u64::try_from(end).unwrap())
+                .unwrap(),
+        ),
+        Value::IntervalI64(_) => Value::IntervalI64(
+            bumbledb::Interval::new(i64::try_from(start).unwrap(), i64::try_from(end).unwrap())
+                .unwrap(),
+        ),
+        Value::IntervalF64(_) => {
+            let endpoint = |v| {
+                F64::from_bits(crate::verify::f64_oracle::order_key_inverse(
+                    u64::try_from(v).unwrap(),
+                ))
+            };
+            Value::IntervalF64(bumbledb::Interval::new(endpoint(start), endpoint(end)).unwrap())
+        }
+        _ => unreachable!("interval shape"),
     }
 }

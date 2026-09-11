@@ -47,6 +47,14 @@ export type PlanValue =
  * module path or opaque "run this code" node exists.
  */
 export type PlanExpression =
+	| { readonly kind: "measure"; readonly expr: PlanExpression }
+	| {
+			readonly kind: "mulDiv"
+			readonly a: PlanExpression
+			readonly b: PlanExpression
+			readonly divisor: PlanExpression
+			readonly rounding: "towardZero" | "nearestTiesAwayFromZero" | "nearestTiesToEven"
+	  }
 	| { readonly kind: "field"; readonly name: string }
 	| { readonly kind: "literal"; readonly value: PlanValue }
 	| { readonly kind: "negate"; readonly expr: PlanExpression }

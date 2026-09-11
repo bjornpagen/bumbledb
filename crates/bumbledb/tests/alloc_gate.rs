@@ -755,16 +755,10 @@ fn marks_query() -> Query {
     })
 }
 
-/// The capacity-heavy write family: warm commits that churn the marks machinery
-/// — per round, five capacity parents each take a tail append (group measure
-/// +1), a net-nothing delete-reinsert of the head (the touched-parent re-judge
-/// — the measure walk runs on a delta that nets to nothing,
-/// `lean/Bumbledb/Txn/DeltaRestriction.lean: delta_restricted_commit_sound`),
-/// and then a restoring commit removes the tails. The write delta's arena is
-/// per-commit by design — the family's assertions are the judgment's (every
-/// round commits green through live capacity laws) and the read windows' (the
-/// caller re-runs the steady-state gate after the churn: post-commit rebuild is
-/// sanctioned in warmup, then the pools must re-converge to zero).
+/// Churn capacity groups with tail insertions, delete/reinsert pairs, and
+/// restoring deletions. Rejudge touched groups even when a delta nets to
+/// nothing. After the write warmup, steady-state read allocations must
+/// return to zero.
 fn marks_write_family(db: &Db<SchemaDescriptor>) {
     for round in 0..8u64 {
         db.write(common::work(), |tx| {

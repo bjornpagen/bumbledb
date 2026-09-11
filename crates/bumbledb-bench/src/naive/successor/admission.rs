@@ -1,7 +1,5 @@
 //! Mutable-consulted-relation support and the one-command delta algebra —
-//! the ASS-001 successor's independent model side (Lean twin:
-//! `lean/Bumbledb/Txn/Support.lean`; chapter 13 §4, chapter 02
-//! counterexamples; gates CONC-01/CONC-02/CONC-05, E-DELTA, E-ADMIT).
+//! independent model for consulted relation sets and change normalization.
 //!
 //! The support derivation here is INDEPENDENT: it reads the schema
 //! descriptor as data and computes the consulted/mutable relation sets

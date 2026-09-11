@@ -439,6 +439,20 @@ fn lower(
                 u16::try_from(index).expect("validated field count fits u16"),
             ))
         }
+        PlanExpr::Measure(expr) => {
+            ScalarExpr::Measure(boxed(expr, source_name, source_fields, referenced)?)
+        }
+        PlanExpr::MulDiv {
+            a,
+            b,
+            divisor,
+            rounding,
+        } => ScalarExpr::MulDiv {
+            a: boxed(a, source_name, source_fields, referenced)?,
+            b: boxed(b, source_name, source_fields, referenced)?,
+            divisor: boxed(divisor, source_name, source_fields, referenced)?,
+            rounding: *rounding,
+        },
         PlanExpr::Literal(value) => ScalarExpr::Literal(value.clone()),
         PlanExpr::Negate(inner) => {
             ScalarExpr::Negate(boxed(inner, source_name, source_fields, referenced)?)

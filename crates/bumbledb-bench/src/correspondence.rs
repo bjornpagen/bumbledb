@@ -1,11 +1,8 @@
-//! L20-owned Lean correspondence that runs as bench cargo tests.
-//!
-//! L19 removed three-way / cargo oracles from `scripts/lean.sh`. These
-//! cases live here: collision bytes, exact folds, and admission support.
-//! The independent judgment reference is `judge_final_state`, never the
-//! production planner. Verification: **`NotRun`**.
+//! Independent regression checks for exact row identity, float folds, and
+//! admission support. Judgment expectations use `judge_final_state` rather
+//! than the production planner.
 
-/// Correspondence ids L20 owns for L21 / spec-census.
+/// Stable ids for the independent regression cases in this module.
 pub const OWNED_CASES: &[&str] = &[
     "C-D04-collision-bytes",
     "C-D19-cancel",
@@ -174,7 +171,7 @@ mod tests {
         assert_eq!(mean_bits(&[MAX_FINITE, MAX_FINITE]), Some(MAX_FINITE));
     }
 
-    /// C-D19-merge-not-idemp — exact Lean name `merge_not_idempotent`.
+    /// Replaying an exact partial state doubles its contribution.
     #[test]
     fn merge_not_idempotent() {
         let acc = fold(&[ONE, TWO]);

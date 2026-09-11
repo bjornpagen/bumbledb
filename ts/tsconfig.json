@@ -27,6 +27,6 @@
 		"noUncheckedIndexedAccess": true,
 		"noImplicitOverride": true
 	},
-	"include": ["src", "scripts", "test"],
+	"include": ["src", "scripts", "test", "bench"],
 	"exclude": ["dist", "node_modules", "crate"]
 }

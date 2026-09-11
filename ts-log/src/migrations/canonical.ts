@@ -111,6 +111,7 @@ function expressionJson(expression: PlanExpression): JsonValue {
 			return { kind: "field", name: expression.name }
 		case "literal":
 			return { kind: "literal", value: valueJson(expression.value) }
+		case "measure":
 		case "negate":
 		case "isNaN":
 		case "isFinite":
@@ -120,6 +121,14 @@ function expressionJson(expression: PlanExpression): JsonValue {
 		case "multiply":
 		case "divide":
 			return { kind: expression.kind, left: expressionJson(expression.left), right: expressionJson(expression.right) }
+		case "mulDiv":
+			return {
+				kind: expression.kind,
+				a: expressionJson(expression.a),
+				b: expressionJson(expression.b),
+				divisor: expressionJson(expression.divisor),
+				rounding: expression.rounding
+			}
 		case "cast":
 			return { kind: "cast", cast: expression.cast, expr: expressionJson(expression.expr) }
 	}

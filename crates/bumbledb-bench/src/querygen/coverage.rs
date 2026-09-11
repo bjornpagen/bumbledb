@@ -431,6 +431,10 @@ impl Coverage {
                     }
                 }
                 // A computed head projects one finalized scalar word.
+                FindTerm::Segments { .. } => {
+                    interval_finds += 1;
+                    projected_words += 2;
+                }
                 FindTerm::Compute(_) => {
                     projected_words += 1;
                 }

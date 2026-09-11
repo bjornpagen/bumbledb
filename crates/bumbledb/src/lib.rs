@@ -85,9 +85,10 @@ pub use api::prepared::{
     Answer, AnswerValue, Answers, BindArgs, BindValue, CompleteResult, DeliveryTicket, ParamArg,
     PreparedQuery, ResultCursor, ResultIdentity, ResultPage, ResultRow,
 };
+pub use bumbledb_theory::interval::SegmentOp;
 pub use bumbledb_theory::{F64, F64CastError, F64ParseError, Uuid};
 pub use changes::{ChangeError, ChangeSet, ChangeSetBuilder};
-pub use scalar::{NumericCast, ScalarError, ScalarEvaluator, ScalarExpr};
+pub use scalar::{NumericCast, Rounding, ScalarError, ScalarEvaluator, ScalarExpr};
 /// Narrow native wrapper seam; not a public key/value database product.
 #[doc(hidden)]
 pub mod integration {

@@ -103,6 +103,9 @@ fn witness(schema: &Schema, query: &Query, occ_stats: &[OccStats]) -> ValidatedP
             }
             // The sink reads a computed find through its input variables
             // (C05: the adapter evaluates per surviving binding).
+            FindTerm::Segments { left, right, .. } => {
+                sink_vars.extend([*left, *right]);
+            }
             FindTerm::Compute(expr) => sink_vars.extend(expr.variables()),
             FindTerm::Count | FindTerm::Pack { .. } | FindTerm::Aggregate { .. } => {}
         }

@@ -12,18 +12,13 @@ its recipe's schema, and round-trips through `ir::render` —
 and a sync test pins the duplication, so a recipe edited here without the test
 following breaks the build.
 
-Guarantee labels that name Lean results cite the checked spec in `lean/` by
-theorem name (`lean/Bumbledb/….lean: name` — `scripts/spec-census.sh` verifies
-every citation resolves); the label always names any additional Rust premise.
+Each recipe states the enforced database invariant and any application responsibility. Keys, containments, capacities, and query operators retain their ordinary runtime semantics.
 
 ## Foundations
 
 ## 1. The minimal interval schema
 
-Guarantee: Lean theorem + validator/runtime premise — the pointwise key
-enforces per-service disjointness (`lean/Bumbledb/Dependencies.lean:
-pointwise_key_disjoint`); checked intervals supply nonempty values
-(`lean/Bumbledb/Values.lean: interval_nonempty`).
+Guarantee: the pointwise key enforces per-service disjointness. Checked interval constructors reject empty values.
 
 One fact per outage window; the pointwise key is the whole temporal design.
 
@@ -57,14 +52,15 @@ let overlapping = query!(Uptime {
 });
 ```
 
-Total downtime per service is host arithmetic on the interval endpoints
-every answer row already carries (`end − start`).
+Total downtime can be computed in native stages: `measure` each bounded interval,
+then sum in a following stage. Use `pack` first when overlapping outages should
+count once. Native `FindTerm::Segments` constructs intervals;
+`ScalarExpr::Measure` computes width. The [staged recipes](../ts/COOKBOOK.md#14-derive-slices-measure-them-and-round-the-total)
+show the public algebra and contribution identity end to end.
 
 ## 2. Discriminated unions
 
-Guarantee: Lean theorem + validator/runtime premises — key-backed equality
-gives unique source/target correspondence (`lean/Bumbledb/Dependencies.lean:
-keyed_eq_unique_correspondence`); both projections must resolve to declared keys.
+Guarantee: key-backed equality requires exactly one corresponding row on each side. Both projections must resolve to declared keys.
 
 Sum-typed entities: a closed-relation discriminator plus per-arm child
 relations, connected by bidirectional conditional containments.
@@ -88,12 +84,17 @@ bumbledb::schema! {
 }
 ```
 
+The TypeScript `alternatives` helper constructs these ordinary laws from a
+parent scalar key, closed roster, and child keys. Declare supplied keys once;
+the expansion follows roster order and has the same descriptor and fingerprint
+as manual laws. Composite scalar identities work. Interval identity projections
+express coverage and cannot prove exactly one payload row. An arm switch plus
+payload replacement is one atomic final-state change. Evidence and ownership
+remain explicit laws. See the [complete declaration](../ts/COOKBOOK.md#16-exhaustive-alternatives-with-ordinary-laws).
+
 ## 3. 0..1 optional attributes
 
-Guarantee: Lean theorem + validator/runtime premises — the child key proves at
-most one fact (`lean/Bumbledb/Dependencies.lean: functionality_unique_witness`)
-and containment requires its parent (`lean/Bumbledb/Dependencies.lean:
-contains_iff_view_subset`); absence remains legal.
+Guarantee: the child key allows at most one fact, and containment requires its parent. Absence remains legal.
 
 No nulls, anywhere. Optional data is an absent fact in a child relation; the
 child's key plus a one-way containment *is* "nullable column", done honestly.
@@ -124,8 +125,9 @@ let unaddressed = query!(Optionality {
 Guarantee: host discipline + validator premises — fixed-point scale and
 currency grouping live in host newtypes; containments only resolve references.
 
-Fixed-point i64 minor units; the host newtype owns scale and currency. Floats
-are permanently refused (the ledger); proration and FX are host arithmetic.
+Fixed-point i64 minor units; the host newtype owns scale and currency.
+Native `mulDiv` supports exact bounded integer proration with explicit rounding.
+FX policy, rate evidence, and unit discipline remain application responsibilities.
 
 ```rust
 bumbledb::schema! {
@@ -199,10 +201,7 @@ let by_digest = query!(Content {
 
 ## 6. The vocabulary
 
-Guarantee: Lean theorem + validator/runtime premise — the sealed closed
-extension is constant at every instance (`lean/Bumbledb/Schema.lean:
-den_closed_constant`) and the compiled member-set containment admits only
-declared priority handles.
+Guarantee: the closed extension is fixed by the schema. Member-set containment admits only the declared priority handles.
 
 The enum idiom's replacement, first-class: a vocabulary is a **closed
 relation** — its ground axioms are declared in the schema, sealed at
@@ -337,12 +336,7 @@ let paged = query!(Oncall {
 
 ## 9. Ordered collections
 
-Guarantee: Lean theorem + validator/runtime premises — mutual point coverage
-plus pointwise keys realizes exact partition
-(`lean/Bumbledb/Dependencies.lean: exact_partition_iff`), and the mixed-width
-interval positions type by element domain
-(`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`); ordering the result
-remains a host presentation step.
+Guarantee: mutual point coverage plus pointwise keys enforces an exact partition. Interval positions match by element domain regardless of width refinement. The application orders results for presentation.
 
 The linked-list verdict: successor pointers are control flow smuggled into
 data — every reorder becomes a dependent chain of writes. Order is a value.
@@ -402,9 +396,7 @@ string order is refused: there is no
 
 ## 10. Trees and ASTs
 
-Guarantee: Lean theorem + validator/runtime premises for key-backed arms
-(`lean/Bumbledb/Dependencies.lean: keyed_eq_unique_correspondence`); host
-discipline for acyclicity — statements prove arm/edge shape, never a tree theorem.
+Guarantee: key-backed arms enforce each variant's row correspondence. The application enforces acyclicity; these declarations alone do not establish a tree.
 
 Node header + per-kind arms (recipe 2's pattern); every edge resolves; the
 shape theorems come from FDs on the edge relations.
@@ -518,9 +510,7 @@ let physics = query!(Ecs {
 
 ## 13. State machines
 
-Guarantee: Lean theorem + validator/runtime premises for the shipped arm
-(`lean/Bumbledb/Dependencies.lean: keyed_eq_unique_correspondence`); host
-discipline for allowed transitions — equality pins state evidence, not paths.
+Guarantee: key-backed equality requires the selected state's evidence. The application enforces which state transitions are allowed.
 
 States are a discriminated union; per-state data lives in arms; and the
 conditional reference target — a reference to "an order *that is shipped*" —
@@ -557,10 +547,7 @@ let shipped = query!(Orders {
 
 ## 14. The calendar core
 
-Guarantee: Lean theorem + validator/runtime premises — accepted equality is
-key-backed correspondence (`lean/Bumbledb/Dependencies.lean:
-keyed_eq_unique_correspondence`), while pointwise keys/coverage enforce only
-declared hard policy.
+Guarantee: equality enforces key-backed correspondence. Pointwise keys and coverage enforce the declared hard constraints.
 
 Policy as schema: hard rules are pointwise keys, soft rules are the statements
 you decline to write.
@@ -626,11 +613,7 @@ let busy_people = query!(Calendar {
 
 ## 15. Effective-dated configuration
 
-Guarantee: Lean theorem/countermodel + validator/runtime premise — pointwise
-keys plus one-way support inclusion form a disjoint cover
-(`lean/Bumbledb/Dependencies.lean: pointwise_key_disjoint`,
-`coverage_is_support_inclusion`); target overhang is legal
-(`lean/Bumbledb/Countermodels.lean: one_way_overhang`).
+Guarantee: pointwise keys prevent overlap, and one-way containment requires source coverage. Target intervals may extend beyond that source.
 
 Versioned rules: no overlaps (pointwise key), no gaps in the policy's source
 lifetime (one-way coverage; version overhang remains legal), and "in force on
@@ -669,10 +652,7 @@ let successions = query!(Pricing {
 
 ## 16. Disjoint covers
 
-Guarantee: Lean theorem/countermodel + validator/runtime premise —
-`lean/Bumbledb/Dependencies.lean: coverage_is_support_inclusion` proves source
-coverage, not exact partition (`lean/Bumbledb/Countermodels.lean:
-one_way_overhang`).
+Guarantee: containment requires source coverage. A target may overhang the source; exact partition requires constraints in both directions.
 
 Pay periods, shifts, estimated-tax quarters: a pointwise key plus one-way
 coverage is a **disjoint cover** — no overlaps among pay periods and no holes
@@ -709,7 +689,8 @@ Guarantee: validator/runtime premises + host discipline — keys prove bracket
 disjointness and statements prove residency coverage; full bracket coverage and proration are host duties.
 
 Brackets are intervals over money; the top bracket is a ray; regimes key on
-(year, status); and proration happens at write time, never at query time.
+(year, status). Native staged queries can derive finite overlaps and prorated
+amounts from the stored facts.
 
 ```rust
 bumbledb::schema! {
@@ -746,15 +727,21 @@ let marginal = query!(Tax {
 });
 ```
 
-Tax owed is host arithmetic over the bracket walk — arithmetic beyond the
-measure is refused (the ledger).
+A native nonrecursive pipeline can intersect earning intervals with each bracket,
+measure overlaps, preserve contribution identity, sum weighted amounts, and apply
+`mulDiv` once to the total. Keep earning and band identity through the weighted
+projection so equal-valued contributions both count. Rounding slices separately
+changes the calculation. See the [executable TypeScript recipe](../ts/COOKBOOK.md#14-derive-slices-measure-them-and-round-the-total).
+
+`ScalarExpr::MulDiv { a, b, divisor, rounding }` uses an exact wide product and
+checks its 64-bit result after rounding. `Rounding` has `TowardZero`,
+`NearestTiesAwayFromZero`, and `NearestTiesToEven`. A positive divisor and matching
+integer kinds are required. Existing checked multiplication still rejects its own
+intermediate overflow. The same expression runs in queries and migrations.
 
 ## 18. Free time and coalescing
 
-Guarantee: Lean theorem + runtime query semantics — `Pack` coalesces answer
-intervals (`lean/Bumbledb/Query/Aggregates.lean: pack_canonical`,
-`pack_extensional`); it asserts no stored disjointness, completeness, or
-maintenance behavior.
+Guarantee: `Pack` coalesces result intervals. It does not impose stored disjointness, completeness, or automatic maintenance.
 
 `Pack` is Snodgrass's coalesce as an aggregate — maximal disjoint segments per
 group, one answer per (group, segment). Coalescing is never a write rule: the
@@ -780,22 +767,37 @@ let busy = query!(FreeTime {
 });
 ```
 
-Raw claimed time is host arithmetic on the interval endpoints every
-answer row already carries (`end − start`). Overlaps double-count, often
-the wrong question.
+Raw claimed time can be measured natively. Summing overlapping claims
+double-counts; use the existing `pack` stage when the intended quantity is union coverage.
 
-Coalesced totals = the two-query composition (Pack, then a host fold) —
-aggregates never nest; free time (gaps) is the two-line host walk over
-sorted packed answers (the host sorts — `bigint` `<` is enough; the engine
-never orders) — both refusals recorded in the ledger.
+Coalesced totals use successive `pack`, `measure`, and `sum` stages.
+Binary `difference` constructs up to two gaps against one interval. Subtracting
+an arbitrary relation of busy intervals still requires a coverage sweep;
+unioning pairwise differences is incorrect.
+
+`Interval::intersection` returns zero or one interval; `Interval::difference`
+returns zero, one, or two maximal nonempty pieces. Query `FindTerm::Segments`
+uses those endpoint-only operations on bound inputs; independent producers form
+a Cartesian product. Their results preserve element kind and discard unproved
+fixed-width refinements. A following stage can join, negate, measure, or pack
+those outputs. The current macro grammar does not parse general computed trees;
+the public structural Rust IR is the authoring path.
+
+Subtracting `[3,7)` from `[0,10)` produces `[0,3)` and `[7,10)`. Subtracting
+the whole interval produces no rows. Each subtraction has one interval operand;
+unioning separate differences is not subtraction of combined coverage.
+
+Integer measure is exact `u64` width for bounded signed or unsigned intervals.
+Integer maximum endpoints denote rays. Dense measure preserves the native
+once-rounded endpoint difference; finite overflow and unboundedness refuse
+distinctly. Clip a ray before measuring it. Later filtering cannot hide an
+upstream failure. See the [difference, pack, and measure pipeline](../ts/COOKBOOK.md#15-subtract-a-window-coalesce-coverage-and-measure).
 
 ## The write side
 
 ## 19. The ledger
 
-Guarantee: Lean theorem + runtime invariant for bounded sums
-(`lean/Bumbledb/Query/Aggregates.lean: checkedSum_sound`); host discipline
-for double entry — statements resolve posting references, not arithmetic agreement.
+Guarantee: checked sums reject overflow. Posting references are database constraints; the application enforces double-entry arithmetic agreement.
 
 The census workload. Balance is a query, never a column.
 
@@ -839,10 +841,7 @@ let audit = query!(Ledger {
 
 ## 20. Conditional writes
 
-Guarantee: Lean theorem + generation-witness/runtime premise + host retry
-discipline — instance-derived writes detect movement
-(`lean/Bumbledb/Txn.lean: writeFrom_moved`, `witness_conflict_distinct`);
-final-state point reads need no earlier witness.
+Guarantee: a generation witness rejects a write based on a moved instance. The application owns retries. Final-state point reads need no earlier witness.
 
 The generation witness: read the model,
 propose a delta, commit iff the model you read is still the model.
@@ -887,9 +886,7 @@ the final state — per-fact premises need no earlier `Witness`.
 
 ## 21. Derived relations
 
-Guarantee: Lean theorem + validator/runtime premises for soundness
-(`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`); host
-discipline for completeness — containment rejects unsupported facts but never refreshes omissions.
+Guarantee: containment rejects unsupported stored facts. The application maintains completeness and refreshes missing derived facts.
 
 The materialized view as a relation under statements — unsoundness the schema
 can name is uncommittable; incompleteness remains representable until the host
@@ -930,11 +927,7 @@ let deriving = query!(Rollup {
 
 ## 22. Union reads
 
-Guarantee: Lean theorem + represented planner/runtime premise — rule union is
-set-idempotent (`lean/Bumbledb/Query/Denotation.lean: union_idempotent`);
-key-backed DU arms satisfy the disjoint-arms licence
-(`lean/Bumbledb/Exec/Dedup.lean: disjoint_witness_licence`); execution
-always keeps one spanning seen-set.
+Guarantee: rule union uses set semantics. Deduplication absorbs repeated derivations while retaining distinct bindings needed by aggregates.
 
 The whole-DU read is a set of rules: one head, one rule per arm — disjunction
 is data at the top, never an execution node.
@@ -1000,11 +993,7 @@ bumbledb::schema! {
 
 ## 24. The closure idiom
 
-Guarantee: host discipline for the loop — the finite `seen` set proves
-termination for the host run; the engine-native form beside it executes
-under the linear reach driver, budget-bounded
-(`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`;
-`lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
+Guarantee: the application loop terminates over its finite seen set. The native form runs through the linear reach driver with execution budgets.
 
 Reachability, in two dialects. The host-loop idiom remains the
 depth-bounded answer: the censused hierarchies are **depth-bounded**, so
@@ -1077,11 +1066,7 @@ one intersection per hop, and that composition has no engine form.
 
 ## 25. The chart of accounts
 
-Guarantee: host discipline + runtime aggregate semantics — the host computes
-closure, then one checked `Sum` (`lean/Bumbledb/Query/Aggregates.lean:
-checkedSum_sound`); the engine-native form folds over a *finished* rec, the
-ordinary main-over-finished-table shape
-(`lean/Bumbledb/Exec/Reach.lean: evalQuery_sound`).
+Guarantee: the application computes closure before a checked sum. The native form likewise aggregates over the completed recursive relation.
 
 The ledger workload's real recursion case, in the same two dialects: a
 hierarchical chart of accounts and a subtree rollup. The host composition —
@@ -1149,9 +1134,7 @@ because the application-owned id keeps their bindings distinct.
 
 ## 26. Exact partition
 
-Guarantee: Lean theorem + validator/runtime premises — mutual point coverage
-plus pointwise keys realizes exact partition
-(`lean/Bumbledb/Dependencies.lean: exact_partition_iff`).
+Guarantee: mutual point coverage plus pointwise keys enforces an exact partition.
 
 An exact partition needs both coverage directions. The first containment below
 is the intent-level reference; the two pointwise keys make each side disjoint;
@@ -1187,9 +1170,7 @@ with any scalar-prefix arity before the final interval position.
 
 ## 27. Derived facts, maintained
 
-Guarantee: host discipline + validator/runtime premises — freshness comes from
-the generation witness; containment proves surviving rollup facts sound only
-(`lean/Bumbledb/Txn.lean: derived_soundness_vs_freshness`).
+Guarantee: a generation witness checks freshness. Containment validates surviving rollup facts; the application maintains missing ones.
 
 A stored rollup is an ordinary relation with an ordinary soundness statement.
 Here `Pack` derives maximal busy spans, while containment prevents any stored
@@ -1247,10 +1228,7 @@ new store. There is no third duration.
 
 ## 28. Migration is ETL
 
-Guarantee: Lean theorem + validator/runtime premises + host discipline —
-fingerprints refuse reinterpretation, final-state judgments validate each load
-(`lean/Bumbledb/Txn.lean: etl_lands_valid`), and the host owns
-the semantic transform and dependency-safe load order.
+Guarantee: schema fingerprints prevent reinterpretation, and final-state judgment validates each load. The application owns the transformation and dependency-safe load order.
 
 Core storage does not reinterpret an existing store under a new schema:
 the store records the theory's fingerprint, and `Db::open` under a changed
@@ -1332,12 +1310,7 @@ migrated store answers under the new theory's guarantees).
 
 ## 29. The zone ledger
 
-Guarantee: Lean theorem + validator/runtime premises — per-kind mutual point
-coverage realizes each arm's exact partition
-(`lean/Bumbledb/Dependencies.lean: exact_partition_iff`) over one
-disjointness witness, and the mixed-width `==` positions type by element
-domain (`lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`); witness
-segmentation is host discipline (the honesty note below).
+Guarantee: per-kind mutual coverage and a shared pointwise key enforce each arm's exact partition. Interval positions match by element domain. The application chooses the witness segmentation described below.
 
 Recipe 9's sidecar, composed: a ledger whose timeline divides into zones of
 two kinds — unit zones (`interval<u64, 1>`) and pair zones
@@ -1435,12 +1408,7 @@ the point read comes with it.
 
 ## 31. The power budget
 
-Guarantee: Lean theorem + validator/runtime premises — the capacity law
-bounds each pool's summed draw by the pool's own row
-(`lean/Bumbledb/Capacity.lean: CapacityLaw`; per touched parent, one keyed
-probe plus one measure walk, `lean/Bumbledb/Oracle.lean:
-capacity_plan_decides`); the pinned-column containment proves a device's
-watts equals its model's at every commit.
+Guarantee: capacity bounds each pool's summed draw by its own row, using indexed target lookup and a measure walk for each touched group. Pinned-column containment requires a device's watts to equal its model's at every commit.
 
 Per-group capacity is one statement: the weight bracket names the measure
 on the SOURCE row, and the dependent bound reads each group's ceiling from
@@ -1485,12 +1453,7 @@ let draw = query!(Racks {
 
 ## 32. Calendar capacity
 
-Guarantee: Lean theorem + validator/runtime premises — the Duration weight
-sums each booking's interval measure against the room's own span measure
-(`lean/Bumbledb/Capacity.lean: CapacityLaw`; explicit scalar measures and
-Duration weights can use scalar or Duration bounds in the same application
-unit; unweighted row counts cannot use Duration bounds, C18; a ray-valued weight or
-bound refuses typed at the law site, ruled 2026-07-24, C10).
+Guarantee: duration weights sum booking lengths against the room's span. Explicit scalar weights and durations may use scalar or duration bounds in the same application unit. Unweighted counts cannot use duration bounds. Unbounded weights or bounds fail with a typed error at the law site.
 
 "Total booked time per room stays within the room's span" — one statement.
 The interval enters through the measure argument, never the group key (the
@@ -1520,8 +1483,8 @@ weaker law than the unit exclusion), and `<=[w]{1..*}` ("positive total")
 is not "at least one booking" — that intent is the bare containment. Choose
 by the intended constraint, not by a superficially similar count expression.
 
-The booked time per room is host arithmetic on the `booked` endpoints
-every answer row already carries (`end − start`).
+Booked time can be computed with native measurement and a subsequent sum stage;
+coalesce first if overlapping bookings should count once.
 
 `Duration` measures discrete interval width; it does not imply a clock unit.
 For `interval<u64>` wage-base coordinates in cents, its width is cents.

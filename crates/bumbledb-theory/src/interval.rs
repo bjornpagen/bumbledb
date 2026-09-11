@@ -23,13 +23,9 @@ mod sealed {
     impl Sealed for crate::F64 {}
 }
 
-/// The interval element domain — the Rust face of the spec's endpoint
-/// vocabulary, sealed to the three orderable scalars: no fourth element
-/// type is constructible, and no host comparator enters the algebra.
-/// Integer elements state the point-domain ceiling once
-/// (`lean/Bumbledb/Values.lean: PointDomain`); the float element states
-/// the dense-line endpoint/point split (NaN is no endpoint, nonfinite
-/// values are no points).
+/// Sealed endpoint vocabulary: unsigned integers, signed integers, and
+/// canonical floats. Integer domains reserve their ceiling for ray ends.
+/// Dense intervals reject NaN endpoints and nonfinite point probes.
 pub trait Element: sealed::Sealed + Copy + Ord {
     /// The ordering ceiling: the reserved integer ray endpoint, or the
     /// float's `+Infinity` unbounded-above sentinel.
@@ -128,6 +124,21 @@ impl<T: Element> Interval<T> {
             .then_some(Self { start, end })
     }
 
+    /// Endpoint-only intersection; an empty represented set is no interval.
+    #[must_use]
+    pub fn intersection(self, other: Self) -> Option<Self> {
+        Self::new(self.start.max(other.start), self.end.min(other.end))
+    }
+
+    /// At most two maximal disjoint pieces outside `other`, without enumerating points.
+    #[must_use]
+    pub fn difference(self, other: Self) -> [Option<Self>; 2] {
+        [
+            Self::new(self.start, self.end.min(other.start)),
+            Self::new(self.start.max(other.end), self.end),
+        ]
+    }
+
     /// The interval unbounded above: `[start, MAX_END)` for the integers,
     /// `[start, +Infinity)` on the dense line. `ray(MAX)`/`ray(+Infinity)`
     /// refuses — an empty set is not a value.
@@ -164,8 +175,6 @@ impl<T: Element> Interval<T> {
 
 impl<T: Discrete> Interval<T> {
     /// Fixed-width `[start, start + width)`; never a ray.
-    /// `lean/Bumbledb/Values.lean: FixedU64.not_ray`,
-    /// `lean/Bumbledb/Countermodels.lean: unit_slot_at_ceiling_unconstructible`.
     /// Absent for `F64` by the [`Discrete`] bound: rounded float widths do
     /// not establish constant exact length.
     ///
@@ -569,5 +578,99 @@ mod tests {
         let gap_right = Interval::<F64>::new(F64::from_bits(b.to_bits() + 1), F64::from(2.0))
             .expect("gap start");
         assert!(!generic_meets(left, gap_right));
+    }
+}
+
+/// One endpoint-only relational constructor. The result has zero to two rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentOp {
+    Intersection,
+    Difference,
+}
+
+impl SegmentOp {
+    #[must_use]
+    pub fn apply<T: Element>(
+        self,
+        left: Interval<T>,
+        right: Interval<T>,
+    ) -> [Option<Interval<T>>; 2] {
+        match self {
+            Self::Intersection => [left.intersection(right), None],
+            Self::Difference => left.difference(right),
+        }
+    }
+}
+
+#[cfg(test)]
+mod segment_properties {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn points(span: Interval<i64>) -> BTreeSet<i64> {
+        (span.start()..span.end()).collect()
+    }
+
+    #[test]
+    fn finite_grid_decomposition_is_exact_and_maximal() {
+        let spans: Vec<_> = (-4..=4)
+            .flat_map(|a| ((a + 1)..=5).map(move |b| Interval::new(a, b).unwrap()))
+            .collect();
+        for &a in &spans {
+            for &b in &spans {
+                let pa = points(a);
+                let pb = points(b);
+                let intersection = a.intersection(b);
+                assert_eq!(intersection, b.intersection(a));
+                assert_eq!(a.intersection(a), Some(a));
+                let common = intersection.map_or_else(BTreeSet::new, points);
+                assert_eq!(common, pa.intersection(&pb).copied().collect());
+                let difference: Vec<_> = a.difference(b).into_iter().flatten().collect();
+                assert!(difference.len() <= 2);
+                assert!(difference.windows(2).all(|w| w[0].end() < w[1].start()));
+                let rest: BTreeSet<_> = difference.iter().flat_map(|s| points(*s)).collect();
+                assert_eq!(rest, pa.difference(&pb).copied().collect());
+                assert!(rest.is_disjoint(&common));
+                assert_eq!(rest.union(&common).copied().collect::<BTreeSet<_>>(), pa);
+                assert_eq!(
+                    difference
+                        .iter()
+                        .map(|s| s.duration().unwrap())
+                        .sum::<u64>()
+                        + intersection.map_or(0, |s| s.duration().unwrap()),
+                    a.duration().unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rays_extremes_and_dense_endpoints_use_order_only() {
+        let whole = Interval::new(i64::MIN, i64::MAX).unwrap();
+        let finite = Interval::new(-1, 1).unwrap();
+        assert_eq!(whole.intersection(finite), Some(finite));
+        assert_eq!(
+            whole.difference(finite),
+            [Interval::new(i64::MIN, -1), Interval::new(1, i64::MAX)]
+        );
+        assert_eq!(whole.duration(), None);
+        let unsigned = Interval::new(0u64, u64::MAX).unwrap();
+        assert_eq!(
+            unsigned.difference(Interval::new(5, 6).unwrap()),
+            [Interval::new(0, 5), Interval::new(6, u64::MAX)]
+        );
+        let dense = |a, b| Interval::new(F64::from(a), F64::from(b)).unwrap();
+        let ray = dense(f64::NEG_INFINITY, f64::INFINITY);
+        let mid = dense(-0.0, 1.0);
+        assert_eq!(ray.intersection(mid), Some(dense(0.0, 1.0)));
+        assert_eq!(
+            ray.difference(mid),
+            [
+                Some(dense(f64::NEG_INFINITY, 0.0)),
+                Some(dense(1.0, f64::INFINITY))
+            ]
+        );
+        assert!(dense(-1.0, 0.0).intersection(dense(-0.0, 1.0)).is_none());
+        assert!(Interval::<F64>::new(F64::from(f64::NAN), F64::from(1.0)).is_none());
     }
 }

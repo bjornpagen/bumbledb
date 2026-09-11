@@ -1,11 +1,10 @@
 //! Exact integer multiples of 2^-1074, rounded only at an output boundary.
 //!
-//! Bound: every finite binary64 magnitude is at most
+//! Every finite binary64 magnitude is at most
 //! `(2^53 - 1) * 2^2045 < 2^2098` in scaled units. For n <= 2^64-1,
 //! the triangle inequality gives `abs(total) < 2^(2098+64) = 2^2162`.
 //! A 34-limb signed magnitude has 2176 magnitude bits, so neither a valid push
-//! nor a count-checked merge can overflow its finite storage. The bound is
-//! proved: `lean/Bumbledb/Float64/Sum.lean:accumulator_within_34_limbs`.
+//! nor a count-checked merge can overflow its finite storage.
 
 use super::FloatCardinalityOverflow;
 use bumbledb_theory::F64;
@@ -111,15 +110,12 @@ impl ExactF64Accumulator {
         self.round(NonZeroU64::MIN)
     }
 
-    /// Exact byte image for the one scratch map: a spilled
-    /// group's accumulator round-trips bit-for-bit, so partition merges
-    /// across the RAM→disk transition are the SAME merges the in-RAM bank
-    /// performs (`lean/Bumbledb/Float64/Sum.lean` merge laws — exactness
-    /// lives in the limbs, and the limbs are copied verbatim).
+    /// Exact scratch representation: a spilled accumulator round-trips bit for
+    /// bit, so partition merges use the same exact limbs as resident merges.
     ///
     /// Layout: `[0x00]` for Empty; `[0x01][count u64 BE][total tag]` for
-    /// `NonEmpty`, where the total tag is `0x01 ‖ negative u8 ‖ 34×u64 BE`
-    /// (finite), `0x02` (+∞), `0x03` (−∞) or `0x04` (NaN).
+    /// `NonEmpty`. Total tags: `0x01` followed by sign and 34 big-endian u64 limbs
+    /// (finite), `0x02` (+infinity), `0x03` (-infinity), or `0x04` (NaN).
     pub(crate) fn encode_into(&self, out: &mut Vec<u8>) {
         match &self.state {
             State::Empty => out.push(0x00),

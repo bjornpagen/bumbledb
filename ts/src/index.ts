@@ -6,6 +6,7 @@
  * or disposal twin. The raw native bridge is not exported from this barrel.
  */
 
+export { alternatives } from "#alternatives.ts"
 export type {
 	BoundsOnTarget,
 	CapacityWeight,
@@ -112,7 +113,13 @@ export type { FindColumn } from "#query/atom.ts"
 export { ALLEN } from "#query/atom.ts"
 export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#query/compute.ts"
 export { Compute } from "#query/compute.ts"
-export type { DescriptionParameter, DescriptionRow, DescriptionTable, QueryDescription } from "#query/description.ts"
+export type {
+	DescriptionHead,
+	DescriptionParameter,
+	DescriptionRow,
+	DescriptionTable,
+	QueryDescription
+} from "#query/description.ts"
 export { describeQuery, queryFromDescription } from "#query/description.ts"
 export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"
 export type {
@@ -147,6 +154,7 @@ export type {
 	VarsOf
 } from "#query/scope.ts"
 export { v } from "#query/scope.ts"
+export type { IntervalVar, SegmentOp, Segments } from "#query/segments.ts"
 export type {
 	AnyRelation,
 	Fact,
@@ -164,9 +172,12 @@ export { NativeRuntime } from "#runtime.ts"
 export type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 export { CloseFailure, DbError, dbError, runtimeErrorCodes } from "#runtime-errors.ts"
 export type {
+	IntervalKind,
 	NumericCast,
+	Rounding,
 	ScalarExpr,
 	ScalarFieldRef,
+	ScalarInputKind,
 	ScalarKind,
 	ScalarLeafScope,
 	ScalarLiteral,

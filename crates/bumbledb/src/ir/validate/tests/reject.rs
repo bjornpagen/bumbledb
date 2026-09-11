@@ -974,10 +974,8 @@ fn cross_domain_schema() -> Schema {
     .expect("valid fixture")
 }
 
-/// Q1 relaxes widths, never element domains: Allen between a u64-domain
-/// fixed-width term and an i64-domain general term stays an illegal comparison
-/// — the two domains share no `Point` tag (`lean/Bumbledb/Schema.lean:
-/// Value.points_one_tag_u64`).
+/// Allen comparisons require the same element domain even when one operand
+/// is fixed-width and the other is a general interval.
 #[test]
 fn rejects_an_allen_pair_across_element_domains_whatever_the_widths() {
     let query = Query::single(Rule {

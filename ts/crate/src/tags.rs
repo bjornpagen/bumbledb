@@ -230,6 +230,7 @@ wire_tags! {
     /// C05 roster (`FindTerm::Compute(ScalarExpr)`) is exhaustive here.
     mod find_term for FindTerm {
         VAR: FindTerm::Var(_) => "var",
+        SEGMENTS: FindTerm::Segments { .. } => "segments",
         COMPUTE: FindTerm::Compute(_) => "compute",
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
@@ -242,6 +243,8 @@ wire_tags! {
     /// (`scalar_expr_in`), spelled exactly as the plan JSON grammar spells
     /// the same roster (C01/C11: one spelling, no second evaluator).
     mod scalar_expr for bumbledb::ScalarExpr {
+        MUL_DIV: bumbledb::ScalarExpr::MulDiv { .. } => "mulDiv",
+        MEASURE: bumbledb::ScalarExpr::Measure(_) => "measure",
         VAR: bumbledb::ScalarExpr::Var(_) => "var",
         LITERAL: bumbledb::ScalarExpr::Literal(_) => "literal",
         NEGATE: bumbledb::ScalarExpr::Negate(_) => "negate",

@@ -10,9 +10,19 @@ import type { AnyQuery, ChainContext, Query } from "#query/lower.ts"
 import { alignedHeadOf, EMPTY_RULE, lowerQuery, makeRawChain, makeRawQuery, taggedCmpLiteral } from "#query/lower.ts"
 import { parseQueryIr } from "#query/parse-ir.ts"
 import { type AnyVar, type MatchOwner, makeParam, makeSetParam, type ParamsRecord, v } from "#query/scope.ts"
+import { difference, type IntervalVar, intersection } from "#query/segments.ts"
 import type { FieldsShape } from "#relation.ts"
 import { handleOf } from "#rows.ts"
-import { queryVarLeaf, scalarBinary, scalarCast, scalarFloatPredicate, scalarLiteral, scalarNegate } from "#scalar.ts"
+import {
+	queryVarLeaf,
+	scalarBinary,
+	scalarCast,
+	scalarFloatPredicate,
+	scalarLiteral,
+	scalarMeasure,
+	scalarMulDiv,
+	scalarNegate
+} from "#scalar.ts"
 import type { Schema, SchemaRelations } from "#schema.ts"
 import { schemaDescriptor } from "#schema.ts"
 import { arrayValue, recordValue, valueDescriptor } from "#values.ts"
@@ -38,6 +48,12 @@ interface DescriptionParameter {
 }
 
 type DescriptionRow<F extends FieldsShape> = { readonly [K in keyof F]: Infer<F[K]> }
+
+/** Checked result fields remain exact through v(imported), just as at runtime.
+ * Carrier classes come from the replayed head and remain runtime-checked. */
+type DescriptionHead<F extends FieldsShape> = {
+	readonly [K in keyof F]: { readonly field: F[K]; readonly class: string | undefined }
+}
 
 function refused(context: string, expected: string): never {
 	throw new AuthoringError({
@@ -237,6 +253,11 @@ function replayRule(
 			case "var": {
 				const variable = variableAt(input.var)
 				const kind = variable.field.kind
+				if (variable.field.kind === "interval")
+					return queryVarLeaf(
+						variable,
+						({ u64: "intervalU64", i64: "intervalI64", f64: "intervalF64" } as const)[variable.field.element]
+					)
 				if (
 					rosterOf(variable.field) !== undefined ||
 					(kind !== "bool" && kind !== "u64" && kind !== "i64" && kind !== "f64")
@@ -259,6 +280,10 @@ function replayRule(
 						return refused("query compute", "requires a scalar literal")
 				}
 			}
+			case "measure":
+				return scalarMeasure("query compute", scalar(input.expr))
+			case "mulDiv":
+				return scalarMulDiv("query compute", scalar(input.a), scalar(input.b), scalar(input.divisor), input.rounding)
 			case "negate":
 				return scalarNegate("query compute", scalar(input.expr))
 			case "isNaN":
@@ -281,6 +306,11 @@ function replayRule(
 			let value: unknown
 			if (find.kind === "var") value = variableAt(find.var)
 			else if (find.kind === "compute") value = scalar(find.expr)
+			else if (find.kind === "segments")
+				value = (find.op === "intersection" ? intersection : difference)(
+					variableAt(find.left) as IntervalVar,
+					variableAt(find.right) as IntervalVar
+				)
 			else if (find.kind === "count") value = { agg: "count" }
 			else value = { agg: find.kind === "pack" ? "pack" : find.op.kind, over: variableAt(find.over) }
 			return [column, value]
@@ -293,7 +323,7 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 	schema: Schema<Rels, Classes>,
 	input: unknown,
 	result: F
-): Query<Rels, DescriptionRow<F>, ParamsRecord, Classes> {
+): Query<Rels, DescriptionRow<F>, ParamsRecord, Classes, DescriptionHead<F>> {
 	const theory = schemaDescriptor(schema)
 	const description = checkedDescription(input)
 	const resultRecord = recordValue(
@@ -387,8 +417,8 @@ function queryFromDescription<Rels extends SchemaRelations, Classes extends Sche
 	if (usedParameters.size !== description.parameters.length) refused("query parameters", "declared parameter is unused")
 	// Complete shared lowering also checks tagged literals and ordinal bounds.
 	lowerQuery(value)
-	return value as unknown as Query<Rels, DescriptionRow<F>, ParamsRecord, Classes>
+	return value as unknown as Query<Rels, DescriptionRow<F>, ParamsRecord, Classes, DescriptionHead<F>>
 }
 
-export type { DescriptionParameter, DescriptionRow, DescriptionTable, QueryDescription }
+export type { DescriptionHead, DescriptionParameter, DescriptionRow, DescriptionTable, QueryDescription }
 export { describeQuery, queryFromDescription }

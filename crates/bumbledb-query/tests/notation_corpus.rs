@@ -233,6 +233,22 @@ fn scalar_expr_json(expr: &ScalarExpr) -> String {
         )
     };
     match expr {
+        ScalarExpr::Measure(inner) => format!(
+            "{{\"kind\":\"measure\",\"expr\":{}}}",
+            scalar_expr_json(inner)
+        ),
+        ScalarExpr::MulDiv {
+            a,
+            b,
+            divisor,
+            rounding,
+        } => format!(
+            "{{\"kind\":\"mulDiv\",\"a\":{},\"b\":{},\"divisor\":{},\"rounding\":\"{}\"}}",
+            scalar_expr_json(a),
+            scalar_expr_json(b),
+            scalar_expr_json(divisor),
+            rounding.name()
+        ),
         ScalarExpr::Var(v) => format!("{{\"kind\":\"var\",\"var\":{}}}", v.0),
         ScalarExpr::Literal(value) => {
             format!("{{\"kind\":\"literal\",\"value\":{}}}", value_json(value))
@@ -274,6 +290,15 @@ fn scalar_expr_json(expr: &ScalarExpr) -> String {
 
 fn find_json(find: &FindTerm) -> String {
     match find {
+        FindTerm::Segments { op, left, right } => format!(
+            "{{\"kind\":\"segments\",\"op\":\"{}\",\"left\":{},\"right\":{}}}",
+            match op {
+                bumbledb::SegmentOp::Intersection => "intersection",
+                bumbledb::SegmentOp::Difference => "difference",
+            },
+            left.0,
+            right.0
+        ),
         FindTerm::Var(v) => format!("{{\"kind\":\"var\",\"var\":{}}}", v.0),
         FindTerm::Compute(expr) => {
             format!(

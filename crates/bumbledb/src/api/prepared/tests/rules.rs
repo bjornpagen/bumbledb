@@ -293,11 +293,9 @@ fn a_grouped_count_head_across_rules_is_the_typed_validation_refusal() {
     );
 }
 
-/// The or-transparency law (ruled 2026-07-23, R2): a DNF-derived rule set
-/// re-keys the union dedup on the shared slot arrays, so surface `or` never
-/// changes a fold domain — distinct full bindings that project to EQUAL head
-/// rows all fold, and the nullary Count counts the written rule's binding set
-/// (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+/// DNF union deduplicates full bindings through shared slots. Distinct
+/// bindings that project to equal heads must all contribute to a fold;
+/// Count uses the written rule's binding set.
 #[test]
 fn an_or_spelled_fold_keeps_the_written_rules_full_binding_domain() {
     let fix = postings(&overlap_postings());

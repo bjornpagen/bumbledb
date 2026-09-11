@@ -16,6 +16,7 @@ import type {
 	ShapeOf
 } from "#query/scope.ts"
 import { isTerm, term } from "#query/scope.ts"
+import type { Segments } from "#query/segments.ts"
 import type { FieldsShape } from "#relation.ts"
 import type { ScalarKind } from "#scalar.ts"
 import type { Uuid } from "#uuid.ts"
@@ -75,6 +76,7 @@ type AggData =
 
 /** Compute `expr` is the shared `#scalar.ts` query-var node (one grammar). */
 type FindEntryData =
+	| Segments
 	| { readonly kind: "var"; readonly over: AnyVar }
 	| { readonly kind: "aggregate"; readonly agg: AggData }
 	| { readonly kind: "compute"; readonly expr: QueryNode; readonly result: ScalarKind }

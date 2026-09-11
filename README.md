@@ -197,7 +197,7 @@ See the [full results, charts, and limitations](docs/perf/results.md) and the
 scripts/battery.sh
 ```
 
-The battery checks Rust, the native bridge, TypeScript, Lean correspondence,
+The battery checks Rust, the native bridge, TypeScript, independent conformance oracles,
 and isolated packaged consumers. It does not run benchmarks.
 
 The [static Linux ARM64 guide](docs/static-linux-arm64.md) covers the fully
@@ -213,7 +213,6 @@ ARM64 and Linux x64.
 - `ts/`, `ts-log/`: Effect SDKs and the shared native bridge.
 - `crates/bumbledb-bench/`, `docs/perf/`, `assets/`: benchmarks and current charts.
 - `examples/`: runnable consumers and the Notes application.
-- `lean/`: executable specification and correspondence checks.
 
 ## License
 

@@ -38,14 +38,10 @@ pub const MAX_RULES: usize = 16;
 /// checked trees.
 pub const MAX_CONDITION_DEPTH: usize = 64;
 
-/// Dense derived-table id — an index into a [`Query`]'s interiors,
-/// with a Reach query's rec occupying `InteriorId(interiors.len)`
-/// [`crate::schema::RelationId`], deliberately: a **separate identity**,
-/// never a pun. Statements quantify over stored relations only
-/// ; no statement form carries
-/// an `InteriorId` position. Construction never panics: a derived-table
-/// count that does not fit `u32` is [`crate::error::ValidationError::InteriorIdOverflow`].
-/// (`lean/Bumbledb/Query/Syntax.lean: InteriorId`). Same width as
+/// Dense derived-table id: an index into `Query::interiors`. The recursive
+/// component occupies the next index. This identity is separate from stored
+/// `RelationId`; schema statements quantify over stored relations only.
+/// An interior count exceeding u32 produces `ValidationError::InteriorIdOverflow`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct InteriorId(pub u32);
 
@@ -59,12 +55,9 @@ impl InteriorId {
     }
 }
 
-/// Where an atom draws its facts: a stored (EDB) relation, or a
-/// derived table of the same query (an interior, or the rec)
-/// atom's bindings address **head positions** positionally —
-/// `FieldId(i)` is the target derived head's column `i`, typed by its
-/// (`FieldId` is already positional, never nominal).
-/// (`lean/Bumbledb/Query/Syntax.lean: AtomSource`). An `Interior`
+/// An atom reads either a stored relation or a derived table of the same
+/// query. Derived bindings address head columns positionally: `FieldId(i)`
+/// selects column i, with the field type inferred from that head.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AtomSource {
     Edb(RelationId),
@@ -80,7 +73,7 @@ impl AtomSource {
         }
     }
 
-    /// the rec (`lean/Bumbledb/Query/Syntax.lean: AtomSource.interior?`).
+    /// Return the derived-table id, including the recursive component.
     #[must_use]
     pub fn interior(self) -> Option<InteriorId> {
         match self {
@@ -170,21 +163,36 @@ impl FoldOp {
     }
 }
 
-/// One find term: a projected variable, nullary count, a fold over a
-/// variable, or pack. Count cannot carry a variable; folds and pack
-/// cannot omit one. Length of an interval is host arithmetic on the
-/// endpoints the answer row already carries.
+pub use bumbledb_theory::interval::SegmentOp;
+
+/// One find term: a projection, scalar expression, interval producer, count,
+/// fold, or pack. Count carries no variable; folds and pack require one.
+/// Interval measurement is a scalar expression, while constructive interval
+/// operations produce zero to two answer rows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FindTerm {
     Var(VarId),
 
     Compute(crate::ScalarExpr),
 
+    /// Fully bound binary interval constructor. Independent outputs combine
+    /// relationally; no result drops the input binding. Nonrecursive stages only.
+    Segments {
+        op: SegmentOp,
+        left: VarId,
+        right: VarId,
+    },
+
     Count,
 
-    Aggregate { op: FoldOp, over: VarId },
+    Aggregate {
+        op: FoldOp,
+        over: VarId,
+    },
 
-    Pack { over: VarId },
+    Pack {
+        over: VarId,
+    },
 }
 
 impl FindTerm {
@@ -192,7 +200,7 @@ impl FindTerm {
     pub fn head_term(&self) -> HeadTerm {
         match self {
             Self::Var(_) => HeadTerm::Var,
-            Self::Compute(_) => HeadTerm::Compute,
+            Self::Compute(_) | Self::Segments { .. } => HeadTerm::Compute,
             Self::Count => HeadTerm::Aggregate(HeadOp::Count),
             Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
             Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),
@@ -478,16 +486,11 @@ impl From<ProjectionRule> for Rule {
     }
 }
 
-/// A named interior: one typed nonrecursive relation stage — a finite
-/// union of [`Rule`]s whose heads may include **aggregate and computed
-/// outputs** (chapter 12's uniform nonrecursive composition; the old
-/// projection-only wall is deleted). Evaluated **once**, not an lfp.
-/// Declaration order is topological order: interior `i` may read
-/// `Interior(j)` only for `j < i`, and NO interior may read the rec —
-/// the recursive cycle stays projection-only with no aggregation or
-/// value creation in its feedback (`lean/Bumbledb/Query/Stages.lean`).
-/// A name is a compositional handle, never a materialization directive:
-/// the head is `rules[0].head()`, exactly like main.
+/// A nonrecursive relation stage: a finite union of rules whose heads may
+/// produce aggregates, scalars, and intervals. Declaration order is
+/// topological: interior i may read only interiors j < i, and cannot read
+/// the recursive component. A name provides composition without requiring
+/// a particular materialization strategy. The head is `rules[0].head()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Interior {
     pub rules: Vec<Rule>,
@@ -509,8 +512,7 @@ impl Interior {
     }
 }
 
-/// A base arm of a linear rec: negation is unrepresentable, and there
-/// is no self field (`lean/Bumbledb/Query/Syntax.lean: RecRule`).
+/// A base arm of linear recursion. It has no self-atom or negation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecRule {
     pub finds: Vec<VarId>,
@@ -530,9 +532,8 @@ impl RecRule {
     }
 }
 
-/// A step arm of a linear rec: `self_bindings` IS the unique positive
-/// self-atom. Remaining atoms are non-self. Negation is unrepresentable
-/// (`lean/Bumbledb/Query/Syntax.lean: RecStep`).
+/// A recursive step with exactly one positive self-atom in `self_bindings`.
+/// Remaining atoms are non-self; negation is unrepresentable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecStep {
     pub finds: Vec<VarId>,
@@ -576,11 +577,9 @@ impl RecStep {
     }
 }
 
-/// One linear recursive SCC: nonempty base arms (no self atom) and
-/// nonempty rec arms (exactly one positive self-atom each, reified as
-/// `base.len + rec.len` is one pool against [`MAX_RULES`].
-/// [`RecStep::self_bindings`]) (`lean/Bumbledb/Query/Syntax.lean: Rec`).
-/// The rec's `InteriorId` is `interiors.len` after the overflow check.
+/// One linear recursive component: nonempty base arms and nonempty step
+/// arms, each with one positive self-atom. Their combined count is bounded
+/// by `MAX_RULES`. Its `InteriorId` follows the nonrecursive interiors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rec {
     pub base: NonEmpty<RecRule>,
@@ -594,15 +593,9 @@ impl Rec {
     }
 }
 
-/// A query: named interiors (a DAG, eval once), then either a finite
-/// .
-/// **Denotation:** interiors then (Reach: rec lfp) then main
-/// means there is exactly one union per rule-list — no bag distinction
-/// exists or is representable. Disjunction is data, never an execution
-/// node.
-/// The single-rule query is the conjunctive query unchanged
-/// ([`Query::single`]): empty-prefix CQ (`rec` is `None`).
-/// (`lean/Bumbledb/Query/Denotation.lean: evalQuery`). Set semantics
+/// A query evaluates its acyclic interiors, an optional linear recursive
+/// fixed point, then the main rules. Each rule list denotes a set union.
+/// `Query::single` constructs the conjunctive case with no predecessor stages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Query {
     pub interiors: Vec<Interior>,

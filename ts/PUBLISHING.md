@@ -15,9 +15,12 @@ The Linux build targets glibc 2.34; it is not a musl build. Rust workspace
 crates have `publish = false` and are consumed from source/Git. There is no
 C package or public Rust log SDK to publish.
 
-A Git tag, a GitHub Release, and npm publication are separate actions.
-Creating a GitHub Release does not put packages in the registry. Registry
-publication remains an explicit owner action.
+Every release requires all three: publication of the five packages, an
+annotated Git tag `v<version>` pushed to GitHub at the verified source commit,
+and a published GitHub Release for that tag with release notes, all five
+tarballs, and `SHA256SUMS` attached. None substitutes for another. Registry
+publication remains an explicit owner action; the complete owner command must
+include tagging and GitHub Release creation, not just package publication.
 
 Use **pnpm only** for JavaScript dependency installation, builds, packing,
 registry inspection, and publication. The `packageManager` field in `ts/`
@@ -48,7 +51,7 @@ addon from a different package version.
    three supported-platform build and test jobs** to finish with `success`:
    `check / darwin`, `check / linux-arm64`, and `check / linux-x64`.
    These jobs include the native/SDK builds, complete correctness battery,
-   Rust and TypeScript tests, Lean checks, and installed-consumer checks.
+   Rust and TypeScript tests, independent oracles, and installed-consumer checks.
    Missing, running, skipped, cancelled, or failed required jobs block release.
    **Do not wait for the entire workflow to turn green:** static Linux ARM64
    (`static-linux-arm64 / musl`) and Miri are supplemental and do not block
@@ -112,36 +115,47 @@ the staged tarball paths, not the source package directories. Every command
 must stop on failure; never proceed with a partially published dependency
 family as though it were complete. Authentication or OTP may be required.
 
-For 1.2.1, use `/tmp/bumbledb-release-1.2.1` as the fresh staging directory.
+For 1.3.0, use `/tmp/bumbledb-release-1.3.0` as the fresh staging directory.
 From the repository root, after the required jobs and artifact checks pass:
 
 ```sh
-RELEASE_DIR=/tmp/bumbledb-release-1.2.1
-node ts/scripts/stage.ts --out "$RELEASE_DIR"
-node ts-log/scripts/stage.ts --out "$RELEASE_DIR"
-(cd "$RELEASE_DIR" && shasum -a 256 ./*.tgz > SHA256SUMS)
+BUMBLEDB_RELEASE_DIR=/tmp/bumbledb-release-1.3.0
+node ts/scripts/stage.ts --out "$BUMBLEDB_RELEASE_DIR"
+node ts-log/scripts/stage.ts --out "$BUMBLEDB_RELEASE_DIR"
+(cd "$BUMBLEDB_RELEASE_DIR" && shasum -a 256 ./*.tgz > SHA256SUMS)
 ```
 
-The owner publish one-liner below checks the same CI run and the staged
-checksums, publishes the five packages in dependency order with pnpm, and
-creates the matching tag/GitHub Release with those exact tarballs. Set
-`RUN_ID` to the successful candidate's CI run ID first. The release directory
-must contain exactly the five reviewed 1.2.1 tarballs and their checksum file.
+The complete owner command checks the candidate's CI and staged checksums,
+publishes the five packages in dependency order, pushes an annotated tag at
+that exact commit, and creates the public GitHub Release with those bytes.
+Set `BUMBLEDB_CI_RUN` to the candidate's successful CI run ID first. Run from
+its clean checkout; the release directory must contain exactly the five
+reviewed 1.3.0 tarballs and their checksum file. For a future version, update
+both the version and the staging directory. Supply the owner an absolute
+checkout path and the verified commit/run IDs when preparing a release command.
 
 ```sh
-node scripts/release-ready.mjs "$RUN_ID" && (cd /tmp/bumbledb-release-1.2.1 && shasum -a 256 -c SHA256SUMS) && (cd ts && for p in bumbledb-darwin-arm64 bumbledb-linux-arm64 bumbledb-linux-x64 bumbledb bumbledb-log; do pnpm publish "/tmp/bumbledb-release-1.2.1/bjornpagen-$p-1.2.1.tgz" --access public --no-git-checks || exit; done) && gh release create v1.2.1 /tmp/bumbledb-release-1.2.1/*.tgz /tmp/bumbledb-release-1.2.1/SHA256SUMS --target "$(git rev-parse HEAD)" --title 'BumbleDB 1.2.1' --notes-file docs/release-1.2.1.md
+(set -eu; BUMBLEDB_VERSION=1.3.0; BUMBLEDB_RELEASE_DIR=/tmp/bumbledb-release-1.3.0; BUMBLEDB_REVISION=$(git rev-parse HEAD); node scripts/release-ready.mjs "$BUMBLEDB_CI_RUN"; (cd "$BUMBLEDB_RELEASE_DIR" && shasum -a 256 -c SHA256SUMS); (cd ts && pnpm whoami && for p in bumbledb-darwin-arm64 bumbledb-linux-arm64 bumbledb-linux-x64 bumbledb bumbledb-log; do pnpm publish "$BUMBLEDB_RELEASE_DIR/bjornpagen-$p-$BUMBLEDB_VERSION.tgz" --access public --no-git-checks || exit; done); git tag -a "v$BUMBLEDB_VERSION" "$BUMBLEDB_REVISION" -m "BumbleDB $BUMBLEDB_VERSION"; git push origin "refs/tags/v$BUMBLEDB_VERSION"; gh release create "v$BUMBLEDB_VERSION" "$BUMBLEDB_RELEASE_DIR"/*.tgz "$BUMBLEDB_RELEASE_DIR/SHA256SUMS" --verify-tag --title "BumbleDB $BUMBLEDB_VERSION" --notes-file "docs/release-$BUMBLEDB_VERSION.md")
 ```
 
+Authentication or OTP may be required. If `pnpm whoami` fails, authenticate
+with `pnpm --dir ts login` and rerun the command. A successful identity check
+alone does not establish permission to publish every package.
+
 If publication stops partway through, inspect each package with
-`pnpm --dir ts view PACKAGE@1.2.1 dist --json`, compare the registry bytes,
+`pnpm --dir ts view PACKAGE@1.3.0 dist --json`, compare the registry bytes,
 and resume only the missing packages in order. Never republish or replace
 an existing version. `--no-git-checks` permits publishing staged tarballs;
 the preceding release check still requires a clean, verified candidate.
+If tagging or GitHub Release creation failed after publication, verify the
+remote tag resolves to the candidate, then resume that remaining step. Never
+move a release tag or replace a released artifact to recover a partial run.
 
-After publication, download the registry artifacts and compare their hashes
-with the staged files. Test a clean installed consumer on each supported
-platform. Only this establishes registry distribution; local tarball tests
-cannot substitute for it.
+After publication, verify the tag points to the candidate and the Release is
+published (not a draft), with the expected title, notes, and six assets. Download
+the registry artifacts and compare their hashes with the staged files. Test a
+clean installed consumer on each supported platform. Only this establishes
+registry distribution; local tarball tests cannot substitute for it.
 
 pnpm's minimum-release-age policy can delay fresh packages. Consumers should
 make any scoped exception deliberately; do not turn off registry safeguards
@@ -162,5 +176,6 @@ claim of universal production readiness or complete external qualification.
 
 The [1.2.1 benchmark plan](../docs/perf/runs/1.2.1/README.md) prepares a new
 full local run. Until it is executed and reviewed, retain the existing
-benchmark provenance and make no 1.2.1 performance claim. Benchmark completion
-is separate from the required build/test CI jobs.
+benchmark provenance. The [structural query measurements](../docs/perf/structural-algebra-20260911.md)
+record their own pre-release source; neither report is a full 1.3.0 benchmark.
+Benchmark completion is separate from the required build/test CI jobs.

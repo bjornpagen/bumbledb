@@ -1,9 +1,7 @@
-//! The linear-reach driver: one rec SCC, interiors then
-//! rec then main. Round 0 runs the base arms through the ordinary rule
-//! loop; rounds ≥ 1 run each rec arm against the watermark frontier
-//! (the unique self-atom is the marked delta occurrence). An empty Δ ends the rec
-//! Interiors-only never enters this module's loop.
-//! (`lean/Bumbledb/Exec/Reach.lean: evalLinearReach_eq_lfp`).
+//! Linear recursion: evaluate interiors, then the recursive component, then
+//! main. The base arms seed round zero. Each later round reads the watermark
+//! frontier at its unique self-atom. An empty frontier ends the fixed point.
+//! Queries containing only interiors never enter this loop.
 use std::sync::Arc;
 
 use super::derived::{ScratchStage, SealedStage};

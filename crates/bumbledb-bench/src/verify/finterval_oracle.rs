@@ -12,8 +12,6 @@
 //!
 //! Nothing here consults production interval, Allen, or comparison helpers;
 //! ordering is the sibling `f64_oracle::order_key` (itself independent).
-//! The Lean twin is `lean/Bumbledb/FloatInterval.lean` (exact rational
-//! points); the two models must agree on every shared fixture.
 
 use super::f64_oracle::{Class, INF, NEG_INF, SIGN, canonical, classify, order_key};
 
@@ -111,10 +109,8 @@ impl FInterval {
         self.contains_dense(Dense::At(probe))
     }
 
-    /// The RAW order-key comparison an engine would run WITHOUT the
-    /// finite-probe guard — exposed so the tests can demonstrate the guard
-    /// is load-bearing (`lean/Bumbledb/FloatInterval.lean:
-    /// neg_inf_probe_needs_guard`).
+    /// Expose the raw comparison without the finite-probe guard so tests
+    /// can demonstrate why the guard is required.
     #[must_use]
     pub fn raw_key_compare(self, probe_raw: u64) -> bool {
         let probe = canonical(probe_raw);
@@ -262,15 +258,9 @@ mod tests {
         // between -MAX and its successor is NOT in the ray (it is above
         // -MAX)…
         assert!(!ray.contains_dense(Dense::JustAbove(NEG_MAX)));
-        // …while nonemptiness is witnessed at [-inf, x) for any x with a
-        // representable below it: [-inf, -MAX) has no representable
-        // member, and the oracle's dense fragment cannot spell a point
-        // below every representable — that HALF of the fixture is the
-        // Lean model's rational witness
-        // (`lean/Bumbledb/FloatInterval.lean: negInfRay_witness`). What
-        // this side pins is the discrete-model REFUTATION: an engine that
-        // enumerates representable points calls this valid interval
-        // empty.
+        // [-infinity, -MAX) has no representable binary64 member but denotes
+        // a nonempty dense interval. Enumerating representable values would
+        // incorrectly classify it as empty.
         let representable_members = [NEG_MAX, SIGN | ONE, 0, ONE, MAX_FINITE, NEG_INF, INF, NAN]
             .iter()
             .filter(|&&p| ray.contains_probe(p))

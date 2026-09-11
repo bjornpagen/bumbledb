@@ -54,13 +54,9 @@ cargo nextest run --workspace
 echo "==> scripts/check.sh"
 scripts/check.sh
 
-# Lean kernel + constructor correspondence (scripts/lean.sh already
-# runs scripts/spec-census.sh). lean.sh is not a cargo-test owner —
-# correspondence::OWNED_CASES live in crates/bumbledb-bench and run
-# under workspace nextest above. No dyn/wording census.
-# Current identity goldens run in the workspace conformance_v3 test target.
-echo "==> scripts/lean.sh"
-scripts/lean.sh
+# Independent arithmetic and endpoint oracle; native corpus replay runs above.
+echo "==> independent structural corpus"
+python3 scripts/structural-corpus.py
 
 echo "==> bridge: Rust tests in the parallel process pool (ts/crate)"
 cargo nextest run --manifest-path ts/crate/Cargo.toml --config-file .config/nextest.toml

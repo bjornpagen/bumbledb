@@ -117,15 +117,9 @@ fn tree_terms(tree: &ConditionTree) -> Vec<Vec<Comparison>> {
     }
 }
 
-/// representation level, the duplicate-statement machinery's sibling
-/// (`schema/validate.rs` rejects identical normalized statements; here
-/// the duplicate is a fact of the distribution, so it collapses instead).
-/// Normalized-form equality: finds, atoms, and negated atoms verbatim;
-/// condition lists as **sets** — order- and multiplicity-insensitive,
-/// `ruleAnswers_conditions_congr` identifies the set-equal pair's
-/// answers, then `union_idempotent` deletes the duplicate). First
-/// occurrence wins, so rule order (hence diagnostic indices) stays
-/// (`lean/Bumbledb/Query/Denotation.lean`:
+/// Collapse distributed rules with identical finds, atoms, negated atoms,
+/// and set-equal conditions. Condition order and multiplicity do not change
+/// answers. Keep the first occurrence to preserve diagnostic ordering.
 #[must_use]
 pub fn collapse(rules: Vec<LoweredRule>) -> Vec<LoweredRule> {
     let mut kept: Vec<LoweredRule> = Vec::with_capacity(rules.len());

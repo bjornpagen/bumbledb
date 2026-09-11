@@ -16,6 +16,13 @@ impl Signature {
             .iter()
             .map(|term| match term {
                 FindTerm::Var(var) => SignatureColumn::Project { ty: var_type(var) },
+                FindTerm::Segments { left, .. } => SignatureColumn::Project {
+                    ty: ValueType::Interval {
+                        element: var_type(left)
+                            .interval_element()
+                            .expect("validated interval"),
+                    },
+                },
                 FindTerm::Compute(expr) => SignatureColumn::Project {
                     ty: expr
                         .result_type(|var| typing.var_types.get(&var).copied())
@@ -30,7 +37,11 @@ impl Signature {
                     op: AggKind::of(*op),
                 },
                 FindTerm::Pack { over } => SignatureColumn::Fold {
-                    ty: var_type(over),
+                    ty: ValueType::Interval {
+                        element: var_type(over)
+                            .interval_element()
+                            .expect("validated interval"),
+                    },
                     op: AggKind::Pack,
                 },
             })
@@ -51,6 +62,7 @@ impl AggKind {
 }
 
 impl Context {
+    #[expect(clippy::too_many_lines, reason = "one exhaustive find grammar check")]
     pub(super) fn check_finds(
         &self,
         rule: &LoweredRule,
@@ -63,6 +75,32 @@ impl Context {
         for (find_idx, term) in rule.finds.iter().enumerate() {
             let find = FindIndex(find_idx);
             match term {
+                FindTerm::Segments { left, right, .. } => {
+                    for var in [left, right] {
+                        if !self.atom_vars.contains(var) {
+                            return Err(ValidationError::UnboundFindVariable { var: *var });
+                        }
+                    }
+                    let left = self.resolved_var_type(*left).interval_element();
+                    let right = self.resolved_var_type(*right).interval_element();
+                    if left.is_none() || left != right {
+                        return Err(ValidationError::ScalarExpression {
+                            find,
+                            source: crate::ScalarError::TypeMismatch,
+                        });
+                    }
+                    if rule.finds.iter().any(|f| {
+                        matches!(
+                            f,
+                            FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. }
+                        )
+                    }) {
+                        return Err(ValidationError::ScalarExpression {
+                            find,
+                            source: crate::ScalarError::TypeMismatch,
+                        });
+                    }
+                }
                 FindTerm::Compute(expr) => {
                     let ty = expr
                         .result_type(|var| self.var_types.get(&var).copied())

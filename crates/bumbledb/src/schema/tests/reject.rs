@@ -1289,7 +1289,7 @@ fn rejects_a_set_literal_of_the_wrong_type() {
 fn rejects_a_capacity_with_an_interval_position() {
     // The v0 refusal: a window counts FACTS per parent; an interval
 
-    // (`lean/Bumbledb/Capacity.lean` § v0 refusals; trigger: a sighted
+    // Capacity projections identify groups with scalar keys.
 
     let mut decl = extension_tree();
     // A pointwise key on Task(span) so only the interval refusal fires.
@@ -1565,7 +1565,7 @@ fn accepts_a_duration_measure_against_a_u64_field_bound() {
 
 #[test]
 fn rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound() {
-    // resolved window (`lean/Bumbledb/Schema.lean: den_closed_constant`).
+    // Evaluate the resolved window against the constant extension.
 
     let decl = SchemaDescriptor {
         relations: vec![
@@ -1688,7 +1688,7 @@ fn rejects_a_window_arity_mismatch() {
 
 #[test]
 fn rejects_a_closed_to_closed_window_the_axioms_refute() {
-    // (`lean/Bumbledb/Schema.lean: den_closed_constant`). The cited row
+    // The cited row belongs to the sealed constant extension.
 
     let decl = SchemaDescriptor {
         relations: vec![
@@ -1750,16 +1750,10 @@ fn rejects_interval_positions_across_element_domains_whatever_the_widths() {
     );
 }
 
-/// The declaration counts here are host-supplied data at the public
-/// `Db::create` trust boundary, and the query boundary's own caps are all typed
-/// refusals (`ValidationError::TooManyRules` / `TooManyAtoms` /
-/// `TooManyVariables`) — the schema boundary now matches the engine's
-/// typed-refusal law (`lean/Bumbledb/Admission.lean`: acceptance and refusal
-/// are a typed gate verdict, never a crash). The caps landed as
-/// `SchemaError::TooManyStatements` (the materialized statement roster past
-/// 2^16) and `SchemaError::RelationTooManyColumns` (a relation's field-id mint
-/// past 2^16), both computed before any u16 id is minted; `validate`'s `#
-/// Panics` contract now names only the unreachable 2^32-relations case.
+/// Public schema declaration counts produce typed refusals before ids are
+/// minted: `TooManyStatements` bounds the statement roster, and
+/// `RelationTooManyColumns` bounds field positions. Oversized input must not
+/// truncate an id or panic.
 #[test]
 fn the_id_width_caps_refuse_typed_rather_than_panicking() {
     let count = u32::from(u16::MAX) + 1;

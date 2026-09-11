@@ -11,6 +11,7 @@ import type {
 	ScalarExprIr,
 	TermIr
 } from "#native.ts"
+import { roundingMode } from "#scalar.ts"
 import { arrayValue as array, recordValue, valueDescriptor } from "#values.ts"
 
 function fail(context: string, expected: string): never {
@@ -59,6 +60,7 @@ function scalar(context: string, input: unknown, depth = 1): ScalarExprIr {
 		case "literal":
 			recordValue(context, raw, ["kind", "value"])
 			return Object.freeze({ kind: raw.kind, value: valueDescriptor(`${context}.value`, raw.value) })
+		case "measure":
 		case "negate":
 		case "isNaN":
 		case "isFinite":
@@ -73,6 +75,15 @@ function scalar(context: string, input: unknown, depth = 1): ScalarExprIr {
 				kind: raw.kind,
 				left: scalar(`${context}.left`, raw.left, depth + 1),
 				right: scalar(`${context}.right`, raw.right, depth + 1)
+			})
+		case "mulDiv":
+			recordValue(context, raw, ["kind", "a", "b", "divisor", "rounding"])
+			return Object.freeze({
+				kind: raw.kind,
+				a: scalar(`${context}.a`, raw.a, depth + 1),
+				b: scalar(`${context}.b`, raw.b, depth + 1),
+				divisor: scalar(`${context}.divisor`, raw.divisor, depth + 1),
+				rounding: roundingMode(raw.rounding)
 			})
 		case "cast": {
 			recordValue(context, raw, ["kind", "cast", "expr"])
@@ -102,6 +113,16 @@ function headTerm(context: string, input: unknown): HeadTermIr {
 
 function find(context: string, input: unknown): FindTermIr {
 	const raw = tagged(context, input)
+	if (raw.kind === "segments") {
+		recordValue(context, raw, ["kind", "op", "left", "right"])
+		if (raw.op !== "intersection" && raw.op !== "difference") return fail(context, "unknown segment operator")
+		return Object.freeze({
+			kind: raw.kind,
+			op: raw.op,
+			left: ordinal(context, raw.left),
+			right: ordinal(context, raw.right)
+		})
+	}
 	switch (raw.kind) {
 		case "var":
 			recordValue(context, raw, ["kind", "var"])
@@ -210,7 +231,8 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 		if (rule.finds.length !== head.length) fail(`${context}.rules[${index}]`, "finds width does not match head width")
 		for (const [position, find] of rule.finds.entries()) {
 			const term = head[position]
-			const family = find.kind === "var" || find.kind === "compute" ? find.kind : "aggregate"
+			const plainFamily = find.kind === "var" || find.kind === "compute" ? find.kind : "aggregate"
+			const family = find.kind === "segments" ? "compute" : plainFamily
 			if (term?.kind !== family)
 				fail(`${context}.rules[${index}].finds[${position}]`, "find family does not match head")
 			if (term.kind === "aggregate") {

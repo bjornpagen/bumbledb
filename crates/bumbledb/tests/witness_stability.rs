@@ -1,7 +1,5 @@
-//! probe-order-invariant by construction, and the Lean side compares
-//! verdicts by that list (`lean/Main.lean:: RVerdict`, list `BEq`).
-//! today, the whole rejection value — is invariant under everything a
-//! semantics before any probe runs.
+//! Rejection evidence must retain canonical ordering across insertion and
+//! probe orders. Compare complete verdict values, including witnesses.
 use bumbledb::schema::ValidateDescriptor as _;
 use bumbledb::{Db, Direction, Theory, Violation, Violations};
 

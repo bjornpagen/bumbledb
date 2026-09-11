@@ -159,12 +159,9 @@ fn randomized_subset_projections_match_the_oracle_under_d2() {
     }
 }
 
-/// The epoch wrap guard (`Executor::advance_cancel_epoch`): the D2 cancellation
-/// table is stamped, never cleared per execution, and the u32 epoch recycles
-/// its space once per 2³² executions — a stamp from the previous cycle must not
-/// alias the recycled value, or a live origin's whole subtree is silently
-/// skipped (answers missing that `lean/Bumbledb/Exec/Plan.lean:
-/// valid_plan_sound` requires).
+/// The cancellation table uses u32 epoch stamps. On wrap, a stamp from
+/// the previous cycle must not alias the recycled epoch and silently skip
+/// a live origin's subtree.
 #[test]
 fn epoch_wrap_never_aliases_a_stale_cancellation() {
     let schema = schema(2);

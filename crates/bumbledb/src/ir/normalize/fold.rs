@@ -4,7 +4,6 @@
 //! Two jobs, one pass:
 //! 1. **Range folding** — a conjunction of constant order filters on one
 //!    u64/i64 slot collapses into a single `[lo, hi]` summary.
-//!    `lean/Bumbledb/Exec/Rewrites.lean`: `range_summary_replacement`.
 use std::collections::BTreeMap;
 
 use super::Occurrence;

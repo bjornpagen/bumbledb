@@ -1,8 +1,5 @@
-//! One JSON document per case: (sealed relations, ground axioms, the
-//! MATERIALIZED statement list — indices are the engine's statement ids), the
-//! committed pre-state, executable judge: `lean/Bumbledb/Decide.lean:
-//! Txn.judgeB`, proved ids. Format in `lean/conformance/README.md` § judgment
-//! cases.
+//! Each fixture records sealed relations, constant extensions, materialized
+//! statements, a lawful pre-state, a delta, and the complete sorted verdict.
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -129,13 +126,8 @@ fn item(doc: u64, pos: u64, note: u64) -> (RelationId, Vec<Value>) {
     )
 }
 
-/// Holder(id, tag; key id); Account(holder, kind, num) under BOTH statement
-/// forms at once: the reference containment `Account(holder) <= Holder(id)`
-/// (statement 1) and the window `Holder(id) <={1..2} Account(holder | kind ==
-/// 1)` (statement 2) — the one roster schema whose statement phase can cite
-/// containment and capacity TOGETHER, so the ordered multi-citation verdict
-/// surface (`lean/Main.lean: RVerdict`'s list `BEq`, ascending indices via
-/// `verdictOf`) is actually exercised.
+/// Exercise containment and capacity in one schema so a final verdict
+/// can cite both statement kinds in canonical order.
 fn ledger_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -162,11 +154,7 @@ fn ledger_schema() -> SchemaDescriptor {
     }
 }
 
-/// Holder + Account under `Holder(id) <={2} Account(holder | kind == 1)`
-/// (exactness) and a second `{0}` window on kind 9 (the exclusion — the vacuous
-/// `0..*` posture is unrepresentable, rejected at validation as
-/// `CapacityVacuousWindow`; the default says nothing by not being spelled,
-/// `lean/Bumbledb/Capacity.lean: capacity_zero_star`).
+/// Exercise exact capacity and zero-capacity exclusion.
 fn exact_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -323,11 +311,8 @@ fn booking(room: u64, start: u64, end: u64, num: u64) -> (RelationId, Vec<Value>
 const SLOT: RelationId = RelationId(0);
 const CLAIM: RelationId = RelationId(1);
 
-/// Slot(id, span) under the pointwise key DECLARED `(id, span)`; the
-/// containment statement WRITTEN interval-first on both sides — `Claim(span,
-/// id) <= Slot(span, id)` — accepted through the set-canonical key resolution
-/// (the `FieldSet` doctrine, `lean/Bumbledb/Schema.lean: Header.intervalSplit`)
-/// and judged as coverage.
+/// Resolve a pointwise key when the written containment projection orders
+/// its interval and scalar fields differently from the declared key.
 fn permuted_schema() -> SchemaDescriptor {
     let interval = ValueType::Interval {
         element: bumbledb::schema::IntervalElement::U64,
@@ -369,8 +354,7 @@ fn claim(start: u64, end: u64, id: u64) -> (RelationId, Vec<Value>) {
 const PLAYLIST: RelationId = RelationId(0);
 const FSLOT: RelationId = RelationId(1);
 
-/// Element-domain typing meets at the containments' interval position (widths
-/// free — `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`).
+/// Interval compatibility follows element domains independently of width.
 fn playlist_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -526,13 +510,8 @@ fn cur_account(id: u64, currency: u64) -> (RelationId, Vec<Value>) {
     (RelationId(1), vec![Value::U64(id), Value::U64(currency)])
 }
 
-/// Currency closed WITH a payload column, narrowed by ψ: `Account(currency) <=
-/// Currency(id | region == 1)` — the member set compiles to the ψ
-/// sub-vocabulary {Usd, Eur}, leaving Jpy a REAL sealed member outside the
-/// statement's vocabulary (the K1 face's engine arm,
-/// `schema/validate.rs::compile_member_set`; the model's σ-over-extension twin,
-/// [`NaiveDb::target_facts`]; Lean reads the selection uniformly —
-/// `lean/Bumbledb/Schema.lean: den_closed_constant`).
+/// A selection over a closed target narrows its allowed vocabulary.
+/// Native member-set compilation must agree with `NaiveDb::target_facts`.
 fn closed_psi_schema() -> SchemaDescriptor {
     SchemaDescriptor {
         relations: vec![
@@ -695,7 +674,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
             deletes: vec![],
             inserts: vec![device(1, 5, 1)],
         },
-        // (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`),
+        // Recheck every parent group touched by the delta.
         JudgmentFixture {
             name: "judgment-capacity-dependent-bound-lowered-by-target-update",
             schema: dependent_schema(),
@@ -807,7 +786,7 @@ fn fixtures() -> Vec<JudgmentFixture> {
                 lane_i(2, i64::MAX - 6),
             ],
         },
-        // (`lean/Main.lean: RVerdict` list `BEq`, `verdictOf`'s indexed
+        // Compare the complete sorted statement-id list.
         JudgmentFixture {
             name: "judgment-statement-mixed-citations",
             schema: ledger_schema(),
@@ -885,7 +864,7 @@ fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
         Value::String(_) | Value::Uuid(_) | Value::IntervalF64(_) => {
             unreachable!(
                 "judgment fixtures carry no strings, identities or dense intervals — \
-                 the Lean judgment grammar spells none of them"
+                 the judgment interchange grammar spells none of them"
             )
         }
     }
@@ -1111,11 +1090,8 @@ fn grouped(facts: &Facts) -> Vec<(RelationId, Vec<Vec<Value>>)> {
     map.into_iter().collect()
 }
 
-/// The agreed verdict in the lane's shape: the phase is read off the citation
-/// kinds (the all-key flag is descriptive; every violation is retained),
-/// and the statement-id set
-/// deduplicates a containment cited in both directions (the `Direction`
-/// refinement sits below the Lean altitude).
+/// Record every violation and derive the descriptive phase from its kinds.
+/// A containment cited in both directions contributes one statement id.
 pub(super) fn lane_verdict(name: &str, verdict: &Verdict) -> JVerdict {
     match verdict {
         Verdict::Committed => JVerdict::Accept,
@@ -1300,7 +1276,7 @@ mod tests {
 
     use super::*;
 
-    /// (`lean/Main.lean: RVerdict` derives `BEq` — order-sensitive), and
+    /// Verdicts compare the entire ordered statement-id list.
     #[test]
     fn lane_verdict_orders_and_dedups_the_citation_list() {
         let both_directions = Verdict::Aborted(vec![

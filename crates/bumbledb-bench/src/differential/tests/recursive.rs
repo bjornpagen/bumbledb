@@ -1,4 +1,4 @@
-//! (`lean/Bumbledb/Exec/Reach.lean: evalQueryList`) over the Tiny
+//! Differential checks for restricted recursive queries over Tiny fixtures.
 use bumbledb::schema::ValidateDescriptor as _;
 use std::collections::BTreeSet;
 

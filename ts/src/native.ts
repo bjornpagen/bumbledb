@@ -89,6 +89,14 @@ type HeadOpIr = "sum" | "mean" | "min" | "max" | "count" | "pack"
 type NumericCastIr = "toF64" | "toF64Exact" | "toI64Exact" | "toU64Exact"
 
 type ScalarExprIr =
+	| { readonly kind: "measure"; readonly expr: ScalarExprIr }
+	| {
+			readonly kind: "mulDiv"
+			readonly a: ScalarExprIr
+			readonly b: ScalarExprIr
+			readonly divisor: ScalarExprIr
+			readonly rounding: import("#scalar.ts").Rounding
+	  }
 	| { readonly kind: "var"; readonly var: number }
 	| { readonly kind: "literal"; readonly value: TaggedValue }
 	| { readonly kind: "negate"; readonly expr: ScalarExprIr }
@@ -114,6 +122,12 @@ type FoldOpIr =
 	| { readonly kind: "max" }
 
 type FindTermIr =
+	| {
+			readonly kind: "segments"
+			readonly op: import("#query/segments.ts").SegmentOp
+			readonly left: number
+			readonly right: number
+	  }
 	| { readonly kind: "var"; readonly var: number }
 	| { readonly kind: "compute"; readonly expr: ScalarExprIr }
 	| { readonly kind: "count" }

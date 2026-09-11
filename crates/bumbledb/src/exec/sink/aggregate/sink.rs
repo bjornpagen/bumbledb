@@ -158,15 +158,11 @@ impl Sink for AggregateSink {
         }
         match (!self.distinct_bindings(), self.cached_constant_group) {
             (true, true) => self.fold_batch_dedup_constant_group(batch),
-            // Raw survivor multiplicity (`push_repeated`) is legal ONLY
-            // under the checked distinct-binding witness: exact float
-            // accumulation is NOT idempotent (the merge doubles a replayed
-            // partition — `lean/Bumbledb/Float64/Sum.lean:
-            // merge_not_idempotent`, bench `partial_state_replay_is_not_
-            // idempotent`), so a multiplicity contribution without either
-            // a seen-set verdict, the plan's semantic `DistinctWitness`,
-            // or a deduplicated resident COLT traversal would double-count
-            // overlapping derivations. The latter never licenses raw scans.
+            // Raw multiplicity is legal only with the checked distinct-binding
+            // witness. Exact accumulation is not idempotent: replaying a partition
+            // doubles its contribution. The seen set, a semantic `DistinctWitness`,
+            // or deduplicated resident COLT traversal must exclude overlapping
+            // derivations before push_repeated. Resident dedup does not license raw scans.
             (false, true) => {
                 debug_assert!(
                     self.distinct_bindings(),

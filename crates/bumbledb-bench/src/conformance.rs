@@ -1,10 +1,7 @@
-//! The Lean tree mathematics, and its executable half `evalList` is PROVED
-//! equal to the set denotation (`eval_sound`), so evaluating it on real Tiny
-//! (`lean/Bumbledb/Query/Denotation.lean`) is derived from the example in
-//! `lean/conformance/README.md`); written to `lean/conformance/cases/*.json`
-//! (checked in — the `lean/Bumbledb/Exec/Reach.lean: evalQueryList` — three-way
-//! like (`lean/Bumbledb/Exec/Dedup.lean: membership_lowering_preserves_fold`).
-//! licenses (`lean/Bumbledb/Query/Syntax.lean`, the membership note).
+//! Checked-in semantic cases generated from production execution and
+//! independent evaluators. Replay reconstructs each case from its recorded
+//! provenance, compares native and oracle results, and checks exact JSON
+//! bytes against fixtures/conformance.
 pub mod complete;
 pub mod judgment;
 pub mod reach;
@@ -50,12 +47,12 @@ pub struct Report {
 
     pub excluded_wide: u64,
 
-    /// Cases with a computed head: the Lean case grammar has no compute
-    /// kind, so such a query is inexpressible there — excluded, counted.
+    /// Computed heads are outside this interchange format and are counted as
+    /// excluded. Generated structural-stage tests cover those heads separately.
     pub excluded_compute: u64,
 
-    /// Cases touching an `Uuid` or dense-interval value the Lean value
-    /// grammar cannot spell yet — excluded, counted.
+    /// UUID and dense-interval values are outside this interchange format
+    /// and are counted as excluded.
     pub excluded_value: u64,
 }
 
@@ -82,11 +79,10 @@ impl Report {
 pub(super) enum Exclusion {
     UnresolvedLiteral,
 
-    /// A computed head — inexpressible in the Lean case grammar.
+    /// A computed head outside this interchange format.
     ComputedHead,
 
-    /// An `Uuid` or dense `Interval<F64>` value — the Lean value grammar
-    /// has no tag for either yet.
+    /// UUID or dense interval values outside this interchange format.
     UnrepresentableValue,
 }
 
@@ -242,8 +238,7 @@ impl World {
     }
 }
 
-/// The Allen basic names, in `Basic::ALL` order — the mask spelling of the
-/// interchange format (and of `lean/Bumbledb/Query/Syntax.lean`'s `AllenRel`).
+/// Allen basic names in `Basic::ALL` order, used by the interchange format.
 const BASIC_NAMES: [&str; 13] = [
     "before",
     "meets",
@@ -449,7 +444,7 @@ fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
         FindTerm::Var(v) => {
             let _ = write!(out, "{{\"var\":{}}}", v.0);
         }
-        FindTerm::Compute(_) => return Err(Exclusion::ComputedHead),
+        FindTerm::Compute(_) | FindTerm::Segments { .. } => return Err(Exclusion::ComputedHead),
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
@@ -518,6 +513,10 @@ fn count_vars(rule: &Rule) -> u16 {
                     see(&mut count, var);
                 }
             }
+            FindTerm::Segments { left, right, .. } => {
+                see(&mut count, *left);
+                see(&mut count, *right);
+            }
             FindTerm::Count => {}
         }
     }
@@ -556,12 +555,10 @@ fn membership(term: &Term, anchored: &[bool], params: &[ParamValue]) -> bool {
     }
 }
 
-/// One rule after the membership lowering: rewritten positive atoms, negated
-/// atoms left in SURFACE form (Lean `AntiProbe` / `surfaceMatchesB` reads
-/// membership there), the original conditions plus the lowered `PointIn`
-/// leaves, and the SURFACE WIDTH — the written rule's variable count, below the
-/// fresh mints, so the Lean fold domain projects every mint away (finding 087,
-/// discharged).
+/// A rule after positive-membership lowering. Negated atoms retain their
+/// surface membership semantics. The recorded width excludes fresh
+/// variables introduced by lowering so those variables cannot change
+/// the distinct-binding fold domain.
 struct LoweredRule<'a> {
     finds: &'a [FindTerm],
     atoms: Vec<Atom>,
@@ -1482,15 +1479,11 @@ pub fn generate_corpus() -> (Report, Vec<(String, String)>) {
     (report, cases)
 }
 
-/// The checked-in corpus directory (`lean/conformance/cases`).
+/// The checked-in corpus directory (`crates/bumbledb-bench/fixtures/conformance`).
 /// # Panics
 #[must_use]
 pub fn corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("crates/bumbledb-bench sits two levels below the repository root")
-        .join("lean/conformance/cases")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("fixtures/conformance")
 }
 
 /// # Panics
@@ -1523,16 +1516,10 @@ pub fn write_corpus(dir: &Path) -> Report {
     report
 }
 
-// These existing Lean-only expression fixtures are authored independently of
-// the random generator. Regeneration owns its outputs, not these witnesses.
+// The independent arithmetic/endpoint fixture is checked by bumbledb-log's
+// structural_conformance target. Query regeneration does not own that corpus.
 fn manually_authored_case(name: &str) -> bool {
-    matches!(
-        name,
-        "hand-measure-find"
-            | "hand-measure-count-collision"
-            | "hand-measure-predicate"
-            | "hand-measure-fold-sum"
-    )
+    name == "structural-algebra"
 }
 
 /// # Panics
@@ -1551,6 +1538,7 @@ pub fn replay_checked_in_corpus() -> usize {
         "no checked-in conformance cases under {}",
         dir.display()
     );
+    let mut replayed = 0;
     for path in &files {
         let name = path
             .file_stem()
@@ -1559,11 +1547,11 @@ pub fn replay_checked_in_corpus() -> usize {
             .to_owned();
         let text = std::fs::read_to_string(path).expect("read a corpus case");
 
-        // disk (do not edit cases/); skip engine+naive replay. Lean
-
+        // Independently owned fixtures have no random-query provenance.
         if manually_authored_case(&name) {
             continue;
         }
+        replayed += 1;
         let document = if name.starts_with("judgment-") {
             judgment::replay_judgment_case(&name)
         } else if name.starts_with("complete-") {
@@ -1580,7 +1568,7 @@ pub fn replay_checked_in_corpus() -> usize {
              triage per the fuzzing charter, regenerate only if the generator changed"
         );
     }
-    files.len()
+    replayed
 }
 
 fn replay_case(worlds: &mut BTreeMap<u64, World>, name: &str, text: &str) -> String {
@@ -1642,8 +1630,6 @@ fn read_u64(value: &crate::json::Value, key: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::process::Command;
-
     use super::*;
     use bumbledb::FoldOp;
 
@@ -1722,7 +1708,7 @@ mod tests {
         );
     }
 
-    /// Regenerates `lean/conformance/cases/` in place. Ignored: run it
+    /// Regenerates `crates/bumbledb-bench/fixtures/conformance/` in place. Ignored: run it
     #[test]
     #[ignore = "regenerates the checked-in corpus; run deliberately"]
     fn regenerate_the_conformance_corpus() {
@@ -1759,46 +1745,5 @@ mod tests {
     fn the_corpus_replays_byte_identical_from_its_provenance() {
         let cases = replay_checked_in_corpus();
         eprintln!("conformance: {cases} checked-in cases replayed byte-identical");
-    }
-
-    /// Three-way (engine + naive + `lake exe conformance`) over the checked-in
-    /// corpus. L19 removed cargo tests from `scripts/lean.sh`. This is L20
-    /// qualification, not a Lean proof and not a G15 timing cell. Final
-    /// qualification only:
-    /// `cargo test -p bumbledb-bench three_way_conformance -- --ignored`.
-    #[test]
-    #[ignore = "needs elan/lake on PATH; L20 qualification, not scripts/lean.sh"]
-    fn three_way_conformance_over_the_checked_in_corpus() {
-        let engine_started = Instant::now();
-        let cases = replay_checked_in_corpus();
-        eprintln!(
-            "conformance: {cases} cases — engine+naive replay + byte comparison: {} ms",
-            engine_started.elapsed().as_millis()
-        );
-
-        let lean_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .expect("repository root")
-            .join("lean");
-        let lean_started = Instant::now();
-        let output = Command::new("lake")
-            .arg("exe")
-            .arg("conformance")
-            .arg("conformance/cases")
-            .current_dir(&lean_dir)
-            .output()
-            .expect("run `lake exe conformance` (install elan / the pinned Lean toolchain)");
-        eprintln!(
-            "conformance: lake exe conformance: {} ms\n{}{}",
-            lean_started.elapsed().as_millis(),
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-        assert!(
-            output.status.success(),
-            "the Lean denotation disagrees with the checked-in corpus (see the named case \
-             files above) — a trophy; triage per the fuzzing charter"
-        );
     }
 }

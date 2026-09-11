@@ -1,0 +1,15 @@
+{
+	"sourceRevision": "79ddf5832a5249f9f9db0b9c8153a65a53084d74",
+	"artifacts": {
+		"bjornpagen-bumbledb-1.2.1.tgz": "d53e9d1e437378dd90d09bd7a15ed5219bad48ea73d2249b75bc4aff184b5a78",
+		"bjornpagen-bumbledb-darwin-arm64-1.2.1.tgz": "9b947ea579ad82206f35b5c9f94acfc4fae3d79c34d38b2b48b1f14f468a3af2"
+	},
+	"result": {
+		"schemaId": "c7aa7e9af4c9b08286db2ba5b84eae8e5b3c511a6f258d99db2d61f0bfc382db",
+		"descriptor": "13834e1d9ae3dfa60d75396d33d426cd448f77f6ae8c072a424e93edd436eac0",
+		"arithmetic": "fce670920907aac8a6ec768e4c95e426fe4590e8900ab48552788b1a01239daf",
+		"pack": "c630df665e175a775521af0968251da1920c5ceb03cc7dbec8de265c1c6d89c6",
+		"sum": "bb39025adfc543b5bd4da4fa153a6fa6dc8c0142ac5fef8b1d54dc2182258518",
+		"counts": [128, 128, 8]
+	}
+}

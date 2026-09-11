@@ -8,7 +8,7 @@
 //! whole RAM partition FLUSHES into a `ScratchRelation` keyed by the
 //! group-key words' exact big-endian bytes, merging with any previously
 //! flushed state per group. Partition merges are licensed by the exact
-//! accumulator merge laws (`lean/Bumbledb/Float64/Sum.lean` — the limb
+//! accumulator merge operations (the limb
 //! bank round-trips bit-for-bit through `encode_into`/`decode_from`, so a
 //! spilled group's Sum/Mean bits equal the resident bits); integer
 //! Sum/Min/Max/Count merges are the same total operations the scan path

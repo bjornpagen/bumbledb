@@ -6,13 +6,11 @@
 //!
 //! * [`admission`] — mutable-consulted-relation support, the one-command
 //!   normalization/tie rule, and the union/commutation counterexamples that
-//!   bound what the raw-delta algebra licenses (Lean twins:
-//!   `lean/Bumbledb/Txn/Support.lean`, countermodels in chapter 02).
+//!   bound what the raw-delta algebra licenses.
 //! * [`staged`] — the independent staged relation-expression evaluator:
 //!   acyclic stages with aggregate/computed outputs consumed downstream,
 //!   producer-error propagation, inline/materialize equivalence, and the
-//!   frozen-finite-domain recursion fence (Lean twin:
-//!   `lean/Bumbledb/Query/Stages.lean`).
+//!   frozen-finite-domain recursion fence.
 //!
 //! Neither model calls production equality, arithmetic, hashing or
 //! transition helpers as an oracle: schema DESCRIPTORS are consumed as data

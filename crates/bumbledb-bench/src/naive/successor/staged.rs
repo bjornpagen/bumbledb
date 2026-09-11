@@ -1,7 +1,6 @@
 //! The independent staged relation-expression evaluator (P11; chapter 12,
 //! chapter 13 §C; gates `Q-IR`, `Q-GROUP`, `Q-RECUR`, `F-SET`,
-//! `F-OPT-NEG`; audit ASS-002 routing). Lean twin:
-//! `lean/Bumbledb/Query/Stages.lean`.
+//! `F-OPT-NEG`; audit ASS-002 routing).
 //!
 //! Stages evaluate in an acyclic order — each is a total function of the
 //! EARLIER stages' complete outputs, producing a complete deduplicated row

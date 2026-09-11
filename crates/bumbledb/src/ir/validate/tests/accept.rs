@@ -335,6 +335,28 @@ fn mixed_width_schema() -> Schema {
 }
 
 #[test]
+fn pack_forgets_input_width_and_combines_fixed_and_general_arms() {
+    let arm = |field| Rule {
+        finds: vec![FindTerm::Pack { over: VarId(0) }],
+        atoms: vec![atom(RelationId(0), vec![(field, var(0))])],
+        negated: vec![],
+        conditions: vec![],
+    };
+    let fixed = Query::single(arm(2));
+    let schema = mixed_width_schema();
+    let witness = validate(&schema, &fixed).expect("pack fixed intervals");
+    assert_eq!(
+        *witness.signature().columns[0].ty(),
+        ValueType::Interval {
+            element: IntervalElement::U64
+        }
+    );
+    let mut combined = fixed;
+    combined.rules.push(arm(1));
+    validate(&schema, &combined).expect("pack merges fixed and general intervals alike");
+}
+
+#[test]
 fn accepts_a_mixed_width_allen_pair_of_one_element_domain() {
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],

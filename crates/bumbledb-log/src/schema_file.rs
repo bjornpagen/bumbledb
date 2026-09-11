@@ -428,6 +428,29 @@ fn parse_fixed_element(json: &Json) -> Result<FixedIntervalElement, TheoryFile> 
 
 fn parse_statement(json: &Json) -> Result<StatementDescriptor, TheoryFile> {
     let object = json.as_object().ok_or(TheoryFile::Shape("statement"))?;
+    if object.len() != 1 {
+        return Err(TheoryFile::Shape("statement requires one kind"));
+    }
+    let (kind, body) = object.iter().next().expect("one key");
+    let fields: &[&str] = match kind.as_str() {
+        "functionality" => &["relation", "projection"],
+        "containment" => &["source", "target"],
+        // An omitted upper bound is the supported unbounded spelling in
+        // older snapshots; rendering still canonicalizes it to null.
+        "capacity" if body.get("hi").is_none() => &["target", "weight", "lo", "source"],
+        "capacity" => &["target", "weight", "lo", "hi", "source"],
+        _ => return Err(TheoryFile::Shape("unknown statement")),
+    };
+    let body_fields = body
+        .as_object()
+        .ok_or(TheoryFile::Shape("statement body"))?;
+    if body_fields.len() != fields.len()
+        || body_fields
+            .keys()
+            .any(|key| !fields.contains(&key.as_str()))
+    {
+        return Err(TheoryFile::Shape("unknown or missing statement field"));
+    }
     if let Some(body) = object.get("functionality") {
         return Ok(StatementDescriptor::Functionality {
             relation: RelationId(as_u32(&body["relation"], "relation")?),
@@ -461,6 +484,13 @@ fn parse_projection(json: &Json) -> Result<Box<[FieldId]>, TheoryFile> {
 }
 
 fn parse_side(json: &Json) -> Result<Side, TheoryFile> {
+    let object = json.as_object().ok_or(TheoryFile::Shape("side"))?;
+    if object
+        .keys()
+        .any(|key| !["relation", "projection", "selection"].contains(&key.as_str()))
+    {
+        return Err(TheoryFile::Shape("unknown side field"));
+    }
     let selection = match json.get("selection") {
         None | Some(Json::Null) => Box::from([]),
         Some(bindings) => bindings

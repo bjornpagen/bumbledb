@@ -13,7 +13,7 @@ import type { AnyField } from "#fields.ts"
 import { bool as boolField, f64 as f64Field, i64 as i64Field, rosterOf, u64 as u64Field } from "#fields.ts"
 import type { AnyVar } from "#query/scope.ts"
 import { isTerm, term } from "#query/scope.ts"
-import type { ScalarKind, ScalarLiteral, ScalarNode } from "#scalar.ts"
+import type { Rounding, ScalarKind, ScalarLiteral, ScalarNode } from "#scalar.ts"
 import {
 	checkBool,
 	checkF64,
@@ -27,6 +27,8 @@ import {
 	scalarCast,
 	scalarFloatPredicate,
 	scalarLiteral,
+	scalarMeasure,
+	scalarMulDiv,
 	scalarNegate
 } from "#scalar.ts"
 
@@ -61,7 +63,11 @@ type OperandKind<O> =
 			: never
 
 function isComputeExpr(value: unknown): value is AnyComputeExpr {
-	return isScalarNode(value) && value.scope === "query-var" && value.result !== "unresolved"
+	return (
+		isScalarNode(value) &&
+		value.scope === "query-var" &&
+		(value.result === "u64" || value.result === "i64" || value.result === "f64" || value.result === "bool")
+	)
 }
 
 function varKindOf(where: string, ref: AnyVar): ScalarKind {
@@ -167,6 +173,37 @@ function negate<O extends SignedOperand>(operand: O): ComputeExpr<OperandKind<O>
 	return scalarNegate(where, asQueryNode(where, operand)) as ComputeExpr<OperandKind<O> & ("i64" | "f64")>
 }
 
+type IntegerOperand =
+	| ComputeExpr<"u64">
+	| ComputeExpr<"i64">
+	| (AnyVar & { readonly field: { readonly kind: "i64" | "u64" } })
+
+function mulDiv<A extends IntegerOperand, B extends IntegerOperand, D extends IntegerOperand>(
+	a: A,
+	b: B & (OperandKind<A> extends OperandKind<B> ? unknown : never),
+	divisor: D & (OperandKind<A> extends OperandKind<D> ? unknown : never),
+	rounding: Rounding
+): ComputeExpr<OperandKind<A>> {
+	return scalarMulDiv(
+		"Compute.mulDiv",
+		asQueryNode("Compute.mulDiv", a),
+		asQueryNode("Compute.mulDiv", b),
+		asQueryNode("Compute.mulDiv", divisor),
+		rounding
+	) as ComputeExpr<OperandKind<A>>
+}
+
+function measure<V extends AnyVar & { readonly field: { readonly kind: "interval" } }>(
+	interval: V
+): ComputeExpr<V["field"] extends { readonly element: "f64" } ? "f64" : "u64"> {
+	if (!isTerm(interval) || interval[term] !== "var" || interval.field.kind !== "interval")
+		throw new AuthoringError({ message: "Compute.measure: expected an interval variable" })
+	const kind = { u64: "intervalU64", i64: "intervalI64", f64: "intervalF64" } as const
+	return scalarMeasure("Compute.measure", queryVarLeaf(interval, kind[interval.field.element])) as ComputeExpr<
+		V["field"] extends { readonly element: "f64" } ? "f64" : "u64"
+	>
+}
+
 function toF64(operand: ArithmeticOperand): ComputeExpr<"f64"> {
 	const where = "Compute.toF64"
 	return scalarCast(where, "toF64", "f64", asQueryNode(where, operand)) as ComputeExpr<"f64">
@@ -225,6 +262,8 @@ const Compute = Object.freeze({
 	subtract,
 	multiply,
 	divide,
+	mulDiv,
+	measure,
 	toF64,
 	toF64Exact,
 	toI64Exact,

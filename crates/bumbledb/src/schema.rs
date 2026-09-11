@@ -423,7 +423,7 @@ pub struct Relation {
 
     capacity_sources: Box<[CapacityId]>,
 
-    /// (`lean/Bumbledb/Txn/DeltaRestriction.lean: touchedParents`).
+    /// Rejudge every target group touched by the final delta.
     capacity_targets: Box<[CapacityId]>,
     body: RelationBody,
 }
@@ -573,7 +573,7 @@ impl Schema {
             .map(|statement| self.view(statement))
     }
 
-    /// Mirrors `lean/Bumbledb/Schema.lean: Statement.closedConstant`.
+    /// The closed extension is fixed by the schema.
     pub(crate) fn closed_constant(&self, view: StatementView<'_>) -> bool {
         let closed = |relation| self.relation(relation).body().closed_rows().is_some();
         match view {

@@ -255,7 +255,7 @@ function checkTsPackages(findings: string[]): void {
 }
 
 /** Maintained code and manifest scopes; documentation may discuss dependencies. */
-const CODE_PREFIXES = ["crates/", "ts/", "ts-log/", "examples/", "scripts/", ".github/", "lean/"] as const
+const CODE_PREFIXES = ["crates/", "ts/", "ts-log/", "examples/", "scripts/", ".github/"] as const
 
 function checkBannedText(files: readonly string[], findings: string[]): void {
 	for (const file of files) {

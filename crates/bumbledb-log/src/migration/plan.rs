@@ -12,7 +12,7 @@
 //! plan under a reused label is drift, not a takeover.
 
 use bumbledb::Value;
-use bumbledb::scalar::NumericCast;
+use bumbledb::scalar::{NumericCast, Rounding};
 
 use crate::history::{FrameError, SchemaId};
 
@@ -92,6 +92,13 @@ pub enum PlanExpr {
     Subtract(Box<PlanExpr>, Box<PlanExpr>),
     Multiply(Box<PlanExpr>, Box<PlanExpr>),
     Divide(Box<PlanExpr>, Box<PlanExpr>),
+    MulDiv {
+        a: Box<Self>,
+        b: Box<Self>,
+        divisor: Box<Self>,
+        rounding: Rounding,
+    },
+    Measure(Box<Self>),
     Cast {
         kind: NumericCast,
         expr: Box<PlanExpr>,
@@ -175,6 +182,10 @@ const EXPR_NEGATE: u8 = 6;
 const EXPR_CAST: u8 = 7;
 const EXPR_IS_NAN: u8 = 8;
 const EXPR_IS_FINITE: u8 = 9;
+// Additive closed grammar extension: old expression bytes/digests are unchanged.
+// Readers predating these tags reject them through the unknown-tag branch.
+const EXPR_MUL_DIV: u8 = 10;
+const EXPR_MEASURE: u8 = 11;
 
 const VALUE_BOOL: u8 = 0;
 const VALUE_U64: u8 = 1;
@@ -262,6 +273,26 @@ fn put_expr(out: &mut Frame, expr: &PlanExpr, depth: usize) -> Result<(), FrameE
         return Err(FrameError::LimitExceeded);
     }
     match expr {
+        PlanExpr::Measure(expr) => {
+            out.tag(EXPR_MEASURE)?;
+            put_expr(out, expr, depth + 1)?;
+        }
+        PlanExpr::MulDiv {
+            a,
+            b,
+            divisor,
+            rounding,
+        } => {
+            out.tag(EXPR_MUL_DIV)?;
+            out.tag(match rounding {
+                Rounding::TowardZero => 0,
+                Rounding::NearestTiesAwayFromZero => 1,
+                Rounding::NearestTiesToEven => 2,
+            })?;
+            put_expr(out, a, depth + 1)?;
+            put_expr(out, b, depth + 1)?;
+            put_expr(out, divisor, depth + 1)?;
+        }
         PlanExpr::Field(name) => {
             out.tag(EXPR_FIELD)?;
             out.span(name.as_bytes())?;
@@ -482,6 +513,28 @@ fn read_expr(input: &mut Reader<'_>, cap: usize, depth: usize) -> Result<PlanExp
         Ok((left, right))
     };
     match input.tag()? {
+        (_, EXPR_MEASURE) => Ok(PlanExpr::Measure(Box::new(read_expr(
+            input,
+            cap,
+            depth + 1,
+        )?))),
+        (_, EXPR_MUL_DIV) => {
+            let rounding = match input.tag()? {
+                (_, 0) => Rounding::TowardZero,
+                (_, 1) => Rounding::NearestTiesAwayFromZero,
+                (_, 2) => Rounding::NearestTiesToEven,
+                (at, got) => return Err(PlanError::Frame(FrameError::Tag { at, got })),
+            };
+            let a = Box::new(read_expr(input, cap, depth + 1)?);
+            let b = Box::new(read_expr(input, cap, depth + 1)?);
+            let divisor = Box::new(read_expr(input, cap, depth + 1)?);
+            Ok(PlanExpr::MulDiv {
+                a,
+                b,
+                divisor,
+                rounding,
+            })
+        }
         (_, EXPR_FIELD) => Ok(PlanExpr::Field(read_name(input, cap)?)),
         (_, EXPR_LITERAL) => Ok(PlanExpr::Literal(read_value(input, cap)?)),
         (_, EXPR_ADD) => {
@@ -705,7 +758,38 @@ fn parse_expr(json: &Json, depth: usize) -> Result<PlanExpr, PlanError> {
     if depth > MAX_EXPR_DEPTH {
         return Err(PlanError::Shape("expression too deep"));
     }
+    let fields: &[&str] = match json["kind"].as_str() {
+        Some("field") => &["kind", "name"],
+        Some("literal") => &["kind", "value"],
+        Some("measure" | "negate" | "isNaN" | "isFinite") => &["kind", "expr"],
+        Some("add" | "subtract" | "multiply" | "divide") => &["kind", "left", "right"],
+        Some("mulDiv") => &["kind", "a", "b", "divisor", "rounding"],
+        Some("cast") => &["kind", "cast", "expr"],
+        _ => return Err(PlanError::Shape("unknown expression kind")),
+    };
+    let object = json
+        .as_object()
+        .ok_or(PlanError::Shape("expression object"))?;
+    if object.len() != fields.len() || object.keys().any(|key| !fields.contains(&key.as_str())) {
+        return Err(PlanError::Shape("unknown or missing expression field"));
+    }
     match json["kind"].as_str() {
+        Some("measure") => Ok(PlanExpr::Measure(Box::new(parse_expr(
+            &json["expr"],
+            depth + 1,
+        )?))),
+        Some("mulDiv") => {
+            let rounding = json["rounding"]
+                .as_str()
+                .and_then(Rounding::from_name)
+                .ok_or(PlanError::Shape("unknown rounding mode"))?;
+            Ok(PlanExpr::MulDiv {
+                a: Box::new(parse_expr(&json["a"], depth + 1)?),
+                b: Box::new(parse_expr(&json["b"], depth + 1)?),
+                divisor: Box::new(parse_expr(&json["divisor"], depth + 1)?),
+                rounding,
+            })
+        }
         Some("field") => Ok(PlanExpr::Field(name(json, "name")?)),
         Some("literal") => Ok(PlanExpr::Literal(
             parse_value(&json["value"]).map_err(PlanError::Shape)?,
@@ -899,6 +983,23 @@ fn render_operation(out: &mut String, operation: &Operation) {
 
 fn render_expr(out: &mut String, expr: &PlanExpr) {
     match expr {
+        PlanExpr::Measure(expr) => render_unary(out, "measure", expr),
+        PlanExpr::MulDiv {
+            a,
+            b,
+            divisor,
+            rounding,
+        } => {
+            out.push_str("{\"kind\":\"mulDiv\",\"a\":");
+            render_expr(out, a);
+            out.push_str(",\"b\":");
+            render_expr(out, b);
+            out.push_str(",\"divisor\":");
+            render_expr(out, divisor);
+            out.push_str(",\"rounding\":");
+            push_string(out, rounding.name());
+            out.push('}');
+        }
         PlanExpr::Field(field) => {
             out.push_str("{\"kind\":\"field\",\"name\":");
             push_string(out, field);

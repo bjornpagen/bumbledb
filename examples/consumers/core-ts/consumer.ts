@@ -8,6 +8,10 @@
  * Verification: NotRun until packed-consumer qualification.
  */
 import {
+	alternatives,
+	closed,
+	closedId,
+	Compute,
 	capacity,
 	ChangeSet,
 	contained,
@@ -179,3 +183,18 @@ export const drainPages = (reader: QueryReader<typeof Learning>, student: Uuid) 
 			)
 		})
 	)
+
+/** Packed declaration portability for the structural algebra. */
+const Observed = relation("Observed", { span: interval(i64), amount: u64 })
+const Observations = schema("Observations", { Observed }, [])
+export const measuredSegments = query(Observations).rule((r) => {
+	const row = v(Observed)
+	return r.match(Observed, row).find({
+		span: r.intersection(row.span, row.span),
+		amount: Compute.mulDiv(row.amount, Compute.u64(2n), Compute.u64(3n), "nearestTiesToEven")
+	})
+})
+const Choice = closed("Choice", ["One"])
+const Parent = relation("Parent", { id: u64, choice: closedId(Choice) })
+const Child = relation("Child", { parent: u64 })
+export const choiceLaws = alternatives(key(Parent, ["id"]), "choice", Choice, { One: key(Child, ["parent"]) })

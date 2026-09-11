@@ -637,6 +637,7 @@ fn literal_set_in(obj: &Object) -> napi::Result<LiteralSetSpec> {
 }
 
 fn side_in(obj: &Object) -> napi::Result<SideSpec> {
+    exact_fields(obj, &["relation", "projection", "selection"])?;
     let projection: Array = req(obj, "projection", "side")?;
     let mut fields = Vec::with_capacity(projection.len() as usize);
     for index in 0..projection.len() {
@@ -847,9 +848,15 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
 /// can exhaust the stack).
 const MAX_SCALAR_DEPTH: usize = 128;
 
-/// Parses one computed-find scalar expression: the exact core `ScalarExpr`
-/// roster, spelled as the plan JSON grammar spells it (`var` binds a rule
-/// variable ordinal on this lane — the query IR's own variable space).
+fn exact_fields(obj: &Object, fields: &[&str]) -> napi::Result<()> {
+    let keys = Object::keys(obj)?;
+    if keys.len() != fields.len() || keys.iter().any(|key| !fields.contains(&key.as_str())) {
+        return Err(err("unknown or missing descriptor field".into()));
+    }
+    Ok(())
+}
+
+/// Parses the core scalar grammar with rule-local variable ordinals.
 fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
     if depth > MAX_SCALAR_DEPTH {
         return Err(err(format!(
@@ -857,7 +864,31 @@ fn scalar_expr_in(obj: &Object, depth: usize) -> napi::Result<ScalarExpr> {
         )));
     }
     let kind: String = req_text(obj, "kind", "scalar expression")?;
+    let fields: &[&str] = match kind.as_str() {
+        "var" => &["kind", "var"],
+        "literal" => &["kind", "value"],
+        "measure" | "negate" | "isNaN" | "isFinite" => &["kind", "expr"],
+        "cast" => &["kind", "cast", "expr"],
+        "mulDiv" => &["kind", "a", "b", "divisor", "rounding"],
+        "add" | "subtract" | "multiply" | "divide" => &["kind", "left", "right"],
+        _ => return Err(err("unknown scalar expression kind".into())),
+    };
+    exact_fields(obj, fields)?;
     match kind.as_str() {
+        tags::scalar_expr::MUL_DIV => {
+            let rounding = req_text(obj, "rounding", "scalar rounding")?;
+            let rounding = bumbledb::Rounding::from_name(&rounding)
+                .ok_or_else(|| err("unknown integer rounding mode".into()))?;
+            Ok(ScalarExpr::MulDiv {
+                a: Box::new(scalar_child(obj, "a", depth)?),
+                b: Box::new(scalar_child(obj, "b", depth)?),
+                divisor: Box::new(scalar_child(obj, "divisor", depth)?),
+                rounding,
+            })
+        }
+        tags::scalar_expr::MEASURE => Ok(ScalarExpr::Measure(Box::new(scalar_child(
+            obj, "expr", depth,
+        )?))),
         tags::scalar_expr::VAR => Ok(ScalarExpr::Var(var_in(obj, "var", "scalar var")?)),
         tags::scalar_expr::LITERAL => {
             let value: Object = req(obj, "value", "scalar literal")?;
@@ -947,6 +978,20 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
     let kind: String = req_text(obj, "kind", "find term")?;
     match kind.as_str() {
         tags::find_term::VAR => Ok(FindTerm::Var(var_in(obj, "var", "var find")?)),
+        tags::find_term::SEGMENTS => {
+            exact_fields(obj, &["kind", "op", "left", "right"])?;
+            let op = req_text(obj, "op", "segment operator")?;
+            let op = match op.as_str() {
+                "intersection" => bumbledb::SegmentOp::Intersection,
+                "difference" => bumbledb::SegmentOp::Difference,
+                _ => return Err(err("unknown segment operator".into())),
+            };
+            Ok(FindTerm::Segments {
+                op,
+                left: var_in(obj, "left", "segment left")?,
+                right: var_in(obj, "right", "segment right")?,
+            })
+        }
         tags::find_term::COMPUTE => {
             let expr: Object = req(obj, "expr", "compute find")?;
             Ok(FindTerm::Compute(scalar_expr_in(&expr, 1)?))

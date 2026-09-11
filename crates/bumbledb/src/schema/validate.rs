@@ -322,11 +322,8 @@ enum FunctionalityEvidence {
     Pointwise(DisjointDeterminantProof, ValueType),
 }
 
-/// Q1 — element-domain typing at interval positions: two interval types of one
-/// element domain match positionally WHATEVER their widths (the pointwise
-/// judgments quantify over points, which carry an element domain and not a
-/// width — `lean/Bumbledb/Schema.lean: Value.points`; the coverage walk is
-/// width-blind by construction, `storage/commit/judgment.rs::check_coverage`).
+/// Interval positions match by element domain. Width refinements do not
+/// change the pointwise coverage relation.
 fn positional_types_match(a: &ValueType, b: &ValueType) -> bool {
     match (a.interval_element(), b.interval_element()) {
         (Some(ea), Some(eb)) => ea == eb,
@@ -676,18 +673,11 @@ struct SealedCapacity {
     hi: SealedBound,
 }
 
-/// The premises are exactly the model's (`lean/Bumbledb/Admission.lean:
-/// capacityForm`; `lean/Bumbledb/Oracle.lean: capacity_plan_decides` is the
-/// promised plan): the canonical window vocabulary with its weight-sensitivity
-/// law, WEIGHT typing (a `[field]` weight is a u64 SOURCE position, a
-/// `[Duration(field)]` weight an interval one), DEPENDENT-BOUND typing (a bound
-/// ident is a u64 or interval position of TARGET's row, by name against the
-/// whole roster — C1; dimension mixing refused — C18), the shared side shapes,
-/// the containment target-key rule reused verbatim, and the v0 interval refusal
-/// narrowed to PROJECTIONS — the group key identifies facts, and intervals
-/// enter through the measure argument (`lean/Bumbledb/Capacity.lean` § v0
-/// refusals; *trigger* for lifting: a sighted counting-over-denotation
-/// workload).
+/// Validate capacity weights and dependent bounds against their source
+/// and target fields, then reuse side-shape and target-key validation.
+/// Group projections are scalar identities; interval values enter through
+/// the duration measure. Reject inverted literal windows; equivalent or
+/// vacuous windows retain their ordinary grouped-measure meaning.
 #[expect(
     clippy::too_many_arguments,
     clippy::too_many_lines,
@@ -704,10 +694,6 @@ fn validate_capacity(
     relations: &[Relation],
     descriptors: &[StatementDescriptor],
 ) -> Result<SealedCapacity, SchemaError> {
-    // nothing at any weight (`lean/Bumbledb/Capacity.lean:
-
-    // duplicate spelling (`lean/Bumbledb/Subsumption.lean:
-
     // Only genuinely different semantics refuse: an inverted literal window
     // admits nothing. Vacuous `{0..*}` and unit-floor windows are accepted
     // canonical grouped-measure laws — equivalent spellings normalized at
@@ -813,7 +799,7 @@ fn validate_capacity(
         descriptors,
     )?;
 
-    // (`lean/Bumbledb/Schema.lean: den_closed_constant`; a per-row
+    // Both sides are constant; evaluate the window during validation.
 
     if let (CapacityEnforcement::Closed { .. }, Some(source_rows)) = (
         &enforcement,
@@ -1036,12 +1022,8 @@ fn validate_projection<'p>(
     })
 }
 
-/// The shared side-pair gate of the two two-sided forms — ONE definition site,
-/// exactly as `resolve_target_key` is shared (the Lean model states one
-/// acceptance rule: `lean/Bumbledb/Admission.lean: containmentForm` /
-/// `capacityForm` take their sides through one structure). Form-specific
-/// refusals (the closed-interval refusal, the capacity window vocabulary and
-/// interval bans) stay with their callers.
+/// Shared side-pair validation for containment and capacity. Each caller
+/// retains its own field restrictions and window vocabulary.
 fn validate_side_pair<'t>(
     id: StatementId,
     source: &Side,

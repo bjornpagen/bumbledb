@@ -109,13 +109,13 @@ pub fn script_steps() -> &'static [ScriptStep] {
             ),
         },
         ScriptStep {
-            id: "three-way-conformance",
+            id: "conformance-replay",
             kind: StepKind::Semantic,
-            command: "cargo test -p bumbledb-bench three_way_conformance -- --ignored",
+            command: "cargo test -p bumbledb-bench the_corpus_replays_byte_identical",
             hosts: &HOSTS,
             warmth: None,
             durability: Durability::MatchedDurable,
-            prerequisite: Some("elan/lake on PATH; L19 lean.sh no longer invokes cargo tests"),
+            prerequisite: None,
         },
         ScriptStep {
             id: "storage-census",
@@ -411,12 +411,12 @@ mod tests {
         assert!(
             script_steps()
                 .iter()
-                .any(|s| { s.id == "three-way-conformance" && s.kind == StepKind::Semantic })
+                .any(|s| { s.id == "conformance-replay" && s.kind == StepKind::Semantic })
         );
         assert!(
             !script_steps()
                 .iter()
-                .any(|s| s.id == "three-way-conformance" && s.kind == StepKind::Timing)
+                .any(|s| s.id == "conformance-replay" && s.kind == StepKind::Timing)
         );
     }
 

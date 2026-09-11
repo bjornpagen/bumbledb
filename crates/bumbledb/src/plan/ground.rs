@@ -414,6 +414,7 @@ fn output_vars(finds: &[FindTerm]) -> BTreeSet<VarId> {
             }
             FindTerm::Count => {}
             FindTerm::Compute(expr) => vars.extend(expr.variables()),
+            FindTerm::Segments { left, right, .. } => vars.extend([*left, *right]),
         }
     }
     vars

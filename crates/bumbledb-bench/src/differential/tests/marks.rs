@@ -161,13 +161,9 @@ fn violating_deltas_against_a_zero_fact_store_agree_with_the_model() {
     );
 }
 
-/// The capacity-boundary subfamilies over both oracles: `{n}` exactness (one
-/// under by deletion, one over by insertion), the `{0}` exclusion (its first
-/// member convicts; out-of-σ children never count), the law over an absent
-/// parent, and the delete-then-reinsert seams — a net-nothing delta re-judges
-/// its touched group (`lean/Bumbledb/Txn/DeltaRestriction.lean:
-/// delta_restricted_commit_sound`) and a net-nothing reinsert beside a real
-/// deletion still convicts.
+/// Compare capacity boundary cases through both oracles: exactness,
+/// exclusion, absent parents, and delete/reinsert pairs. A delta that nets
+/// to nothing still rejudges its touched groups.
 #[test]
 fn capacity_boundary_and_reinsert_verdicts_agree_with_the_model() {
     let dir = TempDir::new("differential-marks-exact");

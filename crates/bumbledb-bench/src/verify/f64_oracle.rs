@@ -8,9 +8,7 @@
 //! the SUBJECT of the differential tests (the hardware side `F-ARITH`
 //! qualifies), never as the oracle.
 //!
-//! The model mirrors the kernel-checked Lean specification
-//! (`lean/Bumbledb/Float64/Sum.lean`, `lean/Bumbledb/Float64.lean`) as a
-//! third implementation: canonical quotient (one zero, one NaN), total order
+//! The independent model implements: canonical quotient (one zero, one NaN), total order
 //! key, exact scaled-integer decomposition (units of 2^-1074), the exact
 //! sum/mean accumulator with the canonical merge table, and one final
 //! round-to-nearest-ties-to-even of the exact dyadic rational.

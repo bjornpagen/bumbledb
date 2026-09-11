@@ -1496,12 +1496,8 @@ fn identity_main(arity: u16) -> Rule {
     }
 }
 
-/// Recursion at the public surface: a roster-clean linear rec prepares and
-/// executes under the reach driver, and the self-loop `interior 0(x) |
-/// Account(id: x); interior 0(x) | interior 0(x)` denotes exactly the base
-/// rule's set — the rec arm re-derives, the seen-set absorbs, the fixpoint
-/// closes in one growing round (`lean/Bumbledb/Exec/Reach.lean:
-/// evalLinearReach_eq_lfp`).
+/// A linear self-loop re-derives the base set. The seen set absorbs those
+/// rows and the public query reaches a fixed point after one growing round.
 #[test]
 fn prepare_executes_recursion_under_the_driver() {
     let dir = common::TempDir::new("api-reach-driver");

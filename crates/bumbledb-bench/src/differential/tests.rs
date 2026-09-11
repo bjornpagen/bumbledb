@@ -9,6 +9,7 @@ mod identity_bytes;
 mod marks;
 mod pack;
 mod recursive;
+mod structural;
 mod witness;
 
 use bumbledb::schema::{

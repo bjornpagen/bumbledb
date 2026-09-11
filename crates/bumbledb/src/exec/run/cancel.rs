@@ -9,8 +9,7 @@ impl Executor {
         }
     }
 
-    /// origin cancelled: the same silent-drop hazard the origin mint
-    /// `lean/Bumbledb/Exec/Plan.lean: valid_plan_sound` requires.
+    /// A recycled epoch must not make a live origin appear cancelled.
     pub(super) fn advance_cancel_epoch(&mut self) {
         self.cancel_epoch = self.cancel_epoch.wrapping_add(1);
         if self.cancel_epoch == 0 {

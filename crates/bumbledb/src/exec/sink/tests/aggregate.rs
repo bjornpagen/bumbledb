@@ -813,13 +813,9 @@ fn the_union_seen_set_keys_head_projections_across_rule_layouts() {
     );
 }
 
-/// The DNF-derived union regime re-keys on the shared slot arrays: the
-/// disjuncts of one written rule share one variable scope, so the
-/// `VarId`-ordered spans read the same binding tuple through each clone's
-/// own layout — a cross-disjunct re-derivation is absorbed, while distinct
-/// full bindings projecting to equal head rows all fold (the head-projection
-/// key would eat them; the or-transparency law forbids exactly that —
-/// `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+/// DNF disjuncts share a variable scope. Dedup keys read the same complete
+/// binding through each plan layout, absorbing repeated derivations while
+/// preserving distinct bindings that project to equal head rows.
 #[test]
 fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     use crate::exec::run::{Bindings, Sink};
@@ -872,14 +868,9 @@ fn the_dnf_union_seen_set_keys_shared_slot_arrays_across_clone_layouts() {
     );
 }
 
-/// G05 (grouped-reduction half): the group tables/accumulator banks move
-/// onto the charged scratch relation at forced transition points — before
-/// the first group (zero allowance creates the scratch tier ahead of row
-/// one), during the stream (a tiny allowance flushes mid-groups) and after
-/// the first group (an allowance crossed only once several groups exist).
-/// Every regime produces identical answer words, INCLUDING exact float
-/// bits (`lean/Bumbledb/Float64/Sum.lean` merge laws license the
-/// partition merges; the limb bank round-trips bit-for-bit).
+/// Force aggregate spill before, during, and after group creation. Every
+/// regime must produce identical answer words, including exact float bits;
+/// partition merges retain the accumulator limbs without rounding.
 #[test]
 fn group_state_spill_matches_resident_bits_before_during_and_after_first_group() {
     use crate::exec::run::{Bindings, Sink as _};

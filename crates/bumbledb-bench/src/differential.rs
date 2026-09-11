@@ -277,6 +277,7 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
                 .collect(),
         ),
         Err(Error::Overflow { .. }) => Answers::Overflow,
+        Err(Error::Scalar { .. }) => Answers::Scalar,
         Err(other) => panic!("engine refused a differential query: {other:?}"),
     }
 }

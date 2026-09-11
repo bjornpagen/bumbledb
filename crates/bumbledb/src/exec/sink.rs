@@ -1,7 +1,6 @@
-//! The two consumers of bindings: set-projection with dedup and
-//! the D2 subtree-skip signal, and aggregate folds with binding dedup.
-//! The sinks are where union lives: `union_spans` keys the multi-rule
-//! aggregate head projection. `lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`.
+//! Binding consumers: deduplicated set projection with subtree skipping,
+//! and aggregate folds with full-binding deduplication. Shared union spans
+//! identify bindings consistently across DNF rule layouts.
 use crate::encoding::encode_i64;
 use crate::exec::scratch::{ScratchAppend, ScratchMapId};
 use crate::exec::wordmap::WordMap;

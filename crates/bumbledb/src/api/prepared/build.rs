@@ -731,7 +731,8 @@ fn prepare_rule(
                 // (validation's group-key law, `ir/validate/validate.rs`);
                 // its inputs reach the sink through complete bindings, and
                 // the computed sink declines every scan-fold pushdown.
-                FindTerm::Compute(_)
+                FindTerm::Segments { .. }
+                | FindTerm::Compute(_)
                 | FindTerm::Count
                 | FindTerm::Aggregate { .. }
                 | FindTerm::Pack { .. } => None,
@@ -849,12 +850,9 @@ impl SlotLayout for crate::exec::dispatch::KeyProbePlan {
     }
 }
 
-/// Seals the DNF-derived union regime's shared-slot dedup keys (ruled
-/// 2026-07-23, R2): per rule, the `VarId`-ordered spans of the vars EVERY
-/// clone's plan binds — the disjuncts of one written rule share one variable
-/// scope, so the `VarId` order reads the same binding tuple through every
-/// clone's own layout, and the re-keyed union folds the written rule's distinct
-/// full bindings (`lean/Bumbledb/Exec/Dedup.lean: dnf_rekey_transparent`).
+/// Seal shared-slot dedup keys for a DNF-derived union. Every disjunct shares
+/// one variable scope; `VarId`-ordered spans read the same full binding through
+/// each plan layout. Distinct bindings that project to equal heads still fold.
 fn seal_dnf_spans(rules: &mut [PreparedRule]) {
     let inventory = |rule: &PreparedRule| -> Vec<(crate::ir::VarId, usize, usize)> {
         match rule {
@@ -922,8 +920,18 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     .collect();
                 FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
                     find: find_idx,
-                    expression: expr.clone(),
+                    expression: term.clone(),
                     inputs,
+                }))
+            }
+            FindTerm::Segments { left, right, .. } => {
+                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
+                    find: find_idx,
+                    expression: term.clone(),
+                    inputs: [*left, *right]
+                        .into_iter()
+                        .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                        .collect(),
                 }))
             }
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
@@ -1009,7 +1017,7 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             },
             // A computed output joins the group key through an appended
             // slot the radix table cannot cover: stay hashed.
-            FindTerm::Compute(_) => return Vec::new(),
+            FindTerm::Segments { .. } | FindTerm::Compute(_) => return Vec::new(),
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
         }
     }

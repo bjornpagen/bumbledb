@@ -4,7 +4,6 @@
 **/.pnpm-store
 **/.DS_Store
 **/__pycache__
-**/.lake
 **/.env
 **/.env.*
 bench-out

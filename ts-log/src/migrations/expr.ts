@@ -173,6 +173,29 @@ function walk(node: unknown, depth: number, budget: Budget, fields: Set<string>)
 	if (!isRecord(node) || typeof node.kind !== "string") {
 		return "an expression node must be a tagged core ScalarExpr value — functions, promises and plain hosts are not plan data"
 	}
+	const arms: Readonly<Record<string, readonly string[]>> = {
+		field: ["name"],
+		literal: ["value"],
+		measure: ["expr"],
+		negate: ["expr"],
+		isNaN: ["expr"],
+		isFinite: ["expr"],
+		cast: ["cast", "expr"],
+		mulDiv: ["a", "b", "divisor", "rounding"],
+		add: ["left", "right"],
+		subtract: ["left", "right"],
+		multiply: ["left", "right"],
+		divide: ["left", "right"]
+	}
+	const required = Object.hasOwn(arms, node.kind) ? arms[node.kind] : undefined
+	if (required === undefined)
+		return `unsupported expression node ${node.kind} — the finite supported grammar is ${Object.keys(arms).join("/")}`
+	if (
+		required.some((key) => !Object.hasOwn(node, key)) ||
+		Object.keys(node).some((key) => !["kind", "scope", "result", "depth", ...required].includes(key))
+	)
+		return "unknown or missing expression field"
+	if (Object.hasOwn(node, "scope") && node.scope !== "source-field") return "migration expressions read source fields"
 	switch (node.kind) {
 		case "field": {
 			if (typeof node.name !== "string" || node.name.length === 0 || node.name.length > 255) {
@@ -185,6 +208,7 @@ function walk(node: unknown, depth: number, budget: Budget, fields: Set<string>)
 			const value = planValueOf(node.value)
 			return typeof value === "string" ? value : { kind: "literal", value }
 		}
+		case "measure":
 		case "negate":
 		case "isNaN":
 		case "isFinite": {
@@ -208,6 +232,18 @@ function walk(node: unknown, depth: number, budget: Budget, fields: Set<string>)
 			}
 			return { kind: node.kind, left, right }
 		}
+		case "mulDiv": {
+			const { rounding } = node
+			if (rounding !== "towardZero" && rounding !== "nearestTiesAwayFromZero" && rounding !== "nearestTiesToEven")
+				return "unknown integer rounding mode"
+			const a = walk(node.a, depth + 1, budget, fields)
+			if (typeof a === "string") return a
+			const b = walk(node.b, depth + 1, budget, fields)
+			if (typeof b === "string") return b
+			const divisor = walk(node.divisor, depth + 1, budget, fields)
+			if (typeof divisor === "string") return divisor
+			return { kind: node.kind, a, b, divisor, rounding }
+		}
 		case "cast": {
 			const cast = CASTS.find((name) => name === node.cast)
 			if (cast === undefined) {
@@ -220,7 +256,7 @@ function walk(node: unknown, depth: number, budget: Budget, fields: Set<string>)
 			return { kind: "cast", cast, expr: inner }
 		}
 		default:
-			return `unsupported expression node ${node.kind} — the finite supported grammar is field/literal/negate/add/subtract/multiply/divide/cast/isNaN/isFinite`
+			return `unsupported expression node ${node.kind}`
 	}
 }
 

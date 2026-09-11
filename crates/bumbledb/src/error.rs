@@ -321,7 +321,7 @@ pub enum StatementErrorKind {
         field: FieldId,
     },
 
-    /// (`lean/Bumbledb/Schema.lean: Selection.singleton_satisfies_iff` —
+    /// A Many selection requires at least two distinct literals.
     DegenerateSelectionSet {
         relation: RelationId,
         field: FieldId,
@@ -338,8 +338,7 @@ pub enum StatementErrorKind {
         hi: u64,
     },
 
-    /// Roster "an interval position in a capacity projection" — refused
-    /// (`lean/Bumbledb/Capacity.lean` § v0 refusals; *trigger* for
+    /// Interval positions cannot be capacity group keys.
     CapacityIntervalPosition {
         relation: RelationId,
         field: FieldId,
@@ -888,7 +887,7 @@ pub enum Violation {
         fact: Box<[u8]>,
     },
 
-    /// (`lean/Bumbledb/Capacity.lean: CapacityLaw`).
+    /// Capacity sums source weights per target and checks the declared window.
     Capacity {
         statement: StatementRef,
 

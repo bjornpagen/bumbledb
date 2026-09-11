@@ -349,12 +349,8 @@ fn chain_descriptor() -> SchemaDescriptor {
     }
 }
 
-/// The chained elimination executed end to end (the empirical arm of
-/// `lean/Bumbledb/Exec/Rewrites.lean: Query.chained_elimination_sound`): on the
-/// `A<=B<=C` chain, `B` falls with `A` as its pairing source and `C` falls with
-/// the already-eliminated `B` as its source — the plan keeps one occurrence —
-/// and the execution's answers are identical to the grounding-disabled
-/// three-way join's.
+/// Chained elimination on A <= B <= C retains one occurrence and produces
+/// the same answers as the grounding-disabled three-way join.
 #[test]
 fn a_chained_elimination_executes_result_identical_to_the_disabled_plan() {
     let c_rows: Vec<Vec<Value>> = [1u64, 2]

@@ -61,7 +61,7 @@ fn build_occurrences(
                 })
                 .collect();
 
-            // positional reading `lean/Bumbledb/Query/Denotation.lean:
+            // Derived atoms address their head columns positionally.
 
             let field_types: Vec<bumbledb_theory::schema::ValueType> = match occurrence.source() {
                 crate::ir::AtomSource::Edb(relation) => {

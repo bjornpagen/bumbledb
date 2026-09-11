@@ -13,9 +13,13 @@ below runs a database at import time.
 ```ts
 import { Effect, Option, Result, Stream } from "effect"
 import {
+	alternatives,
+	bool,
 	capacity,
 	ChangeSet,
 	closed,
+	closedId,
+	Compute,
 	contained,
 	Db,
 	describeQuery,
@@ -35,6 +39,7 @@ import {
 	relation,
 	Scalar,
 	schema,
+	select,
 	str,
 	u64,
 	v,
@@ -539,3 +544,176 @@ const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
 const asFloat = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
 void [incrementUnits, asFloat]
 ```
+
+
+## 14. Derive slices, measure them, and round the total
+
+An earning range crosses two rate bands. Intersection produces a relation of
+nonempty segments, measurement produces exact integer widths, and ordinary
+stages combine the results. These are synthetic arithmetic units, not tax policy.
+
+```ts
+const Earning = relation("Earning", { id: u64, schedule: u64, span: interval(u64) })
+const Band = relation("Band", { id: u64, schedule: u64, span: interval(u64), numerator: u64 })
+const Rates = schema("Rates", { Earning, Band }, [key(Earning, ["id"]), key(Band, ["id"])])
+const overlaps = query(Rates).rule((r) => {
+	const earning = v(Earning)
+	const band = v(Band)
+	return r.match(Earning, earning).match(Band, { ...band, schedule: earning.schedule }).find({
+		earning: earning.id, band: band.id, numerator: band.numerator,
+		span: r.intersection(earning.span, band.span)
+	})
+})
+const weighted = query(Rates).rule((r) => {
+	const row = v(overlaps)
+	return r.match(overlaps, row).find({ earning: row.earning, band: row.band,
+		weighted: Compute.multiply(Compute.measure(row.span), row.numerator) })
+})
+const totals = query(Rates).rule((r) => {
+	const row = v(weighted)
+	return r.match(weighted, row).find({ earning: row.earning, total: r.sum(row.weighted) })
+})
+const amounts = query(Rates).rule((r) => {
+	const row = v(totals)
+	return r.match(totals, row).find({ earning: row.earning,
+		amount: Compute.mulDiv(row.total, Compute.u64(1n), Compute.u64(10n), "nearestTiesToEven") })
+})
+const calculate = Effect.scoped(Effect.gen(function* () {
+	const db = yield* Db.create(localPath, Rates)
+	const change = yield* ChangeSet.builder(Rates)
+	yield* change.insert(Earning, [{ id: 1n, schedule: 1n, span: { start: 80n, end: 140n } }])
+	yield* change.insert(Band, [
+		{ id: 1n, schedule: 1n, span: { start: 0n, end: 100n }, numerator: 1n },
+		{ id: 2n, schedule: 1n, span: { start: 100n, end: 200n }, numerator: 2n }
+	])
+	yield* db.apply(yield* change.finish(), { expected: { kind: "any" } })
+	const snapshot = yield* db.snapshot()
+	return yield* (yield* snapshot.execute(amounts, {})).collect()
+}))
+// [{ earning: 1n, amount: 10n }]: (20*1 + 40*2)/10, rounded once.
+void calculate
+```
+
+Retain contribution identity through intermediate projections: two distinct
+bands contributing the same amount must both count. Projecting only the amount
+intentionally deduplicates it. Round after summing when that is the intended
+calculation; summing separately rounded contributions can give a different result.
+Checked multiplication and aggregate result ranges still apply before the final
+`mulDiv`. The query creates no stored slice or copied-width facts.
+
+## 15. Subtract a window, coalesce coverage, and measure
+
+Binary difference returns zero, one, or two maximal nonempty pieces. A subsequent
+`pack` stage coalesces overlapping or adjacent coverage per owner; measurement
+then sums covered width once.
+
+```ts
+const Window = relation("Window", { id: u64, owner: u64, span: interval(i64), excluded: interval(i64) })
+const Windows = schema("Windows", { Window }, [key(Window, ["id"])])
+const remaining = query(Windows).rule((r) => {
+	const row = v(Window)
+	return r.match(Window, row).find({ owner: row.owner, span: r.difference(row.span, row.excluded) })
+})
+const coverage = query(Windows).rule((r) => {
+	const row = v(remaining)
+	return r.match(remaining, row).find({ owner: row.owner, span: r.pack(row.span) })
+})
+const widths = query(Windows).rule((r) => {
+	const row = v(coverage)
+	return r.match(coverage, row).find({ owner: row.owner, span: row.span, width: Compute.measure(row.span) })
+})
+const coveredWidth = query(Windows).rule((r) => {
+	const row = v(widths)
+	return r.match(widths, row).find({ owner: row.owner, width: r.sum(row.width) })
+})
+void coveredWidth
+```
+
+For `[0,10)` minus `[3,7)`, the pieces are `[0,3)` and `[7,10)`.
+Subtracting the whole input produces no rows. Absence is never a null or an empty
+interval. Delivery order is unspecified. Multiple producers in one head form
+all combinations; they are not zipped. Their input variables must already be
+bound. Use another stage to consume produced intervals, aggregate, or `pack`.
+Ordinary joins, Allen predicates, and negation accept those derived stages.
+An empty interval producer removes that binding before the same head's scalar
+expressions run, regardless of column order. Once a stage produces an arithmetic
+failure, subsequent stages cannot turn that failure into an empty answer.
+
+Both operands must share an interval element kind: `i64`, `u64`, or `f64`.
+Fixed-width inputs yield general intervals because clipping may change width.
+`pack` also returns general intervals: merging adjacent fixed-width inputs can
+produce a longer interval. These output types survive description export/import.
+Construction compares endpoints and is independent of represented width; output
+enumeration still costs work proportional to its cardinality.
+
+`measure` returns `u64` for bounded integer intervals and the native once-rounded
+`f64` length for dense intervals. Integer maximum endpoints represent rays.
+Unbounded measurement and finite overflow are distinct failures. Clip a ray to a
+finite interval before measuring it. Filtering a later stage cannot erase an
+upstream arithmetic failure. Exact measure additivity applies to bounded integer
+segments, not arbitrary sums of already-rounded floating lengths.
+
+Each difference subtracts one interval. Unioning `A minus B1` with `A minus B2`
+does not subtract their combined coverage from `A`.
+
+## 16. Exhaustive alternatives with ordinary laws
+
+Declare each key once. The helper expands a closed roster into ordinary
+containment and mirrors statements in roster order. Equivalent independently
+constructed descriptors work; JavaScript object identity has no meaning here.
+
+```ts
+const Kind = closed("Kind", ["Imported", "Electronic", "Postal"])
+const Document = relation("Document", { id: u64, kind: closedId(Kind) })
+const Imported = relation("Imported", { document: u64, evidence: str })
+const Electronic = relation("Electronic", { document: u64, reference: str })
+const Postal = relation("Postal", { document: u64, window: interval(i64) })
+const documentKey = key(Document, ["id"])
+const arms = {
+	Imported: key(Imported, ["document"]),
+	Electronic: key(Electronic, ["document"]),
+	Postal: key(Postal, ["document"])
+}
+const Documents = schema("Documents", { Kind, Document, Imported, Electronic, Postal }, [
+	documentKey, arms.Imported, arms.Electronic, arms.Postal,
+	...alternatives(documentKey, "kind", Kind, arms)
+])
+void Documents
+```
+
+Missing, extra, wrong, or duplicate payloads refuse under the generated laws.
+Switch the discriminator and replace its payload in one change: the final state
+is checked, independent of insert/delete call order. Composite scalar keys work.
+Interval keys cannot establish exactly one payload row because their containment
+means pointwise coverage. Payloads themselves can contain intervals.
+
+Each payload keeps its own inferred fields and ordinary relation representation.
+Evidence and ownership still need their own laws. The expansion has the same
+native descriptor, fingerprint, and admission costs as the identical manual laws.
+
+## 17. Exact integer quotients and explicit rounding
+
+`mulDiv` requires matching integer operands and a strictly positive divisor.
+It computes the product exactly in a wider native integer and checks the public
+64-bit result range after rounding.
+
+```ts
+const Input = relation("Input", { amount: i64 })
+const Arithmetic = schema("Arithmetic", { Input }, [])
+const quotients = query(Arithmetic).rule((r) => {
+	const row = v(Input)
+	return r.match(Input, row).find({
+		truncated: Compute.mulDiv(row.amount, Compute.i64(1n), Compute.i64(2n), "towardZero"),
+		away: Compute.mulDiv(row.amount, Compute.i64(1n), Compute.i64(2n), "nearestTiesAwayFromZero"),
+		even: Compute.mulDiv(row.amount, Compute.i64(1n), Compute.i64(2n), "nearestTiesToEven")
+	})
+})
+void quotients
+```
+
+For `amount = -5`, the results are `-2`, `-3`, and `-2`. For `-7`, ties-to-even
+returns `-4`. Exact quotients do not change. `u64::MAX * 2 / 2` succeeds;
+`i64::MIN * -1 / 2` returns `2^62`; `i64::MIN * -1 / 1` refuses final overflow.
+Existing checked multiply/divide retain their intermediate-overflow behavior,
+so replacing them with `mulDiv` is an explicit semantic choice. All three modes
+perform bounded work without an additional scan, index, or JavaScript evaluator.

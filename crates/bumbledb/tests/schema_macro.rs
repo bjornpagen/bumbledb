@@ -1394,7 +1394,7 @@ mod radix_literals {
 
 mod fixed_width_intervals {
 
-    //! `lean/Bumbledb/Values.lean: FixedU64.not_ray`). One stored word,
+    //! Fixed intervals store one start word and cannot reach the ray sentinel.
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, Value, VarId,
     };
@@ -1635,7 +1635,7 @@ mod fixed_width_intervals {
         .expect("write")
         .unwrap();
 
-        // (`lean/Bumbledb/Query/Membership.lean: pointMem_fixed_u64`).
+        // Membership uses the fixed interval reconstructed from start and width.
         let mut covers_12 = db
             .prepare(&membership_query(12), crate::common::work())
             .expect("prepare");
@@ -1684,8 +1684,7 @@ mod fixed_width_intervals {
 }
 
 mod element_domain_typing {
-    //! Q1: interval positions carry an element domain and never a width.
-    //! `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`.
+    //! Interval positions carry an element domain; width is a refinement.
     use bumbledb::error::Direction;
     use bumbledb::ir::{
         Atom, CmpOp, Comparison, ConditionTree, FindTerm, Query, Rule, Term, VarId,

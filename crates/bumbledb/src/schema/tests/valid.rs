@@ -544,10 +544,8 @@ fn task_tree() -> SchemaDescriptor {
     }
 }
 
-/// `Parent(id) <={1..3} Task(parent)` seals into the window arena with the
-/// containment target-key rule reused — the acceptance premise of
-/// `lean/Bumbledb/Admission.lean: capacityForm`, and the plan the gate promises
-/// is `lean/Bumbledb/Oracle.lean: capacity_plan_decides`.
+/// Capacity reuses containment target-key resolution and seals the
+/// validated weight and window into the compiled arena.
 #[test]
 fn a_capacity_statement_over_a_declared_key_validates() {
     let mut decl = task_tree();
@@ -570,8 +568,7 @@ fn a_capacity_statement_over_a_declared_key_validates() {
     ));
 }
 
-/// `{2..*}` — `hi = None` is the `*` spelling, the only spelling of "no upper
-/// bound" (`lean/Bumbledb/Schema.lean: Window`).
+/// An absent upper bound is the unbounded-window spelling.
 #[test]
 fn a_star_window_validates_with_no_ceiling() {
     let mut decl = task_tree();
@@ -628,8 +625,7 @@ fn a_window_into_a_closed_target_validates() {
         .expect("every severity demands at least two handlers");
 }
 
-/// Both sides constant and the counts inside the window: decided at validate,
-/// satisfied, sealed (`lean/Bumbledb/Schema.lean: den_closed_constant`).
+/// Two constant sides with counts inside the window are decided at validation.
 #[test]
 fn a_satisfied_closed_to_closed_window_validates() {
     let decl = SchemaDescriptor {
@@ -798,10 +794,8 @@ fn a_satisfied_weighted_closed_pair_validates() {
         .expect("7 watts inside a 9-watt budget, per the sealed axiom");
 }
 
-/// A literal-set σ seals — and seals CANONICALLY: the sealed side sorts the
-/// set, so both spellings of one set are one statement and one fingerprint
-/// (`lean/Bumbledb/Schema.lean: Selection` — the set is the binding's identity,
-/// not its spelling).
+/// Literal selections normalize to sets: order and duplicates cannot
+/// change the statement or schema fingerprint.
 #[test]
 fn a_literal_set_selection_seals_sorted() {
     let build = |literals: Vec<Value>| {
@@ -859,12 +853,8 @@ fn a_reordered_literal_set_is_a_duplicate_statement() {
     );
 }
 
-/// Q1 — element-domain typing at interval positions: a fixed-width interval
-/// position against a GENERAL one of the same element domain matches
-/// positionally (widths free; the pointwise judgments quantify over points,
-/// which carry an element domain and never a width —
-/// `lean/Bumbledb/Schema.lean: Value.points_one_tag_u64`), and the containment
-/// resolves the same pointwise coverage plan.
+/// Fixed and general intervals of the same element domain match
+/// positionally and resolve to the same pointwise coverage plan.
 #[test]
 fn mixed_width_interval_positions_of_one_element_domain_resolve() {
     let schema = SchemaDescriptor {

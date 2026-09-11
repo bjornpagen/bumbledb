@@ -77,23 +77,6 @@ jobs:
         with:
           package_json_file: ts/package.json
           run_install: false
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.elan
-            lean/.lake
-          key: log-al2023-arm64-lean-${{ hashFiles('lean/lean-toolchain') }}
-          restore-keys: |
-            log-al2023-arm64-lean-
-      - name: install elan
-        # lean/lean-toolchain owns the exact version; elan resolves
-        # and installs it on first `lake` invocation inside lean/.
-        # A cache hit leaves the toolchain on disk; this step is PATH.
-        run: |
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -215,23 +198,6 @@ jobs:
         with:
           package_json_file: ts/package.json
           run_install: false
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.elan
-            lean/.lake
-          key: log-al2023-x64-lean-${{ hashFiles('lean/lean-toolchain') }}
-          restore-keys: |
-            log-al2023-x64-lean-
-      - name: install elan
-        # lean/lean-toolchain owns the exact version; elan resolves
-        # and installs it on first `lake` invocation inside lean/.
-        # A cache hit leaves the toolchain on disk; this step is PATH.
-        run: |
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
@@ -319,23 +285,6 @@ jobs:
           key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
           restore-keys: |
             log-darwin-cargo-
-      - uses: actions/cache@v5
-        with:
-          path: |
-            ~/.elan
-            lean/.lake
-          key: log-darwin-lean-${{ hashFiles('lean/lean-toolchain') }}
-          restore-keys: |
-            log-darwin-lean-
-      - name: install elan
-        # lean/lean-toolchain owns the exact version; elan resolves
-        # and installs it on first `lake` invocation inside lean/.
-        # A cache hit leaves the toolchain on disk; this step is PATH.
-        run: |
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl https://elan.lean-lang.org/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
-          fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Resolve the pnpm store path
         id: pnpm-store
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"

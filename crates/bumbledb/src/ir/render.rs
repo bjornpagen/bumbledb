@@ -182,6 +182,13 @@ fn render_rule(out: &mut String, schema: &Schema, refs: &ClosedRefs, rule: &Rule
 fn find_term(out: &mut String, term: &FindTerm) {
     match term {
         FindTerm::Var(var) => var_name(out, *var),
+        FindTerm::Segments { op, left, right } => {
+            write!(out, "{op:?}(").expect("writing to String");
+            var_name(out, *left);
+            out.push_str(", ");
+            var_name(out, *right);
+            out.push(')');
+        }
         FindTerm::Compute(expr) => {
             use std::fmt::Write as _;
             write!(out, "Compute({expr:?})").expect("writing to String");
