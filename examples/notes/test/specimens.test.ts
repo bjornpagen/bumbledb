@@ -3,8 +3,6 @@
  * and Notes helpers, not reconstructed Scalar/JSON claims. Native
  * operations require generated `{ manifest, plans, snapshots }` and a
  * packed install; missing chain FAILS instead of skipping green.
- *
- * Verification: NotRun until F3.
  */
 import assert from "node:assert/strict"
 import * as fs from "node:fs"

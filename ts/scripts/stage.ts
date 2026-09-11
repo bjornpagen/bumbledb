@@ -57,8 +57,7 @@ function writePackProvenance(stagedDir: string, provenance: PackProvenance): voi
 }
 
 /**
- * Immutable pack staging (docs/reference/packaging.md). Packing copies
- * the already-built outputs and the
+ * Immutable pack staging. Packing copies the already-built outputs and the
  * committed sources into an isolated staging tree, writes the derived
  * packed manifest (exact platform pins injected there, never in the
  * checkout), and runs `pnpm pack` inside that tree. The committed

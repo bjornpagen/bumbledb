@@ -170,7 +170,7 @@ describe("generate / check flow", function suite() {
 		expectIntentRequired(checkExit)
 	})
 
-	test("the complete staged example history generates end to end (P13 handoff)", async function example() {
+	test("the complete staged example history generates end to end", async function example() {
 		const directory = await repoDir()
 		await run(gen.generateMigrations({ schema: App0, repository: { directory } }))
 		const one = await run(gen.generateMigrations({ schema: App1, intent: evolution1, repository: { directory } }))

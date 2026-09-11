@@ -7,7 +7,6 @@
  * and joined close. Business observation keys stay strings. All-public
  * imports only; no Promise twin, no private protocol bytes.
  *
- * Verification: NotRun until packed-consumer qualification.
  */
 import { ChangeSet, type ChangeSet as ChangeSetType, Uuid, type QueryReader } from "@bjornpagen/bumbledb"
 import {

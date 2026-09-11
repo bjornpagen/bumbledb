@@ -542,13 +542,9 @@ fn closed_psi_schema() -> SchemaDescriptor {
     }
 }
 
-/// One dossier row lives OUTSIDE this lane by its own fence: the closed-pair
-/// sum refutation is a VALIDATION refusal
+/// Closed-pair sum refutation is covered by schema validation
 /// (`rejects_a_weighted_closed_pair_the_axioms_refute_under_a_dependent_bound`,
 /// `schema/tests/reject.rs` — a refused schema never reaches a commit verdict).
-/// The retired R16 fresh-keyed weight interplay is gone WITH the mint: the
-/// successor has no fresh generation, so keyed-weight interplay is ordinary
-/// declared-key judgment already covered by the keyed fixtures here.
 #[expect(
     clippy::too_many_lines,
     reason = "one flat fixture roster, data not logic"

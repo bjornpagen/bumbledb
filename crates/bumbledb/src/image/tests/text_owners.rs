@@ -1,5 +1,4 @@
-//! Image ownership is qualified with explicit collection while the query
-//! token-owner cutover is in progress. This is not an automatic-GC test.
+//! Image text ownership under explicit collection.
 use std::sync::Arc;
 
 use super::R;

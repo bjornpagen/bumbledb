@@ -3,9 +3,7 @@
  * is exactly what `src/db/schema.ts` exported at that commit, retained so
  * the whole generated chain is reproducible from source
  * (`scripts/generate-history.ts` replays the stages through the real
- * generator). This mirrors the log package's recorded example history
- * (`ts-log/test/migrations-example.ts` — the P10 handoff), moved onto
- * application-owned `Uuid` identity.
+ * generator). The fixture uses application-owned `Uuid` identity.
  *
  * Stage 0 → `0000-initialize`          create Note, no seeds
  * Stage 1 → `0001-note-pinned`         add Note.pinned, backfill(false)

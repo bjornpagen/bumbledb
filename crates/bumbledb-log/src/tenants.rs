@@ -1,4 +1,4 @@
-//! The successor tenant cache bookkeeping core (chapter 31, C09 consumer).
+//! Tenant cache bookkeeping.
 //!
 //! One typed registry of per-tenant owner slots keyed by the digest of the
 //! COMPLETE canonical binding. Every acquire mints a fresh one-shot
@@ -13,8 +13,7 @@
 //! native runtime (ts/crate, C09) drives it: kernel directory locks,
 //! executor scheduling and actual owner teardown stay native obligations,
 //! and the registry hands owners OUT for teardown rather than dropping
-//! them behind the caller's back. The 0.x renewable-TTL `Replica` LRU and
-//! its disposable-directory eviction are deleted whole.
+//! them behind the caller's back.
 
 use std::collections::{BTreeMap, BTreeSet};
 

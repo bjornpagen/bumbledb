@@ -7,13 +7,9 @@
  *   DEPLOYED_URL    — the deployed base URL
  *   DEPLOYED_TOKEN  — a valid session token for a PROVISIONED test tenant
  *
- * Missing configuration FAILS this suite: absent credentials are NotRun
- * evidence, never a green skip (chapter 64). The deployment/migration
- * REHEARSAL (frozen rollout, lost activation, abort-vs-activate) is the
- * scripts/migrate.ts runbook procedure in docs/reference/deployment.md,
- * executed and recorded at F3 — not simulated here.
- *
- * Verification: NotRun until F3.
+ * Missing configuration fails this suite. These request tests do not
+ * exercise migration rollout, lost activation, or abort-versus-activate
+ * recovery through scripts/migrate.ts.
  */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"

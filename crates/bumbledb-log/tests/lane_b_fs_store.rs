@@ -3,7 +3,7 @@
 //! leaves the OLD or the NEW complete bytes, never a torn head; reserved
 //! namespaces are unreachable through keys; listing never surfaces ownership
 //! scratch. Real SIGKILL/power-failure arms are the process lanes
-//! (`local_ownership.rs` / P12 F3 harness). Verification: `NotRun`.
+//! (`local_ownership.rs`).
 
 use std::path::PathBuf;
 

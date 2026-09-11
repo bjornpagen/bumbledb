@@ -5,7 +5,7 @@
  * reads, crash after each durable step, interrupt during acquire must
  * not keep a successor out, and interruption while promise I/O continues.
  *
- * Verification: NotRun during fanout. Qualification must drive the real
+ * Qualification must drive the real
  * addon. A generic "lock acquired" mock cannot satisfy this file.
  */
 import assert from "node:assert/strict"

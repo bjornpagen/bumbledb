@@ -1,8 +1,7 @@
 //! Epoch-barrier GC: one active barrier, immutable mark evidence, resumable
 //! sweep progress — GC-01/02/05..11 deterministic schedules over `MemStore`
 //! (REP-007/008/012/013/019). Real-S3 listing/fault evidence is the separate
-//! credential-gated lane; process-kill lanes are P12's F3 harness over these
-//! same entry points. Verification: `NotRun` (F1 authors, does not execute).
+//! credential-gated lane; process-kill tests exercise these same entry points.
 
 mod lane_support;
 

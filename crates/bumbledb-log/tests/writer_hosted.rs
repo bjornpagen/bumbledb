@@ -4,7 +4,7 @@
 //! backpressure, and — the crux — a lost/unknown CAS response that resolves to
 //! the durable receipt via catch-up materialization rather than a fabricated
 //! success/rejection. Maps to PROTO-04/06/12, the hosted arm of PROTO-17 and
-//! the C08 `MaintenanceRequired` refusal. Verification: `NotRun`.
+//! the C08 `MaintenanceRequired` refusal.
 
 use std::path::PathBuf;
 use std::sync::Arc;

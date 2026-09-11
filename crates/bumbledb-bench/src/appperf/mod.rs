@@ -1,13 +1,11 @@
-//! Compact chapter-40 scorecard (resident read, mutation→read, numeric/
+//! Application performance scorecard (resident read, mutation→read, numeric/
 //! interval/Pack, nonresident, tenant lifecycle, hosted decision).
 //! Gates APP-FAST/MUTATE/NUMERIC/LARGE/TENANTS/TARGETS/METHOD/MAGIC;
-//! audit PERF-001–005 and REVIEW-001. Verification: `NotRun`.
+//! audit PERF-001–005 and REVIEW-001.
 //!
-//! Authored during F1; every measurement executes only in F3, serialized per
-//! host. The module owns:
+//! Measurements run serially on each host. The module owns:
 //!
-//! - the frozen workload matrix — families × regimes × gates, with pass
-//!   criteria fixed **before** replacement hot paths land ([`workloads`]);
+//! - the workload matrix — families × regimes × gates ([`workloads`]);
 //! - the cost-account vocabulary every cell reports ([`CostAccount`]) —
 //!   copies, bytes, allocations, live resources, queue wait, conversion and
 //!   event-loop delay are first-class columns, not prose;

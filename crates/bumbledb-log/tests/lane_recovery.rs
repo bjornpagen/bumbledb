@@ -1,9 +1,7 @@
 //! Recovery: ownership before cleanup, identity before reads, hydration from
 //! checkpoint plus exact tail, differentiated corruption, and never an empty
 //! fallback — REC-01..06, STORE-05/08 shapes, GC-12's no-partial-serve rule
-//! (REP-005/010/011/017/018, SDK-016). Process-kill variants are P12's F3
-//! harness over these entry points. Verification: `NotRun` (F1 authors, does
-//! not execute).
+//! (REP-005/010/011/017/018, SDK-016).
 
 mod lane_support;
 
@@ -578,7 +576,7 @@ fn local_create_is_explicit_and_local_open_needs_no_remote_machinery() {
 
 /// D06/D26: a legal schema whose empty state violates a law never becomes
 /// Ready. Create, empty genesis restore, and a missing-HEAD hydrate leave
-/// the destination absent — not a ready partial Db. Verification: `NotRun`.
+/// the destination absent — not a ready partial Db.
 #[test]
 fn d06_failed_hydrate_leaves_destination_absent() {
     let store = MemStore::new();
@@ -669,7 +667,6 @@ fn dest_unpublished(path: &std::path::Path) {
 /// D17: tip disagreement and a refuse during final metadata construction
 /// never publish. `theory()` admits empty, so a premature `complete_install`
 /// would leave a destination — dest-absent is the discriminator.
-/// Verification: `NotRun`.
 #[test]
 fn d17_incomplete_genesis_restore_leaves_destination_absent() {
     let genesis = DecisionStamp {
@@ -772,7 +769,7 @@ fn d17_incomplete_genesis_restore_leaves_destination_absent() {
 /// D18: receipt cleanup is L07 `delete_host_batch` / `HostResume` windows
 /// (`RECEIPT_CLEANUP_BATCH_BYTES`); peak working storage does not grow with
 /// receipt count. Wrong tip still refuses before that cleanup and leaves
-/// dest unpublished. Verification: `NotRun`.
+/// dest unpublished.
 #[test]
 fn d18_receipt_cleanup_stays_bounded_wrong_tip_absent() {
     let genesis = DecisionStamp {

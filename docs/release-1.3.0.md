@@ -25,11 +25,6 @@ native packages use version 1.3.0.
   expression roundtrips, and actual 1.2.1 database reopening have regression
   coverage. Both cookbooks show the complete staged compositions.
 
-Row equations are not included. Application policy and imperative workflows
-stay in the host language. The Lean project and implementation TODO were
-removed; the native conformance corpus remains, alongside independent integer
-and rational endpoint oracles.
-
 Each binary interval operation compares endpoints, independent of represented
 width: intersection emits at most one piece and difference at most two per
 binding. Multiple independent differences can emit up to `2^k` combinations;

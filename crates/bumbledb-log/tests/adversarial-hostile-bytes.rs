@@ -9,8 +9,7 @@
 //! round-trips and P05 tests object-layer digests; this file forges
 //! WELL-FRAMED decisions whose recorded claims lie, plus a strict truncation
 //! sweep, and asserts the replay evaluator convicts each one with typed
-//! errors and zero state movement. Verification: `NotRun` (F2 authors, does
-//! not execute).
+//! errors and zero state movement.
 
 #[path = "migration_support/mod.rs"]
 mod support;

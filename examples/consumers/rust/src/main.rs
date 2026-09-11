@@ -11,7 +11,6 @@
 //! Typed facts encode through `Fact::append_values`. Query params bind as
 //! `BindValue` (the published `BindArgs` surface).
 //!
-//! Verification: NotRun until packed-consumer qualification.
 
 use bumbledb::{
     Admission, ApplyExpected, ApplyOutcome, BindValue, ChangeSet, ChangeSetBuilder, CloseReport,

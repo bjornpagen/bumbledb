@@ -6,17 +6,15 @@ and generated schema evolution. It targets Node, not Edge or the browser.
 
 Local history is the supported end-to-end setup. Hosted S3 bindings and
 Alchemy deployment code are present, but generated hosted initialization and
-migration are not wired through the current TypeScript/native bridge.
-Do not treat this example as a qualified one-command hosted deployment.
+migration are unsupported through the TypeScript/native bridge.
 
 ## Local setup
 
-This example follows the development SDKs and pins Effect `4.0.0-rc.112`.
-Use matching locally staged SDK packages; the published packages may expose
-an earlier API. The repository's packed-consumer check installs the current
-packages in isolation without publishing anything.
+This example pins the core and log SDKs to `1.3.0` and Effect to
+`4.0.0-rc.112`. The repository's packed-consumer check also tests locally
+staged SDK packages in isolation.
 
-After installing the matching packages, from this directory:
+From this directory:
 
 ```sh
 pnpm install

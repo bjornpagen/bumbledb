@@ -5,7 +5,6 @@
  * field-arithmetic backfill metadata, scoped collect/pages, and joined
  * close. Importing this module performs no native work.
  *
- * Verification: NotRun until packed-consumer qualification.
  */
 import {
 	alternatives,

@@ -3,7 +3,7 @@
  * Forged and kind-confused tokens, one-shot take, retained wrappers after
  * close, close/drain under load. Deleted writer/parked-session verbs are
  * not part of this roster — snapshot/session attacks use the db-native
- * capability path. Verification: NotRun
+ * capability path.
  */
 import assert from "node:assert/strict"
 import * as fs from "node:fs"

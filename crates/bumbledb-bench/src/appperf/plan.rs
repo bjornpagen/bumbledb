@@ -1,7 +1,5 @@
-//! Finite measurement input plan for L21. Execution is deferred.
-//!
-//! Verification: **`NotRun`**. Timing only on a quiet host after writer freeze.
-//! Deterministic counters (visits, owners, roster, census) may run daily.
+//! Measurement workloads, host requirements, and execution prerequisites.
+//! This module describes the run; results are recorded by the runner.
 
 use super::workloads::{self, Cell};
 use super::{Gate, Regime};

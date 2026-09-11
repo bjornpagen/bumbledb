@@ -1,7 +1,6 @@
 //! The object-layer composition over the deterministic store: verified puts
 //! and gets, immutable-conflict refusal, ambiguous-store resolution, and the
 //! bounded decision epoch probe (C07 grammar; STORE-05/06 shapes).
-//! Verification: `NotRun` (F1 authors, does not execute).
 
 use bumbledb::WorkContext;
 use bumbledb_log::store::mem::{Behavior, MemStore, Op};

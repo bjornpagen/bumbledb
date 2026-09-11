@@ -1,8 +1,7 @@
 //! Erasure via the Deleted authority — ERASE-01..04 (OPS-002/003 boundary).
 //! Fact deletion is an ordinary command; whole-tenant erasure tombstones,
 //! honors explicitly retained roots, collects former live objects, and
-//! reports residuals instead of claiming secure erasure. Verification:
-//! `NotRun` (F1 authors, does not execute).
+//! reports residuals instead of claiming secure erasure.
 
 mod lane_support;
 

@@ -2,7 +2,7 @@
 
 This release simplifies allocation and resource ownership across the Rust
 engine and TypeScript SDKs. It includes API changes; upgrade the core, log and
-native platform packages together. The project remains under active development.
+native platform packages together.
 
 ## Changes since 1.0.1
 

@@ -2,7 +2,6 @@
 //! source, ordered-step semantics with the core judge at every boundary,
 //! one staged final target, seeds exactly once, and complete typed refusal
 //! of invalid targets. Maps to MIG-01/02/04/11/12/13 and OPS-001.
-//! Verification: `NotRun` (F1 authors, does not execute).
 
 #[path = "migration_support/mod.rs"]
 mod support;
@@ -716,7 +715,7 @@ fn target_entries(root: &std::path::Path) -> usize {
 
 /// D20/D26: compile every expression under verified schemas before freeze
 /// or install, including zero source rows. Empty nonempty-required target
-/// stays absent; the same plan with valid rows admits. Verification: `NotRun`.
+/// stays absent; the same plan with valid rows admits.
 #[test]
 fn d20_d26_compile_before_effects_and_invalid_target_stays_absent() {
     let plan = plan_nonempty_required();

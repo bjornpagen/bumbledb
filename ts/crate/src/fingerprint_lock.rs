@@ -36,10 +36,7 @@ bumbledb::schema! {
     relation SavingsTerms { account: u64 as AccountId, rate_bps: i64 }
     relation AuditTrail { account: u64 as AccountId, rate_bps: i64 }
 
-    // The weighted-capacity extension (capacity cutover, dossier § 4.2):
-    // the weight descriptor, the dependent bound, and the Duration pair
-    // all enter the lock's encoding surface — statement for statement the
-    // SDK twin's tail.
+    // The fingerprint covers weighted capacity, dependent bounds, and Duration pairs.
     relation Pool {
         id: u64 as PoolId,
         supply: u64,
@@ -53,9 +50,7 @@ bumbledb::schema! {
         ran: interval<u64>,
     }
 
-    // The successor issues no database identity: the old `fresh` modifier
-    // is DECLARED key statements now (`R(id) -> R;`) — same identity law,
-    // spelled in the statement grammar the encoding surface hashes.
+    // Declared keys contribute to the schema fingerprint.
     Holder(id) -> Holder;
     Account(id) -> Account;
     Pool(id) -> Pool;
@@ -92,9 +87,7 @@ bumbledb::schema! {
 /// The pinned cross-host fingerprint of the `CrossHost` theory. The macro
 /// twin must keep hashing to this constant: a silent encoding-surface change
 /// in the engine (or the `schema!` grammar) is exactly the drift this lock
-/// exists to catch. The 0.x TS twin (`test/fingerprint.test.ts`) died with
-/// the fresh-modifier grammar; when the SDK regrows a fingerprint pin it
-/// bakes THIS constant (F3 note in implementation/packets/P06.md).
+/// exists to catch.
 /// `18446744073709551615` above is `u64::MAX` — the `at` selection literal
 /// is the unbounded ray `[5, ∞)`.
 const PIN: &str = "84481bd32f7182df21ea5aea542c05d13a7dd52fe378cdb05c4fef9558624d31";

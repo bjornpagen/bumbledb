@@ -5,7 +5,6 @@
  * manifest write; empty source is not a shortcut; edited/missing snapshots
  * refuse. Uses the production codec (actual native compile).
  *
- * Verification: NotRun during fanout.
  */
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"

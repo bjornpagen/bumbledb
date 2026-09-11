@@ -1,18 +1,12 @@
-//! Chapter 34's successor notation, exercised end to end (API-12; C10's
-//! "no first-class operator exists solely in the native kernel"):
+//! Typed query composition and structural literals, exercised end to end:
 //!
 //! - `use name = &template;` — NONRECURSIVE COMPOSITION: an existing
 //!   schema-bound typed query value splices into the importing query's
 //!   derived-stage roster as owned immutable IR (interior-id shifted,
 //!   cloned, never a borrow of a database or session);
-//! - interior heads may AGGREGATE (P03's generalized
-//!   `Interior { rules: Vec<Rule> }`; the projection-only wall is deleted —
-//!   only the recursive cycle stays projection-only);
+//! - interior heads may aggregate; recursive cycles stay projection-only;
 //! - `uuid:"…"` literals and dense `f64..f64` interval literals lower to
-//!   the canonical `Value::Uuid` / `Value::IntervalF64` (chapter 11/34
-//!   typed floats, intervals and Uuid with Rust syntax parity).
-//!
-//! Verification: `NotRun` until F3 (campaign phase rule).
+//!   the canonical `Value::Uuid` / `Value::IntervalF64`.
 
 use bumbledb::ir::Value;
 use bumbledb::{Atom, AtomSource, Db, FindTerm, FoldOp, Interval, Query, Term, Uuid, VarId};

@@ -2,7 +2,7 @@
  * TS-010 / D22 discriminator: pure schema/scalar authoring must not load
  * the native addon. Native resolution is made unavailable — importing
  * successfully while the platform package is still installed is not this
- * gate. Verification: NotRun
+ * gate.
  */
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"

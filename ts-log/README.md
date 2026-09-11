@@ -283,11 +283,10 @@ runtime:
   containing `db/`. After activation, retrying the original migration returns
   that target binding, so adopting a retry cannot reopen the frozen source.
 
-  **Current limitation:** these generated migration runner verbs target local
+  These generated migration runner verbs target local
   authorities only. The TypeScript/native bridge refuses hosted migration
   execution; a hosted tenant's cache is not an authoritative local migration
-  target. Hosted migration orchestration is not supported. Real-S3 and Graviton qualification
-  remain deferred, not passed.
+  target. Real-S3 deployments and Graviton performance have not been qualified.
 - Field arithmetic such as `Scalar.add(Scalar.field("units"), Scalar.u64(1n))`
   is valid intent metadata. Native chain compilation binds it before any
   new manifest write or source freeze, including zero input rows.

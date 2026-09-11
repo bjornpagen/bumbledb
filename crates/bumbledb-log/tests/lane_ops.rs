@@ -1,7 +1,7 @@
 //! Bounded status fixtures and maintenance cancellation — OPS-TEST-01 and the
 //! maintenance half of OPS-TEST-02 (native-runtime shutdown is P06/C09; the
 //! obligation here is that bounded work stops typed, keeps durable progress
-//! and resumes). Verification: `NotRun` (F1 authors, does not execute).
+//! and resumes).
 
 mod lane_support;
 

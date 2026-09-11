@@ -19,7 +19,6 @@
  * D19 twin of the shared scalar grammar: query I64/U64 pairing refuses
  * here without any/casts; arithmetic mixing is authored in
  * `scalar-algebra.test.ts` / `computed-find.test.ts`.
- * Verification: NotRun
  */
 
 import assert from "node:assert/strict"

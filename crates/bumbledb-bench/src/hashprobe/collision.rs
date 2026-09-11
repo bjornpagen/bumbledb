@@ -1,11 +1,8 @@
 //! HASH-02: forced local-fingerprint collisions through every equality,
 //! admission, query, delete, reopen and spill path.
 //!
-//! Production 16-byte fingerprints cannot be collided by test inputs alone,
-//! so the engine must expose a test-only fingerprint override (requested from
-//! P01/P02: a `collision-probe`-style feature or injectable fingerprinter in
-//! the core digest/storage seam — see the P14 packet file's dependency list).
-//! This module owns everything that does not depend on that hook:
+//! Callers supply operations with forced fingerprints through [`EngineOps`].
+//! This module provides:
 //!
 //! - the deterministic adversarial operation schedule ([`schedule`]),
 //! - the independent final-state oracle (a `BTreeMap`-keyed relation with a
@@ -14,8 +11,7 @@
 //!   in its ordering),
 //! - the bounded-work checker (a collision bucket may add lookup work, never
 //!   unbounded work, and never merges two distinct facts),
-//! - the injection surface ([`EngineOps`]) that the F3 wiring implements over
-//!   the real engine with the override engaged.
+//! - the injection surface ([`EngineOps`]) for the implementation under test.
 //!
 //! Long values above LMDB's key-size bound belong in the same lane: the
 //! schedule includes oversized-payload rows so collision buckets are checked
@@ -176,9 +172,8 @@ impl Model {
     }
 }
 
-/// What the F3 wiring implements over the real engine with the fingerprint
-/// override engaged. Every method reports `(rejected?, probes)` where
-/// `probes` counts exact-comparison fetches so bounded-work is checkable.
+/// Operations with the fingerprint override engaged. Probe counts track
+/// exact-comparison fetches so the driver can check work bounds.
 pub struct EngineOps<'a> {
     /// One-row insert command → (rejected by the key law, probes).
     pub insert: &'a mut dyn FnMut(Row) -> Result<(bool, u64), String>,

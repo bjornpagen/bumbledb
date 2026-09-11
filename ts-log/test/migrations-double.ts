@@ -3,10 +3,9 @@
  * (`migrations-*.test.ts`). It is a harness for the LANGUAGE layer only —
  * the repo workflow, diff admission, write ordering, drift refusal and
  * deterministic output — never a second production codec: the one production
- * binding is `#migrations/native.ts` over the native migration codec, and
- * digest/frame golden vectors are P09's Rust tests plus the F3 lanes
- * (physical digest bytes stay provisional until the F3 format freeze, so
- * these tests must not pin them).
+ * binding is `#migrations/native.ts` over the native migration codec.
+ * Rust conformance tests cover the production digest and frame encodings;
+ * this double uses test-only digests.
  *
  * The double is deterministic and self-consistent: fake 64-hex digests are
  * derived from canonical JSON spellings, recorded manifests re-verify from

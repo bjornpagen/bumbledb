@@ -1,7 +1,7 @@
 //! `LocalHistory` over a real core LMDB store: atomic facts/receipt/head
 //! attachment, durable no-op/rejection/precondition receipts, retry
 //! deduplication and the exact-state (ABA) witness. Maps to PROTO-02/07/08/09/
-//! 10/17 and CONC-02/03. Verification: `NotRun` (F1 authors, does not execute).
+//! 10/17 and CONC-02/03.
 
 use std::path::PathBuf;
 use std::sync::Arc;

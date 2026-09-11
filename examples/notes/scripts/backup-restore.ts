@@ -9,8 +9,6 @@
  *     verify <destinationDir>
  *   node --experimental-strip-types scripts/backup-restore.ts \
  *     restore <operationIdHex> <destinationDir> <targetTenantId>
- *
- * Verification: NotRun until F3.
  */
 import * as fs from "node:fs"
 import * as path from "node:path"

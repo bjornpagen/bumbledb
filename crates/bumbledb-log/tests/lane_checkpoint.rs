@@ -2,7 +2,7 @@
 //! STORE-03/04/07 shapes, the epoch-moved restaging rule, the tail envelope
 //! backpressure and the shared blank-projection digests.
 //! Deterministic `MemStore` schedules; real-S3 evidence is the separate
-//! credential-gated lane. Verification: `NotRun` (F1 authors, does not execute).
+//! credential-gated lane.
 
 mod lane_support;
 
@@ -448,7 +448,7 @@ fn receipt_retirement_advances_atomically_with_its_checkpoint() {
 }
 
 /// D16: nonzero checkpoint-only root (seq 7) has base == tip and no tip
-/// `ObjectRef`. Same-tip retirement/rebase remains legal. Verification: `NotRun`.
+/// `ObjectRef`. Same-tip retirement/rebase remains legal.
 #[test]
 fn d16_checkpoint_only_at_sequence_seven_has_no_tip_locator() {
     let store = MemStore::new();

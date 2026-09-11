@@ -1036,13 +1036,8 @@ pub(crate) fn optional_number(obj: &Object, key: &str, ctx: &str) -> napi::Resul
     }
 }
 
-/// The C08 durable-tail envelope of one history open (finding #6 bridge
-/// half): the OPTIONAL wire field `tailPolicy: { maxCount: bigint,
-/// maxBytes: bigint } | null` on the history open request. Absent/null is
-/// the machine default (`TailPolicy::UNBOUNDED`) — the bridge never invents
-/// an envelope the deployment did not configure. (Provisional spelling
-/// recorded in implementation/packets/P09.md pending W2-CERT's published
-/// spelling in P04.md.)
+/// Decode the optional `tailPolicy: { maxCount: bigint, maxBytes: bigint }`
+/// on a history open request. Absent or null uses `TailPolicy::UNBOUNDED`.
 pub(crate) fn tail_policy_in(
     obj: &Object,
     ctx: &str,

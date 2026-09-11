@@ -1,5 +1,4 @@
-//! The preserved mixed-fleet CAS regression, on the ONE authoritative
-//! implementation (C07; frozen-handoff CAS failure record).
+//! Mixed-fleet CAS regression against the shared native implementation.
 //!
 //! The 0.x failure: TS used numeric tokens/`~head`/unconditional rename while
 //! Rust used `mutation.lock` — a paused TS old-value read, a Rust CAS, and a
@@ -8,7 +7,6 @@
 //! lane proves the exact failure shapes cannot recur against `FsStore` —
 //! every acknowledged swap is linearized, a paused holder's stale version
 //! loses, and hostile mutation-lock shapes refuse or are inert.
-//! Verification: `NotRun` (F1 authors, does not execute).
 
 #![cfg(unix)]
 

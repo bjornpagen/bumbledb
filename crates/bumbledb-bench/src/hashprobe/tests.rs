@@ -1,5 +1,3 @@
-//! Authored F1, executed F3 with the workspace suite.
-//!
 //! Gate mapping: `roles_*` → HASH-01; `collision_*` → HASH-02;
 //! `sizing_*` → HASH-03; `equivalence_*`/`kat_*`/`inputs_*` → HASH-01/04.
 
@@ -347,8 +345,7 @@ fn kat_self_generated_vector_round_trips_and_mismatch_fails() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// HASH-02 — schedule, model and driver logic (the real-engine wiring runs in
-// F3 with the fingerprint override; these pin the harness semantics).
+// HASH-02: deterministic collision schedule, model, and driver semantics.
 
 #[test]
 fn collision_schedule_is_deterministic_and_touches_every_path() {

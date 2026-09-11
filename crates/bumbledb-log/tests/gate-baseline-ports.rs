@@ -5,7 +5,6 @@
 //! Baselines live in `audit/`; each test cites its audit row and states the
 //! successor property it proves over the LANDED surfaces.
 //!
-//! Verification: `NotRun` (F2 authors, does not execute).
 
 mod lane_support;
 

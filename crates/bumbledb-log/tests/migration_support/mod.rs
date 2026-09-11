@@ -1,5 +1,5 @@
 //! Shared fixtures for the migration_* integration lanes. Test support
-//! only; nothing here is a production surface. Verification: `NotRun` (F1).
+//! only; nothing here is a production surface.
 #![allow(dead_code)]
 
 use std::path::PathBuf;

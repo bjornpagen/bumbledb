@@ -1,11 +1,6 @@
-//! The DRAM-tier displaced lanes — the roster extension's measurement
-//! infrastructure for the memory regime the S-scale roster cannot see
-//! (`docs/reference/apple-silicon-performance.md`: residency is a property of
-//! phase *interleaving*, not footprint — `m2max.mem.residency-is-interleaving`;
-//! 24 MB of interleaved foreign streaming degrades a nominally resident probe
-//! structure +53% — query (the view memo — every execute after the first shows
-//! scale (every family × draw row-identical across engines before a is O(rows)
-//! per pass), the exact warm protocol shape with the lane's
+//! Probe and scan workloads with 0, 24, or 96 MiB of foreign streaming
+//! between passes to measure cache displacement. Each draw is checked
+//! against SQLite before timing.
 use bumbledb::schema::ValidateDescriptor as _;
 use std::path::Path;
 

@@ -1,8 +1,6 @@
 //! Independent verified-bytes backup and new-incarnation restore —
 //! BACKUP-01..05 shapes and RESTORE-01..03. The destination is a
-//! DISTINCT store; restores read the destination only. Cross-platform and
-//! >RAM arms are F3 lanes over these entry points. Verification: NotRun (F1
-//! > authors, does not execute).
+//! distinct store; restores read the destination only.
 
 mod lane_support;
 
@@ -594,7 +592,7 @@ fn restore03_restored_outbox_style_facts_document_duplicate_delivery_hazard() {
 
 /// D16/D17: a relocated backup is consumed from the destination manifest's
 /// ordered refs. Historical decision commitments stay unchanged; restore
-/// does not follow source-location parent refs. Verification: `NotRun`.
+/// does not follow source-location parent refs.
 #[test]
 fn d16_relocated_backup_uses_manifest_refs_not_source_locators() {
     let store = MemStore::new();
@@ -643,7 +641,6 @@ fn d16_relocated_backup_uses_manifest_refs_not_source_locators() {
 /// D17: a with-tail restore whose expected tip disagrees with the reached
 /// authority refuses before publication. `theory()` admits empty prefixes,
 /// so dest-absent means the tip check ran on the unready owner.
-/// Verification: `NotRun`.
 #[test]
 fn d17_wrong_tip_with_tail_leaves_destination_absent() {
     let store = MemStore::new();

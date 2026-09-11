@@ -3,10 +3,7 @@
  * through the REAL route handlers (APP-01/02/03 local halves): provision a
  * tenant from the generated plan chain, then drive Request objects at the
  * handlers. Requires the generated artifacts (run `pnpm run generate`
- * first — an F3 step); a missing chain FAILS loudly instead of skipping
- * green.
- *
- * Verification: NotRun until F3 (campaign phase rule).
+ * first); a missing chain fails the suite.
  */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"

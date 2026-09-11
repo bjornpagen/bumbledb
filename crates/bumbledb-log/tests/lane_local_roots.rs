@@ -1,8 +1,6 @@
 //! `LocalHistory` named restore points: complete-then-register, owner-scoped
 //! cleanup, never-reused root directories, and restore preserving the point's
-//! original evidence — LOCAL-01..03 (REP-003 local arm). Kill-based variants
-//! are P12's F3 process harness over these same boundaries. Verification:
-//! `NotRun` (F1 authors, does not execute).
+//! original evidence — LOCAL-01..03 (REP-003 local arm).
 
 mod lane_support;
 

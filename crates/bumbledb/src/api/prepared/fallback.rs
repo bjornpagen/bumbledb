@@ -1046,7 +1046,6 @@ mod tests {
     use bumbledb_theory::schema::{FieldId, ValueType};
 
     /// String columns take `TextEq`; i64 high-bit words do not.
-    /// Verification: `NotRun`.
     #[test]
     fn fallback_operands_mark_string_columns() {
         let field_types = [ValueType::U64, ValueType::String, ValueType::I64];

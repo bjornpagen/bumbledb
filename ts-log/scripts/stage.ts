@@ -54,8 +54,7 @@ function writePackProvenance(stagedDir: string, provenance: PackProvenance): voi
 }
 
 /**
- * Immutable pack staging for `@bjornpagen/bumbledb-log`
- * (docs/reference/packaging.md). The already-built
+ * Immutable pack staging for `@bjornpagen/bumbledb-log`. The already-built
  * `dist/` and the committed docs are copied into an isolated staging
  * tree, the packed manifest is derived there (repo-only fields dropped;
  * the exact peer handshake asserted), and `pnpm pack` runs inside that
@@ -63,7 +62,7 @@ function writePackProvenance(stagedDir: string, provenance: PackProvenance): voi
  * phase leaves it byte-identical.
  *
  * The exact peer handshake this stage refuses to pack without:
- *  - `peerDependencies.effect === "4.0.0-rc.112"` (docs/reference/api.md),
+ *  - `peerDependencies.effect === "4.0.0-rc.112"`,
  *  - `peerDependencies["@bjornpagen/bumbledb"] === <this version>` — the
  *    log package can never silently select a different native
  *    command/runtime contract; both packages resolve the SAME shared

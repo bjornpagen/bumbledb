@@ -1,8 +1,8 @@
-//! Authored F1, executed F3. Gate mapping: `scorecard_*` → APP-FAST/MUTATE/
+//! Gate mapping: `scorecard_*` → APP-FAST/MUTATE/
 //! NUMERIC/LARGE/TENANTS/TARGETS/METHOD/MAGIC structure; `layers_*` →
 //! the chapter 40 §7 decomposition contract (G15/RUN family evidence);
 //! `hosted_*` → PERF-003; `runner_*` → APP-FAST/MUTATE/TENANTS mechanics
-//! (tiny corpora — the measured F3 cells use real scales).
+//! (small test corpora; measurements use full scales).
 
 use super::hosted::{
     self, CommitCostSample, ContentionCell, HistoryMode, KeyMode, TerminalOutcome, WRITER_COUNTS,

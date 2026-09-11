@@ -8,7 +8,6 @@
  * scope of `#scalar.ts` — not a second roster.
  *
  * D19: known query I64/U64 mixing fails without any/casts.
- * Verification: NotRun
  */
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"

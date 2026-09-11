@@ -1,5 +1,5 @@
 //! Authored discriminators D07–D12 / D25 for the L05 query machine.
-//! Verification: `NotRun`. Each gate is a consumer of the production
+//! Each gate is a consumer of the production
 //! execute/delivery path — not a `type_name` / `size_of` / fn-ref claim.
 
 use super::*;

@@ -1,2 +1,0 @@
-UUID: 48DFD26A-D6FB-3F4A-98B2-5B341881A73A (arm64) /Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/profiling/bumbledb-bench
-UUID: 48DFD26A-D6FB-3F4A-98B2-5B341881A73A (arm64) /Users/bjorn/Documents/bumbledb/bench-out/autoresearch-20260908.pMXtzv/profiling/bumbledb-bench.dSYM/Contents/Resources/DWARF/bumbledb_bench

@@ -5,7 +5,6 @@
 //! history rows are corruption evidence, and cross-version/foreign frames
 //! refuse before anything trusts them. Maps to MIG-03/06/08/09/10 (native
 //! halves of TS-MIG-02/06/08) and OPS-001.
-//! Verification: `NotRun` (F1 authors, does not execute).
 
 #[path = "migration_support/mod.rs"]
 mod support;

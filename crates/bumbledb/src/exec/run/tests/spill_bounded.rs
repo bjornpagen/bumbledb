@@ -1,4 +1,4 @@
-//! Spill-bounded derived consumption (D09). Verification: `NotRun`.
+//! Spill-bounded derived consumption (D09).
 //! A scratch-backed stage walks through L03's borrowed visitor: `Err`
 //! stops immediately and `Ok(false)` is a clean early stop. Peak decode
 //! storage is one row. No `type_name` / `size_of`.

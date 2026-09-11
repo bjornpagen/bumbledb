@@ -4,8 +4,6 @@
  * under the original command; absence after rotation is not proved loss.
  *
  *   node --experimental-strip-types scripts/resolve-command.ts <tenantId> <requestKeyHex>
- *
- * Verification: NotRun until F3.
  */
 import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
 import { parseCommandRef } from "@bjornpagen/bumbledb-log"

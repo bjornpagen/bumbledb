@@ -179,13 +179,7 @@ mod tests {
         })
     }
 
-    /// STALE PIN, DELIBERATELY (F1, 2026-09-04): the successor moved the
-    /// canonical stream to v6 (no per-field generation byte) and this schema
-    /// replaced its six fresh auto-keys with declared id keys, so this hex
-    /// WILL mismatch at F3 — which is exactly this test's job: the failure
-    /// forces the deliberate corpus/report re-baseline (record the new hex
-    /// from the failure message; no execution is allowed in F1 to compute
-    /// it here).
+    /// Schema encoding changes require a deliberate corpus and report update.
     #[test]
     fn the_fingerprint_is_pinned() {
         assert_eq!(

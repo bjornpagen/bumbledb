@@ -1,8 +1,7 @@
 //! C11 canonical plan/manifest codec: identity is the canonical FRAME, the
 //! label is human-only, formatting never changes a digest, and every tamper
 //! (edit/reorder/relabel/prefix) refuses with its exact position.
-//! Maps to MIG-07 (native half of TS-MIG-01), OPS-001. Verification: `NotRun`
-//! (F1 authors, does not execute).
+//! Maps to MIG-07 (native half of TS-MIG-01), OPS-001.
 
 #[path = "migration_support/mod.rs"]
 mod support;

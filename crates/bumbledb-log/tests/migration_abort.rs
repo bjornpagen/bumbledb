@@ -3,7 +3,6 @@
 //! activator loses to the tombstone under the same stable namespace lock,
 //! activation winning refuses automatic abort, and a cancelled operation
 //! permanently reports Aborted. Maps to MIG-03/05/09/14 and OPS-001.
-//! Verification: `NotRun` (F1 authors, does not execute).
 
 #[path = "migration_support/mod.rs"]
 mod support;

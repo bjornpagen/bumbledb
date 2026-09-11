@@ -2,7 +2,7 @@
 
 An embedded relational database for Rust and TypeScript, backed by LMDB.
 Relations have set semantics, joins use Free Join, and schemas and queries
-are defined in code rather than SQL. The project is under active development.
+are defined in code rather than SQL.
 
 [TypeScript guide](ts/README.md)
 · [Cookbook](docs/cookbook.md)
@@ -148,7 +148,7 @@ sees structural value types and relational constraints.
 `bumbledb-log` adds named, retryable commands, retained outcomes, checkpoints,
 backup/restore, and migrations through its TypeScript API. Local history uses
 durable local storage. Hosted history uses S3 as the authority and LMDB as a
-local cache; real S3/IAM deployment qualification is still pending. There is
+local cache; real S3/IAM deployments have not been qualified. There is
 no public Rust log SDK or C API.
 
 The [Notes example](examples/notes/README.md) exercises a server-side Next.js
@@ -182,9 +182,8 @@ durable writes and constraint refusals include SQLite wins. Compacted stores
 use 1.67–1.80× indexed SQLite's space in the measured ledger/calendar workloads.
 Some workloads exceed the informational latency budgets.
 
-The hardware target is a Raspberry Pi Zero 2 with 512 MB RAM. Pi memory and
-performance qualification is still pending; the M2 Max results do not establish
-performance on the Pi or with a working set larger than RAM.
+The hardware target is a Raspberry Pi Zero 2 with 512 MB RAM. These measurements
+do not establish performance on that device or with a working set larger than RAM.
 
 See the [full results, charts, and limitations](docs/perf/results.md) and the
 [measurement and profiling guide](docs/perf/measurement-plan.md).

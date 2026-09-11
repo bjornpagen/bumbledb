@@ -1,18 +1,15 @@
-//! Chapter 34's typed templates and `params!` — the Rust half of the
-//! compile-time param/row typing parity (API-12; C05 bind roster):
+//! Typed templates and `params!` parameter binding:
 //!
 //! - `query!` evaluates to a typed TEMPLATE wrapping the owned immutable
 //!   IR: `Deref<Target = Query>` keeps every untyped consumer compiling,
 //!   `into_query()` moves the plain IR out, `param_names()`/`columns()`
-//!   carry the name tables that used to die at expansion;
+//!   carry the parameter and column name tables;
 //! - `template.bind(params! { name: value, … })` is order-free typed
-//!   named binding onto the positional C05 `Vec<ParamArg>` — unknown,
+//!   named binding onto the positional `Vec<ParamArg>` — unknown,
 //!   missing and doubled names are COMPILE errors (typestate builder;
 //!   compile-fail fixtures pin them), and value-vs-slot type agreement
 //!   stays the engine's typed bind error at execution;
 //! - `field in ?set` params bind as `&[Value]` slices.
-//!
-//! Verification: `NotRun` until F3 (campaign phase rule).
 
 use bumbledb::{AnswerValue, Answers, BindValue, Db, Interval, ParamArg, Uuid, Value};
 use bumbledb_query::{params, query};

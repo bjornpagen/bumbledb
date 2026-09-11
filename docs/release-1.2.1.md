@@ -27,9 +27,7 @@ All three supported-platform builds and full correctness batteries must pass
 on the release commit. Static Linux ARM64 and Miri remain supplemental checks,
 outside the publication gate. See the [publishing procedure](../ts/PUBLISHING.md).
 
-The [full 1.2.1 benchmark rerun](perf/runs/1.2.1/README.md) is prepared but
-has not been measured. Existing published results retain their 1.1.0 source
-provenance; this release makes no new performance claim. Real-S3/IAM,
-Graviton performance, and larger-than-memory qualification remain deferred,
-not passed. Hosted generated migration orchestration remains unsupported
-through the TypeScript/native bridge.
+The [full benchmark results](perf/results.md) measured 1.1.0 source;
+this release makes no new performance claim. Real-S3/IAM, Graviton performance,
+and larger-than-memory workloads have not been qualified. Hosted generated
+migration orchestration is unsupported through the TypeScript/native bridge.

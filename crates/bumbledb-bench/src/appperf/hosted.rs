@@ -177,7 +177,7 @@ pub fn contention_schedule() -> Vec<ContentionCell> {
     cells
 }
 
-/// The seam the F3 wiring implements over the real hosted log.
+/// Contention workload interface over hosted history.
 /// One call runs one contention cell and returns every command's complete
 /// cost sample. No emulator shortcut: `backend` names what actually served
 /// the requests, and emulator green is recorded as emulator green.

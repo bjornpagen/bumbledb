@@ -2,7 +2,7 @@
  * D18 / TS-003: every partial acquisition is owned before the next
  * interruptible step. Directory acquire is finalized before Db open;
  * operation output is registered before the next yield. JS tokens stay
- * reachable. Verification: NotRun
+ * reachable.
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"

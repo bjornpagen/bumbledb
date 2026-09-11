@@ -5,7 +5,6 @@
  * commands with retained refs, same-ID retry/resolve, generated
  * initialize/migrate/reopen, backup/restore, and joined close.
  *
- * Verification: NotRun until packed-consumer qualification.
  */
 import { ChangeSet, Uuid, Scalar } from "@bjornpagen/bumbledb"
 import * as fs from "node:fs"

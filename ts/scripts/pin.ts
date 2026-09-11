@@ -2,25 +2,18 @@ import { ScriptError } from "./errors.ts"
 import { PUBLISH_PLATFORMS } from "./platform.ts"
 
 /**
- * Packed-manifest derivation — pure functions over the committed repo
- * manifest, consumed by `scripts/stage.ts`. The committed `package.json`
- * is NEVER rewritten: the earlier prepack/postpack pair that injected and
- * removed `optionalDependencies` in place is deleted
- * (docs/reference/packaging.md PKG-02: no prepack/postpack hook rewrites
- * the developer's package.json or depends on an interrupted post-hook
- * repairing it). Instead the exact platform
- * pins are written into the STAGED manifest only, inside an isolated
- * staging tree, and `pnpm pack` runs there. An interrupted stage leaves
- * the checkout byte-identical by construction.
+ * Pure packed-manifest derivation for `scripts/stage.ts`. Exact platform
+ * pins are written into an isolated staging tree before `pnpm pack`,
+ * leaving the committed package.json unchanged even if staging fails.
  *
- * The pin policy is unchanged: every shipped platform package is pinned
+ * Every shipped platform package is pinned
  * to the exact release version read from the manifest itself (one
  * source), and the committed manifest stays registry-independent so a
  * lockfile can never demand the current unpublished version
  * (`--frozen-lockfile` bootstrap window).
  */
 
-/** The one selected TypeScript peer/dev dependency (chapter 35). */
+/** The selected TypeScript peer/dev dependency. */
 const EFFECT_PIN = "4.0.0-rc.112"
 
 function stringField(manifest: Record<string, unknown>, field: string, where: string): string {

@@ -1,6 +1,6 @@
-//! Authored F1, executed F3. Gate mapping: everything here → APP-LARGE /
+//! Gate mapping: everything here → APP-LARGE /
 //! G05 (fixture-plan admission, generator determinism/resumability, sparse
-//! refusal). Population itself happens only in F3 on fitting hardware.
+//! refusal). Populating the full fixture requires sufficient disk and memory.
 
 use super::enforce;
 use super::generator::{self, StreamChecksum};

@@ -1,6 +1,5 @@
 /**
- * The explicit migration admin runner (chapter 33 "Explicit migrate and
- * cutover") — a provisioned Node admin job, never a request hook, build
+ * The migration admin runner is a provisioned Node job, never a request hook, build
  * import or worker-startup duty. It consumes the CHECKED-IN generated
  * plan data (bounded decode of the committed files; no schema.ts load, no
  * authoring code, no callbacks) and calls the native executor through the

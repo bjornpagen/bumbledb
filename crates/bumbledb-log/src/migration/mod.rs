@@ -1,5 +1,5 @@
-//! Native canonical migration execution and durable cutover (C11, chapter
-//! 22/33). Internal shared-native implementation, not a public Rust SDK.
+//! Native canonical migration execution and durable activation.
+//! Internal shared-native implementation, not a public Rust SDK.
 //!
 //! One canonical data family, one executor:
 //!

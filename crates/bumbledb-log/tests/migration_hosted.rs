@@ -9,7 +9,7 @@
 //! production `store::mem::MemStore` double (faults are explicit script
 //! entries; the store never invents state); real S3 is the P05/P12 F3 lane.
 //! Maps to MIG-01/05/09/14 (hosted halves), the C08 composed-head seam and
-//! OPS-001. Verification: `NotRun` (authored, not executed).
+//! OPS-001.
 
 use bumbledb_log::store::receive::{ReceiveLimits, ReceivedHead, ReceivingStore, TransportContext};
 

@@ -12,8 +12,7 @@
 //! P11's compile-time guarantee); this file is the bridge P11 declared but
 //! could not wire before the machine landed.
 //!
-//! Requires the `bumbledb-bench` dev-dependency (P12 hub request to P00).
-//! Verification: `NotRun` (F2 authors, does not execute).
+//! Uses independent trace models from the `bumbledb-bench` dev-dependency.
 
 mod lane_support;
 

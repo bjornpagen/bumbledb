@@ -30,7 +30,7 @@
     "sourceRevision": {
       "type": "string",
       "pattern": "^[a-f0-9]{40}$",
-      "description": "Optional post-commit git object name recorded in final handoff metadata only."
+      "description": "Optional Git commit identifying the release; source integrity is checked by candidateSourceDigest."
     },
     "audits": { "$ref": "#/$defs/obligationRows" },
     "gates": { "$ref": "#/$defs/obligationRows" },

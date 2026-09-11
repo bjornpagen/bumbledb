@@ -3,10 +3,7 @@
 //! Four distinct measurements, reported as themselves and never conflated:
 //!
 //! 1. **Live key/value bytes per namespace** — walked entry by entry through
-//!    the [`CensusSource`] the F3 wiring provides over the successor store's
-//!    read snapshot (C04; the walker itself is a P02 interface request — see
-//!    the P14 packet file). Chapter 41's arithmetic model predicts these
-//!    numbers, so model-versus-walk divergence is itself a finding.
+//!    the [`CensusSource`] over one coherent read snapshot.
 //! 2. **LMDB page statistics** — page size, depth, branch/leaf/overflow
 //!    pages, entries and freelist pages, store-wide. Mixed namespaces share
 //!    pages; there is no honest exact per-namespace page attribution without
@@ -33,10 +30,8 @@ pub struct EntrySize {
     pub value_bytes: u64,
 }
 
-/// What the F3 wiring implements over one coherent read snapshot of the
-/// successor store. Implementations must walk **live** entries only (one
-/// snapshot, no dirty pages) and classify by the successor's actual tag
-/// roster. Requested from P02 as part of C04's snapshot cursor handoff.
+/// Walk live entries from one coherent read snapshot, classified by the
+/// store's namespace tags.
 pub trait CensusSource {
     /// # Errors
     fn walk(&mut self, visit: &mut dyn FnMut(EntrySize)) -> Result<(), String>;

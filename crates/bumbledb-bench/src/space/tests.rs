@@ -1,4 +1,4 @@
-//! Authored F1, executed F3. Gate mapping: `model_*`/`census_*`/`sqlite_*` →
+//! Gate mapping: `model_*`/`census_*`/`sqlite_*` →
 //! SPACE-01; `variants_*` → SPACE-02.
 
 use std::collections::BTreeSet;

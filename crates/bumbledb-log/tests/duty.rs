@@ -1,8 +1,7 @@
 //! The duty maintenance CLI over a real `FsStore` layout: status, GC, roots,
 //! backup, verify-backup, erase and the explicit finite argument grammar
 //! (OPS-TEST-01 shape at the CLI boundary). The binary is an adapter over
-//! the same library implementation, not a second machine. Verification:
-//! `NotRun` (F1 authors, does not execute).
+//! the same library implementation, not a second machine.
 
 mod lane_support;
 

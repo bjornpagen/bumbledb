@@ -333,7 +333,7 @@ fn finalize_materializes_each_distinct_intern_once() {
 }
 
 /// Forced work refusal during text compare fails the query. It does
-/// not return a successful empty or wrong answer. Verification: `NotRun`.
+/// not return a successful empty or wrong answer.
 #[test]
 fn text_compare_refusal_fails_the_query() {
     let fix = postings(&[(1, 7, "alpha", 10), (2, 7, "beta", 20)]);
