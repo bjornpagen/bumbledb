@@ -377,11 +377,14 @@ type ComputedClasses<Rels extends SchemaRelations, Comps extends readonly string
 	}
 }
 
-type ClassesOf<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = ComputedClasses<
-	Rels,
-	BuildComps<PairsOf<Stmts>>,
-	GeneratorsOf<Rels>
->
+// A generated/erased statement array is not an empty theory. Its runtime
+// containments may connect any compatible fields, so retain unknown classes
+// until the native authoring boundary rather than inventing bare carriers.
+type ClassesOf<Rels extends SchemaRelations, Stmts extends readonly Statement[]> = [DecidableRoster<Stmts>] extends [
+	true
+]
+	? ComputedClasses<Rels, BuildComps<PairsOf<Stmts>>, GeneratorsOf<Rels>>
+	: SchemaClasses
 
 interface MemberCoords {
 	readonly relation: string

@@ -267,13 +267,6 @@ type UnionToIntersection<U> = (U extends unknown ? (member: U) => void : never) 
 type ShapeOf<U> = [U] extends [never] ? Record<never, never> : Flatten<UnionToIntersection<U>>
 
 /**
- * A slot's identity for the positive-join judgment: the field's structural
- * signature ({@link SignatureOf} — the ONE interpreter, shared with the
- * face pairing wall) plus the slot's law class.
- */
-type SlotSignature<S extends ClassedField> = readonly [SignatureOf<S["field"]>, S["class"]]
-
-/**
  * A widened slot — an explicitly erased query template or fully generic
  * code with no retained descriptor — cannot be judged
  * at the type tier. The degradation law applies: best effort degrades to
@@ -283,7 +276,15 @@ type SlotSignature<S extends ClassedField> = readonly [SignatureOf<S["field"]>, 
 type WidenedSlot<S extends ClassedField> = [AnyField] extends [S["field"]] ? true : false
 
 type JoinOk<A extends ClassedField, B extends ClassedField> =
-	WidenedSlot<A> extends true ? true : WidenedSlot<B> extends true ? true : Same<SlotSignature<A>, SlotSignature<B>>
+	WidenedSlot<A> extends true
+		? true
+		: WidenedSlot<B> extends true
+			? true
+			: Same<SignatureOf<A["field"]>, SignatureOf<B["field"]>> extends true
+				? string extends A["class"] | B["class"]
+					? true
+					: Same<A["class"], B["class"]>
+				: false
 
 type U64Wire<F extends AnyField> = F extends { readonly kind: "u64" }
 	? F extends { readonly closed: unknown }

@@ -124,3 +124,24 @@ test("imported projections preserve signedness, interval descriptors and closed 
 		Compute.add(row.text, Compute.u64(1n))
 	}, /reads u64\/i64\/f64\/bool/)
 })
+
+test("generated statement arrays leave carrier identity unknown, not falsely bare", () => {
+	const generated = [key(Label, ["id"]), contained(on(Label, "kind"), on(Kind, "id"))]
+	const dynamic = schema("Generated", { Label, Kind }, generated)
+	const projected = query(dynamic).rule((r) => {
+		const row = v(Label)
+		return r.match(Label, row).find(row)
+	})
+	const joined = query(dynamic).rule((r) => {
+		const row = v(projected)
+		return r.match(projected, row).match(Kind, { id: row.kind }).find(row)
+	})
+	assert.equal(joined.data.finds.length, 6)
+	assert.throws(() => {
+		const { id } = v(projected)
+		query(dynamic).rule((r) =>
+			// @ts-expect-error Unknown carriers do not erase known field kinds.
+			r.match(Label, { text: id }).find({ id })
+		)
+	}, /domain-unequal fields/)
+})
