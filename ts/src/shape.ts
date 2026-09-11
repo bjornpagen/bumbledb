@@ -1,5 +1,5 @@
 import type { Query } from "#query/lower.ts"
-import type { ParamsRecord } from "#query/scope.ts"
+import type { inferred, ParamsRecord } from "#query/scope.ts"
 /**
  * Shared derived types: `S` is a
  * declared core schema value's type, `Rel<S>` its ordinary (writable)
@@ -24,7 +24,13 @@ type Key<K extends KeyStatement<AnyRelation, readonly string[]>> = Pick<
 	Extract<K["projection"][number], keyof Fact<K["owner"]>>
 >
 
-/** Immutable typed query template. */
-type QueryTemplate<S extends AnySchema, P extends ParamsRecord, A> = Query<S["relations"], A, P>
+/** The immutable executable view of a query. Readers consume its schema/data
+ * and inferred result/parameters, not the author's rule-building methods.
+ * Runtime schema identity remains authoritative for dynamically built schemas.
+ */
+type QueryTemplate<S extends AnySchema, P extends ParamsRecord, A> = Pick<
+	Query<S["relations"], A, P>,
+	"schema" | "data" | typeof inferred
+>
 
 export type { Key, QueryTemplate, Rel }

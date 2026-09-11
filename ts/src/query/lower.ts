@@ -100,6 +100,8 @@ type RowOf<T> = InferredOf<T> extends { readonly row: infer R } ? R : never
 
 type HeadShape = Readonly<Record<string, ClassedField>> | undefined
 
+type HeadOf<T> = InferredOf<T> extends { readonly head: infer H extends HeadShape } ? H : HeadShape
+
 interface RuleValue<Row, P extends ParamsRecord, Head extends HeadShape = undefined> {
 	readonly rule: RuleData
 	readonly [inferred]?: { readonly row: Row; readonly params: P; readonly head: Head }
@@ -225,7 +227,7 @@ interface QueryRuleChain<
 		bindings: B & CheckInteriorBindings<B>
 	): QueryRuleChain<Rels, P, Classes>
 
-	find<const F extends FindShape>(entries: F & CheckFind<F>): RuleValue<RowOfFind<F>, P>
+	find<const F extends FindShape>(entries: F & CheckFind<F>): RuleValue<RowOfFind<F>, P, HeadRecordOf<Classes, F>>
 }
 
 interface InteriorRuleScope<Rels extends SchemaRelations, Classes extends SchemaClasses = SchemaClasses>
@@ -388,22 +390,23 @@ interface Query<
 	Rels extends SchemaRelations,
 	Row,
 	Params extends ParamsRecord,
-	Classes extends SchemaClasses = SchemaClasses
+	Classes extends SchemaClasses = SchemaClasses,
+	Head extends HeadShape = HeadShape
 > {
 	readonly schema: Schema<Rels, Classes>
 	readonly data: QueryData
 
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
-	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes>
+	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes, Head | HeadOf<RV>>
 
 	/** A diagnostic name for composition/tracing — never a schema relation. */
-	named(label: string): Query<Rels, Row, Params, Classes>
+	named(label: string): Query<Rels, Row, Params, Classes, Head>
 
 	interior(name: string, ...builds: never[]): never
 
 	reach(name: string, arms: never): never
-	readonly [inferred]?: { readonly row: Row; readonly params: Params }
+	readonly [inferred]?: { readonly row: Row; readonly params: Params; readonly head: Head }
 }
 
 interface AnyQuery {
@@ -422,7 +425,7 @@ type QueryStart<
 > = {
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
-	): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>
+	): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes, HeadOf<RV>>
 	interior<const Builds extends readonly InteriorBuild<Rels, Classes>[]>(
 		name: string,
 		...builds: Builds
@@ -440,7 +443,7 @@ type QueryReachStart<
 > = {
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
-	): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>
+	): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes, HeadOf<RV>>
 }
 
 const termOps: TermOps = Object.freeze({
@@ -1774,13 +1777,19 @@ function makeRawQuery(
 	return value
 }
 
-function makeQuery<Rels extends SchemaRelations, Row, P extends ParamsRecord, Classes extends SchemaClasses>(
+function makeQuery<
+	Rels extends SchemaRelations,
+	Row,
+	P extends ParamsRecord,
+	Classes extends SchemaClasses,
+	Head extends HeadShape
+>(
 	theory: Schema<Rels, Classes>,
 	interiors: readonly InteriorData[],
 	rec: RecData | undefined,
 	rules: readonly RuleData[]
-): Query<Rels, Row, P, Classes> {
-	return makeRawQuery(theory, interiors, rec, rules) as unknown as Query<Rels, Row, P, Classes>
+): Query<Rels, Row, P, Classes, Head> {
+	return makeRawQuery(theory, interiors, rec, rules) as unknown as Query<Rels, Row, P, Classes, Head>
 }
 
 function collectInterior<Rels extends SchemaRelations, Classes extends SchemaClasses>(
@@ -1899,9 +1908,11 @@ function makeQueryStart<Rels extends SchemaRelations, Classes extends SchemaClas
 		},
 		rule<RV extends AnyRuleValue>(
 			build: (r: QueryRuleScope<Rels, Classes>) => RV
-		): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes> {
+		): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes, HeadOf<RV>> {
 			const built = build(makeQueryRuleScope<Rels, Classes>(theory, env))
-			return makeQuery<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>(theory, interiors, undefined, [built.rule])
+			return makeQuery<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes, HeadOf<RV>>(theory, interiors, undefined, [
+				built.rule
+			])
 		}
 	}
 	Object.freeze(start)
@@ -1917,9 +1928,11 @@ function makeQueryReachStart<Rels extends SchemaRelations, Classes extends Schem
 	const start = {
 		rule<RV extends AnyRuleValue>(
 			build: (r: QueryRuleScope<Rels, Classes>) => RV
-		): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes> {
+		): Query<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes, HeadOf<RV>> {
 			const built = build(makeQueryRuleScope<Rels, Classes>(theory, env))
-			return makeQuery<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes>(theory, interiors, rec, [built.rule])
+			return makeQuery<Rels, RowOf<RV>, Flatten<P & ParamsOf<RV>>, Classes, HeadOf<RV>>(theory, interiors, rec, [
+				built.rule
+			])
 		}
 	}
 	Object.freeze(start)

@@ -122,9 +122,18 @@ function isImportedSource(value: unknown): value is ImportedSource {
 
 type RowOfImport<Q> = InferredOf<Q> extends { readonly row: infer R } ? R : never
 
+type HeadOfImport<Q> = InferredOf<Q> extends { readonly head: infer H } ? H : never
+
+// Retain the same descriptor and carrier class as the runtime import facade.
+// A host bigint alone cannot distinguish i64 from u64 or a closed identifier.
+type ImportedVar<Q, K extends string> =
+	HeadOfImport<Q> extends Readonly<Record<K, infer S extends ClassedField>>
+		? Var<S["field"], string, K> & { readonly [inferred]?: { readonly slot: S } }
+		: Var<AnyField, string, K>
+
 type ImportVars<Q> = [RowOfImport<Q>] extends [never]
 	? Readonly<Record<string, Var<AnyField, string, string>>>
-	: { readonly [K in keyof RowOfImport<Q> & string]: Var<AnyField, string, K> }
+	: { readonly [K in keyof RowOfImport<Q> & string]: ImportedVar<Q, K> }
 
 interface ImportFacade {
 	/** The pseudo-owner every import var carries (structurally an owner). */
@@ -241,10 +250,11 @@ type MintClassOf<Classes extends SchemaClasses, V> =
 		? ClassLookup<ClassRecordOf<Classes, RN>, K>
 		: never
 
-type MintSlotOf<Classes extends SchemaClasses, V extends AnyVar> = {
-	readonly field: V["field"]
-	readonly class: MintClassOf<Classes, V>
-}
+type MintSlotOf<Classes extends SchemaClasses, V extends AnyVar> = [InferredOf<V>] extends [never]
+	? { readonly field: V["field"]; readonly class: MintClassOf<Classes, V> }
+	: InferredOf<V> extends { readonly slot: infer S extends ClassedField }
+		? S
+		: { readonly field: V["field"]; readonly class: MintClassOf<Classes, V> }
 
 type ParamsRecord = Readonly<Record<string, unknown>>
 
@@ -264,8 +274,8 @@ type ShapeOf<U> = [U] extends [never] ? Record<never, never> : Flatten<UnionToIn
 type SlotSignature<S extends ClassedField> = readonly [SignatureOf<S["field"]>, S["class"]]
 
 /**
- * A widened slot — a variable minted from an imported query template (its
- * facade columns carry `AnyField`) or fully generic code — cannot be judged
+ * A widened slot — an explicitly erased query template or fully generic
+ * code with no retained descriptor — cannot be judged
  * at the type tier. The degradation law applies: best effort degrades to
  * SILENT, never to a wrong refusal; the runtime join judgment (real
  * descriptors off the imported head's slots) stays authoritative.

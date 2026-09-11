@@ -1,4 +1,4 @@
-import type { AnyField, Infer } from "#fields.ts"
+import type { BoolField, F64Field, I64Field, Infer, U64Field } from "#fields.ts"
 import type { SchemaClasses } from "#law.ts"
 import type { IntervalVarOk, NumericVarOk } from "#query/atom.ts"
 import type { AnyComputeExpr, ComputeExpr, ComputeValue } from "#query/compute.ts"
@@ -95,17 +95,30 @@ type FindValue<E> = E extends AnyVar
 
 type RowOfFind<F extends FindShape> = { readonly [K in keyof F]: FindValue<F[K]> }
 
+type ComputeFields = {
+	readonly u64: U64Field
+	readonly i64: I64Field
+	readonly f64: F64Field
+	readonly bool: BoolField
+}
+
 /**
- * The head signature of a recursive rule's find record as classed mint
- * slots (descriptor + law-computed class), keyed by column name — the
- * signature an interior join pairs against (`F` is variable-only there).
+ * The head signature as classed slots, shared by derived-stage and imported
+ * query variables. Projection preserves its carrier; aggregates/computations
+ * produce bare values, matching findColumnSlotOf at runtime.
  */
 type HeadRecordOf<Classes extends SchemaClasses, F extends FindShape> = {
 	readonly [K in keyof F]: F[K] extends AnyVar
 		? MintSlotOf<Classes, F[K]>
-		: F[K] extends AnyComputeExpr
-			? { readonly field: AnyField; readonly class: undefined }
-			: never
+		: F[K] extends ComputeExpr<infer Kind extends ScalarKind>
+			? { readonly field: ComputeFields[Kind]; readonly class: undefined }
+			: F[K] extends CountAgg
+				? { readonly field: U64Field; readonly class: undefined }
+				: F[K] extends Agg<"mean", AnyVar>
+					? { readonly field: F64Field; readonly class: undefined }
+					: F[K] extends Agg<FoldOpName, infer Over extends AnyVar>
+						? { readonly field: Over["field"]; readonly class: undefined }
+						: never
 }
 
 export type { Agg, CheckFind, CheckRecFind, FindEntry, FindShape, HeadRecordOf, RowOfFind }
