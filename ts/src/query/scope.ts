@@ -124,11 +124,16 @@ type RowOfImport<Q> = InferredOf<Q> extends { readonly row: infer R } ? R : neve
 
 type HeadOfImport<Q> = InferredOf<Q> extends { readonly head: infer H } ? H : never
 
+/** Named imported slot so downstream declarations need not spell its private marker. */
+interface ImportedFieldVar<S extends ClassedField, K extends string> extends Var<S["field"], string, K> {
+	readonly [inferred]?: { readonly slot: S }
+}
+
 // Retain the same descriptor and carrier class as the runtime import facade.
 // A host bigint alone cannot distinguish i64 from u64 or a closed identifier.
 type ImportedVar<Q, K extends string> =
 	HeadOfImport<Q> extends Readonly<Record<K, infer S extends ClassedField>>
-		? Var<S["field"], string, K> & { readonly [inferred]?: { readonly slot: S } }
+		? ImportedFieldVar<S, K>
 		: Var<AnyField, string, K>
 
 type ImportVars<Q> = [RowOfImport<Q>] extends [never]
@@ -401,6 +406,7 @@ export type {
 	ClassedField,
 	ExactVars,
 	Flatten,
+	ImportedFieldVar,
 	ImportedSource,
 	ImportVars,
 	InferredOf,

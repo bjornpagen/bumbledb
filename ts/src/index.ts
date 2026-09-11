@@ -114,7 +114,7 @@ export type { AnyComputeExpr, ComputeExpr, ComputeValue, QueryNode } from "#quer
 export { Compute } from "#query/compute.ts"
 export type { DescriptionParameter, DescriptionRow, DescriptionTable, QueryDescription } from "#query/description.ts"
 export { describeQuery, queryFromDescription } from "#query/description.ts"
-export type { Agg, RowOfFind } from "#query/find.ts"
+export type { Agg, HeadRecordOf, RowOfFind } from "#query/find.ts"
 export type {
 	AnyQuery,
 	AnyRuleValue,
@@ -136,6 +136,7 @@ export { lowerQuery, query } from "#query/lower.ts"
 export type {
 	ClassedField,
 	Flatten,
+	ImportedFieldVar,
 	MatchFields,
 	MatchOwner,
 	Param,
