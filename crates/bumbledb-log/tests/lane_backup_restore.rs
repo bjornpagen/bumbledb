@@ -267,6 +267,57 @@ fn backup01_05_backup_verifies_and_restores_from_the_destination_only() {
         "checkpoint facts plus the exact backed-up tail"
     );
     assert_eq!(restored.source_decision, manifest.tip);
+    let expected = bumbledb_log::recovery::OriginBinding {
+        origin: "mem".into(),
+        prefix: "t-restored".into(),
+        identity: restored.identity,
+    };
+    let resolved = bumbledb_log::restore::resolve_writable(
+        &restored.db,
+        &expected,
+        op(0x0f),
+        digest,
+        HEAD_CAP,
+        &work(),
+    )
+    .unwrap();
+    assert_eq!(
+        resolved,
+        restored
+            .authority
+            .position()
+            .map(|position| position.decision)
+    );
+    for (operation, source) in [(op(0x0e), digest), (op(0x0f), [0; 32])] {
+        assert!(
+            bumbledb_log::restore::resolve_writable(
+                &restored.db,
+                &expected,
+                operation,
+                source,
+                HEAD_CAP,
+                &work()
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+    let foreign = bumbledb_log::recovery::OriginBinding {
+        prefix: "foreign".into(),
+        ..expected
+    };
+    assert!(
+        bumbledb_log::restore::resolve_writable(
+            &restored.db,
+            &foreign,
+            op(0x0f),
+            digest,
+            HEAD_CAP,
+            &work()
+        )
+        .unwrap()
+        .is_none()
+    );
     // RESTORE-01: new incarnation; old-scoped requests refuse; no lineage
     // remapping of application bytes.
     assert_ne!(

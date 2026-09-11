@@ -2294,8 +2294,8 @@ fn run_restore(
     };
     // The restore target must be OURS to write: hold the tenant directory's
     // kernel fence for the whole restore, and never overwrite an existing
-    // materialization — a directory that already holds a tenant (this one or
-    // a stranger's) is not a restore target.
+    // materialization. A completed retry resolves its native evidence; a
+    // foreign operation/source remains a no-clobber refusal.
     std::fs::create_dir_all(&target.directory)
         .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
     let target_dir = Path::new(&target.directory);
@@ -2306,16 +2306,6 @@ fn run_restore(
             LogFail::Core(crate::runtime::owners::io_error(error))
         }
     })?;
-    if recovery::materialization_path(target_dir).exists() {
-        return Ok(AdminOwned::Failed {
-            fail: protocol(
-                "AuthorityExists",
-                "a materialization already exists at the restore target; restore never \
-                 overwrites an existing tenant",
-            ),
-            phase: PublicationPhase::Prepared,
-        });
-    }
     let destination = store_of_destination(source)?;
     let restored = with_store!(destination, dest_prefix, store => {
         let (manifest, manifest_digest) =
@@ -2337,6 +2327,23 @@ fn run_restore(
                 expected: target.identity,
                 actual: normalized,
             }));
+        }
+        if recovery::materialization_path(target_dir).exists() {
+            let db = bumbledb::Db::open(&recovery::materialization_path(target_dir), descriptor.clone(), context.clone())
+                .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
+            let genesis = bumbledb_log::restore::resolve_writable(&db, &expected_binding(target), operation, manifest_digest, LIMITS.envelope_bytes, context)
+                .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
+            return match genesis {
+                Some(genesis) => Ok(AdminOwned::Completed(AdminValueOwned::Restore {
+                    identity: target.identity,
+                    genesis: *genesis.hash.as_bytes(),
+                    directory: target.directory.clone(),
+                })),
+                None => Ok(AdminOwned::Failed {
+                    fail: protocol("AuthorityExists", "restore target belongs to another operation or source artifact"),
+                    phase: PublicationPhase::Prepared,
+                }),
+            };
         }
         let Some(checkpoint_ref) = manifest.checkpoint else {
             return Err(protocol(

@@ -40,7 +40,9 @@ use crate::checkpointer::{CheckpointPolicy, HISTORY_KEY_PREFIX};
 use crate::codec::{self, CheckpointManifest};
 use crate::history::authority::{Activation, ActivationCause, HeadAuthority, encode_control};
 use crate::history::command::Limits;
-use crate::history::decision::{GenesisProvenance, GenesisRecord, genesis_stamp};
+use crate::history::decision::{
+    GenesisProvenance, GenesisRecord, decode_genesis, encode_genesis, genesis_stamp,
+};
 use crate::history::receipt::RECEIPT_KEY_PREFIX;
 use crate::history::{DatabaseIdentity, DecisionStamp, IncarnationId, OperationId, StateStamp};
 use crate::recovery::{
@@ -90,6 +92,60 @@ pub struct RestoredIncarnation<S> {
     /// The source's captured stamps, retained as provenance.
     pub source_decision: DecisionStamp,
     pub source_state: StateStamp,
+}
+
+// Kept outside executable receipt (`r`) and migration-history (`m`) prefixes.
+// The canonical genesis preimage proves which backup a completed restore used.
+const RESTORE_GENESIS_KEY: &[u8] = b"writable-restore-genesis";
+
+/// Resolve a completed restore without modifying its current state. The native
+/// activation binds operation and genesis; the canonical genesis binds source
+/// artifact and target identity. A directory's existence alone is no evidence.
+///
+/// # Errors
+/// Corrupt stored evidence or storage failure refuses. Missing or foreign
+/// completion evidence returns `None`, so callers retain no-clobber behavior.
+pub fn resolve_writable<S>(
+    db: &Db<S>,
+    expected: &OriginBinding,
+    operation: OperationId,
+    source_evidence: [u8; 32],
+    cap: usize,
+    work: &WorkContext,
+) -> Result<Option<DecisionStamp>, RestoreError> {
+    let snapshot = db.snapshot(work).map_err(RecoveryError::Storage)?;
+    let frame = snapshot.frame(work);
+    let control = frame
+        .integration_host_attachment()
+        .map_err(RecoveryError::Storage)?;
+    let origin = frame
+        .integration_host_record(BINDING_KEY)
+        .map_err(RecoveryError::from)?;
+    let genesis = frame
+        .integration_host_record(RESTORE_GENESIS_KEY)
+        .map_err(RecoveryError::from)?;
+    let (Some(control), Some(origin), Some(genesis)) = (control, origin, genesis) else {
+        return Ok(None);
+    };
+    let authority =
+        crate::history::authority::decode_control(control, cap).map_err(RecoveryError::Frame)?;
+    let origin = crate::recovery::decode_binding(origin).map_err(RecoveryError::Frame)?;
+    let genesis = decode_genesis(genesis, cap).map_err(RecoveryError::Frame)?;
+    let stamp = genesis_stamp(&genesis, cap).map_err(RecoveryError::Frame)?;
+    if origin != *expected
+        || authority.identity != expected.identity
+        || genesis.identity != expected.identity
+        || genesis.provenance != (GenesisProvenance::Restore { source_evidence })
+        || authority.activation
+            != (Activation::Activated {
+                operation,
+                target_genesis: stamp.hash,
+                cause: ActivationCause::Restore,
+            })
+    {
+        return Ok(None);
+    }
+    Ok(Some(stamp))
 }
 
 /// The incremental system-record projection: exactly the stream writer's
@@ -233,14 +289,21 @@ where
     };
     let binding_bytes = encode_binding(&binding)
         .map_err(|error| RestoreError::Recovery(RecoveryError::Frame(error)))?;
+    let genesis_bytes = encode_genesis(&genesis_record, head_cap).map_err(RecoveryError::Frame)?;
     // Host records then the one complete judged install — a valid checksum
     // preserving a semantically invalid export still refuses activation.
     staged
         .write_host(
-            &[HostRecordChange::Put {
-                key: BINDING_KEY,
-                value: &binding_bytes,
-            }],
+            &[
+                HostRecordChange::Put {
+                    key: BINDING_KEY,
+                    value: &binding_bytes,
+                },
+                HostRecordChange::Put {
+                    key: RESTORE_GENESIS_KEY,
+                    value: &genesis_bytes,
+                },
+            ],
             Some(&control),
             work,
         )
@@ -495,15 +558,22 @@ where
     };
     let binding_bytes = encode_binding(&binding)
         .map_err(|error| RestoreError::Recovery(RecoveryError::Frame(error)))?;
+    let genesis_bytes = encode_genesis(&genesis_record, head_cap).map_err(RecoveryError::Frame)?;
 
     // Binding then genesis control first (`put_host` only). Receipt
     // cleanup is `delete_host_batch`; `m` history rows stay.
     staged
         .write_host(
-            &[HostRecordChange::Put {
-                key: BINDING_KEY,
-                value: &binding_bytes,
-            }],
+            &[
+                HostRecordChange::Put {
+                    key: BINDING_KEY,
+                    value: &binding_bytes,
+                },
+                HostRecordChange::Put {
+                    key: RESTORE_GENESIS_KEY,
+                    value: &genesis_bytes,
+                },
+            ],
             Some(&new_control),
             work,
         )

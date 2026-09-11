@@ -173,6 +173,38 @@ test("native command recovery and independent backup → verify → writable res
 						if (posted.kind === "decided") assert.equal(posted.receipt.outcome.kind, "committed")
 					})
 				)
+				const retry = yield* restore(destination, target, {
+					operationId: ok(OperationId.parse("33333333-3333-3333-3333-333333333333")),
+					backup: backupId,
+					schema: Ledger
+				})
+				assert.deepEqual(retry, restored, "completed retry preserves original genesis even after new commands")
+				const foreignOperation = yield* restore(destination, target, {
+					operationId: ok(OperationId.parse("55555555-5555-5555-5555-555555555555")),
+					backup: backupId,
+					schema: Ledger
+				})
+				assert.equal(foreignOperation.kind, "not-started")
+				const later = { kind: "filesystem", directory: path.join(dir, "later-backup") } as const
+				const laterId = ok(OperationId.parse("66666666-6666-6666-6666-666666666666"))
+				assert.equal(
+					(yield* backup(target, { operationId: laterId, destination: later, schema: Ledger })).kind,
+					"completed"
+				)
+				const foreignSource = yield* restore(later, target, {
+					operationId: ok(OperationId.parse("33333333-3333-3333-3333-333333333333")),
+					backup: laterId,
+					schema: Ledger
+				})
+				assert.equal(foreignSource.kind, "not-started")
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						const history = yield* LocalHistory.open(target, Ledger)
+						const snapshot = yield* history.snapshot(readOptions)
+						const added = yield* snapshot.get(EntryById, { id: 43n })
+						assert.equal(added._tag, "Some", "restore retries never rewind later writes")
+					})
+				)
 				return true
 			})
 		)

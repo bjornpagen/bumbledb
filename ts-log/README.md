@@ -247,6 +247,11 @@ Providing `schema` also supports cold administrative opens when the source is
 not already open in the runtime. Backup contains database facts and receipts;
 external documents referenced by those facts need their own retention.
 
+A completed writable restore retains its canonical genesis beside the native
+activation. Repeating the same operation, target, and backup returns that
+original result even if later commands changed the restored database. A different
+operation or backup refuses without overwriting the target.
+
 ## Migrations
 
 Schema evolution is generated, checked-in, inert data — never inferred at
