@@ -50,6 +50,7 @@ export function inventoryDigest(doc = loadInventoryDocument()) {
     discriminators: doc.discriminators ?? [],
     childFamilies: doc.childFamilies,
     qualificationCells: doc.qualificationCells ?? [],
+    currentSources: doc.currentSources ?? {},
   })
   return crypto.createHash("sha256").update(canonical).digest("hex")
 }
@@ -73,12 +74,12 @@ export function inventory() {
   }
 }
 
-export function listCandidateSourcePaths() {
-  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "buffer" })
+export function listCandidateSourcePaths(sourceRoot = root) {
+  const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: sourceRoot, encoding: "buffer" })
     .toString("utf8")
     .split("\0")
     .filter(Boolean)
-  const untracked = execFileSync("git", ["ls-files", "-z", "--others", "--exclude-standard"], { cwd: root, encoding: "buffer" })
+  const untracked = execFileSync("git", ["ls-files", "-z", "--others", "--exclude-standard"], { cwd: sourceRoot, encoding: "buffer" })
     .toString("utf8")
     .split("\0")
     .filter(Boolean)
@@ -328,4 +329,4 @@ function main() {
   } else process.stdout.write(`Release evidence complete for candidate ${candidateDigest.slice(0, 12)}… (${phase}); no publication performed.\n`)
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main()

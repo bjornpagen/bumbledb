@@ -476,18 +476,6 @@ fn d29_worker_inbox_wakeup_reaches_a_sleeping_pool() {
 }
 
 #[test]
-fn d29_repository_lock_kind_is_stamped_on_the_capability() {
-    let runtime = Runtime::start(options()).unwrap();
-    let cap = runtime
-        .reserve_native_route(super::registry::NativeKind::RepositoryLock)
-        .expect("lock route");
-    assert_eq!(cap.kind, super::registry::NativeKind::RepositoryLock);
-    runtime.rollback_native_route(cap);
-    assert_eq!(runtime.registry.route_count(), 0);
-    assert_eq!(close(&runtime), CloseReport::Closed);
-}
-
-#[test]
 fn d29_failed_native_admission_does_not_leave_a_route() {
     let runtime = Runtime::start(options()).unwrap();
     let handles: Vec<_> = (0..runtime.options.native_handle_capacity)

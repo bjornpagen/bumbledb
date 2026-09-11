@@ -106,6 +106,15 @@ export function makeWireDouble(): WireDouble {
 			counters.cancels += 1
 			queueMicrotask(() => callback(CLOSED))
 		},
+		logTransitionCall: (history: unknown, request: unknown, callback: () => void) =>
+			start("logTransitionCall", { history, request }, callback),
+		logTransitionResult: take,
+		logPopulationApply: (population: unknown, changes: unknown, callback: () => void) =>
+			start("logPopulationApply", { population, changes }, callback),
+		logPopulationFinish: (population: unknown, callback: () => void) =>
+			start("logPopulationFinish", population, callback),
+		logPopulationClose: (population: unknown, callback: (report: CloseWire) => void) =>
+			close("logPopulationClose", population, callback),
 		logErrorCodes: () => [],
 		logHistoryOpen: (_runtime: unknown, request: unknown, callback: () => void) =>
 			start("logHistoryOpen", request, callback),
@@ -180,36 +189,20 @@ export const fakeRuntime = { __fake: "runtime" } as unknown as RuntimeHandle
 /**
  * Registered change views for the seal path, mirroring the core's landed
  * `internalChanges` accessor exactly: `undefined` for a foreign object,
- * `{ handle, schemaId, closed }` for a registered ChangeSet. The stored
- * record is mutable so a test can flip `closed` (the spent capability
- * state); the machine reads the view through the readonly seam type.
+ * `{ handle, schemaId }` for a registered ChangeSet. Lifetime is native.
  */
 interface ChangeViewFixture {
 	readonly handle: unknown
 	readonly schemaId: string
-	closed: boolean
 }
 
 const changeViews = new WeakMap<object, ChangeViewFixture>()
 
-export function registerChange(
-	changes: object,
-	handle: unknown,
-	options: { readonly schemaId?: string; readonly closed?: boolean } = {}
-): void {
+export function registerChange(changes: object, handle: unknown, options: { readonly schemaId?: string } = {}): void {
 	changeViews.set(changes, {
 		handle,
-		schemaId: options.schemaId ?? identityWire.schemaId,
-		closed: options.closed ?? false
+		schemaId: options.schemaId ?? identityWire.schemaId
 	})
-}
-
-/** Marks a registered ChangeSet double closed (the spent capability state). */
-export function closeRegisteredChange(changes: object): void {
-	const view = changeViews.get(changes)
-	if (view !== undefined) {
-		view.closed = true
-	}
 }
 
 export function makeIntegration(): CoreIntegration {

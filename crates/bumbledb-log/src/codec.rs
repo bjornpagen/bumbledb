@@ -1,5 +1,5 @@
 //! The checkpoint stream codec: one canonical logical stream —
-//! schema-bound application facts, retained receipt rows, migration-history
+//! schema-bound application facts, retained receipt rows, transition
 //! evidence — cut into fixed-target chunks, described by one streamed
 //! manifest, digested by one shared acyclic projection.
 //!
@@ -15,7 +15,7 @@
 //! The **logical digest projection** here is shared by export, import and
 //! replay checks: the application digest covers exactly the
 //! fact records; the system digest covers exactly the keyed system records
-//! (retained receipt rows under the `r` key prefix, migration/history
+//! (retained receipt rows under the `r` key prefix, transition
 //! evidence under the `m` key prefix). Control state, head revisions, certificates and the digests
 //! themselves are excluded — bound instead by the manifest's own hash and
 //! the head that references it. `empty_application_digest`/
@@ -112,12 +112,15 @@ pub trait ChunkSink {
 /// Streaming writer refusals.
 #[derive(Debug)]
 pub enum WriteError<E> {
+    RetiredHistory,
     /// Records must arrive facts → receipts → history; order violations are
     /// a caller bug surfaced as refusal, never silently reordered bytes.
     OutOfOrder,
     /// A single record exceeds the configured bound.
     RecordTooLarge {
+        section: &'static str,
         bytes: usize,
+        limit: usize,
     },
     Sink(E),
 }
@@ -217,7 +220,9 @@ impl<'s, K: ChunkSink> StreamWriter<'s, K> {
     ) -> Result<(), WriteError<K::Error>> {
         if payload.len() > self.limits.record_bytes {
             return Err(WriteError::RecordTooLarge {
+                section: "checkpoint record",
                 bytes: payload.len(),
+                limit: self.limits.record_bytes,
             });
         }
         let mut head = Vec::with_capacity(16 + key.map_or(0, <[u8]>::len));
@@ -225,7 +230,11 @@ impl<'s, K: ChunkSink> StreamWriter<'s, K> {
         if let Some(key) = key {
             head.extend_from_slice(
                 &u16::try_from(key.len())
-                    .map_err(|_| WriteError::RecordTooLarge { bytes: key.len() })?
+                    .map_err(|_| WriteError::RecordTooLarge {
+                        section: "checkpoint key",
+                        bytes: key.len(),
+                        limit: usize::from(u16::MAX),
+                    })?
                     .to_be_bytes(),
             );
             head.extend_from_slice(key);
@@ -250,7 +259,11 @@ impl<'s, K: ChunkSink> StreamWriter<'s, K> {
         self.emit(&head, Digest::Application)?;
         let len = (row.len() as u64).to_be_bytes();
         if row.len() > self.limits.record_bytes {
-            return Err(WriteError::RecordTooLarge { bytes: row.len() });
+            return Err(WriteError::RecordTooLarge {
+                section: "checkpoint record",
+                bytes: row.len(),
+                limit: self.limits.record_bytes,
+            });
         }
         self.emit(&len, Digest::Application)?;
         self.emit(row, Digest::Application)?;
@@ -259,12 +272,15 @@ impl<'s, K: ChunkSink> StreamWriter<'s, K> {
     }
 
     /// One keyed system record: a retained receipt row (`r` key prefix) or
-    /// one migration-history evidence record (`m` key prefix). Keys arrive
+    /// one transition evidence record (`t` key prefix). Keys arrive
     /// in ascending key order; hydration writes them back verbatim.
     ///
     /// # Errors
     /// Order/size refusals and sink failure.
     pub fn system(&mut self, key: &[u8], value: &[u8]) -> Result<(), WriteError<K::Error>> {
+        if key.first() == Some(&b'm') {
+            return Err(WriteError::RetiredHistory);
+        }
         if self.section > Section::System {
             return Err(WriteError::OutOfOrder);
         }
@@ -358,7 +374,11 @@ fn record_extent(bytes: &[u8], limits: StreamLimits) -> Result<RecordExtent, Fra
         let payload = u64::from_be_bytes(bytes[header - 8..header].try_into().expect("width"));
         let payload = usize::try_from(payload).map_err(|_| FrameError::LengthOverflow)?;
         if payload > limits.record_bytes {
-            return Err(FrameError::LimitExceeded);
+            return Err(FrameError::LimitExceeded {
+                section: "checkpoint record",
+                required: payload,
+                limit: limits.record_bytes,
+            });
         }
         header
             .checked_add(payload)
@@ -413,6 +433,9 @@ pub fn read_stream<E, S, B: AsRef<[u8]>>(
                 let key_len =
                     usize::from(u16::from_be_bytes(record[1..3].try_into().expect("width")));
                 let key = &record[3..3 + key_len];
+                if key.first() == Some(&b'm') {
+                    return Err(FrameError::Family.into());
+                }
                 let value = &record[3 + key_len + 8..];
                 system_records += 1;
                 sink.system(key, value).map_err(ReadError::Sink)?;
@@ -480,6 +503,26 @@ pub fn read_stream<E, S, B: AsRef<[u8]>>(
         system_records,
         chunks: Vec::new(),
     })
+}
+
+/// One indexed prefix seek, stopping at the first retired record. Never
+/// silently discard old transformation evidence while opening or exporting.
+pub(crate) fn has_retired_history(
+    snapshot: &bumbledb::store::OwnedSnapshot,
+    work: &bumbledb::WorkContext,
+) -> bumbledb::store::StoreResult<bool> {
+    let mut found = false;
+    let scanned = snapshot.host_scan(b"m", work, &mut |_, _| {
+        found = true;
+        Err::<(), _>(bumbledb::store::StoreError::Work(
+            bumbledb::WorkError::Cancelled,
+        ))
+    });
+    if found {
+        Ok(true)
+    } else {
+        scanned.map(|()| false)
+    }
 }
 
 /// The streamed checkpoint manifest / snapshot certificate: identity, the
@@ -675,10 +718,41 @@ mod tests {
         writer.system(b"r-key-1", b"receipt-row-1").unwrap();
         writer.system(b"r-key-2", b"receipt-row-2").unwrap();
         writer
-            .system(b"m-batch-1", b"applied-batch-evidence")
+            .system(b"t-operation-1", b"transition-evidence")
             .unwrap();
         let summary = writer.finish().unwrap();
         (sink.chunks, summary)
+    }
+
+    #[test]
+    fn checkpoint_streams_refuse_retired_migration_metadata() {
+        let mut sink = BufferSink { chunks: vec![] };
+        let mut writer = StreamWriter::new(&mut sink, 4096, StreamLimits::DEFAULT);
+        assert!(matches!(
+            writer.system(b"m-old", b"retired"),
+            Err(WriteError::RetiredHistory)
+        ));
+        let (chunks, _) = write_sample(4096);
+        let mut bytes = chunks.concat();
+        let offset = bytes
+            .windows(b"t-operation-1".len())
+            .position(|key| key == b"t-operation-1")
+            .unwrap();
+        bytes[offset] = b'm';
+        let mut sink = CollectSink::default();
+        assert!(matches!(
+            read_stream(
+                [Ok::<_, std::convert::Infallible>(bytes)],
+                &mut sink,
+                StreamLimits::DEFAULT
+            ),
+            Err(ReadError::Frame(FrameError::Family))
+        ));
+        assert!(
+            sink.system
+                .iter()
+                .all(|(key, _)| key.first() != Some(&b'm'))
+        );
     }
 
     #[test]
@@ -706,7 +780,7 @@ mod tests {
             assert_eq!(sink.facts.len(), 3);
             assert_eq!(sink.facts[1].1, b"row-b-longer-payload");
             assert_eq!(sink.system[0].0, b"r-key-1");
-            assert_eq!(sink.system[2].1, b"applied-batch-evidence");
+            assert_eq!(sink.system[2].1, b"transition-evidence");
         }
     }
 

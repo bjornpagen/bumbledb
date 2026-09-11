@@ -93,7 +93,6 @@ interface DraftState {
 interface ChangesInternal {
 	readonly handle: ChangesHandle
 	readonly schemaId: SchemaId
-	closed: boolean
 }
 
 const changesInternals = new WeakMap<object, ChangesInternal>()
@@ -320,7 +319,6 @@ function acquireChanges<S extends AnySchema>(
 			Effect.suspend(() => {
 				const internal = changesInternals.get(changes)
 				if (internal === undefined) return Effect.void
-				internal.closed = true
 				return releaseOwner("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(internal.handle, callback))
 			}),
 		{ interruptible: true }
@@ -330,7 +328,7 @@ function acquireChanges<S extends AnySchema>(
 function makeChangeSet<S extends AnySchema>(theory: S, wire: ChangesWire, schemaId: SchemaId): ChangeSet<S> {
 	const handle = wire.changes
 	const relations = Object.values(theory.relations)
-	const internal: ChangesInternal = { handle, schemaId, closed: false }
+	const internal: ChangesInternal = { handle, schemaId }
 	const value: ChangeSet<S> = {
 		schemaId,
 		counts: Object.freeze({ ...wire.counts }),
@@ -351,7 +349,6 @@ function makeChangeSet<S extends AnySchema>(theory: S, wire: ChangesWire, schema
 				const right = internalChanges(other)
 				if (right === undefined || right.schemaId !== schemaId)
 					return Effect.fail(refusal("ChangeSet.compose", "InvalidArgument"))
-				if (internal.closed || right.closed) return Effect.fail(refusal("ChangeSet.compose", "ClosedHandle"))
 				return acquireChanges(
 					theory,
 					schemaId,
@@ -365,10 +362,7 @@ function makeChangeSet<S extends AnySchema>(theory: S, wire: ChangesWire, schema
 			})
 		},
 		close() {
-			return Effect.suspend(() => {
-				internal.closed = true
-				return drainClose("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(handle, callback))
-			})
+			return drainClose("ChangeSet.close", (callback) => dbNative.runtimeChangesClose(handle, callback))
 		}
 	}
 	Object.freeze(value)

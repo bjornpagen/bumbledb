@@ -1,13 +1,5 @@
-/**
- * Query-scoped scalar expressions (C05 `FindTerm::Compute`): the
- * variable-addressed leaf scope over the ONE shared operator roster in
- * `#scalar.ts`. Leaves are bound query variables that lower to `VarId`s.
- * Operators are the shared constructors — this module only admits known
- * schema kinds at query-var leaves.
- *
- * `ComputeExpr<K>` is a `ScalarNode<"query-var", K>`. Distinct I64 and U64
- * survive host inference; they do not collapse to plain `bigint`.
- */
+/** Query scalar expressions use the same nodes that native preparation reads.
+ * Distinct i64 and u64 kinds survive TypeScript's shared bigint carrier. */
 import { AuthoringError } from "#errors.ts"
 import type { AnyField } from "#fields.ts"
 import { bool as boolField, f64 as f64Field, i64 as i64Field, rosterOf, u64 as u64Field } from "#fields.ts"
@@ -32,13 +24,13 @@ import {
 	scalarNegate
 } from "#scalar.ts"
 
-/** Query-var tree: the shared AST restricted to this leaf scope. */
-type QueryNode = ScalarNode<"query-var">
+/** Query expression, including interval leaves consumed by measure. */
+type QueryNode = ScalarNode
 
 /** Host value for a derived query compute kind. */
 type ComputeValue<K extends ScalarKind> = K extends "f64" ? number : K extends "bool" ? boolean : bigint
 
-type ComputeExpr<K extends ScalarKind> = ScalarNode<"query-var", K>
+type ComputeExpr<K extends ScalarKind> = ScalarNode<K>
 
 type AnyComputeExpr = ComputeExpr<"u64"> | ComputeExpr<"i64"> | ComputeExpr<"f64"> | ComputeExpr<"bool">
 
@@ -65,7 +57,6 @@ type OperandKind<O> =
 function isComputeExpr(value: unknown): value is AnyComputeExpr {
 	return (
 		isScalarNode(value) &&
-		value.scope === "query-var" &&
 		(value.result === "u64" || value.result === "i64" || value.result === "f64" || value.result === "bool")
 	)
 }
@@ -99,7 +90,7 @@ function asQueryNode(where: string, operand: Operand): QueryNode {
 }
 
 function literal<K extends ScalarKind>(value: ScalarLiteral): ComputeExpr<K> {
-	return scalarLiteral("query-var", value) as ComputeExpr<K>
+	return scalarLiteral(value) as ComputeExpr<K>
 }
 
 function u64(value: bigint): ComputeExpr<"u64"> {

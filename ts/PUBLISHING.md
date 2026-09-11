@@ -10,7 +10,7 @@ the five tarballs, and `SHA256SUMS`.
 | `@bjornpagen/bumbledb-linux-arm64` | Linux ARM64 native addon |
 | `@bjornpagen/bumbledb-linux-x64` | Linux x64 native addon |
 | `@bjornpagen/bumbledb` | Core Effect SDK, declarations, source types, and guides |
-| `@bjornpagen/bumbledb-log` | History SDK, schema/migration subpaths, and migration CLI |
+| `@bjornpagen/bumbledb-log` | History SDK, schema bindings CLI, and native transitions |
 
 Use **pnpm only** for JavaScript installation, builds, packing, registry
 inspection, and publication. Run package commands in `ts/` or with
@@ -48,46 +48,50 @@ node scripts/release-ready.mjs "$BUMBLEDB_CI_RUN"
 Recheck after any new commit. Benchmark reports keep their measured source
 revision; benchmark completion is separate from the build/test gate.
 
-## Build and stage
+## Build and stage one immutable package family
 
-Build both SDKs with `pnpm --dir ts run build` and
-`pnpm --dir ts-log run build`. Then download these artifacts from the verified
-CI run, including each accompanying provenance JSON:
+Download these artifacts from the verified CI run, including each accompanying
+provenance JSON, into a fresh absolute `BUMBLEDB_NATIVE_DIR`:
 
 - `bumbledb.darwin-arm64.node`
 - `bumbledb.linux-arm64.node`
 - `bumbledb.linux-x64.node`
 
-For each platform, install the binary as `ts/npm/<platform>/bumbledb.node`
-and the provenance as `ts/npm/<platform>/.native-provenance.json`.
-Do this **after** SDK builds, which create a local addon. Use the matching CI
-binaries for final staging; retain their run ID, commit, and digests. Staging
-checks source, specification, platform, and binary hashes. Do not restamp old
-binaries for a new commit.
+The directory must contain `bumbledb.<platform>.node` and
+`bumbledb.<platform>.provenance.json` for each platform. Retain the run ID,
+commit and digests; never restamp old binaries for a new release.
 
-Run `scripts/packed-import.sh` with all three artifacts installed. Set
-`BUMBLEDB_RELEASE_DIR` to a fresh absolute directory outside the checkout,
-then assemble the release:
+Set `BUMBLEDB_FAMILY_DIR` to a fresh absolute directory outside the checkout:
 
 ```sh
-(
-  set -eu
-  : "${BUMBLEDB_RELEASE_DIR:?Set an absolute staging directory}"
-  node ts/scripts/stage.ts --out "$BUMBLEDB_RELEASE_DIR"
-  node ts-log/scripts/stage.ts --out "$BUMBLEDB_RELEASE_DIR"
-  (cd "$BUMBLEDB_RELEASE_DIR" && shasum -a 256 ./*.tgz > SHA256SUMS)
-)
+node scripts/build-family.mjs --out "$BUMBLEDB_FAMILY_DIR" --native-artifacts "$BUMBLEDB_NATIVE_DIR" --all-platforms
+node scripts/build-family.mjs --check-family "$BUMBLEDB_FAMILY_DIR"
+export BUMBLEDB_RELEASE_DIR="$BUMBLEDB_FAMILY_DIR/packages"
 ```
 
-Inspect all five tarballs, versions, dependency pins, platform headers, and
-provenance. Staging copies built outputs into isolated package trees and uses
-`pnpm pack`; it does not change source manifests. `--host-only` and
-`--skip-binary` are development options, not full-release assembly.
+The build selects one immutable Git tree, including lockfiles, before compiling.
+Core, Log, native compilation, installed consumer checks and package staging run
+inside its private checkout. Log resolves that attempt's core. The supplied CI
+addons replace private build outputs only after their source/platform/binary
+provenance is checked. Each attempt has its own native target and TypeScript
+outputs; failed or overlapping attempts cannot delete a live consumer's files.
+
+The completed directory contains `source/`, `packages/`, and `family.json`.
+It becomes visible only after installed JavaScript/declaration/example checks
+and packing succeed. The five tarball hashes are in both `family.json` and
+`packages/SHA256SUMS`. Check package contents, exact dependency pins and platform
+headers. Matching version strings alone do not prove matching source.
+
+`pnpm --dir ts run build` and `pnpm --dir ts-log run build` also produce a
+completed host package family and print its directory; they do not replace
+live workspace outputs. `--host-only` packages are for development. Explicitly
+install the selected tarballs into consumers; never copy individual SDK outputs
+from different attempts.
 
 ## Publish, tag, and create the GitHub Release
 
 The owner runs this from the clean, verified checkout with `BUMBLEDB_CI_RUN`
-and `BUMBLEDB_RELEASE_DIR` set. When preparing a copyable release command,
+and `BUMBLEDB_FAMILY_DIR` set. When preparing a copyable release command,
 supply the absolute checkout path and verified commit, run ID, and directory.
 The command publishes native packages first, then core, then log, stopping
 on failure. It also pushes the annotated tag and creates the published GitHub
@@ -97,7 +101,9 @@ Release; both are required parts of publication.
 (
   set -eu
   : "${BUMBLEDB_CI_RUN:?Set the verified CI run ID}"
-  : "${BUMBLEDB_RELEASE_DIR:?Set the verified absolute staging directory}"
+  : "${BUMBLEDB_FAMILY_DIR:?Set the verified absolute package family directory}"
+  node scripts/build-family.mjs --check-family "$BUMBLEDB_FAMILY_DIR"
+  BUMBLEDB_RELEASE_DIR="$BUMBLEDB_FAMILY_DIR/packages"
   BUMBLEDB_VERSION=$(node -p "require('./ts/package.json').version")
   BUMBLEDB_REVISION=$(git rev-parse HEAD)
   node scripts/release-ready.mjs "$BUMBLEDB_CI_RUN"
@@ -132,8 +138,10 @@ platform. Local tarball checks do not establish registry distribution.
 
 Release notes should report support boundaries and actual evidence from the
 [benchmark reports](../docs/perf/results.md) and
-[structural measurements](../docs/perf/structural-algebra-20260911.md).
+[focused cutover measurements](../docs/perf/imperative-cutover-1.3.1.md).
 Real-S3/IAM, Graviton performance, and larger-than-memory workloads have not
-been qualified. Generated hosted migration orchestration is unsupported.
+been qualified. The TypeScript transition API supports local histories; the
+native hosted path uses the existing conditional backend. Schema bindings are generated; all
+transformation and backup policy belongs to the application.
 The evidence inventory and validator live in `.config/obligation-inventory.json`
 and `scripts/release-results.mjs`.

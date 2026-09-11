@@ -263,7 +263,11 @@ pub fn create_restore_point<S>(
         return Err(LocalRootError::RootCapacityExceeded);
     }
     if label.len() > root_policy.max_label_bytes {
-        return Err(LocalRootError::Frame(FrameError::LimitExceeded));
+        return Err(LocalRootError::Frame(FrameError::LimitExceeded {
+            section: "root label",
+            required: label.len(),
+            limit: root_policy.max_label_bytes,
+        }));
     }
     // Export into owned staging under this process's exclusive ownership.
     let staging = staging_base(directory).join(hex_id(id));

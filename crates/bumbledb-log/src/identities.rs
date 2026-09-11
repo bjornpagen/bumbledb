@@ -35,7 +35,7 @@ macro_rules! kinds {
 }
 
 kinds! { frame for FrameError {
-    FrameError::LimitExceeded => "limitExceeded",
+    FrameError::LimitExceeded { .. } => "limitExceeded",
     FrameError::LengthOverflow => "lengthOverflow",
     FrameError::Allocation => "allocation",
     FrameError::Truncated { .. } => "truncated",
@@ -95,6 +95,7 @@ kinds! { log_error for LogError {
     LogError::IncompleteRejectionEvidence => "incompleteRejectionEvidence",
     LogError::Backend => "backend",
     LogError::MaintenanceRequired { .. } => "maintenanceRequired",
+    LogError::UnsupportedArtifact => "unsupportedArtifact",
     LogError::MaterializationStale => "materializationStale",
 } }
 

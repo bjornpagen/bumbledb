@@ -11,7 +11,7 @@ prepended to every recipe. The examples are lazy Effect programs — nothing
 below runs a database at import time.
 
 ```ts
-import { Effect, Option, Result, Stream } from "effect"
+import { Effect, Option, Result, Schema as EffectSchema, Stream } from "effect"
 import {
 	alternatives,
 	bool,
@@ -22,9 +22,12 @@ import {
 	Compute,
 	contained,
 	Db,
+	decodeBoundaryField,
 	describeQuery,
 	duration,
+	encodeBoundaryField,
 	f64,
+	fieldSchema,
 	i64,
 	uuid,
 	Uuid,
@@ -37,7 +40,6 @@ import {
 	queryFromDescription,
 	ref,
 	relation,
-	Scalar,
 	schema,
 	select,
 	str,
@@ -533,20 +535,7 @@ const explicitClose = Effect.scoped(
 void explicitClose
 ```
 
-## 13. Unresolved field arithmetic is authoring metadata
-
-`Scalar.field("units")` is not a typed program. Builders accept it inside
-arithmetic. Native compilation binds it against the verified source
-schema — including empty input — before any manifest write or freeze.
-
-```ts
-const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
-const asFloat = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
-void [incrementUnits, asFloat]
-```
-
-
-## 14. Derive slices, measure them, and round the total
+## 13. Derive slices, measure them, and round the total
 
 An earning range crosses two rate bands. Intersection produces a relation of
 nonempty segments, measurement produces exact integer widths, and ordinary
@@ -601,7 +590,7 @@ calculation; summing separately rounded contributions can give a different resul
 Checked multiplication and aggregate result ranges still apply before the final
 `mulDiv`. The query creates no stored slice or copied-width facts.
 
-## 15. Subtract a window, coalesce coverage, and measure
+## 14. Subtract a window, coalesce coverage, and measure
 
 Binary difference returns zero, one, or two maximal nonempty pieces. A subsequent
 `pack` stage coalesces overlapping or adjacent coverage per owner; measurement
@@ -656,7 +645,7 @@ segments, not arbitrary sums of already-rounded floating lengths.
 Each difference subtracts one interval. Unioning `A minus B1` with `A minus B2`
 does not subtract their combined coverage from `A`.
 
-## 16. Exhaustive alternatives with ordinary laws
+## 15. Exhaustive alternatives with ordinary laws
 
 Declare each key once. The helper expands a closed roster into ordinary
 containment and mirrors statements in roster order. Equivalent independently
@@ -691,7 +680,7 @@ Each payload keeps its own inferred fields and ordinary relation representation.
 Evidence and ownership still need their own laws. The expansion has the same
 native descriptor, fingerprint, and admission costs as the identical manual laws.
 
-## 17. Exact integer quotients and explicit rounding
+## 16. Exact integer quotients and explicit rounding
 
 `mulDiv` requires matching integer operands and a strictly positive divisor.
 It computes the product exactly in a wider native integer and checks the public
@@ -717,3 +706,67 @@ returns `-4`. Exact quotients do not change. `u64::MAX * 2 / 2` succeeds;
 Existing checked multiply/divide retain their intermediate-overflow behavior,
 so replacing them with `mulDiv` is an explicit semantic choice. All three modes
 perform bounded work without an additional scan, index, or JavaScript evaluator.
+
+## 17. Use field codecs directly
+
+Fields carry their host-value schema and strict JSON-boundary representation.
+Use the same descriptors in relations, selected input records, and individual
+values. Integer JSON values are canonical decimal strings; float JSON values
+are canonical `$f64` bit images. Native row bytes remain a separate format.
+
+```ts
+const Method = closed("Method", ["Electronic", "Postal"])
+const input = EffectSchema.Struct({
+	amount: fieldSchema(i64),
+	method: fieldSchema(closedId(Method)),
+	window: fieldSchema(interval(i64))
+})
+const valid = EffectSchema.is(input)({
+	amount: -25n,
+	method: "Electronic",
+	window: { start: 0n, end: 60n }
+})
+const amount = Result.getOrThrow(decodeBoundaryField(i64, "-25"))
+const json = Result.getOrThrow(encodeBoundaryField(i64, amount)) // "-25"
+void [valid, json]
+```
+
+The codecs enforce integer bounds, closed handles, byte widths, valid intervals,
+and canonical floating-point values through the same interpreter used by rows.
+Application parsing of dates, currency, or nonblank text composes with the field
+schema using ordinary Effect Schema operations.
+
+## 18. Combine projections and computations in one query
+
+Every arm supplies the same ordered output columns and compatible field types.
+A stored scalar and a computed scalar can occupy the same projection column.
+
+```ts
+const Entry = relation("Entry", { id: u64, amount: i64, previous: i64, correction: bool })
+const Ledger = schema("Ledger", { Entry }, [])
+const amounts = query(Ledger)
+	.rule((r) => {
+		const { id, amount } = v(Entry)
+		return r.match(Entry, { id, amount, correction: false }).find({ id, amount })
+	})
+	.rule((r) => {
+		const { id, amount, previous } = v(Entry)
+		return r.match(Entry, { id, amount, previous, correction: true })
+			.find({ id, amount: Compute.subtract(amount, previous) })
+	})
+const totals = query(Ledger).rule((r) => {
+	const row = v(amounts)
+	return r.match(amounts, row).find({ id: row.id, total: r.sum(row.amount) })
+})
+void totals
+```
+
+Identical output facts deduplicate before the following stage aggregates them.
+An evidenced zero remains a row; an absent group has none. Interval projections
+can combine with produced interval pieces of the same element kind; a width
+refinement survives only when every arm preserves it. Aggregate operators must
+agree across arms and cannot share a column with a projection.
+
+Each expression retains its original failure boundary. Moving filters across
+an imported stage can change which arithmetic executes; a later filter cannot
+erase an upstream overflow.

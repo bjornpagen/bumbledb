@@ -26,7 +26,7 @@ export function consumerManifest(core, log, pure = false) {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [root, output, mode] = process.argv.slice(2);
   assert(root && output && (mode === undefined || mode === '--pure'), 'usage: packed-project.mjs ROOT OUTPUT [--pure]');
   const read = name => JSON.parse(fs.readFileSync(path.join(root, name, 'package.json'), 'utf8'));

@@ -19,16 +19,15 @@ import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
 import type { NativeRuntimeOptions, Violation } from "@bjornpagen/bumbledb"
-import { ChangeSet, key, NativeRuntime, relation, schema, u64 } from "@bjornpagen/bumbledb"
-import { lower } from "@bjornpagen/bumbledb/internal/log"
+import { ChangeSet, key, NativeRuntime, relation, Schema, schema, u64 } from "@bjornpagen/bumbledb"
 import { Effect, ManagedRuntime } from "effect"
 import { Command } from "#command.ts"
 import { ProtocolError } from "#errors.ts"
 import { LocalHistory } from "#history.ts"
 import type { DatabaseIdentity, DecisionStamp, OperationId, ReceiptEpoch, RequestId } from "#identity.ts"
-import { productionCodec } from "#migrations/native.ts"
 import type { SubmitOptions } from "#options.ts"
 import type { SubmitOutcome, TerminalReceipt } from "#outcome.ts"
+import { schemaSnapshot } from "#schema.ts"
 
 const Item = relation("Item", { a: u64, b: u64 })
 const GateMini = schema("GateMini", { Item }, [key(Item, ["a"])])
@@ -133,7 +132,10 @@ test("rejected submissions expose the complete violation set through submit, res
 	const rt = runtime()
 	try {
 		const program = Effect.gen(function* () {
-			const identityInfo = yield* productionCodec.schemaIdentity(lower(GateMini))
+			const identityInfo = {
+				schemaId: (yield* Schema.compile(GateMini)).schemaId,
+				snapshot: yield* schemaSnapshot(GateMini)
+			}
 			const scope = identityFor(0x47, identityInfo.schemaId)
 			const directory = storeDir("f-evidence")
 			const binding = { kind: "local", directory, identity: scope } as const
@@ -198,7 +200,10 @@ test("at-least snapshots validate exact ancestry, never a sequence floor", async
 	const rt = runtime()
 	try {
 		const program = Effect.gen(function* () {
-			const identityInfo = yield* productionCodec.schemaIdentity(lower(GateMini))
+			const identityInfo = {
+				schemaId: (yield* Schema.compile(GateMini)).schemaId,
+				snapshot: yield* schemaSnapshot(GateMini)
+			}
 			const scope = identityFor(0x51, identityInfo.schemaId)
 			const directory = storeDir("e-ancestry")
 			const binding = { kind: "local", directory, identity: scope } as const

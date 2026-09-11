@@ -1,26 +1,8 @@
-/**
- * The ONE leaf-scoped scalar AST (C1/C8): one tagged literal grammar and
- * operator roster, parameterized by {@link ScalarLeafScope}. TypeScript never
- * evaluates — the native compiler binds source fields and the engine
- * `ScalarEvaluator` executes. Construction is constant work against cached
- * depth/kind summaries; it does not re-walk the tree.
- *
- * Query-var leaves carry a known schema kind. Source-field leaves stay
- * `unresolved` until native snapshot binding. A result kind is recorded only
- * when it is derivable from known operands; otherwise it stays unresolved.
- * Known incompatible kinds refuse here. Unresolved trees are inert metadata,
- * not typechecked programs.
- *
- * Wire spellings (the grammar arms, not a second flattened interpretation):
- *   migration plan JSON — field/literal/operator nodes; one-arm literals (`{ u64: n }`)
- *   query IR — `{ kind: "literal", value: ValueSpec }` via `literalWireOf`
- */
+/** Query scalar nodes, with cached kind and depth. Construction is constant
+ * work; native preparation binds variables and evaluates the expressions. */
 import { AuthoringError } from "#errors.ts"
 import type { ScalarExprIr } from "#native.ts"
 import type { ValueSpec } from "#spec.ts"
-
-/** F0: leaf scope for the shared AST (C1). Query vars are typed; source fields stay unresolved. */
-export type ScalarLeafScope = "query-var" | "source-field"
 
 /** The engine's scalar result vocabulary — distinct at the type level. */
 type ScalarKind = "u64" | "i64" | "f64" | "bool"
@@ -28,7 +10,7 @@ type ScalarKind = "u64" | "i64" | "f64" | "bool"
 /** Cached result kind: known only when derivable; otherwise honestly unresolved. */
 type IntervalKind = "intervalU64" | "intervalI64" | "intervalF64"
 type ScalarInputKind = ScalarKind | IntervalKind
-type ScalarResultKind = ScalarInputKind | "unresolved"
+type ScalarResultKind = ScalarInputKind
 type Rounding = "towardZero" | "nearestTiesAwayFromZero" | "nearestTiesToEven"
 
 /** Host value for a derived scalar kind. */
@@ -38,26 +20,6 @@ type NumericCast = "toF64" | "toF64Exact" | "toI64Exact" | "toU64Exact"
 
 type NumericKind = "u64" | "i64" | "f64"
 
-type NumericOrUnresolved = NumericKind | "unresolved"
-
-/**
- * Combine known numeric kinds, or stay unresolved when a source-field leaf
- * still needs native binding. Distinct known kinds collapse to `never`
- * (static refusal) and throw at the constructor.
- */
-type CombineNumeric<L, R> = L extends "unresolved"
-	? R extends "bool"
-		? never
-		: "unresolved"
-	: R extends "unresolved"
-		? L extends "bool"
-			? never
-			: "unresolved"
-		: L extends R
-			? L
-			: never
-
-/** The tagged literal subset shared by every leaf scope. */
 type ScalarLiteral =
 	| { readonly bool: boolean }
 	| { readonly u64: bigint }
@@ -89,53 +51,31 @@ interface ScalarQueryVar {
 
 type QueryVarLeaf = { readonly kind: "var"; readonly ref: ScalarQueryVar }
 
-type SourceFieldLeaf = { readonly kind: "field"; readonly name: string }
-
-type ScalarLeaf<S extends ScalarLeafScope> = S extends "query-var" ? QueryVarLeaf : SourceFieldLeaf
-
-type ScalarNodeBody<S extends ScalarLeafScope> =
-	| { readonly kind: "measure"; readonly expr: ScalarNode<S> }
+type ScalarNodeBody =
+	| { readonly kind: "measure"; readonly expr: ScalarNode }
 	| {
 			readonly kind: "mulDiv"
-			readonly a: ScalarNode<S>
-			readonly b: ScalarNode<S>
-			readonly divisor: ScalarNode<S>
+			readonly a: ScalarNode
+			readonly b: ScalarNode
+			readonly divisor: ScalarNode
 			readonly rounding: Rounding
 	  }
-	| ScalarLeaf<S>
+	| QueryVarLeaf
 	| { readonly kind: "literal"; readonly value: ScalarLiteral }
-	| { readonly kind: "negate"; readonly expr: ScalarNode<S> }
-	| { readonly kind: "isNaN"; readonly expr: ScalarNode<S> }
-	| { readonly kind: "isFinite"; readonly expr: ScalarNode<S> }
-	| { readonly kind: "add"; readonly left: ScalarNode<S>; readonly right: ScalarNode<S> }
-	| { readonly kind: "subtract"; readonly left: ScalarNode<S>; readonly right: ScalarNode<S> }
-	| { readonly kind: "multiply"; readonly left: ScalarNode<S>; readonly right: ScalarNode<S> }
-	| { readonly kind: "divide"; readonly left: ScalarNode<S>; readonly right: ScalarNode<S> }
-	| { readonly kind: "cast"; readonly cast: NumericCast; readonly expr: ScalarNode<S> }
+	| { readonly kind: "negate"; readonly expr: ScalarNode }
+	| { readonly kind: "isNaN"; readonly expr: ScalarNode }
+	| { readonly kind: "isFinite"; readonly expr: ScalarNode }
+	| { readonly kind: "add"; readonly left: ScalarNode; readonly right: ScalarNode }
+	| { readonly kind: "subtract"; readonly left: ScalarNode; readonly right: ScalarNode }
+	| { readonly kind: "multiply"; readonly left: ScalarNode; readonly right: ScalarNode }
+	| { readonly kind: "divide"; readonly left: ScalarNode; readonly right: ScalarNode }
+	| { readonly kind: "cast"; readonly cast: NumericCast; readonly expr: ScalarNode }
 
-/**
- * One authored node: roster arms plus cached `scope` / `result` / `depth`.
- * Summaries are construction metadata; lowering and L17 serialization read
- * the grammar arms and ignore the summaries.
- */
-type ScalarNode<
-	S extends ScalarLeafScope = ScalarLeafScope,
-	K extends ScalarResultKind = ScalarResultKind
-> = ScalarNodeBody<S> & {
-	readonly scope: S
+/** Cached summaries never replace the expression grammar. */
+type ScalarNode<K extends ScalarResultKind = ScalarResultKind> = ScalarNodeBody & {
 	readonly result: K
 	readonly depth: number
 }
-
-/**
- * Migration authoring expression (source-field scope). `K` is the cached
- * result kind, not a host value type: I64 and U64 remain distinct even
- * though both use bigint in JavaScript.
- */
-type ScalarExpr<K extends ScalarResultKind = ScalarResultKind> = ScalarNode<"source-field", K>
-
-/** A migration field read: unresolved until native snapshot binding. */
-type ScalarFieldRef = ScalarNode<"source-field", "unresolved"> & SourceFieldLeaf
 
 const MAX_SCALAR_DEPTH = 128
 const U64_MAX = (1n << 64n) - 1n
@@ -149,9 +89,10 @@ function scalarAuthoringWork(): number {
 	return authoringWork
 }
 
-function admit<
-	const Node extends { readonly scope: ScalarLeafScope; readonly result: ScalarResultKind; readonly depth: number }
->(where: string, node: Node): Readonly<Node> {
+function admit<const Node extends { readonly result: ScalarResultKind; readonly depth: number }>(
+	where: string,
+	node: Node
+): Readonly<Node> {
 	authoringWork += 1
 	assertDepth(where, node.depth)
 	return Object.freeze(node)
@@ -229,40 +170,19 @@ function assertNumeric(where: string, kind: ScalarInputKind): asserts kind is Nu
 function assertSameKind(where: string, left: ScalarInputKind, right: ScalarInputKind): ScalarInputKind {
 	if (left !== right) {
 		throw new AuthoringError({
-			message: `${where}: operand kinds differ (${left} vs ${right}) — the engine has no mixed promotion; cast explicitly (Scalar.toF64/ toF64Exact/ toI64Exact/ toU64Exact)`
+			message: `${where}: operand kinds differ (${left} vs ${right}) — the engine has no mixed promotion; cast explicitly (Compute.toF64/ toF64Exact/ toI64Exact/ toU64Exact)`
 		})
 	}
 	return left
 }
 
-function assertScope<S extends ScalarLeafScope>(where: string, left: ScalarNode<S>, right: ScalarNode<S>): S {
-	if (left.scope !== right.scope) {
-		throw new AuthoringError({
-			message: `${where}: leaf scopes differ (${left.scope} vs ${right.scope}) — query-var and source-field trees do not mix`
-		})
-	}
-	return left.scope
-}
-
 function combineNumeric(where: string, left: ScalarResultKind, right: ScalarResultKind): ScalarResultKind {
-	if (left === "unresolved" || right === "unresolved") {
-		if (left !== "unresolved") {
-			assertNumeric(where, left)
-		}
-		if (right !== "unresolved") {
-			assertNumeric(where, right)
-		}
-		return "unresolved"
-	}
 	assertNumeric(where, left)
 	assertNumeric(where, right)
 	return assertSameKind(where, left, right)
 }
 
 function negateKind(where: string, inner: ScalarResultKind): ScalarResultKind {
-	if (inner === "unresolved") {
-		return "unresolved"
-	}
 	if (inner !== "i64" && inner !== "f64") {
 		throw new AuthoringError({
 			message: `${where}: the operand is ${inner} — negation is defined over i64 and f64 only`
@@ -272,86 +192,46 @@ function negateKind(where: string, inner: ScalarResultKind): ScalarResultKind {
 }
 
 function assertCastOperand(where: string, inner: ScalarResultKind): void {
-	if (inner === "unresolved") {
-		return
-	}
 	assertNumeric(where, inner)
 }
 
 function assertFloatOperand(where: string, inner: ScalarResultKind): void {
-	if (inner === "unresolved") {
-		return
-	}
 	if (inner !== "f64") {
 		throw new AuthoringError({ message: `${where}: the operand is ${inner} — the float predicates read f64` })
 	}
 }
 
 function isScalarNode(value: unknown): value is ScalarNode {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"kind" in value &&
-		"scope" in value &&
-		"result" in value &&
-		"depth" in value
-	)
-}
-
-function isUnresolvedScalar(node: ScalarNode): boolean {
-	return node.result === "unresolved"
-}
-
-/** Source-field leaf — unresolved until L14 binds it against the verified snapshot. */
-function sourceField(name: string): ScalarFieldRef {
-	if (typeof name !== "string" || name.length === 0) {
-		throw new AuthoringError({ message: "scalar field(...) names a nonempty source field" })
-	}
-	return admit("Scalar.field", {
-		kind: "field",
-		name,
-		scope: "source-field",
-		result: "unresolved",
-		depth: 1
-	})
+	return typeof value === "object" && value !== null && "kind" in value && "result" in value && "depth" in value
 }
 
 /** Query-var leaf — kind is the variable's schema kind, already known. */
-function queryVarLeaf<K extends ScalarInputKind>(ref: ScalarQueryVar, kind: K): ScalarNode<"query-var", K> {
-	return admit("Scalar.queryVar", {
+function queryVarLeaf<K extends ScalarInputKind>(ref: ScalarQueryVar, kind: K): ScalarNode<K> {
+	return admit("Compute.variable", {
 		kind: "var",
 		ref,
-		scope: "query-var",
 		result: kind,
 		depth: 1
 	})
 }
 
-function scalarLiteral<S extends ScalarLeafScope>(scope: S, value: ScalarLiteral): ScalarNode<S, ScalarKind> {
+function scalarLiteral(value: ScalarLiteral): ScalarNode<ScalarKind> {
 	const kind = literalKindOf(value)
-	return admit("Scalar.literal", {
+	return admit("Compute.literal", {
 		kind: "literal",
 		value: literalValue(value),
-		scope,
 		result: kind,
 		depth: 1
-	}) as ScalarNode<S, ScalarKind>
+	}) as ScalarNode<ScalarKind>
 }
 
 type BinaryOp = "add" | "subtract" | "multiply" | "divide"
 
-function scalarBinary<S extends ScalarLeafScope>(
-	where: string,
-	op: BinaryOp,
-	left: ScalarNode<S>,
-	right: ScalarNode<S>
-): ScalarNode<S, ScalarResultKind> {
-	const scope = assertScope(where, left, right)
+function scalarBinary(where: string, op: BinaryOp, left: ScalarNode, right: ScalarNode): ScalarNode {
 	return admit(where, {
 		kind: op,
 		left,
 		right,
-		scope,
 		result: combineNumeric(where, left.result, right.result),
 		depth: Math.max(left.depth, right.depth) + 1
 	})
@@ -363,18 +243,15 @@ function roundingMode(value: unknown): Rounding {
 	return value
 }
 
-function scalarMulDiv<S extends ScalarLeafScope>(
+function scalarMulDiv(
 	where: string,
-	a: ScalarNode<S>,
-	b: ScalarNode<S>,
-	divisor: ScalarNode<S>,
+	a: ScalarNode,
+	b: ScalarNode,
+	divisor: ScalarNode,
 	rounding: Rounding
-): ScalarNode<S> {
-	const scope = assertScope(where, a, b)
-	assertScope(where, a, divisor)
+): ScalarNode {
 	let known: "i64" | "u64" | undefined
 	for (const operand of [a, b, divisor]) {
-		if (operand.result === "unresolved") continue
 		if ((operand.result !== "i64" && operand.result !== "u64") || (known !== undefined && known !== operand.result))
 			throw new AuthoringError({ message: `${where}: operands must have one matching integer kind` })
 		known = operand.result
@@ -385,74 +262,57 @@ function scalarMulDiv<S extends ScalarLeafScope>(
 		b,
 		divisor,
 		rounding: roundingMode(rounding),
-		scope,
-		result:
-			a.result === "unresolved" || b.result === "unresolved" || divisor.result === "unresolved"
-				? "unresolved"
-				: a.result,
+		result: a.result,
 		depth: Math.max(a.depth, b.depth, divisor.depth) + 1
 	})
 }
 
-function scalarMeasure<S extends ScalarLeafScope>(where: string, expr: ScalarNode<S>): ScalarNode<S> {
+function scalarMeasure(where: string, expr: ScalarNode): ScalarNode {
 	const kind = expr.result
-	if (kind !== "unresolved" && kind !== "intervalU64" && kind !== "intervalI64" && kind !== "intervalF64")
+	if (kind !== "intervalU64" && kind !== "intervalI64" && kind !== "intervalF64")
 		throw new AuthoringError({ message: `${where}: measure requires an interval` })
 	return admit(where, {
 		kind: "measure",
 		expr,
-		scope: expr.scope,
-		result: ({ unresolved: "unresolved", intervalF64: "f64", intervalI64: "u64", intervalU64: "u64" } as const)[kind],
+		result: ({ intervalF64: "f64", intervalI64: "u64", intervalU64: "u64" } as const)[kind],
 		depth: expr.depth + 1
 	})
 }
 
-function scalarNegate<S extends ScalarLeafScope>(where: string, expr: ScalarNode<S>): ScalarNode<S, ScalarResultKind> {
+function scalarNegate(where: string, expr: ScalarNode): ScalarNode {
 	return admit(where, {
 		kind: "negate",
 		expr,
-		scope: expr.scope,
 		result: negateKind(where, expr.result),
 		depth: expr.depth + 1
 	})
 }
 
-function scalarCast<S extends ScalarLeafScope>(
-	where: string,
-	cast: NumericCast,
-	result: ScalarKind,
-	expr: ScalarNode<S>
-): ScalarNode<S, ScalarKind> {
+function scalarCast(where: string, cast: NumericCast, result: ScalarKind, expr: ScalarNode): ScalarNode<ScalarKind> {
 	assertCastOperand(where, expr.result)
 	return admit(where, {
 		kind: "cast",
 		cast,
 		expr,
-		scope: expr.scope,
 		result,
 		depth: expr.depth + 1
 	})
 }
 
-function scalarFloatPredicate<S extends ScalarLeafScope>(
-	where: string,
-	op: "isNaN" | "isFinite",
-	expr: ScalarNode<S>
-): ScalarNode<S, "bool"> {
+function scalarFloatPredicate(where: string, op: "isNaN" | "isFinite", expr: ScalarNode): ScalarNode<"bool"> {
 	assertFloatOperand(where, expr.result)
 	return admit(where, {
 		kind: op,
 		expr,
-		scope: expr.scope,
 		result: "bool",
 		depth: expr.depth + 1
 	})
 }
 
 /** Query-var leaves collected once at find-binding time — not during construction. */
-function queryVarsOf(node: ScalarNode<"query-var">): readonly ScalarQueryVar[] {
+function queryVarsOf(node: ScalarNode): readonly ScalarQueryVar[] {
 	const vars: ScalarQueryVar[] = []
-	const pending: ScalarNode<"query-var">[] = [node]
+	const pending: ScalarNode[] = [node]
 	while (pending.length > 0) {
 		const next = pending.pop()
 		if (next === undefined) {
@@ -480,126 +340,16 @@ function queryVarsOf(node: ScalarNode<"query-var">): readonly ScalarQueryVar[] {
 			case "divide":
 				pending.push(next.left, next.right)
 				break
-			default:
-				throw new AuthoringError({
-					message: "queryVarsOf: a query-var tree cannot carry a source-field leaf"
-				})
 		}
 	}
 	return vars
 }
 
-function field(name: string): ScalarFieldRef {
-	return sourceField(name)
-}
-
-function literal(value: ScalarLiteral): ScalarExpr<ScalarKind> {
-	return scalarLiteral("source-field", value)
-}
-
-function u64(value: bigint): ScalarExpr<"u64"> {
-	checkU64(value, "Scalar.u64")
-	return scalarLiteral("source-field", { u64: value }) as ScalarExpr<"u64">
-}
-
-function i64(value: bigint): ScalarExpr<"i64"> {
-	checkI64(value, "Scalar.i64")
-	return scalarLiteral("source-field", { i64: value }) as ScalarExpr<"i64">
-}
-
-function f64(value: number): ScalarExpr<"f64"> {
-	checkF64(value, "Scalar.f64")
-	return scalarLiteral("source-field", { f64: value }) as ScalarExpr<"f64">
-}
-
-function bool(value: boolean): ScalarExpr<"bool"> {
-	checkBool(value, "Scalar.bool")
-	return scalarLiteral("source-field", { bool: value }) as ScalarExpr<"bool">
-}
-
-function negate<K extends "i64" | "f64" | "unresolved">(expr: ScalarExpr<K>): ScalarExpr<K> {
-	return scalarNegate("Scalar.negate", expr) as ScalarExpr<K>
-}
-
-function add<L extends NumericOrUnresolved, R extends CombineNumeric<L, R> extends never ? never : NumericOrUnresolved>(
-	left: ScalarExpr<L>,
-	right: ScalarExpr<R>
-): ScalarExpr<CombineNumeric<L, R>> {
-	return scalarBinary("Scalar.add", "add", left, right) as ScalarExpr<CombineNumeric<L, R>>
-}
-
-function subtract<
-	L extends NumericOrUnresolved,
-	R extends CombineNumeric<L, R> extends never ? never : NumericOrUnresolved
->(left: ScalarExpr<L>, right: ScalarExpr<R>): ScalarExpr<CombineNumeric<L, R>> {
-	return scalarBinary("Scalar.subtract", "subtract", left, right) as ScalarExpr<CombineNumeric<L, R>>
-}
-
-function multiply<
-	L extends NumericOrUnresolved,
-	R extends CombineNumeric<L, R> extends never ? never : NumericOrUnresolved
->(left: ScalarExpr<L>, right: ScalarExpr<R>): ScalarExpr<CombineNumeric<L, R>> {
-	return scalarBinary("Scalar.multiply", "multiply", left, right) as ScalarExpr<CombineNumeric<L, R>>
-}
-
-function divide<
-	L extends NumericOrUnresolved,
-	R extends CombineNumeric<L, R> extends never ? never : NumericOrUnresolved
->(left: ScalarExpr<L>, right: ScalarExpr<R>): ScalarExpr<CombineNumeric<L, R>> {
-	return scalarBinary("Scalar.divide", "divide", left, right) as ScalarExpr<CombineNumeric<L, R>>
-}
-
-function mulDiv<
-	L extends "i64" | "u64" | "unresolved",
-	R extends CombineNumeric<L, R> extends never ? never : "i64" | "u64" | "unresolved",
-	D extends CombineNumeric<L, D> extends never
-		? never
-		: CombineNumeric<R, D> extends never
-			? never
-			: "i64" | "u64" | "unresolved"
->(
-	a: ScalarExpr<L>,
-	b: ScalarExpr<R>,
-	divisor: ScalarExpr<D>,
-	rounding: Rounding
-): ScalarExpr<CombineNumeric<CombineNumeric<L, R>, D>> {
-	return scalarMulDiv("Scalar.mulDiv", a, b, divisor, rounding) as ScalarExpr<CombineNumeric<CombineNumeric<L, R>, D>>
-}
-
-function measure(expr: ScalarFieldRef): ScalarExpr<"unresolved"> {
-	return scalarMeasure("Scalar.measure", expr) as ScalarExpr<"unresolved">
-}
-
-function toF64(expr: ScalarExpr<NumericOrUnresolved>): ScalarExpr<"f64"> {
-	return scalarCast("Scalar.toF64", "toF64", "f64", expr) as ScalarExpr<"f64">
-}
-
-function toF64Exact(expr: ScalarExpr<NumericOrUnresolved>): ScalarExpr<"f64"> {
-	return scalarCast("Scalar.toF64Exact", "toF64Exact", "f64", expr) as ScalarExpr<"f64">
-}
-
-function toI64Exact(expr: ScalarExpr<NumericOrUnresolved>): ScalarExpr<"i64"> {
-	return scalarCast("Scalar.toI64Exact", "toI64Exact", "i64", expr) as ScalarExpr<"i64">
-}
-
-function toU64Exact(expr: ScalarExpr<NumericOrUnresolved>): ScalarExpr<"u64"> {
-	return scalarCast("Scalar.toU64Exact", "toU64Exact", "u64", expr) as ScalarExpr<"u64">
-}
-
-function isNaNExpr(expr: ScalarExpr<"f64" | "unresolved">): ScalarExpr<"bool"> {
-	return scalarFloatPredicate("Scalar.isNaN", "isNaN", expr)
-}
-
-function isFiniteExpr(expr: ScalarExpr<"f64" | "unresolved">): ScalarExpr<"bool"> {
-	return scalarFloatPredicate("Scalar.isFinite", "isFinite", expr)
-}
-
-/** One lowering walk for query variables and row-field bindings. */
-function scalarWire(node: ScalarNode, leaf: (node: QueryVarLeaf | SourceFieldLeaf) => number): ScalarExprIr {
+/** Lower each query variable through its existing binding. */
+function scalarWire(node: ScalarNode, leaf: (node: QueryVarLeaf) => number): ScalarExprIr {
 	const walk = (expr: ScalarNode): ScalarExprIr => scalarWire(expr, leaf)
 	switch (node.kind) {
 		case "var":
-		case "field":
 			return { kind: "var", var: leaf(node) }
 		case "literal":
 			return { kind: "literal", value: literalWireOf(node.value) }
@@ -620,39 +370,12 @@ function scalarWire(node: ScalarNode, leaf: (node: QueryVarLeaf | SourceFieldLea
 	}
 }
 
-/** The authoring namespace: `Scalar.field("units")`, `Scalar.add(...)`. */
-const Scalar = Object.freeze({
-	field,
-	literal,
-	u64,
-	i64,
-	f64,
-	bool,
-	negate,
-	add,
-	subtract,
-	multiply,
-	divide,
-	mulDiv,
-	measure,
-	toF64,
-	toF64Exact,
-	toI64Exact,
-	toU64Exact,
-	isNaN: isNaNExpr,
-	isFinite: isFiniteExpr
-})
-
 export type {
-	CombineNumeric,
 	IntervalKind,
 	NumericCast,
 	NumericKind,
-	NumericOrUnresolved,
 	QueryVarLeaf,
 	Rounding,
-	ScalarExpr,
-	ScalarFieldRef,
 	ScalarInputKind,
 	ScalarKind,
 	ScalarLiteral,
@@ -660,8 +383,7 @@ export type {
 	ScalarOpKind,
 	ScalarQueryVar,
 	ScalarResultKind,
-	ScalarValue,
-	SourceFieldLeaf
+	ScalarValue
 }
 export {
 	assertDepth,
@@ -672,7 +394,6 @@ export {
 	checkI64,
 	checkU64,
 	isScalarNode,
-	isUnresolvedScalar,
 	literalKindOf,
 	literalValue,
 	literalWireOf,
@@ -680,7 +401,6 @@ export {
 	queryVarLeaf,
 	queryVarsOf,
 	roundingMode,
-	Scalar,
 	scalarAuthoringWork,
 	scalarBinary,
 	scalarCast,

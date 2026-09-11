@@ -335,20 +335,6 @@
     "RESTORE-01",
     "RESTORE-02",
     "RESTORE-03",
-    "MIG-01",
-    "MIG-02",
-    "MIG-03",
-    "MIG-04",
-    "MIG-05",
-    "MIG-06",
-    "MIG-07",
-    "MIG-08",
-    "MIG-09",
-    "MIG-10",
-    "MIG-11",
-    "MIG-12",
-    "MIG-13",
-    "MIG-14",
     "ERASE-01",
     "ERASE-02",
     "ERASE-03",
@@ -398,16 +384,6 @@
     "PKG-06",
     "PKG-07A",
     "PKG-07B",
-    "TS-MIG-01",
-    "TS-MIG-02",
-    "TS-MIG-03",
-    "TS-MIG-04",
-    "TS-MIG-05",
-    "TS-MIG-06",
-    "TS-MIG-07",
-    "TS-MIG-08",
-    "TS-MIG-09",
-    "TS-MIG-10",
     "APP-01",
     "APP-02",
     "APP-03",
@@ -429,7 +405,15 @@
     "HASH-01",
     "HASH-02",
     "HASH-03",
-    "HASH-04"
+    "HASH-04",
+    "SCHEMA-01",
+    "SCHEMA-02",
+    "TRANSITION-01",
+    "TRANSITION-02",
+    "TRANSITION-03",
+    "TRANSITION-04",
+    "TRANSITION-05",
+    "PKG-08"
   ],
   "qualificationCells": [
     {
@@ -488,5 +472,35 @@
       "arch": "arm64",
       "required": true
     }
-  ]
+  ],
+  "currentSources": {
+    "SCHEMA-01": [
+      "crates/bumbledb-log/src/bindings.rs",
+      "ts/test/schema-bindings.test.ts"
+    ],
+    "SCHEMA-02": [
+      "ts-log/test/schema-files.test.ts",
+      "ts-log/test/fixtures/transition/source.ts",
+      "ts-log/test/fixtures/transition/target.ts"
+    ],
+    "TRANSITION-01": [
+      "crates/bumbledb-log/src/transition.rs"
+    ],
+    "TRANSITION-02": [
+      "crates/bumbledb-log/tests/transition_local.rs"
+    ],
+    "TRANSITION-03": [
+      "ts/crate/src/runtime/sequence.rs"
+    ],
+    "TRANSITION-04": [
+      "crates/bumbledb-log/tests/transition_hosted.rs"
+    ],
+    "TRANSITION-05": [
+      "ts-log/test/transition.test.ts"
+    ],
+    "PKG-08": [
+      "scripts/build-family.test.mjs",
+      "scripts/packed-import.sh"
+    ]
+  }
 }

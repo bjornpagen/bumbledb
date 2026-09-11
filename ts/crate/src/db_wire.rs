@@ -3,7 +3,7 @@
 //! bounded execution into sealed [`bumbledb::CompleteResult`]s, one-shot
 //! cursor transfer, database-free change drafts, one immutable final-state
 //! apply, bounded inspection, the shared canonical row codec and the two
-//! read-only migration-codec entrypoints.
+//! read-only schema snapshot/binding entrypoints.
 //!
 //! Every verb registers a bounded operation before any completion can run
 //! in JS. Retained resources live in the worker table behind
@@ -15,6 +15,7 @@
 //! Budget refusal and cancel abort that ticket (no accepted page, no
 //! leftover `pending_advance`). Terminal backing stays sticky.
 
+use bumbledb::schema::ValidateDescriptor as _;
 use std::sync::Arc;
 
 use bumbledb::work::WorkContext;
@@ -224,6 +225,35 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
     crate::runtime::session::engine_error(error)
 }
 
+pub(crate) fn schema_error(
+    error: &bumbledb::error::SchemaError,
+    descriptor: &bumbledb::SchemaDescriptor,
+) -> RuntimeError {
+    use crate::runtime::{SchemaDiagnostic, StatementDiagnostic};
+    use bumbledb::error::{SchemaError, StatementErrorKind};
+    let diagnostic = if let SchemaError::Statement { statement, kind } = error {
+        let render = |id: bumbledb::schema::StatementId| StatementDiagnostic {
+            id: id.0,
+            descriptor: bumbledb::schema::render::render_expanded(descriptor, id),
+        };
+        Some(Box::new(SchemaDiagnostic {
+            statement: render(*statement),
+            conflict: match kind {
+                StatementErrorKind::DuplicateStatement { earlier }
+                | StatementErrorKind::DuplicateFunctionality { earlier } => Some(render(*earlier)),
+                _ => None,
+            },
+        }))
+    } else {
+        None
+    };
+    RuntimeError::Engine {
+        kind: crate::tags::error_family::SCHEMA,
+        message: error.to_string(),
+        diagnostic,
+    }
+}
+
 pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
     if let ChangeError::Work(error) | ChangeError::Row(bumbledb::canonical::RowError::Work(error)) =
         error
@@ -231,6 +261,7 @@ pub(crate) fn change_error(error: &ChangeError) -> RuntimeError {
         return RuntimeError::Work(*error);
     }
     RuntimeError::Engine {
+        diagnostic: None,
         kind: crate::tags::error_family::VALIDATION,
         message: format!("bumbledb changes: {error:?}"),
     }
@@ -255,7 +286,6 @@ pub fn runtime_schema_compile(
             }
         };
         Ok(Box::new(move |context| {
-            use bumbledb::schema::ValidateDescriptor as _;
             context.checkpoint()?;
             let (descriptor, attrs) = match parsed {
                 Ok(parsed) => parsed,
@@ -264,6 +294,7 @@ pub fn runtime_schema_compile(
                     | crate::OpenOutcome::NewtypeMismatch(message),
                 ) => {
                     return Err(RuntimeError::Engine {
+                        diagnostic: None,
                         kind: crate::tags::error_family::SCHEMA,
                         message,
                     });
@@ -271,15 +302,11 @@ pub fn runtime_schema_compile(
             };
             context.checkpoint()?;
             let sealed = crate::seal(descriptor, attrs);
-            let schema =
-                sealed
-                    .descriptor
-                    .clone()
-                    .validate()
-                    .map_err(|error| RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                    })?;
+            let schema = sealed
+                .descriptor
+                .clone()
+                .validate()
+                .map_err(|error| schema_error(&error, &sealed.descriptor))?;
             let fingerprint = bumbledb::schema::fingerprint::fingerprint(&schema);
             Ok(Output::Descriptor(marshal::DescriptorWire {
                 manifest: sealed.descriptor.manifest(),
@@ -680,7 +707,6 @@ pub fn runtime_draft_open(
             }
         };
         Ok(Box::new(move |context| {
-            use bumbledb::schema::ValidateDescriptor as _;
             context.checkpoint()?;
             let (descriptor, attrs) = match parsed {
                 Ok(parsed) => parsed,
@@ -689,21 +715,18 @@ pub fn runtime_draft_open(
                     | crate::OpenOutcome::NewtypeMismatch(message),
                 ) => {
                     return Err(RuntimeError::Engine {
+                        diagnostic: None,
                         kind: crate::tags::error_family::SCHEMA,
                         message,
                     });
                 }
             };
             let sealed = Arc::new(crate::seal(descriptor, attrs));
-            let schema =
-                sealed
-                    .descriptor
-                    .clone()
-                    .validate()
-                    .map_err(|error| RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                    })?;
+            let schema = sealed
+                .descriptor
+                .clone()
+                .validate()
+                .map_err(|error| schema_error(&error, &sealed.descriptor))?;
             Ok(Output::Draft(DraftOpened {
                 schema: Arc::new(schema),
                 sealed,
@@ -1222,7 +1245,6 @@ pub fn runtime_encode_rows(
     let mut marshal_error = None;
     let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
         let prepared = (|| -> napi::Result<(bumbledb::schema::Schema, crate::Sealed)> {
-            use bumbledb::schema::ValidateDescriptor as _;
             let (descriptor, attrs) = match crate::descriptor_of(&spec)? {
                 Ok(parsed) => parsed,
                 Err(
@@ -1232,6 +1254,7 @@ pub fn runtime_encode_rows(
                     return Err(thrown(
                         env,
                         RuntimeError::Engine {
+                            diagnostic: None,
                             kind: crate::tags::error_family::SCHEMA,
                             message,
                         },
@@ -1239,15 +1262,11 @@ pub fn runtime_encode_rows(
                 }
             };
             let sealed = crate::seal(descriptor, attrs);
-            let schema = sealed.descriptor.clone().validate().map_err(|error| {
-                thrown(
-                    env,
-                    RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                    },
-                )
-            })?;
+            let schema = sealed
+                .descriptor
+                .clone()
+                .validate()
+                .map_err(|error| thrown(env, schema_error(&error, &sealed.descriptor)))?;
             Ok((schema, sealed))
         })();
         match prepared {
@@ -1298,7 +1317,6 @@ pub fn runtime_decode_rows(
     let mut marshal_error = None;
     let operation = runtime.submit(WorkContext::new(), notification(callback)?, |context| {
         let staged = (|| -> napi::Result<bumbledb::schema::Schema> {
-            use bumbledb::schema::ValidateDescriptor as _;
             let (descriptor, _attrs) = match crate::descriptor_of(&spec)? {
                 Ok(parsed) => parsed,
                 Err(
@@ -1308,21 +1326,17 @@ pub fn runtime_decode_rows(
                     return Err(thrown(
                         env,
                         RuntimeError::Engine {
+                            diagnostic: None,
                             kind: crate::tags::error_family::SCHEMA,
                             message,
                         },
                     ));
                 }
             };
-            descriptor.validate().map_err(|error| {
-                thrown(
-                    env,
-                    RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                    },
-                )
-            })
+            descriptor
+                .clone()
+                .validate()
+                .map_err(|error| thrown(env, schema_error(&error, &descriptor)))
         })();
         match staged {
             Ok(schema) => {
@@ -1352,12 +1366,12 @@ pub fn runtime_decode_rows(
 }
 
 // ---------------------------------------------------------------------------
-// Read-only migration-codec integration.
+// Read-only schema snapshot and binding emission.
 // ---------------------------------------------------------------------------
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn runtime_migration_schema(
+pub fn runtime_schema_snapshot(
     env: Env,
     handle: &External<RuntimeHandle>,
     spec: Object,
@@ -1375,7 +1389,20 @@ pub fn runtime_migration_schema(
         };
         Ok(Box::new(move |context| {
             context.checkpoint()?;
-            let bytes = crate::migration_wire::schema_response(parsed, context)?;
+            let (descriptor, _) = parsed.map_err(|error| match error {
+                crate::OpenOutcome::SchemaError(message)
+                | crate::OpenOutcome::NewtypeMismatch(message) => RuntimeError::Engine {
+                    kind: crate::tags::error_family::SCHEMA,
+                    message,
+                    diagnostic: None,
+                },
+            })?;
+            descriptor
+                .clone()
+                .validate()
+                .map_err(|error| schema_error(&error, &descriptor))?;
+            let bytes = bumbledb_log::schema_file::render(&descriptor).into_bytes();
+            context.checkpoint()?;
             Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
         }))
     });
@@ -1388,22 +1415,45 @@ pub fn runtime_migration_schema(
 
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
-pub fn runtime_migration_read(
+pub fn runtime_schema_bindings(
     env: Env,
     handle: &External<RuntimeHandle>,
-    request: Unknown,
+    snapshot: Unknown,
     callback: Function<(), ()>,
 ) -> napi::Result<External<OperationHandle>> {
     let runtime = owner(handle).map_err(|error| thrown(env, error))?;
-    let request = unshared_input(env, request)?;
+    let snapshot = unshared_input(env, snapshot)?;
     let operation = runtime
         .submit(WorkContext::new(), notification(callback)?, |context| {
             context.checkpoint()?;
-            let owned = request.to_vec();
+            let owned = snapshot.to_vec();
             Ok(Box::new(move |context| {
+                let input =
+                    std::str::from_utf8(&owned).map_err(|_| RuntimeError::InvalidArgument)?;
+                let descriptor = bumbledb_log::schema_file::parse(input).map_err(|error| {
+                    RuntimeError::Engine {
+                        kind: crate::tags::error_family::SCHEMA,
+                        message: error.to_string(),
+                        diagnostic: None,
+                    }
+                })?;
+                descriptor
+                    .clone()
+                    .validate()
+                    .map_err(|error| schema_error(&error, &descriptor))?;
                 context.checkpoint()?;
-                let bytes = crate::migration_wire::chain_response(&owned, context)?;
-                Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
+                let source = bumbledb_log::bindings::emit(&descriptor).map_err(|error| {
+                    RuntimeError::Engine {
+                        kind: crate::tags::error_family::SCHEMA,
+                        message: error.to_string(),
+                        diagnostic: None,
+                    }
+                })?;
+                context.checkpoint()?;
+                Ok(Output::Bytes(QueuedBytes::admit(
+                    context,
+                    source.into_bytes(),
+                )?))
             }))
         })
         .map_err(|error| thrown(env, error))?;

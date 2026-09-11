@@ -2,6 +2,7 @@
 // before product work. Verification of the product is NOT performed here.
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
 import {test} from 'node:test'
 import {
@@ -53,7 +54,7 @@ const manifest=()=>({
 })
 
 test('selected inventory remains complete, not a vacuous match',()=>{
-  const actual=inventory(); assert.equal(actual.audit.length,68); assert.equal(actual.gates.length,237)
+  const actual=inventory(); assert.equal(actual.audit.length,68); assert.equal(actual.gates.length,221)
   assert.equal(actual.priorReview.length,78); assert.equal(actual.discriminators.length,29)
   assert.equal(actual.qualificationCells.length,8)
 })
@@ -75,8 +76,8 @@ test('the expanded child families carry exact padded spellings across every chap
   const {gates}=inventory()
   for(const child of ['CONC-01','CONC-06','E-BRIDGE','E-NO-RESERVE','F-INTERVAL','F-OPT-NEG',
     'Q-LARGE-STORE','Q-INJECT','P-KERNEL','P-PERF','PROTO-01','PROTO-20','STORE-10','LOCAL-03',
-    'GC-13','FS-05','S3-06','REC-07','BACKUP-05','RESTORE-03','MIG-14','ERASE-04','OPS-TEST-02',
-    'API-12','RUN-15','FFI-08','PKG-06','PKG-07A','PKG-07B','TS-MIG-10','APP-08','APP-MAGIC',
+    'GC-13','FS-05','S3-06','REC-07','BACKUP-05','RESTORE-03','TRANSITION-04','ERASE-04','OPS-TEST-02',
+    'API-12','RUN-15','FFI-08','PKG-06','PKG-07A','PKG-07B','TRANSITION-05','APP-08','APP-MAGIC',
     'SPACE-02','HASH-04','G00','G16'])
     assert.ok(gates.includes(child),`inventory lost ${child}`)
   for(const wrong of ['GC-1','PROTO-1','RUN-1']) assert.ok(!gates.includes(wrong),`unpadded ${wrong} appeared`)
@@ -200,4 +201,15 @@ test('native provenance sidecar sits beside the platform binary',()=>{
 })
 test('the live candidate digest is stable for the current checkout inventory',()=>{
   assert.match(computeCandidateSourceDigest(),/^[a-f0-9]{64}$/)
+})
+
+test('retired migration requirements are replaced by ordinary bindings and native transition evidence',()=>{
+  const doc=loadInventoryDocument()
+  assert.ok(!doc.childFamilies.some(id=>/^(MIG-|TS-MIG-)/.test(id)))
+  assert.deepEqual(Object.keys(doc.currentSources),['SCHEMA-01','SCHEMA-02','TRANSITION-01','TRANSITION-02','TRANSITION-03','TRANSITION-04','TRANSITION-05','PKG-08'])
+  for (const [gate,files] of Object.entries(doc.currentSources)) {
+    assert.ok(doc.childFamilies.includes(gate))
+    assert.ok(files.length)
+    for (const file of files) assert.ok(fs.existsSync(path.join(import.meta.dirname,"..",file)),`missing current evidence source ${file}`)
+  }
 })

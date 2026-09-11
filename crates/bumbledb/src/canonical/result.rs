@@ -69,7 +69,6 @@ pub enum ResultError {
         budget: usize,
     },
     // Strict decode refusals:
-    LimitExceeded,
     Family,
     Layout {
         got: u16,
@@ -288,13 +287,17 @@ impl<'a> Reader<'a> {
 /// Every grammar refusal in [`ResultError`]; wire input is never
 /// normalized — unsorted names, duplicate names, noncanonical float
 /// payloads and trailing bytes all refuse.
+#[expect(clippy::too_many_lines, reason = "one linear canonical result grammar")]
 pub fn decode_result(
     bytes: &[u8],
     max_bytes: usize,
     work: &WorkContext,
 ) -> Result<Vec<(Box<str>, Value)>, ResultError> {
     if bytes.len() > max_bytes {
-        return Err(ResultError::LimitExceeded);
+        return Err(ResultError::Budget {
+            needed: bytes.len(),
+            budget: max_bytes,
+        });
     }
     if bytes.is_empty() {
         return Ok(Vec::new());
@@ -519,7 +522,10 @@ mod tests {
 
         assert_eq!(
             decode_result(&bytes, bytes.len() - 1, &work()),
-            Err(ResultError::LimitExceeded)
+            Err(ResultError::Budget {
+                needed: bytes.len(),
+                budget: bytes.len() - 1
+            })
         );
 
         let mut forged = bytes.clone();

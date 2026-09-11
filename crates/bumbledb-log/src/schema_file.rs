@@ -1,8 +1,8 @@
 //! The one native canonical schema-file grammar. The spelling is the
 //! crate's corpus schema object — `{relations, statements}` — so a second
-//! descriptor grammar cannot exist: the duty boundary, the migration
-//! snapshots (`meta/NNNN.schema.json`) and the TypeScript generator all
-//! read and write exactly this text through these entrypoints.
+//! descriptor grammar cannot exist: the duty boundary, retained schema
+//! snapshots and generated TypeScript bindings all read and write exactly
+//! this text through these entrypoints.
 //!
 //! [`parse`] is the strict reader, [`render`] the deterministic writer
 //! (`parse(render(d)) == d`, byte-stable output), and [`schema_id`] the
@@ -23,7 +23,7 @@ use bumbledb::schema::{
 };
 use bumbledb::{SchemaFingerprint, Value};
 
-use crate::migration::json::{
+use crate::json::{
     Json, pair2, parse_u64, parse_value, push_hex, push_indent, push_string, read_tree,
     render_value,
 };

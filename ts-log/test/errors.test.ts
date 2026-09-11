@@ -78,6 +78,34 @@ describe("logFailure", function suite() {
 		assert.equal(decoded.code, "DatabaseMissing")
 	})
 
+	test("plain and structured native failures preserve their detail in thrown and outcome decoding", () => {
+		for (const reason of [
+			{ _tag: "Misuse", detail: "command frame: Truncated { at: 32 }" },
+			{ _tag: "Corruption", detail: "persisted command frame" },
+			{ _tag: "Contention", attempts: 4, detail: "conditional head changed" },
+			{ _tag: "MaintenanceRequired", count: 8n, bytes: 100n, detail: "tail capacity" }
+		]) {
+			const decoded = logFailure("boundary", { source: "protocol", reason })
+			assert.ok(decoded instanceof ProtocolError)
+			assert.deepEqual(decoded.reason, reason)
+			assert.equal(logFailure("another boundary", decoded), decoded)
+		}
+	})
+
+	test("resource measurements remain lossless core errors", () => {
+		const reason = {
+			_tag: "ResourceLimit",
+			dimension: "change",
+			used: 0n,
+			requested: (1n << 64n) - 1n,
+			limit: 1n << 26n
+		}
+		const error = logFailure("Command.decode", { source: "core", reason })
+		assert.ok(error instanceof DbError)
+		assert.deepEqual(error.reason, reason)
+		assert.equal(logFailure("History.submit", error), error)
+	})
+
 	test("the core wire frame decodes to the exact core DbError", function coreFrame() {
 		const decoded = logFailure("History.open", {
 			source: "core",
@@ -104,17 +132,6 @@ describe("logFailure", function suite() {
 })
 
 describe("roster hygiene", function suite() {
-	test("the roster count is pinned for the native speller twin", function count() {
-		// The native Rust test include_str!s codes.ts and compares literal-
-		// for-literal in order; this pin records the agreed size (33 after
-		// MaterializationStale landed beside MaintenanceRequired).
-		assert.equal(protocolErrorCodes.length, 33)
-		assert.equal(
-			protocolErrorCodes.indexOf("MaterializationStale"),
-			protocolErrorCodes.indexOf("MaintenanceRequired") + 1
-		)
-	})
-
 	test("the roster is unique and never respells a core code", function hygiene() {
 		assert.equal(new Set(protocolErrorCodes).size, protocolErrorCodes.length)
 		const coreCodes = [

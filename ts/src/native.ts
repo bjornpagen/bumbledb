@@ -82,7 +82,7 @@ type HeadOpIr = "sum" | "mean" | "min" | "max" | "count" | "pack"
 
 /**
  * The computed-find scalar expression (C05 `FindTerm::Compute(ScalarExpr)`):
- * exactly the frozen core roster, spelled as the migration plan JSON spells
+ * exactly the frozen core roster, spelled as the canonical scalar JSON spells
  * the same expressions (one grammar, no second evaluator). `var` binds a
  * rule variable ordinal on this lane.
  */
@@ -294,7 +294,7 @@ type LogAccess =
 			readonly operation: string
 			readonly intent:
 				| { readonly kind: "erasure" }
-				| { readonly kind: "migration"; readonly planSetDigest: Uint8Array; readonly target: string }
+				| { readonly kind: "transition"; readonly contractDigest: Uint8Array; readonly target: string }
 	  }
 
 type LogLifecycle =
@@ -311,10 +311,10 @@ type LogLifecycle =
 			readonly reason:
 				| { readonly kind: "erasure" }
 				| {
-						readonly kind: "migrationAborted"
+						readonly kind: "transitionAborted"
 						readonly sourceDatabase: string
 						readonly sourceIncarnation: string
-						readonly planSetDigest: Uint8Array
+						readonly contractDigest: Uint8Array
 				  }
 	  }
 
@@ -327,7 +327,7 @@ type LogActivation =
 			readonly cause:
 				| { readonly kind: "create" }
 				| { readonly kind: "restore" }
-				| { readonly kind: "migration"; readonly planSetDigest: Uint8Array }
+				| { readonly kind: "transition"; readonly contractDigest: Uint8Array }
 	  }
 
 interface LogAuthority {
@@ -341,10 +341,10 @@ type LogGenesisProvenance =
 	| { readonly kind: "create" }
 	| { readonly kind: "restore"; readonly sourceEvidence: Uint8Array }
 	| {
-			readonly kind: "migration"
+			readonly kind: "transition"
 			readonly sourceDatabase: string
 			readonly sourceIncarnation: string
-			readonly planSetDigest: Uint8Array
+			readonly contractDigest: Uint8Array
 	  }
 
 interface LogGenesis {

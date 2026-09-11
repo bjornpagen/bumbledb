@@ -39,7 +39,7 @@ pub enum HashRole {
     /// (tenant × relation), not one global trillion-row domain.
     LocalFingerprint,
     /// Authoritative content identity: 32-byte BLAKE3 over schemas, commands,
-    /// receipts, decision chains, snapshots, migration plans and remote
+    /// receipts, decision chains, snapshots, transition evidence and remote
     /// objects. Carries the explicit ~128-bit generic collision-resistance
     /// premise; truncation is forbidden everywhere.
     AuthoritativeContent,

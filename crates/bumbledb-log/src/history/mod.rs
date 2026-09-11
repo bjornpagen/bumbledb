@@ -17,7 +17,7 @@ pub mod admission;
 pub mod authority;
 pub mod command;
 pub mod decision;
-mod frame;
+pub(crate) mod frame;
 pub mod locator;
 pub mod receipt;
 mod types;

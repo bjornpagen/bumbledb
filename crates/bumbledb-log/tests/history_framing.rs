@@ -216,7 +216,11 @@ fn byte_caps_are_checked_before_allocation_and_result_is_not_an_opaque_escape() 
                 ..exact
             }
         ),
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section: "change",
+            required: 4,
+            limit: 3
+        })
     );
     assert_eq!(
         decode_command(
@@ -226,13 +230,21 @@ fn byte_caps_are_checked_before_allocation_and_result_is_not_an_opaque_escape() 
                 ..exact
             }
         ),
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section: "envelope",
+            required: bytes.len(),
+            limit: bytes.len() - 1
+        })
     );
     let mut huge = bytes.clone();
     huge[HEADER + 89..HEADER + 97].copy_from_slice(&u64::MAX.to_be_bytes());
     assert_eq!(
         decode_command(&huge, LIMITS),
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section: "change",
+            required: usize::MAX,
+            limit: LIMITS.change_bytes
+        })
     );
     // A nonempty declared result is bounded canonical metadata, not an opaque
     // escape: claiming a result length with no bytes truncates, and a result
@@ -254,7 +266,11 @@ fn byte_caps_are_checked_before_allocation_and_result_is_not_an_opaque_escape() 
                 ..LIMITS
             },
         ),
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section: "result",
+            required: 65,
+            limit: 64
+        })
     );
     let framed =
         encode_command_with_result(metadata(), &[0xde, 0xad, 0xbe, 0xef], &[7; 8], LIMITS).unwrap();
@@ -390,7 +406,11 @@ fn receipt_tags_counts_state_and_evidence_limits_are_strict() {
     };
     assert_eq!(
         encode_receipt(evidence, LIMITS),
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section: "evidence",
+            required: 257,
+            limit: LIMITS.evidence_bytes
+        })
     );
 }
 
@@ -445,7 +465,11 @@ fn decision_parent_locator_uses_one_option_tag_and_exact_cap() {
     };
     assert_eq!(
         encode_decision(parts, under),
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section: "envelope",
+            required: independent,
+            limit: independent - 1
+        })
     );
     let decoded = decode_decision(&bytes, LIMITS).expect("roundtrip");
     assert_eq!(decoded.parent_object, Some(parent_ref));

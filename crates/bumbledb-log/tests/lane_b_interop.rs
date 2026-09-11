@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
-use bumbledb_log::store::fence::acquire_repository_lock;
+use bumbledb_log::store::fence::acquire_directory;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::{
     ConditionalOutcome, ConditionalStore as _, ReceivedHead, ReceivingStore, TransportContext,
@@ -191,20 +191,20 @@ fn hostile_mutation_lock_shapes_refuse_or_are_inert_for_every_caller() {
 }
 
 #[test]
-fn same_process_repository_lock_refuses_and_keeps_the_inode() {
-    let root = fresh_root("repo-lock");
+fn same_process_directory_ownership_refuses_and_keeps_the_inode() {
+    let root = fresh_root("directory-lock");
     let tenant = root.join("tenant");
-    let first = acquire_repository_lock(&tenant).expect("owner");
+    let first = acquire_directory(&tenant).expect("owner");
     let path = first.lock_path().to_path_buf();
     #[cfg(unix)]
     let inode = first.lock_inode().expect("inode");
     assert!(
-        acquire_repository_lock(&tenant).is_err(),
+        acquire_directory(&tenant).is_err(),
         "same-process duplicate generation refuses"
     );
     assert!(path.exists(), "contention does not unlink the lock inode");
     drop(first);
-    let successor = acquire_repository_lock(&tenant).expect("successor");
+    let successor = acquire_directory(&tenant).expect("successor");
     assert_eq!(successor.lock_path(), path.as_path());
     #[cfg(unix)]
     assert_eq!(successor.lock_inode().expect("same inode"), inode);

@@ -16,7 +16,11 @@ use super::{
 /// frames. Every arm is a bounded grammar refusal, never partial data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
-    LimitExceeded,
+    LimitExceeded {
+        section: &'static str,
+        required: usize,
+        limit: usize,
+    },
     LengthOverflow,
     Allocation,
     Truncated {
@@ -50,9 +54,17 @@ pub enum FrameError {
     },
 }
 
-pub(crate) fn check_limit(length: usize, cap: usize) -> Result<(), FrameError> {
+pub(crate) fn check_limit(
+    length: usize,
+    cap: usize,
+    section: &'static str,
+) -> Result<(), FrameError> {
     if length > cap {
-        Err(FrameError::LimitExceeded)
+        Err(FrameError::LimitExceeded {
+            section,
+            required: length,
+            limit: cap,
+        })
     } else {
         Ok(())
     }
@@ -67,7 +79,7 @@ pub(crate) fn frame_len(family_len: usize, parts: &[usize]) -> Result<usize, Fra
 }
 
 pub(crate) fn allocate_frame(len: usize, cap: usize) -> Result<Vec<u8>, FrameError> {
-    check_limit(len, cap)?;
+    check_limit(len, cap, "envelope")?;
     let mut out = Vec::new();
     out.try_reserve_exact(len)
         .map_err(|_| FrameError::Allocation)?;
@@ -135,7 +147,7 @@ impl<'a> Reader<'a> {
         kind: u8,
         cap: usize,
     ) -> Result<Self, FrameError> {
-        check_limit(bytes.len(), cap)?;
+        check_limit(bytes.len(), cap, "envelope")?;
         let mut input = Self { bytes, at: 0 };
         if input.take(family.len())? != family {
             return Err(FrameError::Family);
@@ -205,9 +217,13 @@ impl<'a> Reader<'a> {
         })
     }
 
-    pub(crate) fn span(&mut self, cap: usize) -> Result<&'a [u8], FrameError> {
+    pub(crate) fn span(
+        &mut self,
+        cap: usize,
+        section: &'static str,
+    ) -> Result<&'a [u8], FrameError> {
         let len = usize::try_from(self.u64()?).map_err(|_| FrameError::LengthOverflow)?;
-        check_limit(len, cap)?;
+        check_limit(len, cap, section)?;
         self.take(len)
     }
 

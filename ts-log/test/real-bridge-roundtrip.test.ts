@@ -4,7 +4,7 @@
  * after reopen — chapter 35's acceptance shape, small and behavioral.
  *
  * Creation uses the sanctioned checked initialization artifact: the
- * NATIVE-rendered canonical schema snapshot (`productionCodec.schemaIdentity`
+ * NATIVE-rendered canonical schema snapshot (`schemaSnapshot`
  * → `schema_file::render`), whose core v6 fingerprint is exactly the
  * creation identity's schemaId. Nothing here is hand-forged bytes.
  */
@@ -15,14 +15,13 @@ import * as path from "node:path"
 import { test } from "node:test"
 import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
-import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Exit, ManagedRuntime, Result } from "effect"
 import { backup, restore, verifyBackup } from "#admin.ts"
 import { Command } from "#command.ts"
 import { LocalHistory } from "#history.ts"
 import type { DatabaseIdentity } from "#identity.ts"
 import { DatabaseId, IncarnationId, OperationId, ReceiptEpoch, RequestId } from "#identity.ts"
-import { productionCodec } from "#migrations/native.ts"
+import { schemaSnapshot } from "#schema.ts"
 
 const Entry = relation("Entry", { id: u64, body: str })
 const EntryById = key(Entry, ["id"])
@@ -53,7 +52,7 @@ test("native command recovery and independent backup → verify → writable res
 				const compiled = yield* Schema.compile(Ledger)
 				// The sanctioned creation artifact: native-rendered canonical
 				// schema snapshot whose fingerprint IS the identity's schemaId.
-				const rendered = yield* productionCodec.schemaIdentity(lower(Ledger))
+				const rendered = { schemaId: (yield* Schema.compile(Ledger)).schemaId, snapshot: yield* schemaSnapshot(Ledger) }
 				assert.equal(rendered.schemaId, compiled.schemaId, "schema_file fingerprint == core compile fingerprint")
 				const tenant: DatabaseIdentity = {
 					databaseId: ok(DatabaseId.parse("abababab-abab-abab-abab-abababababab")),
@@ -86,6 +85,7 @@ test("native command recovery and independent backup → verify → writable res
 						})
 						const outcome = yield* history.submit(command, submitOptions)
 						assert.equal(outcome.kind, "decided", "the submit decided")
+						assert.equal("phase" in outcome, false, "certainty is determined by the outcome variant")
 						if (outcome.kind !== "decided") {
 							return yield* Effect.die("unreachable")
 						}
@@ -125,6 +125,7 @@ test("native command recovery and independent backup → verify → writable res
 				const backupId = ok(OperationId.parse("11111111-1111-1111-1111-111111111111"))
 				const backed = yield* backup(binding, { operationId: backupId, destination, schema: Ledger })
 				assert.equal(backed.kind, "completed")
+				assert.equal("phase" in backed, false)
 				const verified = yield* verifyBackup(destination, { backup: backupId })
 				assert.deepEqual(verified.identity, tenant)
 				const again = yield* backup(binding, { operationId: backupId, destination, schema: Ledger })

@@ -11,7 +11,6 @@ import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
 import { NativeRuntime } from "#runtime.ts"
-import { Scalar } from "#scalar.ts"
 import { schema } from "#schema.ts"
 import { key } from "#statements.ts"
 import { runtimeOptions, storeDir } from "#test/fixtures/learning.ts"
@@ -92,7 +91,6 @@ test("segment kinds survive description imports and fixed-width refinement is dr
 	assert.throws(() =>
 		query(Theory).rule((r) => r.match(Pair, row).find({ span: r.difference(row.a, row.b), count: r.count() }))
 	)
-	assert.throws(() => Scalar.mulDiv(Scalar.u64(1n), Scalar.field("unknown"), Scalar.i64(1n) as never, "towardZero"))
 })
 
 function typePins() {
@@ -109,8 +107,6 @@ function typePins() {
 	Compute.mulDiv(row.id, Compute.i64(1n), Compute.u64(2n), "towardZero")
 	// @ts-expect-error Float multiply/divide is not this integer operation.
 	Compute.mulDiv(Compute.f64(1), Compute.f64(2), Compute.f64(3), "towardZero")
-	// @ts-expect-error Source-field known signed/unsigned operands cannot be mixed.
-	Scalar.mulDiv(Scalar.u64(1n), Scalar.i64(1n), Scalar.field("d"), "towardZero")
 }
 void typePins
 

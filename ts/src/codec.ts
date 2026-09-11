@@ -3,7 +3,7 @@ import { membersAgree } from "#closed.ts"
 import { schemaTables } from "#compile.ts"
 import { dbNative } from "#db-native.ts"
 import { AuthoringError } from "#errors.ts"
-import type { AnyField } from "#fields.ts"
+import { type AnyField, fieldDescriptor, type Infer } from "#fields.ts"
 import { lower } from "#lower.ts"
 import { type AnyRelation, type Fact, relationDescriptor, relationFields } from "#relation.ts"
 import type { CellValue } from "#rows.ts"
@@ -141,7 +141,8 @@ function decodeTaggedF64(value: unknown): number | undefined {
 }
 
 /** Decode representation, then judge the value through the shared interpreter. */
-function decodeBoundaryValue(context: string, field: AnyField, input: unknown): unknown {
+function decodeBoundaryValue<F extends AnyField>(context: string, field: F, input: unknown): Infer<F>
+function decodeBoundaryValue(context: string, field: AnyField, input: unknown): Infer<AnyField> {
 	if ("closed" in field) return fieldValue(context, field, input)
 	let decoded: unknown = input
 	switch (field.kind) {
@@ -165,6 +166,35 @@ function decodeBoundaryValue(context: string, field: AnyField, input: unknown): 
 		}
 	}
 	return fieldValue(context, field, decoded)
+}
+
+/** The host-value schema, using the same interpreter as facts and row codecs. */
+function fieldSchema<F extends AnyField>(field: F) {
+	const descriptor = fieldDescriptor("fieldSchema", field)
+	return EffectSchema.declare((value: unknown): value is Infer<F> => {
+		try {
+			fieldValue("fieldSchema", descriptor, value)
+			return true
+		} catch {
+			return false
+		}
+	})
+}
+
+/** Encode one field's host value in the canonical JSON-boundary form. */
+function encodeBoundaryField<F extends AnyField>(field: F, value: Infer<F>): Result.Result<unknown, DbError> {
+	return Result.try({
+		try: () => encodeBoundaryValue("encodeBoundaryField", fieldDescriptor("encodeBoundaryField", field), value),
+		catch: (cause) => argumentError("encodeBoundaryField", cause)
+	})
+}
+
+/** Strict JSON-boundary decoding, returning the field's canonical host value. */
+function decodeBoundaryField<F extends AnyField>(field: F, input: unknown): Result.Result<Infer<F>, DbError> {
+	return Result.try({
+		try: () => decodeBoundaryValue("decodeBoundaryField", fieldDescriptor("decodeBoundaryField", field), input),
+		catch: (cause) => argumentError("decodeBoundaryField", cause)
+	})
 }
 
 /** Pure schema-tagged JSON encoding of complete rows. */
@@ -286,4 +316,14 @@ const decodeRows = Effect.fn("decodeRows")(function* <R extends AnyRelation>(sha
 })
 
 export type { RowShape }
-export { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowSchema, rowShape }
+export {
+	decodeBoundaryField,
+	decodeBoundaryRows,
+	decodeRows,
+	encodeBoundaryField,
+	encodeBoundaryRows,
+	encodeRows,
+	fieldSchema,
+	rowSchema,
+	rowShape
+}

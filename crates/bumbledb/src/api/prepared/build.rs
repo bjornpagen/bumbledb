@@ -194,7 +194,7 @@ fn prepare_witnessed<S>(
     } else {
         Vec::new()
     };
-    let mut sink = rules.first().map_or_else(
+    let mut sink = sink_seed(&rules).map_or_else(
         || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
         |first| {
             let regime = if rules.len() > 1 {
@@ -389,7 +389,7 @@ fn prepare_interior(
     // An interior is a full stage: projection, aggregate, or computed —
     // the same sink selection as main (chapter 12's uniform nonrecursive
     // composition; the projection-only wall is deleted).
-    let sink = rules.first().map_or_else(
+    let sink = sink_seed(&rules).map_or_else(
         || make_sink(&[], 0, SinkRegime::SingleRule(None), 0, &[]),
         |first| {
             let regime = if rules.len() > 1 {
@@ -1033,6 +1033,19 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
         return Vec::new();
     }
     radixes
+}
+
+/// Every arm retargets one shared sink. Seed it with a computed arm when
+/// present so the existing output adapter can also accept plain projections.
+fn sink_seed(rules: &[PreparedRule]) -> Option<&PreparedRule> {
+    rules
+        .iter()
+        .find(|rule| {
+            rule.finds()
+                .iter()
+                .any(|find| matches!(find, FindSpec::Compute(_)))
+        })
+        .or_else(|| rules.first())
 }
 
 fn make_sink(

@@ -23,6 +23,7 @@ pub mod lanes;
 pub mod owners;
 pub mod publication;
 pub mod registry;
+pub mod sequence;
 pub mod session;
 pub mod table;
 
@@ -114,10 +115,24 @@ impl napi::bindgen_prelude::ToNapiValue for QueuedRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatementDiagnostic {
+    pub id: u16,
+    pub descriptor: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaDiagnostic {
+    pub statement: StatementDiagnostic,
+    pub conflict: Option<StatementDiagnostic>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     RuntimeAlreadyLive,
     ForeignRuntime,
     ClosedHandle,
+    /// An admitted job temporarily owns this live capability.
+    HandleBusy,
     SpentHandle,
     QueueFull,
     InvalidArgument,
@@ -144,6 +159,7 @@ pub enum RuntimeError {
     Engine {
         kind: &'static str,
         message: String,
+        diagnostic: Option<Box<SchemaDiagnostic>>,
     },
     Work(WorkError),
 }
@@ -251,13 +267,17 @@ pub enum Output {
         cap: Capability,
         work: session::PayloadWork,
     },
+    OrderedPayloadContinuation {
+        reservation: sequence::PayloadReservation,
+        work: session::PayloadWork,
+    },
     /// One immutable final-state apply outcome (chapter 35 `Db.apply`).
     Apply(crate::db_wire::ApplyOutcomeOwned),
     /// A non-committing judgment; cancellation never becomes mutation evidence.
     Judge(crate::db_wire::JudgeOutcomeOwned),
     /// Bounded database diagnostics (measurements, never rows).
     DbReport(crate::db_wire::DbInspectionOwned),
-    /// Owned bounded byte payloads (row codec, migration codec responses).
+    /// Owned bounded byte payloads (row codec, schema binding responses).
     Bytes(QueuedBytes),
     /// A log-machine payload (histories, commands, caches, admin — C10's
     /// `LogNative` roster over the internal Rust machine).
@@ -1054,6 +1074,9 @@ impl Runtime {
                         ) {
                             self.complete_operation(operation, Err(error));
                         }
+                    }
+                    Ok(Some(Output::OrderedPayloadContinuation { reservation, work })) => {
+                        reservation.dispatch(Arc::clone(operation), work);
                     }
                     Ok(Some(value)) => self.complete_operation(operation, Ok(value)),
                     Err(error) => self.complete_operation(operation, Err(error)),

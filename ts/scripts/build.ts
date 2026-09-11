@@ -23,6 +23,12 @@ const LOCAL_PLATFORM = localPlatformTarget(process.platform, process.arch)
 
 function build(): void {
 	const packageRoot = fileURLToPath(new URL("..", import.meta.url))
+	const admitted = spawnSync("node", ["scripts/build-family.mjs", "--check-source"], {
+		cwd: path.join(packageRoot, ".."),
+		stdio: "inherit"
+	})
+	if (admitted.status !== 0)
+		throw new ScriptError({ message: "use pnpm run build to select an isolated package-family source" })
 	const distDir = path.join(packageRoot, "dist")
 	const crateManifest = path.join(packageRoot, "crate", "Cargo.toml")
 	const shapePackageDir = path.join(packageRoot, "npm", PUBLISH_PLATFORMS[0])
@@ -33,19 +39,22 @@ function build(): void {
 		`bumbledb build: version ${version} (main == platform == napi crate == engine; the platform pin lives in the staged manifest)`
 	)
 
-	fs.rmSync(distDir, { recursive: true, force: true })
+	if (fs.existsSync(distDir))
+		throw new ScriptError({ message: "build output already exists; start a fresh family attempt" })
 
-	// Incremental release artifacts keep the previous CARGO_PKG_VERSION in
-	// engineVersion(); a lockstep bump must remint bumbledb-node.
-	const clean = spawnSync("cargo", ["clean", "-p", "bumbledb-node", "--release", "--manifest-path", crateManifest], {
-		stdio: "inherit"
+	const tsc = spawnSync("tsc", ["-p", "tsconfig.build.json"], {
+		stdio: "inherit",
+		cwd: packageRoot
 	})
-	if (clean.error) {
-		throw new ScriptError({ message: "spawn cargo clean", cause: clean.error })
+	if (tsc.error) {
+		throw new ScriptError({ message: "spawn tsc", cause: tsc.error })
 	}
-	if (clean.status !== 0) {
-		throw new ScriptError({ message: `cargo clean exited with status ${clean.status}` })
+	if (tsc.status !== 0) {
+		throw new ScriptError({ message: `tsc exited with status ${tsc.status}` })
 	}
+
+	rewriteDeclarationImports(distDir)
+	assertDeclarationsAreIsolated(distDir)
 
 	const cargo = spawnSync("cargo", ["build", "--release", "--manifest-path", crateManifest], {
 		stdio: "inherit"
@@ -65,20 +74,6 @@ function build(): void {
 
 	linkPlatformPackage(packageRoot, localPackageDir)
 	smokeLoad(packageRoot, version)
-
-	const tsc = spawnSync("tsc", ["-p", "tsconfig.build.json"], {
-		stdio: "inherit",
-		cwd: packageRoot
-	})
-	if (tsc.error) {
-		throw new ScriptError({ message: "spawn tsc", cause: tsc.error })
-	}
-	if (tsc.status !== 0) {
-		throw new ScriptError({ message: `tsc exited with status ${tsc.status}` })
-	}
-
-	rewriteDeclarationImports(distDir)
-	assertDeclarationsAreIsolated(distDir)
 
 	const repoRoot = path.join(packageRoot, "..")
 	const stamp = spawnSync("node", ["scripts/release-results.mjs", "--write-native-provenance"], {

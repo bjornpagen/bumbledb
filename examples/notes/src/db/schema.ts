@@ -1,25 +1,11 @@
-/**
- * The application's CURRENT schema — ordinary typed declarations shared by
- * the app's queries AND the migration generator (chapter 33: the same
- * module, no generated runtime-type layer between them). Importing this
- * module constructs inert metadata only; no database work happens here.
- *
- * This is the FINAL stage of the staged evolution history in
- * `evolution-stages.ts` (0000-initialize → 0004-outbox-attachment). There
- * is deliberately NO pending `migrationIntent` export here: intent is
- * generation input, consumed when its plan is recorded, then removed —
- * leaving a stale intent in place refuses the next generate/check run.
- * When the schema evolves again, add the typed intent beside the changed
- * declarations, run `bumbledb-log generate`, review the emitted plan, and
- * delete the intent.
- */
+/** Current application declarations; Log snapshots these values directly. */
 import { bool, contained, uuid, key, on, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 
-/** A user's note. `text` was renamed from `body` in plan 0003. */
+/** A user's note. */
 export const Note = relation("Note", { id: uuid, text: str, pinned: bool })
 export const NoteById = key(Note, ["id"])
 
-/** Fixed labels, seeded declaratively in plan 0002. */
+/** Application labels, populated by explicit initialization. */
 export const Tag = relation("Tag", { id: uuid, name: str })
 
 /**

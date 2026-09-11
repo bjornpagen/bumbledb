@@ -217,7 +217,11 @@ fn complete_schema_identity_limits_and_work_are_enforced_before_sealing() {
             tiny,
             &work()
         ),
-        Err(CommandError::Frame(FrameError::LimitExceeded))
+        Err(CommandError::Frame(FrameError::LimitExceeded {
+            section: "change",
+            limit: 0,
+            ..
+        }))
     ));
     let cancelled = work();
     cancelled.cancel();

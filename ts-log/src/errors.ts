@@ -16,23 +16,27 @@ import { protocolErrorCodes } from "#codes.ts"
 
 const Contention = Schema.Struct({
 	_tag: Schema.Literal("Contention"),
-	attempts: Schema.Number
+	attempts: Schema.Number,
+	detail: Schema.optional(Schema.String)
 })
 const NotYetAvailable = Schema.Struct({
 	_tag: Schema.Literal("NotYetAvailable"),
 	requestedSeq: Schema.BigInt,
-	capturedSeq: Schema.BigInt
+	capturedSeq: Schema.BigInt,
+	detail: Schema.optional(Schema.String)
 })
 const InsufficientLocalDisk = Schema.Struct({
 	_tag: Schema.Literal("InsufficientLocalDisk"),
 	requiredBytes: Schema.BigInt,
-	availableBytes: Schema.BigInt
+	availableBytes: Schema.BigInt,
+	detail: Schema.optional(Schema.String)
 })
 /** Envelope backpressure: the retained tail exceeded its policy. */
 const MaintenanceRequired = Schema.Struct({
 	_tag: Schema.Literal("MaintenanceRequired"),
 	count: Schema.BigInt,
-	bytes: Schema.BigInt
+	bytes: Schema.BigInt,
+	detail: Schema.optional(Schema.String)
 })
 /**
  * The warm local materialization is behind the checkpoint base. Hydration is
@@ -44,56 +48,20 @@ const MaterializationStale = Schema.Struct({
 	_tag: Schema.Literal("MaterializationStale"),
 	detail: Schema.String
 })
-const MigrationDrift = Schema.Struct({
-	_tag: Schema.Literal("MigrationDrift"),
-	detail: Schema.String
-})
-const MigrationUnsupported = Schema.Struct({
-	_tag: Schema.Literal("MigrationUnsupported"),
-	detail: Schema.String
-})
-const MigrationRepository = Schema.Struct({
-	_tag: Schema.Literal("MigrationRepository"),
-	path: Schema.String,
-	detail: Schema.String
-})
-const MigrationIntentRequired = Schema.Struct({
-	_tag: Schema.Literal("MigrationIntentRequired"),
-	requirements: Schema.Array(
-		Schema.Struct({
-			code: Schema.Literals([
-				"ambiguous",
-				"destructive",
-				"missing-backfill",
-				"type-change",
-				"unsupported",
-				"stale-intent",
-				"conflicting-intent"
-			]),
-			relation: Schema.String,
-			field: Schema.NullOr(Schema.String),
-			detail: Schema.String
-		})
-	),
-	truncated: Schema.Boolean
-})
 const structured = [
 	"Contention",
 	"NotYetAvailable",
 	"InsufficientLocalDisk",
 	"MaintenanceRequired",
-	"MaterializationStale",
-	"MigrationDrift",
-	"MigrationUnsupported",
-	"MigrationRepository",
-	"MigrationIntentRequired"
+	"MaterializationStale"
 ] as const
 type StructuredTag = (typeof structured)[number]
 type PlainTag = Exclude<(typeof protocolErrorCodes)[number], StructuredTag>
 const PlainReason = Schema.Struct({
 	_tag: Schema.Literals(
 		protocolErrorCodes.filter((code): code is PlainTag => !(structured as readonly string[]).includes(code))
-	)
+	),
+	detail: Schema.optional(Schema.String)
 })
 
 export const ProtocolReason = Schema.Union([
@@ -102,10 +70,6 @@ export const ProtocolReason = Schema.Union([
 	InsufficientLocalDisk,
 	MaintenanceRequired,
 	MaterializationStale,
-	MigrationDrift,
-	MigrationUnsupported,
-	MigrationRepository,
-	MigrationIntentRequired,
 	PlainReason
 ])
 export type ProtocolReason = typeof ProtocolReason.Type

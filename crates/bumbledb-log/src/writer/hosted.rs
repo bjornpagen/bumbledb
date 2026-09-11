@@ -268,6 +268,7 @@ where
         limits: Limits,
         work: &WorkContext,
     ) -> Result<Self, LogError> {
+        super::local::refuse_retired(&db, work)?;
         let head_key = store::head_key(&prefix);
         let record = read_decoded_head(&backend, &head_key, limits, work)?;
         if record.control.identity.schema_id != fingerprint(&db) {

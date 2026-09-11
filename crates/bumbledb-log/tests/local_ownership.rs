@@ -234,7 +234,7 @@ fn fs02_a_kill_mid_replacement_leaves_the_old_complete_head() {
 
 #[test]
 fn d28_successor_reuses_the_persistent_lock_inode_without_deleting_it() {
-    use bumbledb_log::store::fence::acquire_repository_lock;
+    use bumbledb_log::store::fence::acquire_directory;
     use std::os::unix::fs::MetadataExt;
     let root = fresh_root("d28");
     let tenant = root.join("tenant");
@@ -247,7 +247,7 @@ fn d28_successor_reuses_the_persistent_lock_inode_without_deleting_it() {
     child.signal("STOP");
     std::thread::sleep(Duration::from_millis(100));
     assert!(
-        acquire_repository_lock(&tenant).is_err(),
+        acquire_directory(&tenant).is_err(),
         "paused owner remains exclusive"
     );
     assert!(lock_path.exists(), "pause does not replace the inode");
@@ -256,7 +256,7 @@ fn d28_successor_reuses_the_persistent_lock_inode_without_deleting_it() {
     let _ = child.process.wait().expect("reap");
     let start = Instant::now();
     let successor = loop {
-        match acquire_repository_lock(&tenant) {
+        match acquire_directory(&tenant) {
             Ok(lock) => break lock,
             Err(_) if start.elapsed() < WAIT => std::thread::sleep(Duration::from_millis(50)),
             Err(error) => panic!("death releases ownership: {error}"),

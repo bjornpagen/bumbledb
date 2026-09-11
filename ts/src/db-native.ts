@@ -226,16 +226,8 @@ interface DbBridge {
 		bytes: Uint8Array,
 		callback: () => void
 	): OperationHandle
-
-	/**
-	 * Read-only migration-codec integration over native `schema_file` and
-	 * `migration::{plan, manifest}` through the shared executor: bounded
-	 * owned input, bounded owned JSON response bytes, one registered
-	 * cancellable operation. Neither verb opens, initializes, freezes or
-	 * migrates a database.
-	 */
-	runtimeMigrationSchema(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
-	runtimeMigrationRead(runtime: RuntimeHandle, request: Uint8Array, callback: () => void): OperationHandle
+	runtimeSchemaSnapshot(runtime: RuntimeHandle, spec: SchemaSpec, callback: () => void): OperationHandle
+	runtimeSchemaBindings(runtime: RuntimeHandle, snapshot: Uint8Array, callback: () => void): OperationHandle
 }
 
 // The fresh-addon roster test pins this private declaration exactly as it

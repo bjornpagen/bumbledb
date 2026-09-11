@@ -23,6 +23,7 @@ pub(crate) fn engine_error(error: &bumbledb::Error) -> RuntimeError {
         return RuntimeError::Work(*work);
     }
     RuntimeError::Engine {
+        diagnostic: None,
         kind: crate::tags::error_family::tag(&error.family()),
         message: crate::marshal::engine_message(error),
     }
@@ -500,13 +501,7 @@ impl Runtime {
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<SnapshotWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        self.registry.check(cap)?;
-        match self.registry.state(cap)? {
-            super::registry::ResourceState::Live => {}
-            super::registry::ResourceState::Busy | super::registry::ResourceState::Closing => {
-                return Err(RuntimeError::ClosedHandle);
-            }
-        }
+        self.registry.state(cap)?.admit()?;
         let operation =
             self.register_session_operation(owner, database, session, policy, notify)?;
         let prepared = catch_unwind(AssertUnwindSafe(|| prepare(&operation.context)));
@@ -651,19 +646,6 @@ impl Runtime {
         }
     }
 
-    /// Capability-first lock mint. `cap.kind` is always `RepositoryLock`.
-    /// Same-worker insert is local; JS/cross-worker is fire-and-forget.
-    pub(crate) fn mint_repository_lock(
-        self: &Arc<Self>,
-        lock: bumbledb_log::store::fence::RepositoryLock,
-    ) -> Result<super::registry::RegistryAdmission, RuntimeError> {
-        super::registry::RegistryAdmission::admit(
-            Arc::clone(self),
-            NativeKind::RepositoryLock,
-            super::registry::Payload::RepositoryLock { _lock: lock },
-        )
-    }
-
     pub(crate) fn install_send_payload(
         &self,
         cap: Capability,
@@ -692,13 +674,64 @@ impl Runtime {
         notify: Notify,
         prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
     ) -> Result<Arc<Operation>, RuntimeError> {
-        self.registry.check(cap)?;
-        match self.registry.state(cap)? {
-            super::registry::ResourceState::Live => {}
-            super::registry::ResourceState::Busy | super::registry::ResourceState::Closing => {
-                return Err(RuntimeError::ClosedHandle);
+        self.registry.state(cap)?.admit()?;
+        self.submit_payload_inner(cap, None, policy, notify, prepare)
+    }
+
+    /// Finalization revokes new admission immediately, waits behind existing
+    /// worker jobs, and closes every alias even on cancellation or panic.
+    #[cfg(test)]
+    pub(crate) fn finalize_payload(
+        self: &Arc<Self>,
+        cap: Capability,
+        policy: WorkContext,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
+    ) -> Result<Arc<Operation>, RuntimeError> {
+        self.finalize_payload_ordered(cap, None, policy, notify, prepare)
+    }
+
+    pub(crate) fn finalize_payload_ordered(
+        self: &Arc<Self>,
+        cap: Capability,
+        order: Option<super::sequence::PayloadReservation>,
+        policy: WorkContext,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
+    ) -> Result<Arc<Operation>, RuntimeError> {
+        struct Closing {
+            runtime: Arc<Runtime>,
+            cap: Capability,
+        }
+        impl Drop for Closing {
+            fn drop(&mut self) {
+                let _ = self.runtime.request_resource_close(self.cap);
             }
         }
+        if order.is_none() {
+            self.registry.begin_finalization(cap)?;
+        }
+        let closing = Closing {
+            runtime: Arc::clone(self),
+            cap,
+        };
+        self.submit_payload_inner(cap, order, policy, notify, |context| {
+            let work = prepare(context)?;
+            Ok(Box::new(move |context, payload, publication| {
+                let _closing = closing;
+                work(context, payload, publication)
+            }))
+        })
+    }
+
+    fn submit_payload_inner(
+        &self,
+        cap: Capability,
+        order: Option<super::sequence::PayloadReservation>,
+        policy: WorkContext,
+        notify: Notify,
+        prepare: impl FnOnce(&WorkContext) -> Result<PayloadWork, RuntimeError>,
+    ) -> Result<Arc<Operation>, RuntimeError> {
         let context = policy;
         context.checkpoint()?;
         let mut state = lock(&self.state);
@@ -743,6 +776,10 @@ impl Runtime {
             }
         };
         drop(state);
+        if let Some(order) = order {
+            order.dispatch(Arc::clone(&operation), work);
+            return Ok(operation);
+        }
         if self
             .send_resource(
                 cap,
@@ -1513,21 +1550,6 @@ mod tests {
     }
 
     #[test]
-    fn d29_repository_lock_capability_stamps_kind() {
-        // D29: minted lock handles carry NativeKind::RepositoryLock on the
-        // capability. A directory-owner twin without this stamp fails.
-        let runtime = Runtime::start(options()).unwrap();
-        let cap = runtime
-            .reserve_native_route(NativeKind::RepositoryLock)
-            .expect("lock route");
-        assert_eq!(cap.kind, NativeKind::RepositoryLock);
-        runtime.rollback_native_route(cap);
-        assert_eq!(runtime.registry.route_count(), 0);
-        assert_eq!(runtime.inspect().natives, 0);
-        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
-    }
-
-    #[test]
     fn d18_idle_shutdown_wakes_sleeping_pool_without_reentering_state() {
         // D18: idle pool (active==0) then runtime drain. Re-locking
         // runtime.state from lane_send during begin_close/drain hangs.
@@ -1566,10 +1588,22 @@ mod tests {
         running
             .recv_timeout(Duration::from_secs(5))
             .expect("entered");
+        assert!(matches!(
+            session.submit(policy(), Box::new(|| {}), |_| panic!(
+                "busy refusal precedes input preparation"
+            )),
+            Err(RuntimeError::HandleBusy)
+        ));
         let (tx, rx) = channel();
         session.drain(Box::new(move |report| {
             tx.send(report).unwrap();
         }));
+        assert!(matches!(
+            session.submit(policy(), Box::new(|| {}), |_| panic!(
+                "closing refuses new work"
+            )),
+            Err(RuntimeError::ClosedHandle)
+        ));
         release.send(()).unwrap();
         assert_eq!(
             rx.recv_timeout(Duration::from_secs(5)).expect("close join"),
@@ -1960,9 +1994,21 @@ mod tests {
         running
             .recv_timeout(Duration::from_secs(5))
             .expect("entered");
+        assert!(matches!(
+            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
+                "busy refuses before preparation"
+            )),
+            Err(RuntimeError::HandleBusy)
+        ));
         admission
             .request_close()
             .expect("close while busy cannot QueueFull");
+        assert!(matches!(
+            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
+                "closing refuses before preparation"
+            )),
+            Err(RuntimeError::ClosedHandle)
+        ));
         release.send(()).unwrap();
         let (tx, rx) = channel();
         runtime
@@ -1978,6 +2024,74 @@ mod tests {
         assert_eq!(runtime.inspect().natives, 0);
         assert_eq!(runtime.registry.route_count(), 0);
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+    }
+
+    #[test]
+    fn busy_payload_refuses_temporarily_and_reuses_the_same_capability() {
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            std::sync::Arc::clone(&runtime),
+            NativeKind::Result,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .expect("capability");
+        let baseline = runtime.inspect();
+        let (release, blocked) = channel();
+        let (entered, running) = channel();
+        let (done, completed) = channel();
+        let first = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    done.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |_, _, _| {
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .expect("first job");
+        running
+            .recv_timeout(Duration::from_secs(5))
+            .expect("job holds capability");
+        assert!(matches!(
+            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
+                "busy input not prepared"
+            )),
+            Err(RuntimeError::HandleBusy)
+        ));
+        release.send(()).unwrap();
+        completed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("first complete");
+        assert!(matches!(runtime.take(&first), Ok(Output::Ready)));
+        let (done, completed) = channel();
+        let next = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    done.send(()).unwrap();
+                }),
+                |_| Ok(Box::new(|_, _, _| Ok(Output::Ready))),
+            )
+            .expect("same capability reusable");
+        completed
+            .recv_timeout(Duration::from_secs(5))
+            .expect("reuse complete");
+        assert!(matches!(runtime.take(&next), Ok(Output::Ready)));
+        assert_eq!(runtime.inspect().natives, baseline.natives);
+        assert_eq!(runtime.inspect().queued, baseline.queued);
+        admission.request_close().expect("close");
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, 0);
     }
 
     #[test]
@@ -2081,5 +2195,95 @@ mod tests {
         assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
         assert_eq!(drain_session(&session), CloseReport::Closed);
         let _ = std::fs::remove_dir_all(&base);
+    }
+    #[test]
+    fn finalization_revokes_aliases_drains_busy_work_and_consumes_on_cancel() {
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            Arc::clone(&runtime),
+            NativeKind::Result,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .unwrap();
+        let (entered, running) = channel();
+        let (release, blocked) = channel();
+        let (done, completed) = channel();
+        let first = runtime
+            .submit_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    done.send(()).unwrap();
+                }),
+                |_| {
+                    Ok(Box::new(move |_, _, _| {
+                        entered.send(()).unwrap();
+                        blocked.recv().unwrap();
+                        Ok(Output::Ready)
+                    }))
+                },
+            )
+            .unwrap();
+        running.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (done, finished) = channel();
+        let terminal = runtime
+            .finalize_payload(
+                admission.cap(),
+                policy(),
+                Box::new(move || {
+                    done.send(()).unwrap();
+                }),
+                |_| Ok(Box::new(|_, _, _| Ok(Output::Ready))),
+            )
+            .expect("finalize queues behind the admitted write");
+        assert!(matches!(
+            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
+                "revoked"
+            )),
+            Err(RuntimeError::ClosedHandle)
+        ));
+        assert!(matches!(
+            runtime.finalize_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
+                "already finalizing"
+            )),
+            Err(RuntimeError::ClosedHandle)
+        ));
+        release.send(()).unwrap();
+        completed.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(runtime.take(&first), Ok(Output::Ready)));
+        finished.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(matches!(runtime.take(&terminal), Ok(Output::Ready)));
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, 0);
+
+        let runtime = Runtime::start(options()).unwrap();
+        let admission = super::super::registry::RegistryAdmission::admit(
+            Arc::clone(&runtime),
+            NativeKind::Result,
+            super::super::registry::Payload::Result {
+                result: None,
+                state: super::super::registry::ResultState::Live,
+            },
+        )
+        .unwrap();
+        let stopped = policy();
+        stopped.cancel();
+        assert!(matches!(
+            runtime.finalize_payload(admission.cap(), stopped, Box::new(|| {}), |_| panic!(
+                "cancelled"
+            )),
+            Err(RuntimeError::Work(_))
+        ));
+        assert!(matches!(
+            runtime.submit_payload(admission.cap(), policy(), Box::new(|| {}), |_| panic!(
+                "consumed"
+            )),
+            Err(RuntimeError::ClosedHandle)
+        ));
+        assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
+        assert_eq!(runtime.inspect().natives, 0);
     }
 }

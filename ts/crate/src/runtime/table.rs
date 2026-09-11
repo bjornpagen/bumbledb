@@ -4,9 +4,8 @@
 //! Each configured worker owns one table. Snapshot entries hold L07's
 //! [`OwnedRead`] from `Db::snapshot`, plus worker-affine prepared state.
 //! Jobs borrow the entry and take `frame(&work)`. Send payloads (results,
-//! cursors, drafts, changes, repository locks)
-//! live here so no consumer can run conversion/I/O under the shared route
-//! lock. `NativeKind::RepositoryLock` is stamped on minted lock handles.
+//! cursors, drafts, changes, populations) live here so no consumer can run
+//! conversion/I/O under the shared route lock.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -105,12 +104,7 @@ impl WorkerTable {
         if entry.generation != cap.generation {
             return Err(RuntimeError::ClosedHandle);
         }
-        match entry.state {
-            ResourceState::Live => {}
-            ResourceState::Busy | ResourceState::Closing => {
-                return Err(RuntimeError::ClosedHandle);
-            }
-        }
+        entry.state.admit()?;
         let payload = entry.payload.as_mut().ok_or(RuntimeError::ClosedHandle)?;
         entry.state = ResourceState::Busy;
         Ok((payload, &mut entry.state))
@@ -181,7 +175,7 @@ fn payload_kind(payload: &TablePayload) -> NativeKind {
             Payload::Draft(_) => NativeKind::Draft,
             Payload::Changes { .. } => NativeKind::Changes,
             Payload::ChangesCursor(_) => NativeKind::ChangesCursor,
-            Payload::RepositoryLock { .. } => NativeKind::RepositoryLock,
+            Payload::Population(_) => NativeKind::Population,
         },
     }
 }

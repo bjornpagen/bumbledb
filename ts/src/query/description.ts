@@ -269,13 +269,13 @@ function replayRule(
 				const value = input.value
 				switch (value.kind) {
 					case "u64":
-						return scalarLiteral("query-var", { u64: value.value })
+						return scalarLiteral({ u64: value.value })
 					case "i64":
-						return scalarLiteral("query-var", { i64: value.value })
+						return scalarLiteral({ i64: value.value })
 					case "f64":
-						return scalarLiteral("query-var", { f64: value.value })
+						return scalarLiteral({ f64: value.value })
 					case "bool":
-						return scalarLiteral("query-var", { bool: value.value })
+						return scalarLiteral({ bool: value.value })
 					default:
 						return refused("query compute", "requires a scalar literal")
 				}

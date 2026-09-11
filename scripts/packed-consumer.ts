@@ -14,13 +14,11 @@ import {
 	coreProgram,
 	describedAttempts,
 	drainPages,
-	incrementUnits,
-	incrementUnitsAsF64,
 	makeConsumerRuntime,
 	newAttempt,
 	readAttempts
 } from "./core-ts/consumer.ts"
-import { incrementUnitsIntent, knownInvalidMixRefuses, mintIntent } from "./log-ts/consumer.ts"
+import { knownInvalidMixRefuses, mintIntent } from "./log-ts/consumer.ts"
 import { readPublishedAttempts, mintCommand } from "./native-ledger/consumer.ts"
 
 const consumer = createRequire(import.meta.url)
@@ -30,16 +28,6 @@ assert.equal(log.resolve("@bjornpagen/bumbledb"), consumer.resolve("@bjornpagen/
 assert.equal(core.resolve("effect"), consumer.resolve("effect"))
 assert.equal(log.resolve("effect"), consumer.resolve("effect"))
 
-assert.equal(incrementUnits.kind, "add")
-assert.equal(incrementUnits.result, "unresolved")
-assert.equal(incrementUnitsAsF64.kind, "cast")
-if (incrementUnitsAsF64.kind === "cast") {
-	assert.equal(incrementUnitsAsF64.cast, "toF64")
-}
-const convertUnits = incrementUnitsIntent.entries[0]
-assert.equal(convertUnits?.kind, "convert")
-assert.equal(convertUnits && "field" in convertUnits ? convertUnits.field : "", "units")
-assert.equal(incrementUnitsIntent.schema.name, "Learning")
 assert.ok(knownInvalidMixRefuses, "D27: I64/U64 mixing refuses at authoring")
 
 const authoringRecovery = Effect.gen(function* () {

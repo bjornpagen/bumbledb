@@ -24,6 +24,13 @@ structural descriptions. Schema construction owns copies of declarations.
 Independently constructed equivalent declarations work in queries, codecs,
 writes, and key lookups; ordered fields and enum handles must agree.
 
+Individual fields expose the same validation and JSON codecs as rows:
+`fieldSchema(field)` returns a host-value Effect Schema,
+`decodeBoundaryField(field, input)` decodes strict JSON-boundary data, and
+`encodeBoundaryField(field, value)` encodes it. Both boundary operations return
+`Result`; their value type is `Infer<typeof field>`. Compose field schemas into
+ordinary Effect Schema records for application inputs.
+
 ## Platform support
 
 The TypeScript package ships native binaries for **darwin-arm64**
@@ -38,12 +45,12 @@ correctness CI is distinct from the Apple Silicon performance measurements.
 
 ## Install
 
-This guide follows the 1.3.0 source API. Use the guide from the Git tag matching
+This guide follows the 1.3.1 source API. Use the guide from the Git tag matching
 your installed package. GitHub release tarballs and npm publication are separate;
 the npm command below applies once that version is published.
 
 ```sh
-pnpm add @bjornpagen/bumbledb@1.3.0 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb@1.3.1 effect@4.0.0-rc.112
 ```
 
 ## Quick start
@@ -225,10 +232,6 @@ and query representations.
   query or compilation. Checked immutable branches may be shared. Structural
   declarations with byte payloads are copied when consumed; JavaScript byte
   buffers themselves are mutable and are never treated as immutable cache keys.
-- `Scalar.field("units")` is an unresolved source-field leaf.
-  `Scalar.add(Scalar.field("units"), Scalar.u64(1n))` authors synchronously
-  without native loading. Native schema binding typechecks it, including
-  on zero rows. There is no `field<T>` assertion and no JS evaluator.
 - Operational failure is the one `DbError` tagged-reason class in the
   Effect error channel; interruption and finalizer problems stay in
   `Cause`. Resource owners are scoped and report honest `CloseReport`s;

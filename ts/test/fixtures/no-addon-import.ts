@@ -11,7 +11,6 @@ import { Compute } from "#query/compute.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
 import { relation } from "#relation.ts"
-import { Scalar } from "#scalar.ts"
 import { schema } from "#schema.ts"
 import { key } from "#statements.ts"
 
@@ -20,11 +19,11 @@ assert.equal(nativeBindingIsLoaded(), false, "package import must not load the a
 const Note = relation("Note", { id: uuid, text: str, pinned: bool })
 const Notes = schema("Notes", { Note }, [key(Note, ["id"])])
 assert.equal(Notes.relations.Note.name, "Note")
-const pinned = Scalar.bool(false)
+const pinned = Compute.bool(false)
 assert.equal(pinned.kind, "literal")
 assert.equal(pinned.result, "bool")
-const units = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
-assert.equal(units.result, "unresolved")
+const units = Compute.add(Compute.u64(2n), Compute.u64(1n))
+assert.equal(units.result, "u64")
 assert.equal(nativeBindingIsLoaded(), false, "pure constructors must not touch the addon")
 
 assert.throws(

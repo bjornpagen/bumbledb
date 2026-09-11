@@ -41,9 +41,7 @@ function statusOf(error: DbError | ProtocolError): number {
 		case "NotInitialized":
 		case "DatabaseMissing":
 			return 404
-		case "MigrationRequired":
-		case "MigrationDrift":
-		case "DatabaseAhead":
+		case "OperationConflict":
 		case "CommandIdentityConflict":
 			return 409
 		default:

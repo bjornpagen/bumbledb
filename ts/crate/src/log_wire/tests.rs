@@ -155,10 +155,6 @@ fn the_protocol_roster_pins_ts_log_codes_exactly() {
             .collect::<Vec<_>>(),
         "ts-log/src/codes.ts and the native speller drifted"
     );
-    // Wave-D roster pin: exactly 33 rows, `MaterializationStale` directly
-    // after `MaintenanceRequired` (the two rows landed together in P04R's
-    // identities.rs; the TS count/adjacency test pins the same order).
-    assert_eq!(PROTOCOL_CODES.len(), 33, "the wave-D roster is 33 rows");
     let maintenance = PROTOCOL_CODES
         .iter()
         .position(|code| *code == "MaintenanceRequired")
@@ -225,9 +221,44 @@ fn the_result_codec_is_the_core_authority_and_uuid_crosses_as_hex() {
         ("k".to_string(), Value::U64(1)),
         ("k".to_string(), Value::U64(2)),
     ];
-    assert!(encode_result_record(&duplicate, &work).is_err());
-    assert!(decode_result_record(&bytes[..bytes.len() - 1], &work).is_err());
+    assert!(matches!(encode_result_record(&duplicate, &work),
+        Err(LogFail::Protocol { code: "Misuse", detail }) if detail.contains("DuplicateName")));
+    assert!(
+        matches!(decode_result_record(&bytes[..bytes.len() - 1], &work),
+        Err(LogFail::Protocol { code: "Corruption", detail }) if detail.contains("Truncated"))
+    );
     assert!(decode_result_record(&[], &work).expect("empty").is_empty());
+}
+
+#[test]
+fn native_command_framing_preserves_measures_and_boundary_classification() {
+    use bumbledb_log::history::FrameError;
+    use bumbledb_log::history::command::CommandError;
+    let failure = fail_of_command(CommandError::Frame(FrameError::LimitExceeded {
+        section: "change",
+        required: usize::MAX,
+        limit: LIMITS.change_bytes,
+    }));
+    assert!(
+        matches!(failure, LogFail::Core(RuntimeError::ResourceLimit {
+        dimension: "change", used: 0, requested: u64::MAX, limit,
+    }) if limit == LIMITS.change_bytes as u64)
+    );
+    assert!(matches!(
+        fail_of_command(CommandError::Frame(FrameError::Allocation)),
+        LogFail::Core(RuntimeError::Work(bumbledb::WorkError::Allocation))
+    ));
+    assert!(
+        matches!(fail_of_command(CommandError::Frame(FrameError::Truncated { at: 88 })),
+        LogFail::Protocol { code: "Misuse", detail } if detail.contains("88"))
+    );
+    assert!(matches!(
+        decode_result_record(&[0], &policy()),
+        Err(LogFail::Protocol {
+            code: "Corruption",
+            ..
+        })
+    ));
 }
 
 #[test]
@@ -649,22 +680,6 @@ fn closed_history_refuses_and_close_joins_idempotently() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
-#[test]
-fn planned_target_incarnations_are_deterministic_and_operation_scoped() {
-    let a = OperationId::from_core(bumbledb::Uuid::from_bytes([1; 16]));
-    let b = OperationId::from_core(bumbledb::Uuid::from_bytes([2; 16]));
-    assert_eq!(
-        planned_target_incarnation(a),
-        planned_target_incarnation(a),
-        "a retry of the same operation resumes the same target"
-    );
-    assert_ne!(
-        planned_target_incarnation(a),
-        planned_target_incarnation(b),
-        "distinct operations never share a planned target"
-    );
-}
-
 fn inspect_via_verb(
     resource: &Arc<HistoryResource>,
     work: &bumbledb::work::WorkContext,
@@ -676,18 +691,6 @@ fn inspect_via_verb(
             other.is_ok()
         ),
     }
-}
-
-fn empty_manifest_for(descriptor: &bumbledb::SchemaDescriptor) -> String {
-    let id = bumbledb_log::schema_file::schema_id(descriptor).expect("schema id");
-    let prefix = bumbledb_log::migration::manifest::base_prefix_digest(&id, LIMITS.envelope_bytes)
-        .expect("empty-base prefix");
-    format!(
-        "{{\n  \"manifestVersion\": 1,\n  \"planVersion\": 1,\n  \"baseSchemaId\": \"{}\",\n  \
-         \"basePrefixDigest\": \"{}\",\n  \"entries\": []\n}}\n",
-        hex32(&id.0),
-        hex32(&prefix)
-    )
 }
 
 #[test]
@@ -747,29 +750,4 @@ fn d18_abandoned_snapshot_output_drains_its_session() {
     assert_eq!(drain_resource(&opened.resource), CloseReport::Closed);
     assert_eq!(drain_runtime(&runtime), CloseReport::Closed);
     let _ = std::fs::remove_dir_all(&base);
-}
-
-#[test]
-fn d20_admin_missing_and_foreign_snapshots_refuse_before_side_effects() {
-    let work = policy();
-    let missing = admin::PlansSpec::test_chain(
-        empty_manifest_for(&Mini.descriptor()),
-        Vec::new(),
-        Vec::new(),
-    );
-    match missing.test_verify(&work) {
-        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "UnsupportedArtifact"),
-        other => panic!("missing snapshots refuse before verify, got {other:?}"),
-    }
-
-    let foreign = bumbledb_log::schema_file::render(&Other.descriptor());
-    let foreign_plans = admin::PlansSpec::test_chain(
-        empty_manifest_for(&Mini.descriptor()),
-        Vec::new(),
-        vec![foreign],
-    );
-    match foreign_plans.test_verify(&work) {
-        Err(LogFail::Protocol { code, .. }) => assert_eq!(code, "MigrationDrift"),
-        other => panic!("a foreign base snapshot refuses, got {other:?}"),
-    }
 }

@@ -18,8 +18,8 @@
  */
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Cause, Effect, ManagedRuntime, Option } from "effect"
-import { ChangeSet } from "#changes.ts"
+import { Cause, Effect, ManagedRuntime, Option, Result, Stream } from "effect"
+import { ChangeSet, internalChanges } from "#changes.ts"
 import { Db } from "#db.ts"
 import { bytes, str } from "#fields.ts"
 import type { Fact } from "#relation.ts"
@@ -46,6 +46,41 @@ const newId = () => Effect.runPromise(Effect.sync(() => crypto.randomUUID()))
 function studentRow(id: Uuid, name: string): Fact<typeof Student> {
 	return { id, name, budget: 10n }
 }
+
+test("native ChangeSet ownership rejects all reads and both composition positions after close", async () => {
+	const rt = runtime()
+	try {
+		await rt.runPromise(
+			Effect.scoped(
+				Effect.gen(function* () {
+					const db = yield* Db.create(storeDir("closed-changes"), Learning)
+					const left = yield* (yield* ChangeSet.builder(Learning)).finish()
+					const right = yield* (yield* ChangeSet.builder(Learning)).finish()
+					const before = yield* (yield* NativeRuntime).inspect()
+					assert.equal((yield* left.close()).kind, "closed")
+					assert.deepEqual(Object.keys(internalChanges(left) ?? {}).sort(), ["handle", "schemaId"])
+					for (const effect of [
+						left.toBytes().pipe(Effect.asVoid),
+						Stream.runCollect(left.records()).pipe(Effect.asVoid),
+						left.compose(right).pipe(Effect.asVoid),
+						right.compose(left).pipe(Effect.asVoid),
+						db.apply(left, { expected: { kind: "any" } }).pipe(Effect.asVoid)
+					]) {
+						const outcome = yield* Effect.result(effect)
+						assert.ok(Result.isFailure(outcome))
+						assert.equal(outcome.failure.code, "ClosedHandle")
+					}
+					assert.ok((yield* right.toBytes()).byteLength > 0)
+					const after = yield* (yield* NativeRuntime).inspect()
+					assert.equal(after.natives, before.natives - 1n)
+					assert.equal(after.retained, before.retained)
+				})
+			)
+		)
+	} finally {
+		await rt.dispose()
+	}
+})
 
 test("insert effects are lazy and rerunnable: each run reads the THEN-CURRENT array", async function lazyRerun() {
 	const rt = runtime()

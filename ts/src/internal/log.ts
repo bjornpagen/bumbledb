@@ -12,7 +12,6 @@ export type { PreparedQuery, QueryReader } from "#db.ts"
 export { Db, internalPublishedReader } from "#db.ts"
 export type { SnapshotHandle } from "#db-native.ts"
 export { lower } from "#lower.ts"
-export { internalMigrationRead, internalMigrationSchema } from "#migration.ts"
 export {
 	internalBlake3,
 	internalDescriptor,
@@ -22,11 +21,10 @@ export {
 } from "#native.ts"
 export type { CompleteResult } from "#result.ts"
 export { factCellsOf } from "#rows.ts"
-export type { NativeRuntimeOptions, RepositoryLock } from "#runtime.ts"
+export type { NativeRuntimeOptions } from "#runtime.ts"
 export {
 	finalizeClose,
 	hashChunk,
-	internalAcquireRepositoryLock,
 	NativeRuntime,
 	nativeOperation,
 	nativeOperationWith,
@@ -41,8 +39,8 @@ export type {
 	InspectionWire,
 	NativeKind,
 	OperationHandle,
-	RepositoryLockHandle,
 	RuntimeHandle
 } from "#runtime-native.ts"
 export { runtimeNative } from "#runtime-native.ts"
 export { schemasAgree } from "#schema.ts"
+export { internalSchemaBindings, internalSchemaSnapshot } from "#schema-file.ts"

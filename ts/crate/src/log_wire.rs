@@ -3,7 +3,7 @@
 //! `HostedHistory` over one S3 HEAD), published snapshots wrapping the exact
 //! core reader capability, sealed commands over registered core `ChangeSets`,
 //! the native-backed typed tenant cache, and the one `logAdmin` verb family
-//! (maintenance, retention, backup/restore/erase, migration workflow).
+//! (maintenance, retention, backup/restore/erase, transitions).
 //!
 //! Every operation registers in the ONE runtime registry (owned,
 //! cancellable, drained at shutdown); take-functions throw the typed
@@ -11,7 +11,7 @@
 //! join-idempotent. No protocol transition, CAS loop, lock, TTL or timer
 //! exists on the JS side — this module IS the one implementation boundary.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -49,11 +49,8 @@ use crate::runtime_wire::{
 };
 
 mod admin;
-mod lock;
-pub use lock::{
-    RepositoryLockHandle, log_repository_lock_acquire, log_repository_lock_release,
-    log_repository_lock_take,
-};
+mod transition;
+pub use transition::*;
 
 pub(crate) use admin::{AdminOwned, admin_verb};
 
@@ -83,13 +80,6 @@ pub(crate) const PROTOCOL_CODES: &[&str] = &[
     "SlotBorrowed",
     "Contention",
     "IncompleteRejectionEvidence",
-    "MigrationRequired",
-    "MigrationDrift",
-    "MigrationIntentRequired",
-    "MigrationUnsupported",
-    "MigrationRepository",
-    "DatabaseAhead",
-    "MigrationOutputMismatch",
     "OperationConflict",
     "InsufficientLocalDisk",
     "UnsupportedArtifact",
@@ -123,8 +113,7 @@ pub enum LogFail {
     Core(RuntimeError),
     /// A protocol refusal whose TS reason schema declares only the tag (the
     /// bounded `detail` is diagnostic data for every plain reason, and the
-    /// REQUIRED field of the detail-structured reasons `MaterializationStale`/
-    /// MigrationDrift/MigrationUnsupported).
+    /// required field of detail-structured reasons such as `MaterializationStale`).
     Protocol { code: &'static str, detail: String },
     /// A protocol refusal whose TS `ProtocolReason` schema declares fields
     /// beyond `_tag`/`detail`: the frame renderer carries every declared
@@ -162,32 +151,6 @@ pub enum StructuredReason {
         bytes: u64,
         detail: String,
     },
-    /// `{path: string, detail: string}` — produced by the TS generator lane
-    /// today; the native arm exists so a native emission is well-formed.
-    #[allow(dead_code)] // rostered reason with no native producer yet
-    MigrationRepository { path: String, detail: String },
-    /// `{requirements: [...], truncated: boolean}` — produced by the TS
-    /// generator lane today; the native arm exists so a native emission is
-    /// well-formed.
-    #[allow(dead_code)] // rostered reason with no native producer yet
-    MigrationIntentRequired {
-        requirements: Vec<IntentRequirement>,
-        truncated: bool,
-    },
-}
-
-/// One row of `MigrationIntentRequired.requirements`, spelled exactly as the
-/// TS schema declares it (`field` is `string | null`, never absent).
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // constructed only with MigrationIntentRequired (no native producer yet)
-pub struct IntentRequirement {
-    /// One of the TS literal roster: ambiguous / destructive /
-    /// missing-backfill / type-change / unsupported / stale-intent /
-    /// conflicting-intent.
-    pub(crate) code: &'static str,
-    pub(crate) relation: String,
-    pub(crate) field: Option<String>,
-    pub(crate) detail: String,
 }
 
 impl StructuredReason {
@@ -197,8 +160,6 @@ impl StructuredReason {
             Self::NotYetAvailable { .. } => "NotYetAvailable",
             Self::InsufficientLocalDisk { .. } => "InsufficientLocalDisk",
             Self::MaintenanceRequired { .. } => "MaintenanceRequired",
-            Self::MigrationRepository { .. } => "MigrationRepository",
-            Self::MigrationIntentRequired { .. } => "MigrationIntentRequired",
         }
     }
 
@@ -241,28 +202,6 @@ impl StructuredReason {
                 reason.set("bytes", BigInt::from(*bytes))?;
                 reason.set("detail", detail.as_str())?;
             }
-            Self::MigrationRepository { path, detail } => {
-                reason.set("path", path.as_str())?;
-                reason.set("detail", detail.as_str())?;
-            }
-            Self::MigrationIntentRequired {
-                requirements,
-                truncated,
-            } => {
-                let mut rows = Vec::with_capacity(requirements.len());
-                for requirement in requirements {
-                    let mut row = Object::new(env)?;
-                    row.set("code", requirement.code)?;
-                    row.set("relation", requirement.relation.as_str())?;
-                    // `field` is `string | null` in the TS schema — an
-                    // absent property would refuse; None crosses as null.
-                    row.set("field", requirement.field.clone())?;
-                    row.set("detail", requirement.detail.as_str())?;
-                    rows.push(row);
-                }
-                reason.set("requirements", rows)?;
-                reason.set("truncated", *truncated)?;
-            }
         }
         Ok(reason)
     }
@@ -282,8 +221,6 @@ const FIELD_STRUCTURED_CODES: &[&str] = &[
     "NotYetAvailable",
     "InsufficientLocalDisk",
     "MaintenanceRequired",
-    "MigrationRepository",
-    "MigrationIntentRequired",
 ];
 
 pub(crate) fn protocol(code: &'static str, detail: impl Into<String>) -> LogFail {
@@ -314,14 +251,19 @@ pub(crate) fn fail_of_log(error: LogError) -> LogFail {
             protocol("ReceiptExpiredUnknown", "receipt epoch retired")
         }
         LogError::NotInitialized => protocol("NotInitialized", "open never initializes"),
+        LogError::UnsupportedArtifact => {
+            protocol("UnsupportedArtifact", "retired migration records")
+        }
         LogError::Corruption => protocol("Corruption", "malformed or foreign frame"),
         LogError::Work(error) => LogFail::Core(RuntimeError::Work(error)),
         LogError::Core(error) => LogFail::Core(RuntimeError::Engine {
+            diagnostic: None,
             kind: "command",
             message: format!("{error:?}"),
         }),
         LogError::Storage(error) => LogFail::Core(crate::runtime::session::engine_error(&error)),
         LogError::HostSeal(error) => LogFail::Core(RuntimeError::Engine {
+            diagnostic: None,
             kind: "hostSeal",
             message: format!("{error:?}"),
         }),
@@ -405,6 +347,7 @@ pub(crate) fn fail_of_recovery(error: RecoveryError) -> LogFail {
             LogFail::Core(crate::runtime::session::engine_error(&error))
         }
         RecoveryError::Host(error) => LogFail::Core(RuntimeError::Engine {
+            diagnostic: None,
             kind: "hostSeal",
             message: format!("{error:?}"),
         }),
@@ -578,19 +521,23 @@ pub(crate) fn command_ref_in(obj: &Object, ctx: &str) -> napi::Result<CommandRef
 // canonical hyphenated UUID text.
 // ---------------------------------------------------------------------------
 
-fn fail_of_result(error: ResultError) -> LogFail {
+fn byte_limit(section: &'static str, required: usize, limit: usize) -> LogFail {
+    LogFail::Core(RuntimeError::ResourceLimit {
+        dimension: section,
+        used: 0,
+        requested: u64::try_from(required).expect("supported hosts have at most 64-bit lengths"),
+        limit: u64::try_from(limit).expect("supported hosts have at most 64-bit lengths"),
+    })
+}
+
+fn fail_of_result(error: ResultError, boundary: &'static str) -> LogFail {
     match error {
         ResultError::Work(work) => LogFail::Core(RuntimeError::Work(work)),
-        // Caller-input refusals at encode (the seal boundary).
-        ResultError::NonScalar { .. }
-        | ResultError::InvalidName { .. }
-        | ResultError::DuplicateName { .. }
-        | ResultError::Budget { .. } => protocol("Misuse", format!("declared result: {error:?}")),
-        // Strict-decode refusals over stored/wire bytes.
-        other => protocol(
-            "Corruption",
-            format!("malformed declared-result record: {other:?}"),
-        ),
+        ResultError::Budget { needed, budget } => byte_limit("result", needed, budget),
+        ResultError::Allocation => {
+            LogFail::Core(RuntimeError::Work(bumbledb::WorkError::Allocation))
+        }
+        other => protocol(boundary, format!("declared-result record: {other:?}")),
     }
 }
 
@@ -603,7 +550,8 @@ pub(crate) fn encode_result_record(
         .iter()
         .map(|(name, value)| (name.as_str(), value))
         .collect();
-    encode_result(&borrowed, LIMITS.result_bytes, work).map_err(fail_of_result)
+    encode_result(&borrowed, LIMITS.result_bytes, work)
+        .map_err(|error| fail_of_result(error, "Misuse"))
 }
 
 /// Strict decode through the core codec (tag 8 Uuid included).
@@ -611,7 +559,8 @@ pub(crate) fn decode_result_record(
     bytes: &[u8],
     work: &WorkContext,
 ) -> MachineResult<Vec<(Box<str>, Value)>> {
-    decode_result(bytes, LIMITS.result_bytes, work).map_err(fail_of_result)
+    decode_result(bytes, LIMITS.result_bytes, work)
+        .map_err(|error| fail_of_result(error, "Corruption"))
 }
 
 fn result_record_in(obj: &Object, ctx: &str) -> napi::Result<Vec<(String, Value)>> {
@@ -728,7 +677,7 @@ impl HistoryKind {
         }
     }
 
-    /// Submit under the per-call C09 bounds, returning phase-carrying
+    /// Submit under the per-call C09 bounds, returning evidence-carrying
     /// [`SubmitCertainty`]. Phase is the certainty arm — never inferred
     /// from English error text. Hosted consumes the options and clamps
     /// them to its own attempt/backoff bounds. Local ignores them: one
@@ -1756,15 +1705,21 @@ pub enum MachineOutput {
     CacheReport(CacheReportOwned),
     Evicted(crate::runtime::CloseReport),
     Admin(AdminOwned),
-    RepositoryLock(lock::RepositoryLockOwned),
+    Transition(TransitionOwned),
 }
 
 impl MachineOutput {
     /// Dispatched-mutation evidence (never rewritten into a cancellation).
     pub(crate) fn mutation_evidence(&self) -> bool {
         match self {
-            Self::Submit(SubmitOwned::Decided { .. }) => true,
             Self::Admin(owned) => owned.mutation_evidence(),
+            Self::Submit(SubmitOwned::Decided { .. })
+            | Self::Transition(
+                TransitionOwned::Applied
+                | TransitionOwned::Ready { .. }
+                | TransitionOwned::Activated { .. }
+                | TransitionOwned::Aborted,
+            ) => true,
             _ => false,
         }
     }
@@ -1778,27 +1733,15 @@ pub enum SubmitOwned {
         /// canonical evidence decoded INSIDE the job (where the schema and
         /// the cancellation context live) into owned public rows.
         violations: Option<ViolationsOwned>,
-        phase: PublicationPhase,
     },
     NotSubmitted {
         reference: CommandRef,
         fail: LogFail,
-        phase: PublicationPhase,
     },
     OutcomeUnknown {
         reference: CommandRef,
         fail: LogFail,
-        phase: PublicationPhase,
     },
-}
-
-pub(crate) fn publication_phase_tag(phase: PublicationPhase) -> &'static str {
-    match phase {
-        PublicationPhase::Prepared => "prepared",
-        PublicationPhase::DispatchedUnresolved => "dispatchedUnresolved",
-        PublicationPhase::Confirmed => "confirmed",
-        PublicationPhase::ProvedNonpublication => "provedNonpublication",
-    }
 }
 
 /// A resolve outcome plus the decoded violations of a found rejected
@@ -2277,7 +2220,6 @@ fn run_history_verb(
                 }
                 SubmitCertainty::NotSubmitted { .. } => {}
             }
-            let phase = certainty.publication_phase();
             let owned = match certainty {
                 SubmitCertainty::Decided {
                     receipt,
@@ -2291,25 +2233,21 @@ fn run_history_verb(
                             receipt,
                             health: local_health,
                             violations,
-                            phase,
                         },
                         Err(fail) => SubmitOwned::Decided {
                             receipt,
                             health: local_health_after_decode_failure(&fail),
                             violations: None,
-                            phase,
                         },
                     }
                 }
                 SubmitCertainty::NotSubmitted { command, error } => SubmitOwned::NotSubmitted {
                     reference: command,
                     fail: fail_of_log(error),
-                    phase,
                 },
                 SubmitCertainty::OutcomeUnknown { command, error } => SubmitOwned::OutcomeUnknown {
                     reference: command,
                     fail: fail_of_log(error),
-                    phase,
                 },
             };
             let _ = reference;
@@ -2862,30 +2800,18 @@ pub fn log_history_result(
                     receipt,
                     health,
                     violations,
-                    phase,
                 } => {
                     outcome.set("kind", "decided")?;
-                    outcome.set("publicationPhase", publication_phase_tag(phase))?;
                     outcome.set("receipt", receipt_wire(env, &receipt, violations)?)?;
                     outcome.set("localHealth", health_wire(&env, &health)?)?;
                 }
-                SubmitOwned::NotSubmitted {
-                    reference,
-                    fail,
-                    phase,
-                } => {
+                SubmitOwned::NotSubmitted { reference, fail } => {
                     outcome.set("kind", "not-submitted")?;
-                    outcome.set("publicationPhase", publication_phase_tag(phase))?;
                     outcome.set("ref", command_ref_wire(&env, &reference)?)?;
                     outcome.set("error", frame_object(&env, &fail)?)?;
                 }
-                SubmitOwned::OutcomeUnknown {
-                    reference,
-                    fail,
-                    phase,
-                } => {
+                SubmitOwned::OutcomeUnknown { reference, fail } => {
                     outcome.set("kind", "outcome-unknown")?;
-                    outcome.set("publicationPhase", publication_phase_tag(phase))?;
                     outcome.set("ref", command_ref_wire(&env, &reference)?)?;
                     outcome.set("error", frame_object(&env, &fail)?)?;
                 }
@@ -3114,8 +3040,20 @@ fn fail_of_command(error: bumbledb_log::history::command::CommandError) -> LogFa
         CommandError::SchemaMismatch => {
             protocol("ForeignIdentity", "the change's schema is not the scope's")
         }
-        CommandError::Frame(frame) => protocol("Corruption", format!("{frame:?}")),
+        CommandError::Frame(bumbledb_log::history::FrameError::LimitExceeded {
+            section,
+            required,
+            limit,
+        }) => byte_limit(section, required, limit),
+        CommandError::Frame(bumbledb_log::history::FrameError::Allocation) => {
+            LogFail::Core(RuntimeError::Work(bumbledb::WorkError::Allocation))
+        }
+        // Both callers consume application-supplied commands: seal inputs
+        // or retained bytes passed to parse. Persisted history has its own
+        // corruption boundary in fail_of_log/fail_of_recovery.
+        CommandError::Frame(frame) => protocol("Misuse", format!("command frame: {frame:?}")),
         CommandError::Core(core) => LogFail::Core(RuntimeError::Engine {
+            diagnostic: None,
             kind: "command",
             message: format!("{core:?}"),
         }),
@@ -3160,6 +3098,7 @@ pub fn log_command_decode(
                         Ok(schema) => schema,
                         Err(error) => {
                             return Err(RuntimeError::Engine {
+                                diagnostic: None,
                                 kind: crate::tags::error_family::SCHEMA,
                                 message: error.to_string(),
                             });
@@ -3167,6 +3106,19 @@ pub fn log_command_decode(
                     };
                     match Command::parse(&schema, &owned, LIMITS, context) {
                         Ok(command) => {
+                            // The log retains opaque core scalar bytes. At
+                            // this public input boundary, establish their
+                            // grammar before a command can be submitted.
+                            if let Err(error) = decode_result(
+                                command.result().as_bytes(),
+                                LIMITS.result_bytes,
+                                context,
+                            ) {
+                                return match fail_of_result(error, "Misuse") {
+                                    LogFail::Core(core) => Err(core),
+                                    fail => Ok(fail_output(fail)),
+                                };
+                            }
                             let reference = command.command_ref();
                             Ok(Output::Machine(MachineOutput::Command(CommandOwned {
                                 command: Arc::new(command),
@@ -3287,7 +3239,6 @@ pub(crate) struct CacheShared {
     registry: Mutex<TenantRegistry<Arc<HistoryResource>>>,
     descriptor: SchemaDescriptor,
     attrs: crate::FieldAttrsTable,
-    expected: Option<(SchemaFingerprint, [u8; 32])>,
     max_open: usize,
     evictions: std::sync::atomic::AtomicU64,
     closing: AtomicBool,
@@ -3327,19 +3278,6 @@ pub fn log_cache_make(
     let ctx = "cache make";
     let runtime = runtime_owner(handle).map_err(|error| thrown(env, error))?;
     let max_open = marshal::ordinal(marshal::req::<f64>(&request, "maxOpen", ctx)?, ctx)? as usize;
-    let expected = match optional_object(&request, "expected")? {
-        None => None,
-        Some(expected) => {
-            let schema_id =
-                fingerprint_of_hex(&marshal::req::<String>(&expected, "schemaId", ctx)?)?;
-            let prefix = fingerprint_of_hex(&marshal::req::<String>(
-                &expected,
-                "appliedPrefixDigest",
-                ctx,
-            )?)?;
-            Some((schema_id, prefix.0))
-        }
-    };
     let spec_object: Object = marshal::req(&request, "schema", ctx)?;
     let (descriptor, attrs) = match crate::descriptor_of(&spec_object)? {
         Ok(parsed) => parsed,
@@ -3368,7 +3306,6 @@ pub fn log_cache_make(
                         registry: Mutex::new(TenantRegistry::new(TenantOptions { max_open })),
                         descriptor,
                         attrs,
-                        expected,
                         max_open,
                         evictions: std::sync::atomic::AtomicU64::new(0),
                         closing: AtomicBool::new(false),
@@ -3414,94 +3351,6 @@ fn tenant_binding_of(
     }
 }
 
-/// The applied migration prefix of one opened database, recomputed from its
-/// authoritative chain records — for the cache's `RuntimeExpectation` check.
-fn applied_prefix_of(
-    resource: &HistoryResource,
-    context: &WorkContext,
-) -> MachineResult<Option<[u8; 32]>> {
-    use bumbledb_log::migration::history::{HistoryRecord, decode_record, history_key};
-    use bumbledb_log::migration::manifest::{
-        ManifestEntry, base_prefix_digest, next_prefix_digest,
-    };
-    let lease = resource.managed.access()?;
-    let cap = LIMITS.envelope_bytes;
-    let mut records: Vec<HistoryRecord> = Vec::new();
-    let mut index = 0u64;
-    loop {
-        context.checkpoint().map_err(RuntimeError::from)?;
-        let key = history_key(index);
-        let mut found: Option<Vec<u8>> = None;
-        let mut host_error = None;
-        lease
-            .db()
-            .read(context.clone(), |read| {
-                match read.integration_host_record(&key) {
-                    Ok(record) => found = record.map(<[u8]>::to_vec),
-                    Err(error) => host_error = Some(error),
-                }
-                Ok(())
-            })
-            .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
-        if let Some(error) = host_error {
-            return Err(LogFail::Core(RuntimeError::Engine {
-                kind: "hostSeal",
-                message: format!("{error:?}"),
-            }));
-        }
-        let Some(bytes) = found else { break };
-        let record = decode_record(&bytes, cap)
-            .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
-        records.push(record);
-        index += 1;
-    }
-    if records.is_empty() {
-        return Ok(None);
-    }
-    let mut prefix: Option<[u8; 32]> = None;
-    for record in &records {
-        match record {
-            HistoryRecord::Baseline(baseline) => {
-                prefix = Some(baseline.validated_prefix);
-            }
-            HistoryRecord::Applied(applied) => {
-                let mut current = if let Some(current) = prefix {
-                    current
-                } else {
-                    let base = match &applied.source {
-                        bumbledb_log::migration::history::AppliedSource::EmptyBase {
-                            base_schema,
-                        } => *base_schema,
-                        bumbledb_log::migration::history::AppliedSource::Database { .. } => applied
-                            .steps
-                            .first()
-                            .map(|step| step.from_schema)
-                            .ok_or_else(|| {
-                                protocol("Corruption", "applied record with no steps")
-                            })?,
-                    };
-                    base_prefix_digest(&base, cap)
-                        .map_err(|error| protocol("Corruption", format!("{error:?}")))?
-                };
-                for step in &applied.steps {
-                    let entry = ManifestEntry {
-                        sequence: step.sequence,
-                        label: step.label.clone(),
-                        from_schema: step.from_schema,
-                        to_schema: step.to_schema,
-                        plan_digest: step.plan_digest,
-                        prefix_digest: [0; 32],
-                    };
-                    current = next_prefix_digest(&current, &entry, cap)
-                        .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
-                }
-                prefix = Some(current);
-            }
-        }
-    }
-    Ok(prefix)
-}
-
 #[napi]
 #[allow(clippy::needless_pass_by_value)]
 pub fn log_cache_acquire(
@@ -3544,14 +3393,6 @@ fn acquire_borrow(
 ) -> MachineResult<BorrowOwned> {
     if shared.closing.load(Ordering::Acquire) {
         return Err(LogFail::Core(RuntimeError::ClosedHandle));
-    }
-    if let Some((expected_schema, _)) = &shared.expected
-        && identity.schema_id != *expected_schema
-    {
-        return Err(protocol(
-            "MigrationRequired",
-            "the binding's schema is not the deployment's expected schema",
-        ));
     }
     let binding = tenant_binding_of(identity, backend, directory);
     loop {
@@ -3602,23 +3443,6 @@ fn acquire_borrow(
                 };
                 match open_history(&shared.runtime, &spec, context) {
                     Ok(opened) => {
-                        if let Some((_, expected_prefix)) = &shared.expected {
-                            let applied = applied_prefix_of(&opened.resource, context)?;
-                            let matches = applied.is_some_and(|prefix| prefix == *expected_prefix);
-                            if !matches {
-                                let resource = opened.resource;
-                                {
-                                    let mut registry = shared.lock_registry();
-                                    registry.fail_open(ticket);
-                                }
-                                teardown_resource(&resource);
-                                return Err(protocol(
-                                    "MigrationRequired",
-                                    "the database's applied migration prefix is not the \
-                                     deployment's expected prefix",
-                                ));
-                            }
-                        }
                         let epoch = opened.receipt_epoch;
                         let resource = opened.resource;
                         let mut registry = shared.lock_registry();
@@ -4043,27 +3867,6 @@ pub fn log_admin_take(env: Env, handle: &External<OperationHandle>) -> napi::Res
 /// diagnostic, never a budget) saturates instead of truncating.
 fn saturating_u32(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
-}
-
-/// The stable target-namespace root for migration targets under one tenant
-/// directory (the executor's `targets_root`).
-pub(crate) fn targets_root(directory: &str) -> PathBuf {
-    Path::new(directory).join("targets")
-}
-
-/// The deterministic planned target incarnation for one migration
-/// operation: a stable ref exists BEFORE dispatch and a retry of the same
-/// operation resumes the same target. The domain is part of the persisted
-/// migration identity contract.
-pub(crate) fn planned_target_incarnation(operation: OperationId) -> IncarnationId {
-    // Domain-prefixed engine hash; the addon carries no second implementation.
-    let mut digest = bumbledb::digest::Digest::new();
-    digest.update(b"bumbledb.migration.v1/target-incarnation\0");
-    digest.update(operation.as_core().as_bytes());
-    let word = digest.finalize();
-    let mut bytes = [0u8; 16];
-    bytes.copy_from_slice(&word[..16]);
-    IncarnationId::from_core(Uuid::from_bytes(bytes))
 }
 
 #[cfg(test)]

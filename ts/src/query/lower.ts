@@ -13,6 +13,7 @@ import {
 	u64 as u64Field
 } from "#fields.ts"
 import { snapshotData } from "#immutable.ts"
+import type { Same } from "#judgment.ts"
 import type { ClassRecordOf, SchemaClasses } from "#law.ts"
 import type {
 	AtomIr,
@@ -102,6 +103,25 @@ type RowOf<T> = InferredOf<T> extends { readonly row: infer R } ? R : never
 type HeadShape = Readonly<Record<string, ClassedField>> | undefined
 
 type HeadOf<T> = InferredOf<T> extends { readonly head: infer H extends HeadShape } ? H : HeadShape
+
+type HeadFieldMeet<A extends AnyField, B extends AnyField> = A extends IntervalField
+	? B extends IntervalField
+		? IntervalField<A["element"], Same<A["width"], B["width"]> extends true ? A["width"] : undefined>
+		: A
+	: A
+
+/** The common refinements of the same output column across union arms. */
+type HeadMeet<A extends HeadShape, B extends HeadShape> =
+	A extends Readonly<Record<string, ClassedField>>
+		? B extends Readonly<Record<string, ClassedField>>
+			? {
+					readonly [K in keyof A & keyof B]: {
+						readonly field: HeadFieldMeet<A[K]["field"], B[K]["field"]>
+						readonly class: Same<A[K]["class"], B[K]["class"]> extends true ? A[K]["class"] : undefined
+					}
+				}
+			: HeadShape
+		: HeadShape
 
 interface RuleValue<Row, P extends ParamsRecord, Head extends HeadShape = undefined> {
 	readonly rule: RuleData
@@ -412,7 +432,7 @@ interface Query<
 
 	rule<RV extends AnyRuleValue>(
 		build: (r: QueryRuleScope<Rels, Classes>) => RV
-	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes, Head | HeadOf<RV>>
+	): Query<Rels, Row | RowOf<RV>, Flatten<Params & ParamsOf<RV>>, Classes, HeadMeet<Head, HeadOf<RV>>>
 
 	/** A diagnostic name for composition/tracing — never a schema relation. */
 	named(label: string): Query<Rels, Row, Params, Classes, Head>
@@ -1542,20 +1562,8 @@ function renderClosedSlice(closed: AnyClosedRoster | undefined): string {
 	return closed === undefined ? "a bare value" : `a ${closed.name} reference`
 }
 
-function headSignature(column: FindColumn): string {
-	const entry = column.entry
-	if (entry.kind === "segments") return `${column.name}:compute`
-	if (entry.kind === "var") {
-		return `${column.name}:var`
-	}
-	if (entry.kind === "compute") {
-		return `${column.name}:compute`
-	}
-	const agg = entry.agg
-	if (agg.op === "fold") {
-		return `${column.name}:${agg.fold}`
-	}
-	return `${column.name}:${agg.op}`
+function headOperation(column: FindColumn): HeadOpIr | undefined {
+	return column.entry.kind === "aggregate" ? headOpOf(column.entry.agg) : undefined
 }
 
 function renderParamAnchor(roster: AnyClosedRoster | undefined): string {
@@ -1692,12 +1700,22 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 	if (first === undefined) {
 		throw new AuthoringError({ message: `${label} needs at least one rule` })
 	}
-	const signature = first.finds.map(headSignature).join(", ")
+	// Bare u64 admits either carrier, but does not make two different
+	// carriers compatible. Retain one original classed slot per column;
+	// checking only the first arm (or its weakened meet) loses that proof.
+	const classed = new Map<number, { readonly slot: ClassedField; readonly rule: number }>()
 	rules.forEach(function verifyHead(rule, index) {
-		const candidate = rule.finds.map(headSignature).join(", ")
-		if (candidate !== signature) {
+		if (
+			rule.finds.length !== first.finds.length ||
+			rule.finds.some((column, position) => {
+				const lead = first.finds[position]
+				return lead === undefined || lead.name !== column.name || headOperation(lead) !== headOperation(column)
+			})
+		) {
+			const render = (columns: readonly FindColumn[]) =>
+				columns.map((column) => `${column.name}:${headOperation(column) ?? "project"}`).join(", ")
 			throw new AuthoringError({
-				message: `every rule of ${label} derives the same head — rule 0 finds (${signature}), rule ${index} finds (${candidate})`
+				message: `every rule of ${label} derives the same head — rule 0 finds (${render(first.finds)}), rule ${index} finds (${render(rule.finds)})`
 			})
 		}
 		rule.finds.forEach(function verifyClosedSlice(column, position) {
@@ -1710,30 +1728,44 @@ function alignedHeadOf(label: string, rules: readonly RuleData[]): readonly Find
 			if (lead === undefined) {
 				return
 			}
-			if (lead.slot !== undefined && column.slot !== undefined && !headFieldJoins(lead.slot, column.slot)) {
+			const prior = classed.get(position) ?? (lead.slot === undefined ? undefined : { slot: lead.slot, rule: 0 })
+			if (prior !== undefined && column.slot !== undefined && !headFieldJoins(prior.slot, column.slot)) {
 				throw new AuthoringError({
-					message: `every rule of ${label} derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(lead.slot)} in rule 0 but at ${renderFieldKind(column.slot)} in rule ${index} (a head column joins class-equal slots; same-wire u64 admits a bare side, and the merged head is bare)`
+					message: `every rule of ${label} derives the same head — the head column ${lead.name} is bound at ${renderFieldKind(prior.slot)} in rule ${prior.rule} but at ${renderFieldKind(column.slot)} in rule ${index} (a head column joins class-equal slots; same-wire u64 admits a bare side, and the merged head is bare)`
 				})
+			}
+			if (column.slot?.class !== undefined && !classed.has(position)) {
+				classed.set(position, { slot: column.slot, rule: index })
 			}
 		})
 	})
 	const merged = first.finds.map(function meetColumn(lead, position) {
 		const slot = lead.slot
-		if (slot === undefined || slot.class === undefined) {
+		if (slot === undefined) {
 			return lead
 		}
 		const demoted = rules.some(function bareElsewhere(rule) {
 			const column = rule.finds[position]
 			return column !== undefined && column.slot !== undefined && column.slot.class !== slot.class
 		})
-		if (!demoted) {
+		const field = slot.field
+		const widened =
+			field.kind === "interval" &&
+			rules.some((rule) => {
+				const other = rule.finds[position]?.slot?.field
+				return other?.kind === "interval" && other.width !== field.width
+			})
+		if (!demoted && !widened) {
 			return lead
 		}
 		return Object.freeze({
 			name: lead.name,
 			entry: lead.entry,
 			closed: lead.closed,
-			slot: Object.freeze({ field: slot.field, class: undefined })
+			slot: Object.freeze({
+				field: widened ? Object.freeze({ ...field, width: undefined }) : field,
+				class: demoted ? undefined : slot.class
+			})
 		})
 	})
 	return Object.freeze(merged)
@@ -2211,7 +2243,6 @@ function lowerComputeNode(node: QueryNode, ids: VarIds): ScalarExprIr {
 
 function lowerComputeGrammar(node: QueryNode, ids: VarIds): ScalarExprIr {
 	return scalarWire(node, (leaf) => {
-		if (leaf.kind !== "var") throw new AuthoringError({ message: "query expressions require bound variables" })
 		return ids.of(leaf.ref as AnyVar)
 	})
 }

@@ -21,5 +21,5 @@
 		"plugins": [{ "name": "next" }]
 	},
 	"include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
-	"exclude": ["node_modules", ".next", "bumbledb/migrations/index.ts"]
+	"exclude": ["node_modules", ".next"]
 }

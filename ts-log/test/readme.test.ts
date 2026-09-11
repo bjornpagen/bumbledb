@@ -29,6 +29,12 @@ test("every ts fence in README.md type-checks against src at HEAD", function rea
 	// paths mapping (a package does not resolve itself through node_modules).
 	const projectDir = fs.mkdtempSync(path.join(packageRoot, "test", "readme-fences-"))
 	try {
+		for (const name of ["source", "target"]) {
+			fs.copyFileSync(
+				path.join(packageRoot, "test", "fixtures", "transition", `${name}.ts`),
+				path.join(projectDir, `${name}.ts`)
+			)
+		}
 		const files = fences.map(function writeFence(body, index) {
 			const file = path.join(projectDir, `fence-${index}.ts`)
 			fs.writeFileSync(file, body)
@@ -40,8 +46,7 @@ test("every ts fence in README.md type-checks against src at HEAD", function rea
 			compilerOptions: {
 				paths: {
 					"@bjornpagen/bumbledb-log": [path.join(packageRoot, "src", "index.ts")],
-					"@bjornpagen/bumbledb-log/schema": [path.join(packageRoot, "src", "schema.ts")],
-					"@bjornpagen/bumbledb-log/migrations": [path.join(packageRoot, "src", "migrations", "index.ts")]
+					"@bjornpagen/bumbledb-log/schema": [path.join(packageRoot, "src", "schema.ts")]
 				},
 				typeRoots: [path.join(packageRoot, "node_modules", "@types")]
 			},

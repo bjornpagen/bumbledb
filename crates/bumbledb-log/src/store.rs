@@ -27,10 +27,7 @@ pub mod receive;
 #[cfg(feature = "store")]
 pub mod s3;
 
-pub use fence::{
-    DirectoryLock, HeldLock, LockIdentity, RepositoryLock, acquire_directory,
-    acquire_repository_lock,
-};
+pub use fence::{DirectoryLock, HeldLock, LockIdentity, acquire_directory};
 pub use receive::{
     ObservedError, RECEIVE_CHUNK_BYTES, ReceiveAccumulator, ReceiveFault, ReceiveLimits,
     ReceivedBody, ReceivedHead, ReceivingStore, TransportContext, TransportObservation,

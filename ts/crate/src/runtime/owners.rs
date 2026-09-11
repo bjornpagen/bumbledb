@@ -17,7 +17,11 @@ use super::{
 pub enum ManagedDbOutcome {
     Opened(ManagedDb),
     Rejected(Vec<crate::marshal::ViolationWire>),
-    Refused { kind: &'static str, message: String },
+    Refused {
+        kind: &'static str,
+        message: String,
+        diagnostic: Option<Box<super::SchemaDiagnostic>>,
+    },
 }
 
 pub(super) struct DatabaseEntry {

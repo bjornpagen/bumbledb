@@ -32,11 +32,18 @@ const Io = Schema.Struct({
 	kind: Schema.String,
 	osCode: Schema.optional(Schema.Number)
 })
-/** A typed engine refusal crossing the executor: core family tag + message. */
+const StatementDiagnostic = Schema.Struct({ id: Schema.Number, descriptor: Schema.String })
+const SchemaDiagnostic = Schema.Struct({
+	statement: StatementDiagnostic,
+	conflict: Schema.optional(StatementDiagnostic)
+})
+
+/** A typed engine refusal, including native statement coordinates when known. */
 const Engine = Schema.Struct({
 	_tag: Schema.Literal("Engine"),
 	kind: Schema.String,
-	message: Schema.String
+	message: Schema.String,
+	diagnostic: Schema.optional(SchemaDiagnostic)
 })
 export const DbReason = Schema.Union([ResourceLimit, Io, Engine, InvalidArgument, PlainReason])
 export class DbError extends Schema.TaggedError<DbError>()("DbError", {
@@ -68,7 +75,13 @@ export function dbError(operation: string, cause: unknown): DbError {
 		"message" in cause &&
 		typeof cause.message === "string"
 	) {
-		return new DbError({ operation, reason: { _tag: "Engine", kind: cause.kind, message: cause.message } })
+		const reason = decodeReason({
+			_tag: "Engine",
+			kind: cause.kind,
+			message: cause.message,
+			diagnostic: "diagnostic" in cause ? cause.diagnostic : undefined
+		})
+		if (reason._tag === "Some") return new DbError({ operation, reason: reason.value })
 	}
 	return new DbError({ operation, reason: { _tag: "Internal" } })
 }

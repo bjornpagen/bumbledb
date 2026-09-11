@@ -383,7 +383,11 @@ impl HeadRecord {
             return Err(HeadError::RootCapacityExceeded);
         }
         if root.label.len() > policy.max_label_bytes {
-            return Err(HeadError::Frame(FrameError::LimitExceeded));
+            return Err(HeadError::Frame(FrameError::LimitExceeded {
+                section: "root label",
+                required: root.label.len(),
+                limit: policy.max_label_bytes,
+            }));
         }
         if self.roots.iter().any(|held| held.id == root.id) {
             return Err(HeadError::DuplicateRoot);
@@ -457,7 +461,11 @@ pub(crate) mod wire {
 
     pub(crate) fn check_limit(length: usize, cap: usize) -> Result<(), FrameError> {
         if length > cap {
-            Err(FrameError::LimitExceeded)
+            Err(FrameError::LimitExceeded {
+                section: "envelope",
+                required: length,
+                limit: cap,
+            })
         } else {
             Ok(())
         }

@@ -737,7 +737,8 @@ changes the calculation. See the [executable TypeScript recipe](../ts/COOKBOOK.m
 checks its 64-bit result after rounding. `Rounding` has `TowardZero`,
 `NearestTiesAwayFromZero`, and `NearestTiesToEven`. A positive divisor and matching
 integer kinds are required. Existing checked multiplication still rejects its own
-intermediate overflow. The same expression runs in queries and migrations.
+intermediate overflow. Queries use this native arithmetic directly; application transformations use
+ordinary imperative code and can query these expressions.
 
 ## 18. Free time and coalescing
 
@@ -1241,8 +1242,10 @@ Migration is extract, transform, load:
 (one generation — the export is a consistent instant), the host transforms,
 and `insert_dyn` inside `write` imports into a store created under the new theory. The
 engine owns both ends. This recipe demonstrates a host-authored transform;
-the TypeScript log layer also supplies generated migration plans and a
-local-history runner. Migration orchestration belongs above the core.
+the TypeScript log layer emits independent old/new schema bindings and
+provides native capture, population, final judgment, and settlement. The
+application writes an ordinary typechecked transformation using those bindings,
+query readers, and change batches. See the [Log cookbook](../ts-log/README.md#generated-bindings-handwritten-migrations).
 
 Three laws make the loop honest. **Load containment targets first** — every
 `write` commits through the ordinary final-state judgment, so a `Salary` fact

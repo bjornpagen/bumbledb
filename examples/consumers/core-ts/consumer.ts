@@ -2,7 +2,7 @@
  * Packed core-TypeScript consumer (D07/D22/D27): the shared `Learning`
  * schema, reusable typed queries, one scoped ChangeSet, the shared
  * QueryReader helper, direct local admission, a witnessed correction,
- * field-arithmetic backfill metadata, scoped collect/pages, and joined
+ * computed query heads, scoped collect/pages, and joined
  * close. Importing this module performs no native work.
  *
  */
@@ -30,7 +30,6 @@ import {
 	type QueryReader,
 	ref,
 	relation,
-	Scalar,
 	schema,
 	str,
 	u64,
@@ -62,10 +61,6 @@ export const Learning = schema("Learning", { Student, Attempt }, [
 		within: within(0n, ref("budget"))
 	})
 ])
-
-/** D27: unresolved field arithmetic authors synchronously. No native load. */
-export const incrementUnits = Scalar.add(Scalar.field("units"), Scalar.u64(1n))
-export const incrementUnitsAsF64 = Scalar.toF64(Scalar.add(Scalar.field("units"), Scalar.u64(1n)))
 
 export const attemptsFor = query(Learning).rule((r) => {
 	const { id, student, score, units, active } = v(Attempt)

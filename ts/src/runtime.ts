@@ -1,7 +1,7 @@
 import { Context, Duration, Effect, Exit, Layer } from "effect"
 import type { CloseReport, OutstandingWork } from "#runtime-errors.ts"
 import { CloseFailure, DbError, dbError } from "#runtime-errors.ts"
-import type { CloseWire, OperationHandle, OptionsWire, RepositoryLockHandle, RuntimeHandle } from "#runtime-native.ts"
+import type { CloseWire, OperationHandle, OptionsWire, RuntimeHandle } from "#runtime-native.ts"
 import { runtimeNative } from "#runtime-native.ts"
 
 export interface NativeRuntimeOptions {
@@ -281,75 +281,6 @@ export const runtimeHandle = Effect.fn("NativeRuntime.handle")(function* () {
 	const handle = owners.get(runtime)
 	if (handle === undefined) return yield* Effect.fail(invalid("NativeRuntime.handle"))
 	return handle
-})
-
-/**
- * Opaque kernel fence (C8). Backed by L14 `log_repository_lock_*` and
- * L12 `mint_repository_lock` (`NativeKind::RepositoryLock`). Native
- * exclusion is the owner — there is no JS occupancy table. `release`
- * is the one close: it joins `logRepositoryLockRelease` then clears
- * `slot.owner` so the Scope finalizer is a no-op. Callers join host
- * I/O first (`joinPendingIo.pipe(Effect.andThen(lock.release))`).
- */
-export interface RepositoryLock {
-	readonly directory: string
-	readonly release: Effect.Effect<void>
-}
-
-function joinLockRelease(operation: string, owner: RepositoryLockHandle): Effect.Effect<void> {
-	return drain(operation, (callback) => runtimeNative.logRepositoryLockRelease(owner, callback)).pipe(
-		Effect.flatMap((report) => finalizeClose(operation, report))
-	)
-}
-
-/**
- * Internal log seam: stamped mint only. Cleanup is registered before
- * the interruptible acquire: `acquireRelease({ interruptible })`
- * installs the finalizer only after acquire succeeds. Interrupt, defect,
- * and acquire failure all run the same slot finalizer — empty slot is
- * a no-op. No `runtimeDirectoryAcquire`, no core `Db`, no JS bookkeeping.
- */
-export const internalAcquireRepositoryLock = Effect.fn("internalAcquireRepositoryLock")(function* (
-	operation: string,
-	directory: string
-) {
-	if (directory.length === 0) {
-		return yield* Effect.fail(invalid(operation))
-	}
-	const runtime = yield* runtimeHandle()
-	const closeOp = `${operation}.repositoryLock`
-	return yield* Effect.uninterruptibleMask((restore) =>
-		Effect.gen(function* () {
-			const slot: { owner: RepositoryLockHandle | undefined } = { owner: undefined }
-			const release = Effect.suspend(() => {
-				const held = slot.owner
-				if (held === undefined) {
-					return Effect.void
-				}
-				return joinLockRelease(closeOp, held).pipe(
-					Effect.ensuring(
-						Effect.sync(() => {
-							slot.owner = undefined
-						})
-					)
-				)
-			})
-			yield* Effect.addFinalizer(() => release)
-			const owner = yield* restore(
-				nativeOperationWith(
-					operation,
-					(callback) => runtimeNative.logRepositoryLockAcquire(runtime, directory, callback),
-					runtimeNative.logRepositoryLockTake,
-					(value) => value
-				)
-			)
-			slot.owner = owner
-			return Object.freeze({
-				directory,
-				release
-			})
-		})
-	)
 })
 
 /** Internal first executor consumer; not a replacement row codec or public hash API. */

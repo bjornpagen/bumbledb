@@ -95,6 +95,7 @@ pub const ERROR_CODES: &[&str] = &[
     "RuntimeAlreadyLive",
     "ForeignRuntime",
     "ClosedHandle",
+    "HandleBusy",
     "SpentHandle",
     "QueueFull",
     "InvalidArgument",
@@ -113,6 +114,7 @@ fn error_code(error: &RuntimeError) -> &'static str {
         RuntimeError::RuntimeAlreadyLive => "RuntimeAlreadyLive",
         RuntimeError::ForeignRuntime => "ForeignRuntime",
         RuntimeError::ClosedHandle => "ClosedHandle",
+        RuntimeError::HandleBusy => "HandleBusy",
         RuntimeError::SpentHandle => "SpentHandle",
         RuntimeError::QueueFull => "QueueFull",
         RuntimeError::InvalidArgument => "InvalidArgument",
@@ -127,6 +129,28 @@ fn error_code(error: &RuntimeError) -> &'static str {
     }
 }
 
+fn write_schema_diagnostic(
+    env: Env,
+    object: &mut Object<'_>,
+    diagnostic: Option<Box<crate::runtime::SchemaDiagnostic>>,
+) -> napi::Result<()> {
+    if let Some(diagnostic) = diagnostic {
+        let mut details = Object::new(&env)?;
+        let render = |statement: crate::runtime::StatementDiagnostic| -> napi::Result<Object<'_>> {
+            let mut value = Object::new(&env)?;
+            value.set("id", u32::from(statement.id))?;
+            value.set("descriptor", statement.descriptor)?;
+            Ok(value)
+        };
+        details.set("statement", render(diagnostic.statement)?)?;
+        if let Some(conflict) = diagnostic.conflict {
+            details.set("conflict", render(conflict)?)?;
+        }
+        object.set("diagnostic", details)?;
+    }
+    Ok(())
+}
+
 /// The typed reason object a core failure crosses as (`{_tag, ...}` — the
 /// `DbReason` roster in ts/src/runtime-errors.ts). Shared with the log wire,
 /// which nests the same object inside its `{source, reason}` frame.
@@ -138,10 +162,16 @@ pub(crate) fn reason_object(env: &Env, error: RuntimeError) -> napi::Result<Obje
             object.set("kind", format!("{kind:?}"))?;
             object.set("osCode", code)?;
         }
-        RuntimeError::Engine { kind, message } => {
+        RuntimeError::Engine {
+            kind,
+            message,
+            diagnostic,
+        } => {
             object.set("kind", kind)?;
             object.set("message", message)?;
+            write_schema_diagnostic(*env, &mut object, diagnostic)?;
         }
+
         RuntimeError::ResourceLimit {
             dimension,
             used,
@@ -656,12 +686,14 @@ pub fn runtime_directory_db_open(
                     Ok(parsed) => parsed,
                     Err(crate::OpenOutcome::SchemaError(message)) => {
                         return Ok(Output::Db(ManagedDbOutcome::Refused {
+                            diagnostic: None,
                             kind: crate::tags::open_kind::SCHEMA_ERROR,
                             message,
                         }));
                     }
                     Err(crate::OpenOutcome::NewtypeMismatch(message)) => {
                         return Ok(Output::Db(ManagedDbOutcome::Refused {
+                            diagnostic: None,
                             kind: crate::tags::open_kind::NEWTYPE_MISMATCH,
                             message,
                         }));
@@ -689,13 +721,23 @@ pub fn runtime_directory_db_open(
                         Ok(Output::Db(ManagedDbOutcome::Opened(managed)))
                     }
                     Err(bumbledb::Error::Schema(error)) => {
+                        let RuntimeError::Engine {
+                            message,
+                            diagnostic,
+                            ..
+                        } = crate::db_wire::schema_error(&error, &descriptor)
+                        else {
+                            unreachable!("schema errors use the engine reason")
+                        };
                         Ok(Output::Db(ManagedDbOutcome::Refused {
                             kind: crate::tags::open_kind::SCHEMA_ERROR,
-                            message: error.to_string(),
+                            message,
+                            diagnostic,
                         }))
                     }
                     Err(error @ bumbledb::Error::SchemaMismatch { .. }) => {
                         Ok(Output::Db(ManagedDbOutcome::Refused {
+                            diagnostic: None,
                             kind: crate::tags::open_kind::FINGERPRINT_MISMATCH,
                             message: crate::marshal::engine_message(&error),
                         }))
@@ -704,6 +746,7 @@ pub fn runtime_directory_db_open(
                     // (chapter 30), never a generic Io failure.
                     Err(error @ bumbledb::Error::DestinationExists { .. }) => {
                         Ok(Output::Db(ManagedDbOutcome::Refused {
+                            diagnostic: None,
                             kind: crate::tags::open_kind::DESTINATION_EXISTS,
                             message: crate::marshal::engine_message(&error),
                         }))
@@ -734,10 +777,15 @@ pub fn runtime_db_take(env: Env, handle: &External<OperationHandle>) -> napi::Re
             object.set("tag", "rejected")?;
             object.set("violations", violations)?;
         }
-        Output::Db(ManagedDbOutcome::Refused { kind, message }) => {
+        Output::Db(ManagedDbOutcome::Refused {
+            kind,
+            message,
+            diagnostic,
+        }) => {
             object.set("tag", "refused")?;
             object.set("kind", kind)?;
             object.set("message", message)?;
+            write_schema_diagnostic(env, &mut object, diagnostic)?;
         }
         _ => return Err(thrown(env, RuntimeError::InvalidArgument)),
     }

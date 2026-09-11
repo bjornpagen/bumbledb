@@ -130,17 +130,14 @@ export type HealthWire =
 	| { readonly kind: "ready"; readonly at: StampWire }
 	| { readonly kind: "unavailable"; readonly error: ErrorWire }
 
-export type PublicationPhaseWire = "prepared" | "dispatchedUnresolved" | "confirmed" | "provedNonpublication"
-
 export type SubmitWire =
 	| {
 			readonly kind: "decided"
 			readonly receipt: ReceiptWire
 			readonly localHealth: HealthWire
-			readonly publicationPhase: PublicationPhaseWire
 	  }
-	| { readonly kind: "not-submitted"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
-	| { readonly kind: "outcome-unknown"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
+	| { readonly kind: "not-submitted"; readonly error: ErrorWire }
+	| { readonly kind: "outcome-unknown"; readonly error: ErrorWire }
 
 export type ResolveWire =
 	| { readonly kind: "found"; readonly receipt: ReceiptWire }
@@ -225,7 +222,6 @@ export interface CommandWire {
 
 export interface CacheMakeWire {
 	readonly maxOpen: number
-	readonly expected: { readonly schemaId: string; readonly appliedPrefixDigest: string } | null
 	/** The lowered core `SchemaSpec` shared by every slot of this cache. */
 	readonly schema: unknown
 }
@@ -240,48 +236,6 @@ export interface CacheInspectionWire {
 		readonly state: "opening" | "ready" | "closing" | "faulted"
 		readonly borrows: number
 	}[]
-}
-
-export interface ManifestEntryWire {
-	readonly sequence: string
-	readonly id: string
-	readonly fromSchemaId: string
-	readonly toSchemaId: string
-	readonly planDigest: string
-	readonly prefixDigest: string
-}
-
-export interface PlansWire {
-	readonly manifestVersion: number
-	readonly planVersion: number
-	readonly baseSchemaId: string
-	readonly basePrefixDigest: string
-	readonly entries: readonly ManifestEntryWire[]
-	/** Canonical inert plan JSON bodies, order-matched with `entries`. */
-	readonly plans: readonly string[]
-	/**
-	 * Canonical schema snapshots (the native `schema_file::render` texts the
-	 * generator wrote to `meta/`): the BASE schema first, then each entry's
-	 * TARGET schema — exactly `entries.length + 1` rows, order-matched.
-	 * Required by the verbs that must compile migration steps
-	 * (migration-initialize/migration-migrate: digests alone cannot
-	 * reconstruct descriptors); absent ⇒ a typed native not-started refusal.
-	 */
-	readonly snapshots: readonly string[]
-}
-
-export interface ActivationRefWire {
-	readonly operationId: string
-	readonly planSetDigest: string
-	readonly target: IdentityWire
-	readonly targetGenesis: string
-}
-
-export interface MigrationRefWire {
-	readonly identity: IdentityWire
-	readonly operationId: string
-	readonly planSetDigest: string
-	readonly target: IdentityWire
 }
 
 /**
@@ -358,43 +312,6 @@ export type AdminRequestWire =
 			readonly operationId: string
 			readonly retainRoots: readonly string[]
 	  }
-	| {
-			readonly verb: "migration-status"
-			readonly binding: BindingWire
-			readonly schema?: unknown
-			readonly plans: PlansWire
-	  }
-	| {
-			readonly verb: "migration-initialize"
-			readonly binding: BindingWire
-			readonly schema?: unknown
-			readonly operationId: string
-			readonly plans: PlansWire
-	  }
-	| {
-			readonly verb: "migration-migrate"
-			readonly binding: BindingWire
-			readonly schema?: unknown
-			readonly operationId: string
-			readonly plans: PlansWire
-			readonly to: string | null
-	  }
-	| {
-			readonly verb: "migration-activate"
-			readonly ref: ActivationRefWire
-			/** The SOURCE binding: locates the stable `<dir>/targets` namespace. */
-			readonly binding?: BindingWire
-			/** The lowered core SchemaSpec of the TARGET. */
-			readonly schema?: unknown
-	  }
-	| {
-			readonly verb: "migration-abort"
-			readonly ref: MigrationRefWire
-			/** The SOURCE binding: locates the stable `<dir>/targets` namespace. */
-			readonly binding?: BindingWire
-			/** The lowered core SchemaSpec of the TARGET. */
-			readonly schema?: unknown
-	  }
 
 export type AdminValueWire =
 	| { readonly verb: "checkpoint"; readonly at: StampWire; readonly state: StateWire; readonly root: string }
@@ -436,71 +353,78 @@ export type AdminValueWire =
 			readonly retainedRoots: readonly string[]
 			readonly residual: readonly { readonly kind: string; readonly location: string }[]
 	  }
-	| { readonly verb: "migration-status"; readonly status: MigrationStatusWire }
-	| { readonly verb: "migration-initialize"; readonly binding: BindingWire; readonly genesis: string }
-	| { readonly verb: "migration-migrate"; readonly value: MigrateValueWire }
-	| {
-			readonly verb: "migration-activate"
-			readonly target: IdentityWire
-			readonly accessMode: "active" | "frozen" | "deleted"
-			readonly operationId: string
-			readonly activatedNow: boolean
-	  }
-	| {
-			readonly verb: "migration-abort"
-			readonly target: IdentityWire
-			readonly targetFenced: boolean
-			readonly sourceAccess: "active" | "frozen" | "deleted"
-	  }
-
-export type SourceAccessWire = {
-	readonly access: "active" | "frozen" | "deleted"
-	readonly operationId: string | null
-}
-
-export type MigrateValueWire =
-	| { readonly kind: "up-to-date"; readonly binding: BindingWire }
-	| {
-			readonly kind: "ready-to-switch"
-			readonly deploymentBinding: BindingWire
-			readonly activation: ActivationRefWire
-	  }
-	| { readonly kind: "paused"; readonly error: ErrorWire; readonly sourceState: SourceAccessWire }
-
-export type MigrationStatusWire =
-	| { readonly kind: "up-to-date"; readonly appliedPrefixDigest: string }
-	| { readonly kind: "pending"; readonly pending: readonly string[] }
-	| { readonly kind: "in-progress"; readonly operationRef: MigrationRefWire }
-	| {
-			readonly kind: "paused"
-			readonly operationRef: MigrationRefWire
-			readonly error: ErrorWire
-			readonly sourceState: SourceAccessWire
-	  }
-	| {
-			readonly kind: "ready-to-switch"
-			readonly operationRef: MigrationRefWire
-			readonly activation: ActivationRefWire
-	  }
-	| { readonly kind: "activated"; readonly operationRef: MigrationRefWire; readonly target: IdentityWire }
-	| { readonly kind: "aborted"; readonly operationRef: MigrationRefWire }
-	| { readonly kind: "outcome-unknown"; readonly operationRef: MigrationRefWire; readonly error: ErrorWire }
-	| { readonly kind: "drift"; readonly detail: string }
-	| { readonly kind: "database-ahead"; readonly detail: string }
 
 export type AdminResultWire =
-	| { readonly certainty: "completed"; readonly value: AdminValueWire; readonly publicationPhase: PublicationPhaseWire }
-	| { readonly certainty: "not-started"; readonly error: ErrorWire; readonly publicationPhase: PublicationPhaseWire }
+	| { readonly certainty: "completed"; readonly value: AdminValueWire }
+	| { readonly certainty: "not-started"; readonly error: ErrorWire }
 	| {
 			readonly certainty: "outcome-unknown"
 			readonly error: ErrorWire
-			readonly publicationPhase: PublicationPhaseWire
 	  }
 	| { readonly certainty: "report"; readonly value: AdminValueWire }
+
+export interface PopulationHandle {
+	readonly __population: unique symbol
+}
+export interface TransitionContractWire {
+	readonly operationId: string
+	readonly source: IdentityWire
+	readonly target: IdentityWire
+	readonly commitment: string
+}
+export interface TransitionCaptureWire {
+	readonly contract: TransitionContractWire
+	readonly decision: StampWire
+	readonly state: StateWire
+}
+export interface InstalledTransitionWire {
+	readonly captured: TransitionCaptureWire
+	readonly applicationDigest: string
+	readonly bytes: Uint8Array
+}
+export interface TransitionSnapshotWire {
+	readonly snapshot: SnapshotHandle
+	readonly provenance: ProvenanceWire
+}
+export type TransitionRequestWire =
+	| {
+			readonly verb: "begin" | "resolve" | "abort"
+			readonly contract: TransitionContractWire
+			readonly schema: unknown
+	  }
+	| { readonly verb: "activate"; readonly evidence: Uint8Array; readonly schema: unknown }
+	| { readonly verb: "inspect"; readonly evidence: Uint8Array }
+export type TransitionResultWire =
+	| {
+			readonly kind: "populating"
+			readonly population: PopulationHandle
+			readonly captured: TransitionCaptureWire
+			readonly source: TransitionSnapshotWire
+			readonly directory: string
+	  }
+	| {
+			readonly kind: "ready"
+			readonly installed: InstalledTransitionWire
+			readonly source?: TransitionSnapshotWire
+			readonly directory: string
+	  }
+	| {
+			readonly kind: "activated"
+			readonly contract: TransitionContractWire
+			readonly genesis: string
+			readonly directory: string
+	  }
+	| { readonly kind: "uninstalled" | "aborted" | "applied" }
 
 // ── The verb roster ────────────────────────────────────────────────────────
 
 export interface LogNative {
+	logTransitionCall(history: HistoryCapability, request: TransitionRequestWire, callback: () => void): OperationHandle
+	logTransitionResult(operation: OperationHandle): TransitionResultWire
+	logPopulationApply(population: PopulationHandle, changes: unknown, callback: () => void): OperationHandle
+	logPopulationFinish(population: PopulationHandle, callback: () => void): OperationHandle
+	logPopulationClose(population: PopulationHandle, callback: (report: CloseWire) => void): void
+
 	/** Shared with the runtime surface; here so a wire double can supply it. */
 	runtimeCancel(operation: OperationHandle, callback: (report: CloseWire) => void): void
 

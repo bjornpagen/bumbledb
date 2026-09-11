@@ -23,8 +23,8 @@ import { EFFECT_PIN } from "./pin.ts"
  *     dependency table names no log, AWS, S3, object-store or async
  *     transport crate.
  *  4. Both TypeScript packages carry the exact Effect 4.0.0-rc.112
- *     peer+dev pin, no AWS/transport dependency (`ts-log` has NO
- *     `dependencies` at all — S3 lives natively), no committed
+ *     peer+dev pin, no AWS/transport dependency (Log's CLI depends only
+ *     on the pinned Effect Node runtime; S3 lives natively), no committed
  *     `optionalDependencies`, and no source-mutating pack lifecycle hook
  *     (`prepack`/`postpack`/`preinstall`/`postinstall`).
  *  5. `@superbuilders` appears nowhere in maintained manifests, locks,

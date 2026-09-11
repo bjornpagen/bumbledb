@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { Effect, ManagedRuntime } from "effect"
+import { Effect, ManagedRuntime, Result } from "effect"
 import { alternatives } from "#alternatives.ts"
 import { ChangeSet } from "#changes.ts"
 import { closed, closedId } from "#closed.ts"
@@ -107,6 +107,42 @@ function typePins() {
 	alternatives(parent, "kind", Kind, { ...arms, Postal: key(Bad, ["id"]) })
 }
 void typePins
+
+test("native expansion refusals cite both actual directions at their current statement positions", async () => {
+	const { Parent, Imported, members, keys, expansion } = declarations()
+	const selected = on(select(Parent, { kind: "Imported" }), "id")
+	const inward = contained(on(Imported, "parent"), selected)
+	const outward = contained(selected, on(Imported, "parent"))
+	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
+	try {
+		for (const [laws, rejected, earlier] of [
+			[[...keys, ...expansion, inward], 12, 7],
+			[[...keys, inward, ...expansion], 8, 5],
+			[[...keys, ...expansion, outward], 12, 6]
+		] as const) {
+			const invalid = schema("ExpandedDuplicate", members, laws)
+			const outcome = await runtime.runPromise(Effect.result(Schema.compile(invalid)))
+			assert.ok(Result.isFailure(outcome))
+			assert.equal(outcome.failure.reason._tag, "Engine")
+			if (outcome.failure.reason._tag !== "Engine") assert.fail("expected native engine refusal")
+			const diagnostic = outcome.failure.reason.diagnostic
+			assert.ok(diagnostic)
+			assert.equal(diagnostic.statement.id, rejected)
+			assert.equal(diagnostic.conflict?.id, earlier)
+			assert.equal(diagnostic.statement.descriptor, diagnostic.conflict?.descriptor)
+			assert.match(diagnostic.statement.descriptor, /Imported\(parent\)/)
+			assert.match(diagnostic.statement.descriptor, /Parent\(id \| kind == /)
+			assert.match(diagnostic.statement.descriptor, / <= /)
+			assert.doesNotMatch(diagnostic.statement.descriptor, /statement#|relation#|field#/)
+		}
+		assert.throws(
+			() => schema("HandwrittenDuplicate", members, [...keys, ...expansion, inward, inward]),
+			/duplicate statement/
+		)
+	} finally {
+		await runtime.dispose()
+	}
+})
 
 test("ordinary native admission enforces payloads and accepts an atomic arm switch", async () => {
 	const { Parent, Imported, Electronic, Postal, Theory, members, keys, manual, expansion } = declarations()

@@ -6,9 +6,9 @@ set -eu
 # mutated), installed from its tarball into a bare consumer, typechecked
 # as a strict downstream (core-ts, log-ts, native-ledger), and run under
 # ManagedRuntime.make(NativeRuntime.layer(...)) — specimens no longer
-# self-provide. A second isolated project imports Scalar authoring with
+# self-provide. A second isolated project imports query authoring with
 # the native addon unavailable. Rust consumer and Notes specimens/routes
-# run in this path; missing Notes migrations fail, never skip green.
+# run in this path.
 # Local packing is not PKG-07B.
 # Default: require every release platform. --host-only: require this host's
 # real binary for per-host CI; never substitute another platform's binary.
@@ -83,7 +83,7 @@ node -e "
     process.exit(1);
   }
 " "$PROVENANCE" "$CANDIDATE" "$SPEC" || exit 1
-tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/dist/migrations/bin.js$' || {
+tar -tzf "$TMP/bjornpagen-bumbledb-log-$V.tgz" | grep -q '^package/dist/bin.js$' || {
   echo "packed-import: FAIL — the ts-log tarball does not carry the bumbledb-log CLI" >&2
   exit 1
 }
@@ -100,6 +100,9 @@ for platform in $PLATFORMS; do
 done
 
 cp "$ROOT/scripts/packed-consumer.ts" "$TMP/consumer/packed-consumer.ts"
+cp "$ROOT/ts-log/test/transition.test.ts" "$TMP/consumer/transition.test.ts"
+mkdir -p "$TMP/consumer/fixtures"
+cp -R "$ROOT/ts-log/test/fixtures/transition" "$TMP/consumer/fixtures/transition"
 mkdir -p "$TMP/consumer/core-ts" "$TMP/consumer/log-ts" "$TMP/consumer/native-ledger"
 cp "$ROOT/examples/consumers/core-ts/consumer.ts" "$TMP/consumer/core-ts/consumer.ts"
 cp "$ROOT/examples/consumers/log-ts/consumer.ts" "$TMP/consumer/log-ts/consumer.ts"
@@ -112,13 +115,13 @@ cp "$ROOT/examples/consumers/native-ledger/consumer.ts" "$TMP/consumer/native-le
 (cd "$TMP/consumer" && ./node_modules/.bin/tsc --strict --exactOptionalPropertyTypes --target es2024 \
   --module nodenext --types node --allowImportingTsExtensions \
   --declaration --emitDeclarationOnly --outDir declarations \
-  packed-consumer.ts core-ts/consumer.ts log-ts/consumer.ts native-ledger/consumer.ts)
+  packed-consumer.ts transition.test.ts core-ts/consumer.ts log-ts/consumer.ts native-ledger/consumer.ts)
 if grep -REq '(node_modules|\.pnpm|import\("/|from "/|"(file|link):)' "$TMP/consumer/declarations"; then
   echo "packed-import: FAIL — consumer declarations leaked a private installation path" >&2
   exit 1
 fi
 # D22: programs that no longer self-provide run under ManagedRuntime.
-(cd "$TMP/consumer" && node packed-consumer.ts)
+(cd "$TMP/consumer" && node packed-consumer.ts && node --test transition.test.ts)
 
 # D27: second isolated project — no platform overrides; optional native off.
 mkdir "$TMP/pure"
@@ -147,7 +150,7 @@ done
 cargo run --manifest-path "$ROOT/examples/consumers/rust/Cargo.toml"
 
 # Run the actual Notes app against the same packed dependencies in isolation.
-# Generate migration history, check the entire app, and build the server.
+# Check the entire app and build the server.
 # Keep the initial install's store: /tmp may resolve a different Linux mount.
 mkdir -p "$TMP/consumer/examples"
 git ls-files --cached --others --exclude-standard -z examples/notes examples/consumers | tar --null -T - -cf - | (cd "$TMP/consumer" && tar -xf -)
@@ -167,8 +170,8 @@ NOTES_DEPS="$(node -e '
 ' "$ROOT/examples/notes/package.json")"
 (cd "$TMP/consumer" && pnpm add --ignore-scripts --store-dir "$STORE" $NOTES_DEPS)
 (cd "$TMP/consumer/examples/notes" && \
-  node --conditions react-server scripts/generate-history.ts && \
   ../../node_modules/.bin/tsc --noEmit && \
+  ../../node_modules/.bin/bumbledb-log snapshot --schema src/db/schema.ts --export App --out schema.json && \
   node --conditions react-server --test test/specimens.test.ts test/routes.test.ts && \
   NEXT_TELEMETRY_DISABLED=1 ../../node_modules/.bin/next build --webpack)
 

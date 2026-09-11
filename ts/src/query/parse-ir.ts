@@ -231,9 +231,8 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 		if (rule.finds.length !== head.length) fail(`${context}.rules[${index}]`, "finds width does not match head width")
 		for (const [position, find] of rule.finds.entries()) {
 			const term = head[position]
-			const plainFamily = find.kind === "var" || find.kind === "compute" ? find.kind : "aggregate"
-			const family = find.kind === "segments" ? "compute" : plainFamily
-			if (term?.kind !== family)
+			const projects = find.kind === "var" || find.kind === "compute" || find.kind === "segments"
+			if (term === undefined || (term.kind === "aggregate") === projects)
 				fail(`${context}.rules[${index}].finds[${position}]`, "find family does not match head")
 			if (term.kind === "aggregate") {
 				const op = find.kind === "aggregate" ? find.op.kind : find.kind
@@ -280,7 +279,10 @@ function parseQueryIr(input: unknown): ParsedQuery {
 		if (rec.length === 0) return fail("parseQueryIr", "rec step is empty")
 		align("rec base", headRec, base)
 		align("rec step", headRec, rec)
-		if (headRec.some((term) => term.kind !== "var") || [...base, ...rec].some((rule) => rule.negated.length !== 0))
+		if (
+			headRec.some((term) => term.kind !== "var") ||
+			[...base, ...rec].some((rule) => rule.negated.length !== 0 || rule.finds.some((find) => find.kind !== "var"))
+		)
 			return fail("query.rec", "recursion requires projection-only heads and no negation")
 		owned = { kind: raw.kind, interiors, head, rules, rec: Object.freeze({ head: headRec, base, rec }) }
 	}

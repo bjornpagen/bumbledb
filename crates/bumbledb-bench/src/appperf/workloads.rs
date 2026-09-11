@@ -10,7 +10,7 @@ use super::{Gate, Regime};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     /// Exact key hit/miss, selective Free Join, fanout/existence, anti-join,
-    /// named-stage reuse, small positive recursion, migration field arithmetic.
+    /// named-stage reuse, small positive recursion, exact scalar arithmetic.
     ResidentRead,
     /// Insert/replace/delete/no-change/rejection then the prepared read.
     MutationRead,

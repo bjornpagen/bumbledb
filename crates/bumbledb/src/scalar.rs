@@ -1,4 +1,4 @@
-//! Shared typed scalar execution for queries and schema migrations.
+//! Typed scalar execution for queries.
 //! Partial operations are stage outputs, never speculative filter terms.
 use crate::exec::kernel::numeric::{NumericalGuard, environment};
 use crate::schema::ValueType;

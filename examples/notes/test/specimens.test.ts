@@ -1,27 +1,24 @@
-/**
- * Notes specimen assertions for D07/D22/D27 — calls the packed consumers
- * and Notes helpers, not reconstructed Scalar/JSON claims. Native
- * operations require generated `{ manifest, plans, snapshots }` and a
- * packed install; missing chain FAILS instead of skipping green.
- */
+/** Notes request and packed-consumer qualification. */
 import assert from "node:assert/strict"
 import * as fs from "node:fs"
 import * as os from "node:os"
 import * as path from "node:path"
 import { test } from "node:test"
-import { Effect, Exit } from "effect"
 import { DbError } from "@bjornpagen/bumbledb"
-import { incrementUnits, incrementUnitsAsF64 } from "../../consumers/core-ts/consumer.ts"
-import { incrementUnitsIntent, knownInvalidMixRefuses, parsedIdentityIsBounded } from "../../consumers/log-ts/consumer.ts"
+import { Effect, Exit } from "effect"
+import { knownInvalidMixRefuses, parsedIdentityIsBounded } from "../../consumers/log-ts/consumer.ts"
 import { bindingFor } from "../src/db/bindings.ts"
-import { loadGeneratedMigrations } from "../src/db/generated.ts"
 import { exitResponse } from "../src/http.ts"
 
 test("runtime layer acquisition failures become redacted HTTP responses", async () => {
-	const response = exitResponse(Exit.fail(new DbError({
-		operation: "TenantCache.make",
-		reason: { _tag: "QueueFull" }
-	})))
+	const response = exitResponse(
+		Exit.fail(
+			new DbError({
+				operation: "TenantCache.make",
+				reason: { _tag: "QueueFull" }
+			})
+		)
+	)
 	assert.equal(response.status, 429)
 	assert.deepEqual(await response.json(), { error: "QueueFull", operation: "TenantCache.make" })
 	const alreadyMapped = Response.json({ error: "Denied" }, { status: 403 })
@@ -29,22 +26,8 @@ test("runtime layer acquisition failures become redacted HTTP responses", async 
 	assert.equal(exitResponse(Exit.die(new Error("private details"))).status, 500)
 })
 
-test("D27: consumer field-arithmetic convert authors unresolved", () => {
-	assert.equal(incrementUnits.kind, "add")
-	assert.equal(incrementUnits.result, "unresolved")
-	assert.equal(incrementUnitsAsF64.kind, "cast")
-	if (incrementUnitsAsF64.kind === "cast") {
-		assert.equal(incrementUnitsAsF64.cast, "toF64")
-	}
-	const entry = incrementUnitsIntent.entries[0]
-	assert.ok(entry !== undefined)
-	assert.equal(entry.kind, "convert")
-	assert.equal(entry.relation, "Attempt")
-	assert.equal(entry.field, "units")
-	if (entry.kind === "convert") {
-		assert.equal(entry.expression, incrementUnits)
-	}
-	assert.equal(knownInvalidMixRefuses, true, "known I64/U64 mixing refuses at the authoring boundary")
+test("packed query arithmetic and identity validation reject invalid values", () => {
+	assert.equal(knownInvalidMixRefuses, true)
 	assert.equal(parsedIdentityIsBounded, true)
 })
 
@@ -61,20 +44,6 @@ test("authenticated bindings are not derived from arbitrary user paths", async (
 		} else {
 			process.env.BUMBLEDB_TENANT_BINDINGS_FILE = previous
 		}
-	}
-})
-
-test("generated runner input is { manifest, plans, snapshots }", () => {
-	const generated = loadGeneratedMigrations()
-	assert.ok(generated.manifest.entries.length > 0, "the committed chain has plans")
-	assert.equal(generated.plans.length, generated.manifest.entries.length)
-	assert.equal(
-		generated.snapshots.length,
-		generated.manifest.entries.length + 1,
-		"snapshots are the empty-base schema plus one target per entry"
-	)
-	for (const snapshot of generated.snapshots) {
-		assert.ok(typeof snapshot === "string" && snapshot.length > 0)
 	}
 })
 

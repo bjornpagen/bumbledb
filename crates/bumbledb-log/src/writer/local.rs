@@ -109,6 +109,7 @@ impl<S> LocalHistory<S> {
     /// Refuses an uninitialized database, a foreign schema and corruption.
     pub fn open(db: Arc<Db<S>>, limits: Limits) -> Result<Self, LogError> {
         let work = crate::admin::internal_read_work();
+        refuse_retired(&db, &work)?;
         let control = read_attachment(&db, &work)?.ok_or(LogError::NotInitialized)?;
         let authority = crate::history::authority::decode_control(&control, limits.envelope_bytes)?;
         if authority.identity.schema_id != fingerprint(&db) {
@@ -449,4 +450,13 @@ fn read_attachment<S>(db: &Db<S>, work: &WorkContext) -> Result<Option<Vec<u8>>,
         Ok(())
     })?;
     Ok(owned)
+}
+
+pub(crate) fn refuse_retired<S>(db: &Db<S>, work: &WorkContext) -> Result<(), LogError> {
+    let map_error = |error| LogError::Storage(bumbledb::Error::Store(Box::new(error)));
+    let snapshot = db.integration_store().snapshot(work).map_err(map_error)?;
+    if crate::codec::has_retired_history(&snapshot, work).map_err(map_error)? {
+        return Err(LogError::UnsupportedArtifact);
+    }
+    Ok(())
 }

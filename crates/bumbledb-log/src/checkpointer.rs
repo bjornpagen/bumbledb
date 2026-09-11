@@ -35,10 +35,9 @@ use crate::store::{
     head_key, put_verified, read_head_bounded,
 };
 
-/// The migration-history host-record key prefix (C08/C11 coordination:
-/// P09 stores its authoritative applied/baseline evidence under keys
-/// beginning with this byte so checkpoints and digests carry it).
-pub const HISTORY_KEY_PREFIX: u8 = b'm';
+/// The transition evidence key prefix. Checkpoints and restores preserve
+/// the original native capture/admission records under this prefix.
+pub const TRANSITION_KEY_PREFIX: u8 = b't';
 
 /// Deployment-qualified checkpoint policy. The chunk size and envelope are
 /// measured policy, not correctness constants.
@@ -173,8 +172,17 @@ pub fn admission_headroom(recovery: &RecoveryRoot, policy: &TailPolicy) -> Headr
 fn write_failure<E: Into<CheckpointError>>(error: WriteError<E>) -> CheckpointError {
     match error {
         WriteError::Sink(error) => error.into(),
-        WriteError::RecordTooLarge { .. } => CheckpointError::Frame(FrameError::LimitExceeded),
+        WriteError::RecordTooLarge {
+            section,
+            bytes,
+            limit,
+        } => CheckpointError::Frame(FrameError::LimitExceeded {
+            section,
+            required: bytes,
+            limit,
+        }),
         WriteError::OutOfOrder => CheckpointError::Corruption("stream section order"),
+        WriteError::RetiredHistory => CheckpointError::Corruption("retired migration records"),
     }
 }
 
@@ -217,6 +225,9 @@ where
         .map_err(store_failure)?
         .ok_or(CheckpointError::NotInitialized)?;
     let authority = decode_control(control, policy.head_cap).map_err(CheckpointError::Frame)?;
+    if crate::codec::has_retired_history(&snapshot, work).map_err(store_failure)? {
+        return Err(CheckpointError::Corruption("retired migration records"));
+    }
     let mut writer = StreamWriter::new(sink, policy.chunk_bytes, policy.stream);
     // Facts: the store's bounded canonical logical export from this exact
     // snapshot. Writer refusals are smuggled out around the storage error
@@ -236,8 +247,8 @@ where
         return Err(write_failure(error));
     }
     exported.map_err(store_failure)?;
-    // System records in ascending key order: 'm' (0x6d) < 'r' (0x72).
-    for prefix in [HISTORY_KEY_PREFIX, RECEIPT_KEY_PREFIX] {
+    // System records in ascending key order: receipts 'r', transitions 't'.
+    for prefix in [RECEIPT_KEY_PREFIX, TRANSITION_KEY_PREFIX] {
         let scanned: Result<(), bumbledb::store::StoreError> =
             snapshot.host_scan(&[prefix], work, &mut |key: &[u8], value: &[u8]| {
                 if prefix == RECEIPT_KEY_PREFIX
@@ -386,10 +397,10 @@ where
 /// Capture one coherent snapshot of `db` and upload it as a complete
 /// verified checkpoint — every chunk plus the streamed manifest — under
 /// `epoch` at `prefix`, WITHOUT touching any head. `publish_checkpoint`
-/// composes this into a head rebase; the hosted migration data plane
+/// composes this into a head rebase; the hosted transition
 /// publishes the returned manifest reference inside the target's genesis
-/// head recovery root instead, so a migrated incarnation's state and its
-/// authoritative migration-history records ('m' system rows) are
+/// head recovery root instead, so a new incarnation's state and its
+/// authoritative transition records ('t' system rows) are
 /// reconstructible from the store alone.
 ///
 /// # Errors

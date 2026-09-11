@@ -28,7 +28,17 @@ export type {
 } from "#closed.ts"
 export { closed, closedId } from "#closed.ts"
 export type { RowShape } from "#codec.ts"
-export { decodeBoundaryRows, decodeRows, encodeBoundaryRows, encodeRows, rowSchema, rowShape } from "#codec.ts"
+export {
+	decodeBoundaryField,
+	decodeBoundaryRows,
+	decodeRows,
+	encodeBoundaryField,
+	encodeBoundaryRows,
+	encodeRows,
+	fieldSchema,
+	rowSchema,
+	rowShape
+} from "#codec.ts"
 export type { CompiledSchema, SchemaId } from "#compile.ts"
 export { Schema } from "#compile.ts"
 export type {
@@ -175,17 +185,13 @@ export type {
 	IntervalKind,
 	NumericCast,
 	Rounding,
-	ScalarExpr,
-	ScalarFieldRef,
 	ScalarInputKind,
 	ScalarKind,
-	ScalarLeafScope,
 	ScalarLiteral,
 	ScalarNode,
 	ScalarResultKind,
 	ScalarValue
 } from "#scalar.ts"
-export { Scalar } from "#scalar.ts"
 export type { AnySchema, Schema as SchemaDeclaration, SchemaRelation, SchemaRelations } from "#schema.ts"
 export { schema } from "#schema.ts"
 export type { AnySelected, FieldsOf, Selected, SelectionBinding, SelectionInput } from "#selection.ts"

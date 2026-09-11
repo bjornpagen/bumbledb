@@ -3,6 +3,7 @@ export const runtimeErrorCodes = [
 	"RuntimeAlreadyLive",
 	"ForeignRuntime",
 	"ClosedHandle",
+	"HandleBusy",
 	"SpentHandle",
 	"QueueFull",
 	"InvalidArgument",

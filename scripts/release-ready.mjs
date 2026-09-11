@@ -2,6 +2,7 @@
 // Release builds and their full correctness batteries must finish successfully.
 // The workflow's aggregate conclusion also includes optional static/Miri jobs.
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
 export const requiredJobs = ["check / darwin", "check / linux-arm64", "check / linux-x64"];
@@ -39,6 +40,6 @@ function main() {
   console.log(`Release CI ready: ${revision}\n${run.url}\n${requiredJobs.join("\n")}\nStatic Linux and Miri are not release blockers.`);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
   try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

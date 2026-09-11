@@ -62,7 +62,7 @@ use crate::runtime_wire::{
 
 pub(crate) fn frame_kind(error: &FrameError) -> &'static str {
     match error {
-        FrameError::LimitExceeded => "limitExceeded",
+        FrameError::LimitExceeded { .. } => "limitExceeded",
         FrameError::LengthOverflow => "lengthOverflow",
         FrameError::Allocation => "allocation",
         FrameError::Truncated { .. } => "truncated",
@@ -642,9 +642,9 @@ fn intent_in(obj: &Object, ctx: &str) -> napi::Result<FreezeIntent> {
     let kind: String = marshal::req(obj, "kind", ctx)?;
     match kind.as_str() {
         "erasure" => Ok(FreezeIntent::Erasure),
-        "migration" => Ok(FreezeIntent::Migration {
-            plan_set_digest: digest_in(
-                &marshal::req::<Uint8Array>(obj, "planSetDigest", ctx)?,
+        "transition" => Ok(FreezeIntent::Transition {
+            contract_digest: digest_in(
+                &marshal::req::<Uint8Array>(obj, "contractDigest", ctx)?,
                 ctx,
             )?,
             target: IncarnationId::from_core(uuid_field(obj, "target", ctx)?),
@@ -700,7 +700,7 @@ fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
             let reason_kind: String = marshal::req(&reason_obj, "kind", ctx)?;
             let reason = match reason_kind.as_str() {
                 "erasure" => DeletedReason::Erasure,
-                "migrationAborted" => DeletedReason::MigrationAborted {
+                "transitionAborted" => DeletedReason::TransitionAborted {
                     source_database: DatabaseId::from_core(uuid_field(
                         &reason_obj,
                         "sourceDatabase",
@@ -711,8 +711,8 @@ fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
                         "sourceIncarnation",
                         ctx,
                     )?),
-                    plan_set_digest: digest_in(
-                        &marshal::req::<Uint8Array>(&reason_obj, "planSetDigest", ctx)?,
+                    contract_digest: digest_in(
+                        &marshal::req::<Uint8Array>(&reason_obj, "contractDigest", ctx)?,
                         ctx,
                     )?,
                 },
@@ -743,9 +743,9 @@ fn authority_in(obj: &Object) -> napi::Result<HeadAuthority> {
             let cause = match cause_kind.as_str() {
                 "create" => ActivationCause::Create,
                 "restore" => ActivationCause::Restore,
-                "migration" => ActivationCause::Migration {
-                    plan_set_digest: digest_in(
-                        &marshal::req::<Uint8Array>(&cause_obj, "planSetDigest", ctx)?,
+                "transition" => ActivationCause::Transition {
+                    contract_digest: digest_in(
+                        &marshal::req::<Uint8Array>(&cause_obj, "contractDigest", ctx)?,
                         ctx,
                     )?,
                 },
@@ -798,13 +798,13 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
                     let mut intent_obj = Object::new(env)?;
                     match intent {
                         FreezeIntent::Erasure => intent_obj.set("kind", "erasure")?,
-                        FreezeIntent::Migration {
-                            plan_set_digest,
+                        FreezeIntent::Transition {
+                            contract_digest,
                             target,
                         } => {
-                            intent_obj.set("kind", "migration")?;
+                            intent_obj.set("kind", "transition")?;
                             intent_obj
-                                .set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
+                                .set("contractDigest", Buffer::from(contract_digest.to_vec()))?;
                             intent_obj.set("target", uuid_text(target.as_core()))?;
                         }
                     }
@@ -828,15 +828,15 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
             let mut reason_obj = Object::new(env)?;
             match reason {
                 DeletedReason::Erasure => reason_obj.set("kind", "erasure")?,
-                DeletedReason::MigrationAborted {
+                DeletedReason::TransitionAborted {
                     source_database,
                     source_incarnation,
-                    plan_set_digest,
+                    contract_digest,
                 } => {
-                    reason_obj.set("kind", "migrationAborted")?;
+                    reason_obj.set("kind", "transitionAborted")?;
                     reason_obj.set("sourceDatabase", uuid_text(source_database.as_core()))?;
                     reason_obj.set("sourceIncarnation", uuid_text(source_incarnation.as_core()))?;
-                    reason_obj.set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
+                    reason_obj.set("contractDigest", Buffer::from(contract_digest.to_vec()))?;
                 }
             }
             lifecycle.set("reason", reason_obj)?;
@@ -861,9 +861,9 @@ fn authority_out<'env>(env: &'env Env, authority: &HeadAuthority) -> napi::Resul
             match cause {
                 ActivationCause::Create => cause_obj.set("kind", "create")?,
                 ActivationCause::Restore => cause_obj.set("kind", "restore")?,
-                ActivationCause::Migration { plan_set_digest } => {
-                    cause_obj.set("kind", "migration")?;
-                    cause_obj.set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
+                ActivationCause::Transition { contract_digest } => {
+                    cause_obj.set("kind", "transition")?;
+                    cause_obj.set("contractDigest", Buffer::from(contract_digest.to_vec()))?;
                 }
             }
             activation.set("cause", cause_obj)?;
@@ -940,7 +940,7 @@ fn genesis_in(obj: &Object) -> napi::Result<GenesisRecord> {
                 ctx,
             )?,
         },
-        "migration" => GenesisProvenance::Migration {
+        "transition" => GenesisProvenance::Transition {
             source_database: DatabaseId::from_core(uuid_field(
                 &provenance_obj,
                 "sourceDatabase",
@@ -951,8 +951,8 @@ fn genesis_in(obj: &Object) -> napi::Result<GenesisRecord> {
                 "sourceIncarnation",
                 ctx,
             )?),
-            plan_set_digest: digest_in(
-                &marshal::req::<Uint8Array>(&provenance_obj, "planSetDigest", ctx)?,
+            contract_digest: digest_in(
+                &marshal::req::<Uint8Array>(&provenance_obj, "contractDigest", ctx)?,
                 ctx,
             )?,
         },
@@ -1023,15 +1023,15 @@ impl napi::bindgen_prelude::ToNapiValue for GenesisWire {
                 provenance.set("kind", "restore")?;
                 provenance.set("sourceEvidence", Buffer::from(source_evidence.to_vec()))?;
             }
-            GenesisProvenance::Migration {
+            GenesisProvenance::Transition {
                 source_database,
                 source_incarnation,
-                plan_set_digest,
+                contract_digest,
             } => {
-                provenance.set("kind", "migration")?;
+                provenance.set("kind", "transition")?;
                 provenance.set("sourceDatabase", uuid_text(source_database.as_core()))?;
                 provenance.set("sourceIncarnation", uuid_text(source_incarnation.as_core()))?;
-                provenance.set("planSetDigest", Buffer::from(plan_set_digest.to_vec()))?;
+                provenance.set("contractDigest", Buffer::from(contract_digest.to_vec()))?;
             }
         }
         obj.set("provenance", provenance)?;

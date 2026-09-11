@@ -2,7 +2,7 @@
 
 Durable named application commands over
 [Bumbledb](https://github.com/bjornpagen/bumbledb): a thin peer of
-`@bjornpagen/bumbledb` (exact peer `1.3.0`). The package adds a durable
+`@bjornpagen/bumbledb` (exact peer `1.3.1`). The package adds a durable
 envelope around the exact core change/read machinery — it never duplicates
 the engine surface. Core types (`ChangeSet`, `QueryReader`, `DbError`,
 `StorageInspection`) are the peer's own exports.
@@ -20,9 +20,7 @@ The surface is small:
    materialization directory beside it. `open` of a missing or unreadable
    configured database never creates a replacement; `create` is the explicit
    constructor: it refuses existing authority and validates a stable
-   creation identity plus a **checked initialization artifact** (the
-   canonical schema snapshot the migration tooling renders) instead of
-   fabricating genesis.
+   creation identity plus a native-verified canonical schema snapshot.
 2. **`Command`** — `Command.seal` turns `{ scope, id, changes, precondition,
    result }` into one owned sealed command with a copyable pre-dispatch
    `ref`; `Command.encode`/`Command.decode` are the one bounded versioned
@@ -36,20 +34,18 @@ The surface is small:
    multi-tenant hosts: `make`/`acquire` (a `HistoryBorrow` whose `release`
    frees only the borrow)/`inspect`/`evict`/`close`. `maxOpen` bounds the
    number of open tenants; evicting a borrowed slot refuses.
-5. **Maintenance and migrations** — explicit admin operations
-   (`checkpoint`, `pinRestorePoint`/`releaseRestorePoint`,
-   `rotateReceiptEpoch`, `retireReceipts`, `collectGarbage`, `backup`/
-   `verifyBackup`/`restore`, `erase`) and the generated-migration workflow
-   under the `./migrations` subpath (below).
+5. **Maintenance and transitions** — explicit checkpoint, receipt, garbage
+   collection, backup/restore and erase operations; native `Transition` capture,
+   population, inspection, activation and abort. Schema tooling emits bindings;
+   applications write their own transformations.
 
 ## Install
 
-This guide follows the 1.3.0 source API. Use the guide from the Git tag matching
-your installed package. GitHub release tarballs and npm publication are separate;
-the npm command below applies once that version is published.
+This guide follows the 1.3.1 source API. Use the guide from the Git tag matching
+your installed package. Install the matched package family after publication.
 
 ```sh
-pnpm add @bjornpagen/bumbledb-log@1.3.0 @bjornpagen/bumbledb@1.3.0 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb-log@1.3.1 @bjornpagen/bumbledb@1.3.1 effect@4.0.0-rc.112
 ```
 
 ## Quick start: one durable round trip
@@ -59,10 +55,10 @@ insert command, submit it to a decided receipt, then reopen the directory
 and resolve the retained ref to the exact recorded outcome.
 
 ```ts
-import * as fs from "node:fs/promises"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { Command, DatabaseId, IncarnationId, LocalHistory, OperationId, ReceiptEpoch, RequestId } from "@bjornpagen/bumbledb-log"
 import type { DatabaseIdentity, LocalBinding, ReadOptions, SubmitOptions } from "@bjornpagen/bumbledb-log"
+import { schemaSnapshot } from "@bjornpagen/bumbledb-log/schema"
 import { Effect, ManagedRuntime, Result } from "effect"
 
 const Entry = relation("Entry", { id: u64, body: str })
@@ -77,12 +73,7 @@ const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(resul
 
 const program = Effect.gen(function* () {
 	const compiled = yield* Schema.compile(Ledger)
-	// The checked initialization artifact: the canonical schema snapshot the
-	// migration generator wrote to your checked-in repository. Its native
-	// fingerprint IS the identity's schemaId — creation re-judges both.
-	const artifact: Uint8Array = yield* Effect.tryPromise(() =>
-		fs.readFile("bumbledb/migrations/meta/0000.schema.json")
-	)
+	const artifact = new TextEncoder().encode(yield* schemaSnapshot(Ledger))
 	const identity: DatabaseIdentity = {
 		databaseId: unwrap(DatabaseId.parse("abababab-abab-abab-abab-abababababab")),
 		incarnationId: unwrap(IncarnationId.parse("cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd")),
@@ -174,7 +165,7 @@ message strings: the core's own `DbError`, unchanged, for core failures
 crossing the log; and `ProtocolError` for the log-specific reason roster
 (`protocolErrorCodes` spells it natively — contention, consistency
 not-yet-available, artifact/authority/identity refusals, maintenance
-backpressure, migration reasons). `LogError = DbError | ProtocolError` and
+backpressure, transition identity). `LogError = DbError | ProtocolError` and
 nothing else. Interruption and finalizer defects stay in `Cause`.
 
 The same core `QueryReader` helper that lists a local `Db` snapshot lists a
@@ -182,7 +173,7 @@ published history snapshot. There is no log-specific query wrapper. The
 packed consumer spells this as `readAttempts(snapshot, student)` on
 both `Db.snapshot` and `history.snapshot`.
 
-Retain the command or admin `operationId` **before** `submit` / `initialize` /
+Retain the command or admin `operationId` **before** `submit` / `Transition.begin` /
 `backup` / `restore`. `outcome-unknown` is resolved under that identity.
 A later missing receipt is not proved loss.
 
@@ -252,50 +243,149 @@ activation. Repeating the same operation, target, and backup returns that
 original result even if later commands changed the restored database. A different
 operation or backup refuses without overwriting the target.
 
-## Migrations
+## Generated bindings, handwritten migrations
 
-Schema evolution is generated, checked-in, inert data — never inferred at
-runtime:
+Log provides two mechanical schema operations:
 
-- `@bjornpagen/bumbledb-log/schema` — pure intent constructors
-  (`migrationIntent`, `renameField`, `renameRelation`, `convert`,
-  `backfill`, `seed`, `dropField`, `dropRelation`). No native work at
-  import or call.
-- `@bjornpagen/bumbledb-log/migrations` — `generateMigrations` diffs the
-  declared schema against the recorded chain and appends one validated,
-  canonically rendered plan to the repository (`manifest.json`,
-  `NNNN-<label>.plan.json`, `meta/NNNN.schema.json`, `snapshots.json`,
-  `index.ts` exporting `{ manifest, plans, snapshots }`, and the
-  `runtime-contract.json` your deploy pins). The admin runner decodes that
-  triple — snapshots are the empty-base schema plus one target per entry.
-  `checkMigrations` is the same judgment without writes. Ordinary onboarding
-  is generated `initialize`,
-  then `LocalHistory.open`. `HostedHistory.open` requires an already
-  initialized hosted authority. `LocalHistory.create`
-  remains the explicit constructor when a checked artifact is already in
-  hand — it is not the Notes/Alchemy path. The runner verbs —
-  `migrationStatus`, `initialize`, `migrate`, `activateMigration`,
-  `abortMigration` — execute generated plans through the one native
-  executor, with `AdminOutcome` certainty (`completed` / `not-started` /
-  `outcome-unknown`). Cold migration opens its source from the verified
-  generated snapshot chain; applications need not retain executable retired
-  schema modules. Published local targets use the standard tenant directory
-  containing `db/`. After activation, retrying the original migration returns
-  that target binding, so adopting a retry cannot reopen the frozen source.
+```sh
+pnpm exec bumbledb-log snapshot --schema src/schema.ts --export App --out schema.json
+pnpm exec bumbledb-log bindings --snapshot source.json --out source.ts
+pnpm exec bumbledb-log bindings --snapshot target.json --out target.ts
+pnpm exec tsc --noEmit
+```
 
-  These generated migration runner verbs target local
-  authorities only. The TypeScript/native bridge refuses hosted migration
-  execution; a hosted tenant's cache is not an authoritative local migration
-  target. Real-S3 deployments and Graviton performance have not been qualified.
-- Field arithmetic such as `Scalar.add(Scalar.field("units"), Scalar.u64(1n))`
-  is valid intent metadata. Native chain compilation binds it before any
-  new manifest write or source freeze, including zero input rows.
-- The `bumbledb-log` bin is the same generator/checker as a CLI.
+`schemaSnapshot(schema)` emits native-verified canonical JSON. `schemaBindings(snapshot)`
+emits ordinary SDK declarations for that one snapshot. Historical bindings do
+not load old application modules. The generated field widths, closed handles,
+keys and expanded laws compile to the same native schema identity. Unsupported
+representations refuse before an output file is replaced.
+
+Write the transformation yourself in TypeScript. This example uses the generated
+[submission/proof fixtures](https://github.com/bjornpagen/bumbledb/tree/v1.3.1/ts-log/test/fixtures/transition): the old schema has one
+proof relation, while the new schema has one relation for each submission method.
+Both use ordinary `Fact` values, queries and `ChangeSet` batches.
+
+```ts
+import { ChangeSet, query, v } from "@bjornpagen/bumbledb"
+import { LocalHistory, Transition } from "@bjornpagen/bumbledb-log"
+import type { History, Population, PublishedSnapshot, TransitionContract } from "@bjornpagen/bumbledb-log"
+import { Effect, Stream } from "effect"
+import * as old from "./source.ts"
+import * as next from "./target.ts"
+
+const joined = query(old.schema).rule((r) => {
+    const { id, method, recordedAt } = v(old.r1)
+    const { reference } = v(old.r2)
+    return r.match(old.r1, { id, method, recordedAt })
+        .match(old.r2, { submission: id, reference })
+        .find({ id, method, recordedAt, reference })
+})
+const documents = query(old.schema).rule((r) => {
+    const row = v(old.r3)
+    return r.match(old.r3, row).find(row)
+})
+
+function transform(source: PublishedSnapshot<typeof old.schema>, target: Population<typeof next.schema>) {
+    return Effect.gen(function* () {
+        const rows = yield* source.execute(joined, {})
+        yield* Stream.runForEach(rows.pages(), (page) => Effect.scoped(Effect.gen(function* () {
+            const batch = yield* ChangeSet.builder(next.schema)
+            yield* batch.insert(next.r1, page.map(({ id, method, recordedAt }) => ({ id, method, recordedAt })))
+            for (const [method, relation] of [["Imported", next.r3], ["Electronic", next.r4], ["Postal", next.r5]] as const) {
+                yield* batch.insert(relation, page.filter(row => row.method === method)
+                    .map(row => ({ submission: row.id, reference: row.reference })))
+            }
+            yield* target.apply(yield* batch.finish())
+        })))
+        const unchanged = yield* source.execute(documents, {})
+        yield* Stream.runForEach(unchanged.pages(), (page) => Effect.scoped(Effect.gen(function* () {
+            const batch = yield* ChangeSet.builder(next.schema)
+            yield* batch.insert(next.r2, page)
+            yield* target.apply(yield* batch.finish())
+        })))
+    })
+}
+
+// Application policy: compare mapped facts, unchanged documents in both
+// directions, and relevant reports. Counts alone do not prove preservation.
+declare function compare(
+    source: PublishedSnapshot<typeof old.schema>,
+    target: PublishedSnapshot<typeof next.schema>
+): Effect.Effect<boolean, Error, import("effect").Scope.Scope>
+
+function migrate(history: History<typeof old.schema>, contract: TransitionContract) {
+    return Effect.scoped(Effect.gen(function* () {
+        const start = yield* Transition.begin(history, next.schema, contract)
+        if (start.kind === "activated") return start.binding
+        if (start.kind === "aborted") return yield* Effect.fail(new Error("Operation was aborted"))
+        const ready = start.kind === "ready" ? start : yield* Effect.gen(function* () {
+            yield* transform(start.source, start.population)
+            return yield* start.population.finish()
+        })
+        const preserved = yield* Effect.scoped(Effect.gen(function* () {
+            const target = yield* LocalHistory.open(ready.binding, next.schema)
+            const inspected = yield* Transition.inspect(target, ready.installed)
+            return yield* compare(start.source, inspected)
+        }))
+        if (!preserved) {
+            yield* Transition.abort(history, next.schema, contract)
+            return yield* Effect.fail(new Error("Application comparison failed"))
+        }
+        return (yield* Transition.activate(history, next.schema, ready.installed)).binding
+    }))
+}
+void migrate
+```
+
+Retain `contract` before dispatch: `operation`, full `source` and `target`
+identities, and a 64-digit hexadecimal `commitment` identifying the application's
+chosen transformation. Compile the target bindings to obtain its schema ID;
+choose a fresh target incarnation. Native admission recompiles the supplied
+schema, freezes the exact source decision/state, and accepts only ordinary
+changes into disk-backed unpublished storage. A commitment records intent; it
+does not attest which JavaScript ran.
+
+Population applies batches sequentially, including deletions. Identical facts
+deduplicate. `ChangeSet.compose` uses add-wins normalization within one command;
+it is not sequential replay. Parent and child facts can arrive in either order.
+`finish` drains admitted calls, consumes every population alias, performs complete
+law judgment and a canonical hash, then installs one frozen target. Final
+judgment checks declared database laws; it cannot detect omission of unconstrained
+application data. Close the inspection scope before activation and adopt the
+returned binding explicitly. The source stays frozen after activation.
+
+On interruption or uncertain installation, call `Transition.resolve` with the
+retained contract first. Reuse a ready target; never rerun the transformation on
+top of it. An abandoned unpublished attempt restarts from empty staging after
+its owner drains. Completed retries return the original activation even after
+new target commands. `Transition.abort` is terminal: it fences the target before
+thawing the matching source, and refuses if activation won. Scope cleanup only
+releases resources; it does not abort a durable operation.
+
+Pages bound JavaScript delivery, but queries still seal their complete native
+result before paging. Use existing indexed partitions when results exceed native
+limits, and bound batches by rows and bytes. There is no per-batch whole-target
+judgment or hash, row journal, or exactly-once guarantee for external effects.
+The [public integration tests](https://github.com/bjornpagen/bumbledb/blob/v1.3.1/ts-log/test/transition.test.ts) exercise generated type
+inference, both batch orders, preservation failures, final-law refusals and retry.
+
+**1.3.1 deliberately removes the previous migration API and artifact formats.**
+There is no transformation DSL, plan generator, repository manager, generated
+migration chain, replay adapter or compatibility export. Old migration records
+refuse explicitly. Ordinary histories without those retired artifacts retain
+their command, receipt and schema identities. 1.3.0 cannot read the new transition
+records.
+
+The TypeScript transition API supports local histories. The native implementation retains the
+existing hosted backend using conditional authority and verified checkpoints.
+Hosted operation claims are permanent authority records; backups preserve
+installed evidence and facts, while writable restore creates a new incarnation.
+Real-S3/IAM deployment and Graviton performance remain unqualified.
 
 ## Platform and packaging
 
 The native engine arrives through the peer `@bjornpagen/bumbledb`
 (darwin-arm64, linux-arm64, linux-x64); this package ships TypeScript only
-and declares both peers exactly (`@bjornpagen/bumbledb 1.3.0`, `effect
+and declares both peers exactly (`@bjornpagen/bumbledb 1.3.1`, `effect
 4.0.0-rc.112`). Version lockstep across the package family is enforced in
 CI.

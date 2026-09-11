@@ -435,7 +435,7 @@ pub fn judge_final_state<S: CandidateFacts>(
 }
 
 /// [`judge_final_state`] with a grouped-map error adapter for the state's
-/// own error channel (e.g. the log's migration states). This does not select
+/// own error channel (e.g. the log's transition admission). This does not select
 /// a representation or install a memory policy.
 ///
 /// # Errors

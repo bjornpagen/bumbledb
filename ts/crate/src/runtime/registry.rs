@@ -11,7 +11,6 @@
 //! - `Runtime::close_resource` is the joined close; it cannot `QueueFull`.
 //! - Failed drafts release their pending rows and stay terminal.
 //! - `Output::Page` / `Rows` carry [`super::QueuedOutput`]. No `Cursor.pending`.
-//! - Lock handles mint with `NativeKind::RepositoryLock`.
 //! - `with_payload`, `RetainedGuard`, and JS-driven `WriterSession` are gone.
 
 use std::collections::BTreeMap;
@@ -33,7 +32,7 @@ pub enum NativeKind {
     Draft,
     Changes,
     ChangesCursor,
-    RepositoryLock,
+    Population,
 }
 
 /// Live / in-use / draining. Busy and closing refuse new work.
@@ -41,7 +40,19 @@ pub enum NativeKind {
 pub enum ResourceState {
     Live,
     Busy,
+    Finalizing,
     Closing,
+}
+
+impl ResourceState {
+    /// Admission distinguishes temporary ownership from terminal closure.
+    pub(crate) fn admit(self) -> Result<(), RuntimeError> {
+        match self {
+            Self::Live => Ok(()),
+            Self::Busy => Err(RuntimeError::HandleBusy),
+            Self::Finalizing | Self::Closing => Err(RuntimeError::ClosedHandle),
+        }
+    }
 }
 
 /// Worker-routed capability header (C7). Binds runtime identity, worker
@@ -97,10 +108,7 @@ pub(crate) enum Payload {
         fingerprint: String,
     },
     ChangesCursor(crate::db_wire::ChangesCursorOpened),
-    /// Kernel repository exclusion. Capability.kind is `RepositoryLock`.
-    RepositoryLock {
-        _lock: bumbledb_log::store::fence::RepositoryLock,
-    },
+    Population(Option<Box<bumbledb_log::transition::local::Population>>),
 }
 
 struct Route {
@@ -108,6 +116,7 @@ struct Route {
     generation: u64,
     state: ResourceState,
     close: bool,
+    finalizing: bool,
 }
 
 pub(crate) struct NativeRegistry {
@@ -171,6 +180,7 @@ impl NativeRegistry {
                 generation,
                 state: ResourceState::Live,
                 close: false,
+                finalizing: false,
             },
         );
         Ok(Capability {
@@ -202,7 +212,28 @@ impl NativeRegistry {
         if route.generation != cap.generation {
             return Err(RuntimeError::ClosedHandle);
         }
-        Ok(route.state)
+        Ok(if route.close {
+            ResourceState::Closing
+        } else if route.finalizing {
+            ResourceState::Finalizing
+        } else {
+            route.state
+        })
+    }
+
+    /// Stop new call admission while previously dispatched work drains on
+    /// the owning worker. The terminal job then consumes the payload.
+    pub(crate) fn begin_finalization(&self, cap: Capability) -> Result<(), RuntimeError> {
+        self.check(cap)?;
+        let mut routes = self.routes();
+        let route = routes
+            .get_mut(&(cap.kind, cap.id))
+            .ok_or(RuntimeError::ClosedHandle)?;
+        if route.generation != cap.generation || route.close || route.finalizing {
+            return Err(RuntimeError::ClosedHandle);
+        }
+        route.finalizing = true;
+        Ok(())
     }
 
     /// Admits one job against a live resource. Busy/closing refuse.
@@ -215,13 +246,12 @@ impl NativeRegistry {
         if route.generation != cap.generation {
             return Err(RuntimeError::ClosedHandle);
         }
-        match route.state {
-            ResourceState::Live => {
-                route.state = ResourceState::Busy;
-                Ok(route.worker)
-            }
-            ResourceState::Busy | ResourceState::Closing => Err(RuntimeError::ClosedHandle),
+        if route.close {
+            return Err(RuntimeError::ClosedHandle);
         }
+        route.state.admit()?;
+        route.state = ResourceState::Busy;
+        Ok(route.worker)
     }
 
     pub(crate) fn end_job(&self, cap: Capability) {

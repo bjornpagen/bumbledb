@@ -14,15 +14,11 @@ import type {
 	CommandRef,
 	DatabaseIdentity,
 	DecisionStamp,
-	OperationId,
 	OperationRef,
-	PlanSetDigest,
 	ReceiptEpoch,
 	RootId,
 	StateStamp
 } from "#identity.ts"
-// Generated plan/manifest/contract shapes are shared with the migration API.
-import type { ActivationRef, GeneratedMigrations } from "#migrations/types.ts"
 import type { HistoryBinding } from "#options.ts"
 
 /** Bounded caller-declared scalar result metadata (core canonical scalars). */
@@ -47,9 +43,6 @@ export interface TerminalReceipt {
 	readonly outcome: TerminalOutcome
 }
 
-/** Where an authoritative operation is in its publication lifecycle. */
-export type PublicationPhase = "prepared" | "dispatchedUnresolved" | "confirmed" | "provedNonpublication"
-
 /**
  * This invocation's materialization, not durable receipt content. A
  * resolved receipt does not prove the local cache reached that decision.
@@ -63,19 +56,16 @@ export type SubmitOutcome =
 			readonly kind: "decided"
 			readonly receipt: TerminalReceipt
 			readonly localHealth: LocalMaterializationHealth
-			readonly phase: PublicationPhase
 	  }
 	| {
 			readonly kind: "not-submitted"
 			readonly command: CommandRef
 			readonly error: LogError
-			readonly phase: PublicationPhase
 	  }
 	| {
 			readonly kind: "outcome-unknown"
 			readonly command: CommandRef
 			readonly error: LogError
-			readonly phase: PublicationPhase
 	  }
 
 export type ResolveOutcome =
@@ -134,18 +124,16 @@ export interface CacheInspection {
  * is the operation's existing protocol identity, derived before dispatch.
  */
 export type AdminOutcome<Value> =
-	| { readonly kind: "completed"; readonly ref: OperationRef; readonly value: Value; readonly phase: PublicationPhase }
+	| { readonly kind: "completed"; readonly ref: OperationRef; readonly value: Value }
 	| {
 			readonly kind: "not-started"
 			readonly ref: OperationRef
 			readonly error: LogError
-			readonly phase: PublicationPhase
 	  }
 	| {
 			readonly kind: "outcome-unknown"
 			readonly ref: OperationRef
 			readonly error: LogError
-			readonly phase: PublicationPhase
 	  }
 
 export interface CheckpointReport {
@@ -214,64 +202,3 @@ export interface ErasureReport {
 	/** Residual copies reported honestly, never a secure-erase claim. */
 	readonly residual: readonly ResidualCopy[]
 }
-
-// ── Migration workflow values ────────────────────────────────────────────
-
-export type { ActivationRef, GeneratedMigrations }
-
-/** Binds abort to the exact operation, plan set and planned target. */
-export interface MigrationRef {
-	readonly operation: OperationRef
-	readonly planSetDigest: PlanSetDigest
-	readonly target: DatabaseIdentity
-}
-
-export interface SourceAccessReport {
-	readonly access: AccessMode
-	readonly operation: OperationId | null
-}
-
-export type MigrateValue =
-	| { readonly kind: "up-to-date"; readonly binding: HistoryBinding }
-	| {
-			readonly kind: "ready-to-switch"
-			readonly deploymentBinding: HistoryBinding
-			readonly activation: ActivationRef
-	  }
-	| { readonly kind: "paused"; readonly error: LogError; readonly sourceState: SourceAccessReport }
-
-export interface InitializeValue {
-	readonly binding: HistoryBinding
-	readonly genesis: string
-}
-
-export interface ActivationReport {
-	readonly target: DatabaseIdentity
-	readonly accessMode: AccessMode
-	readonly operation: OperationId
-	/** True when this invocation performed the one-time transition. */
-	readonly activatedNow: boolean
-}
-
-export interface AbortReport {
-	readonly target: DatabaseIdentity
-	readonly targetFenced: boolean
-	readonly sourceAccess: AccessMode
-}
-
-export type MigrationStatus =
-	| { readonly kind: "up-to-date"; readonly appliedPrefixDigest: string }
-	| { readonly kind: "pending"; readonly pending: readonly string[] }
-	| { readonly kind: "in-progress"; readonly operation: OperationRef }
-	| {
-			readonly kind: "paused"
-			readonly operation: OperationRef
-			readonly error: LogError
-			readonly sourceState: SourceAccessReport
-	  }
-	| { readonly kind: "ready-to-switch"; readonly operation: OperationRef; readonly activation: ActivationRef }
-	| { readonly kind: "activated"; readonly operation: OperationRef; readonly target: DatabaseIdentity }
-	| { readonly kind: "aborted"; readonly operation: OperationRef }
-	| { readonly kind: "outcome-unknown"; readonly operation: OperationRef; readonly error: LogError }
-	| { readonly kind: "drift"; readonly detail: string }
-	| { readonly kind: "database-ahead"; readonly detail: string }

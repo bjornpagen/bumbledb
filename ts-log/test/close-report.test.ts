@@ -128,8 +128,7 @@ describe("known receipt, then finalizer defect", function suite() {
 								outcome: {
 									kind: "decided",
 									receipt: receiptWire,
-									localHealth: { kind: "ready", at: receiptWire.decisionAt },
-									publicationPhase: "confirmed"
+									localHealth: { kind: "ready", at: receiptWire.decisionAt }
 								}
 							}
 						})

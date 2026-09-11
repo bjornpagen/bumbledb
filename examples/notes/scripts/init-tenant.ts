@@ -1,39 +1,16 @@
-/**
- * Provision one tenant database by EXECUTING the generated plan chain from
- * the declared empty base (chapter 33 initialization: seeds and closed
- * data actually run; no latest-schema shortcut marks skipped plans
- * applied), then persist the VERIFIED binding `initialize` returned into
- * the app's tenant registry. Ordinary open never initializes — a missing
- * tenant stays a typed refusal until this explicit admin job runs.
- *
- *   # local development (LocalHistory, durable app-owned directory):
- *   node --experimental-strip-types scripts/init-tenant.ts \
- *     local <tenantId> <operationIdHex> <databaseIdHex> <incarnationIdHex>
- *
- *   # hosted (S3 authority; bucket/prefix from env):
- *   BUMBLEDB_LOG_BUCKET=... BUMBLEDB_LOG_PREFIX=log \
- *   node --experimental-strip-types scripts/init-tenant.ts \
- *     hosted <tenantId> <operationIdHex> <databaseIdHex> <incarnationIdHex>
- *
- * The three Uuids are the STABLE CREATION IDENTITY (chapter 30): the
- * operator mints them once, records them with the tenant, and reuses them
- * on every retry — a lost response re-runs with the same identity and
- * resolves to the same initialization, never a second database. The
- * target schema identity comes from the generated runtime contract. A
- * failed HEAD read never recreates an empty database.
+/** Explicit tenant creation. Retain all three UUIDs and reuse them on retry.
+ * The current schema is compiled directly; application initialization writes
+ * its own ordinary seed command before adopting the tenant binding.
  */
-import * as fs from "node:fs"
 import * as path from "node:path"
-import { Uuid, NativeRuntime } from "@bjornpagen/bumbledb"
+import { NativeRuntime, Schema, Uuid } from "@bjornpagen/bumbledb"
 import type { DatabaseIdentity, HistoryBinding } from "@bjornpagen/bumbledb-log"
-import { DatabaseId, IncarnationId, OperationId, parseSchemaId, renderDatabaseIdentity } from "@bjornpagen/bumbledb-log"
-import { decodeRuntimeContract, initialize } from "@bjornpagen/bumbledb-log/migrations"
+import { DatabaseId, IncarnationId, OperationId, renderDatabaseIdentity } from "@bjornpagen/bumbledb-log"
 import { Effect, Result } from "effect"
 import { saveTenantBinding } from "../src/db/bindings.ts"
-import { generatedDirectory, loadGeneratedMigrations } from "../src/db/generated.ts"
+import { initializeTenant } from "../src/db/initialize.ts"
 import { runtimePolicy } from "../src/db/runtime-policy.ts"
-
-const MIGRATIONS_DIR = generatedDirectory()
+import { App } from "../src/db/schema.ts"
 
 function uuidOf(name: string, hex: string | undefined): Uuid {
 	if (hex === undefined) {
@@ -64,44 +41,31 @@ async function main(): Promise<void> {
 	const databaseId = unwrap("database id", DatabaseId.from(uuidOf("database id", databaseHex)))
 	const incarnationId = unwrap("incarnation id", IncarnationId.from(uuidOf("incarnation id", incarnationHex)))
 
-	const plans = loadGeneratedMigrations(MIGRATIONS_DIR)
+	const verified = await Effect.runPromise(
+		Effect.gen(function* () {
+			const schemaId = (yield* Schema.compile(App)).schemaId
+			const identity: DatabaseIdentity = { databaseId, incarnationId, schemaId }
+			const binding: HistoryBinding =
+				mode === "local"
+					? {
+							kind: "local",
+							directory: path.join(process.cwd(), ".bumbledb", "tenants", tenantId),
+							identity
+						}
+					: {
+							kind: "hosted",
+							origin: {
+								bucket: requireEnv("BUMBLEDB_LOG_BUCKET"),
+								prefix: `${process.env.BUMBLEDB_LOG_PREFIX ?? "log"}/${tenantId}`
+							},
+							directory: path.join(process.cwd(), ".bumbledb", "cache", tenantId),
+							identity
+						}
 
-	const contractDecoded = decodeRuntimeContract(JSON.parse(fs.readFileSync(path.join(MIGRATIONS_DIR, "runtime-contract.json"), "utf8")))
-	if (!contractDecoded.ok) {
-		throw new Error(`runtime contract refuses decoding: ${contractDecoded.detail}`)
-	}
-	const schemaId = unwrap("contract schemaId", parseSchemaId(contractDecoded.value.schemaId))
-
-	const identity: DatabaseIdentity = { databaseId, incarnationId, schemaId }
-	const binding: HistoryBinding =
-		mode === "local"
-			? {
-					kind: "local",
-					directory: path.join(process.cwd(), ".bumbledb", "tenants", tenantId),
-					identity
-				}
-			: {
-					kind: "hosted",
-					origin: {
-						bucket: requireEnv("BUMBLEDB_LOG_BUCKET"),
-						prefix: `${process.env.BUMBLEDB_LOG_PREFIX ?? "log"}/${tenantId}`
-					},
-					directory: path.join(process.cwd(), ".bumbledb", "cache", tenantId),
-					identity
-				}
-
-	const outcome = await Effect.runPromise(
-		initialize(binding, plans, { operationId }).pipe(
-			Effect.provide(NativeRuntime.layer(runtimePolicy.native))
-		)
+			return yield* initializeTenant(binding, operationId)
+		}).pipe(Effect.provide(NativeRuntime.layer(runtimePolicy.native)))
 	)
 
-	if (outcome.kind !== "completed") {
-		console.error(`initialize: ${outcome.kind} — resolve with scripts/migrate.ts status before retrying`)
-		process.exitCode = 1
-		return
-	}
-	const verified = outcome.value.binding
 	if (verified.kind === "local") {
 		saveTenantBinding(tenantId, {
 			kind: "local",
@@ -117,9 +81,7 @@ async function main(): Promise<void> {
 			...(verified.origin.region !== undefined ? { region: verified.origin.region } : {})
 		})
 	}
-	console.log(
-		`tenant ${tenantId} initialized: ${renderDatabaseIdentity(verified.identity)} (genesis ${outcome.value.genesis})`
-	)
+	console.log(`tenant ${tenantId} initialized: ${renderDatabaseIdentity(verified.identity)}`)
 }
 
 function requireEnv(name: string): string {

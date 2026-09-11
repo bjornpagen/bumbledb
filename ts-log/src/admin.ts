@@ -7,7 +7,7 @@
  * protocol report and identity (database/epoch/root/barrier/operation) —
  * no generic admin journal, manufactured maintenance receipts, or shared
  * durable state machine is added. Interruption stays in Cause; the retained
- * operation reference resolves it through `migrationStatus`/`inspect`.
+ * operation reference is retained for native inspection and retry.
  */
 import type { AdminOperations } from "#machine.ts"
 import { log } from "#production.ts"

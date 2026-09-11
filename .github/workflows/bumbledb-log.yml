@@ -67,8 +67,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-            ts/crate/target
           key: log-al2023-arm64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
           restore-keys: |
             log-al2023-arm64-cargo-
@@ -87,33 +85,19 @@ jobs:
           key: log-al2023-arm64-pnpm-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
           restore-keys: |
             log-al2023-arm64-pnpm-
-      - name: Install ts/ (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-        working-directory: ts
-      - name: Put ts/ node_modules/.bin on PATH
-        run: echo "$GITHUB_WORKSPACE/ts/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Build the napi .node
-        run: node scripts/build.ts
-        working-directory: ts
-      - name: stamp native provenance
-        run: node scripts/release-results.mjs --write-native-provenance
+      - name: Build and qualify one immutable package family
+        run: node scripts/build-family.mjs --out "$RUNNER_TEMP/bumbledb-family"
       - name: Build the duty binary
         run: cargo build --release --bin duty
-      - name: Install ts-log/ (frozen lockfile)
-        # lane_b_interop.rs spawns ts-log/test/interop-child.ts, which
-        # resolves @bjornpagen/bumbledb from this install. nextest is
-        # after the one current-addon build.
-        run: pnpm install --frozen-lockfile
-        working-directory: ts-log
-      - name: Put ts-log/ node_modules/.bin on PATH
-        run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
+        working-directory: ${{ runner.temp }}/bumbledb-family/source
+      - name: Complete platform correctness battery
+        run: "$RUNNER_TEMP/bumbledb-family/source/scripts/battery.sh"
       - name: Stage the linux-arm64 artifacts
         run: |
           mkdir -p /tmp/grail-artifacts
-          cp ts/npm/linux-arm64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-arm64.node
-          cp ts/npm/linux-arm64/.native-provenance.json /tmp/grail-artifacts/bumbledb.linux-arm64.provenance.json
-          cp target/release/duty /tmp/grail-artifacts/bumbledb-log-duty
+          cp "$RUNNER_TEMP/bumbledb-family/source/ts/npm/linux-arm64/bumbledb.node" /tmp/grail-artifacts/bumbledb.linux-arm64.node
+          cp "$RUNNER_TEMP/bumbledb-family/source/ts/npm/linux-arm64/.native-provenance.json" /tmp/grail-artifacts/bumbledb.linux-arm64.provenance.json
+          cp "$RUNNER_TEMP/bumbledb-family/source/target/release/duty" /tmp/grail-artifacts/bumbledb-log-duty
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.linux-arm64.node
@@ -143,6 +127,7 @@ jobs:
             exit 0
           fi
           echo "S3 credentials present; running the crate's gated backend cell (still not a Passed evidence row until release-results.mjs validates it)"
+          cd "$RUNNER_TEMP/bumbledb-family/source"
           cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate
 
   linux-x64:
@@ -188,8 +173,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-            ts/crate/target
           key: log-al2023-x64-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
           restore-keys: |
             log-al2023-x64-cargo-
@@ -208,30 +191,19 @@ jobs:
           key: log-al2023-x64-pnpm-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
           restore-keys: |
             log-al2023-x64-pnpm-
-      - name: Install ts/ (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-        working-directory: ts
-      - name: Put ts/ node_modules/.bin on PATH
-        run: echo "$GITHUB_WORKSPACE/ts/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Build the napi .node
-        run: node scripts/build.ts
-        working-directory: ts
-      - name: stamp native provenance
-        run: node scripts/release-results.mjs --write-native-provenance
+      - name: Build and qualify one immutable package family
+        run: node scripts/build-family.mjs --out "$RUNNER_TEMP/bumbledb-family"
       - name: Build the duty binary
         run: cargo build --release --bin duty
-      - name: Install ts-log/ (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-        working-directory: ts-log
-      - name: Put ts-log/ node_modules/.bin on PATH
-        run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
+        working-directory: ${{ runner.temp }}/bumbledb-family/source
+      - name: Complete platform correctness battery
+        run: "$RUNNER_TEMP/bumbledb-family/source/scripts/battery.sh"
       - name: Stage the linux-x64 artifacts
         run: |
           mkdir -p /tmp/grail-artifacts
-          cp ts/npm/linux-x64/bumbledb.node /tmp/grail-artifacts/bumbledb.linux-x64.node
-          cp ts/npm/linux-x64/.native-provenance.json /tmp/grail-artifacts/bumbledb.linux-x64.provenance.json
-          cp target/release/duty /tmp/grail-artifacts/bumbledb-log-duty-linux-x64
+          cp "$RUNNER_TEMP/bumbledb-family/source/ts/npm/linux-x64/bumbledb.node" /tmp/grail-artifacts/bumbledb.linux-x64.node
+          cp "$RUNNER_TEMP/bumbledb-family/source/ts/npm/linux-x64/.native-provenance.json" /tmp/grail-artifacts/bumbledb.linux-x64.provenance.json
+          cp "$RUNNER_TEMP/bumbledb-family/source/target/release/duty" /tmp/grail-artifacts/bumbledb-log-duty-linux-x64
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.linux-x64.node
@@ -261,6 +233,7 @@ jobs:
             exit 0
           fi
           echo "S3 credentials present; running the crate's gated backend cell (still not a Passed evidence row until release-results.mjs validates it)"
+          cd "$RUNNER_TEMP/bumbledb-family/source"
           cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate
 
   darwin:
@@ -280,8 +253,6 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-            ts/crate/target
           key: log-darwin-cargo-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'ts/crate/Cargo.lock') }}
           restore-keys: |
             log-darwin-cargo-
@@ -295,29 +266,15 @@ jobs:
           key: log-darwin-pnpm-${{ hashFiles('ts/pnpm-lock.yaml', 'ts-log/pnpm-lock.yaml') }}
           restore-keys: |
             log-darwin-pnpm-
-      - name: Install ts/ (frozen lockfile)
-        run: pnpm install --frozen-lockfile
-        working-directory: ts
-      - name: Put ts/ node_modules/.bin on PATH
-        run: echo "$GITHUB_WORKSPACE/ts/node_modules/.bin" >> "$GITHUB_PATH"
-      - name: Build the napi .node (ts-log's dependency, not the ts/ suite)
-        run: node scripts/build.ts
-        working-directory: ts
-      - name: stamp native provenance
-        run: node scripts/release-results.mjs --write-native-provenance
-      - name: Install ts-log/ (frozen lockfile)
-        # Same reason as the linux-arm64 job: nextest's interop lane
-        # resolves @bjornpagen/bumbledb from this tree.
-        run: pnpm install --frozen-lockfile
-        working-directory: ts-log
-      - name: Put ts-log/ node_modules/.bin on PATH
-        run: echo "$GITHUB_WORKSPACE/ts-log/node_modules/.bin" >> "$GITHUB_PATH"
-      - run: BUMBLEDB_SKIP_NATIVE_BUILD=1 scripts/battery.sh
+      - name: Build and qualify one immutable package family
+        run: node scripts/build-family.mjs --out "$RUNNER_TEMP/bumbledb-family"
+      - name: Complete platform correctness battery
+        run: "$RUNNER_TEMP/bumbledb-family/source/scripts/battery.sh"
       - name: Stage macOS native provenance
         run: |
           mkdir -p /tmp/grail-artifacts
-          cp ts/npm/darwin-arm64/bumbledb.node /tmp/grail-artifacts/bumbledb.darwin-arm64.node
-          cp ts/npm/darwin-arm64/.native-provenance.json /tmp/grail-artifacts/bumbledb.darwin-arm64.provenance.json
+          cp "$RUNNER_TEMP/bumbledb-family/source/ts/npm/darwin-arm64/bumbledb.node" /tmp/grail-artifacts/bumbledb.darwin-arm64.node
+          cp "$RUNNER_TEMP/bumbledb-family/source/ts/npm/darwin-arm64/.native-provenance.json" /tmp/grail-artifacts/bumbledb.darwin-arm64.provenance.json
       - uses: actions/upload-artifact@v4
         with:
           name: bumbledb.darwin-arm64.node
@@ -342,4 +299,5 @@ jobs:
             exit 0
           fi
           echo "S3 credentials present; running the crate's gated backend cell (still not a Passed evidence row until release-results.mjs validates it)"
+          cd "$RUNNER_TEMP/bumbledb-family/source"
           cargo nextest run --workspace -E 'test(s3_smoke)' --success-output immediate

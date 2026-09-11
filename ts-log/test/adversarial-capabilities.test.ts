@@ -8,7 +8,7 @@
  * These lanes exercise the production `LocalHistory`/`Command` path end to
  * end over the real native runtime. Creation uses the sanctioned checked
  * initialization artifact: the NATIVE-rendered canonical schema snapshot
- * (`productionCodec.schemaIdentity` → `schema_file::render`), whose core v6
+ * (`schemaSnapshot` → `schema_file::render`), whose core v6
  * fingerprint is exactly the creation identity's schemaId — never fabricated
  * client-side bytes.
  */
@@ -19,14 +19,13 @@ import * as path from "node:path"
 import { test } from "node:test"
 import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, Uuid, u64 } from "@bjornpagen/bumbledb"
-import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Exit, ManagedRuntime, Result } from "effect"
 import { Command } from "#command.ts"
 import { LocalHistory } from "#history.ts"
 import type { DatabaseIdentity } from "#identity.ts"
 import { DatabaseId, IncarnationId, OperationId, ReceiptEpoch, RequestId } from "#identity.ts"
-import { productionCodec } from "#migrations/native.ts"
 import type { LocalBinding } from "#options.ts"
+import { schemaSnapshot } from "#schema.ts"
 
 const Note = relation("Note", { id: u64, body: str })
 const NoteById = key(Note, ["id"])
@@ -62,13 +61,13 @@ function identityOf(schemaId: DatabaseIdentity["schemaId"], seed: string): Datab
 
 /**
  * Mints the VALID checked initialization artifact through the sanctioned
- * flow: the native migration codec renders the canonical schema snapshot
+ * flow: the native schema codec renders the canonical schema snapshot
  * (`schema_file::render`) whose fingerprint IS the compiled schemaId the
  * creation identity carries; `check_artifact` re-judges both natively.
  */
 const creation = (seed: string) =>
 	Effect.gen(function* () {
-		const identity = yield* productionCodec.schemaIdentity(lower(Journal))
+		const identity = { schemaId: (yield* Schema.compile(Journal)).schemaId, snapshot: yield* schemaSnapshot(Journal) }
 		return {
 			operationId: ok(OperationId.parse(ok(Uuid.fromBytes(new Uint8Array(16).fill(Number.parseInt(seed, 16)))))),
 			artifact: new TextEncoder().encode(identity.snapshot)

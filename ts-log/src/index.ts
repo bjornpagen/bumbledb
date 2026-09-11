@@ -45,7 +45,6 @@ export {
 	DecisionDigest,
 	IncarnationId,
 	OperationId,
-	PlanSetDigest,
 	parseCommandRef,
 	parseDatabaseIdentity,
 	parseDecisionStamp,
@@ -72,14 +71,10 @@ export type {
 	LocalBinding,
 	LocalCreateOptions,
 	ReadOptions,
-	RuntimeExpectation,
 	SubmitOptions
 } from "#options.ts"
 export type {
-	AbortReport,
 	AccessMode,
-	ActivationRef,
-	ActivationReport,
 	AdminOutcome,
 	BackupReport,
 	BackupVerification,
@@ -91,14 +86,8 @@ export type {
 	CommandScalar,
 	ErasureReport,
 	GcReport,
-	GeneratedMigrations,
 	HistoryInspection,
-	InitializeValue,
 	LocalMaterializationHealth,
-	MigrateValue,
-	MigrationRef,
-	MigrationStatus,
-	PublicationPhase,
 	ReceiptPolicyReport,
 	ReceiptRetirementReport,
 	ReceiptRotationReport,
@@ -107,7 +96,6 @@ export type {
 	RestorePointReport,
 	RestoreReport,
 	RootReleaseReport,
-	SourceAccessReport,
 	SubmitOutcome,
 	TerminalOutcome,
 	TerminalReceipt
@@ -122,3 +110,14 @@ export type {
 } from "#surface.ts"
 export type { TenantCacheOptions } from "#tenants.ts"
 export { TenantCache } from "#tenants.ts"
+export type {
+	ActivatedTransition,
+	InstalledTransition,
+	Population,
+	ReadyTransition,
+	TransitionCapture,
+	TransitionContract,
+	TransitionResolution,
+	TransitionStart
+} from "#transition.ts"
+export { Transition } from "#transition.ts"

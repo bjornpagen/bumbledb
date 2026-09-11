@@ -282,6 +282,13 @@ pub fn verify_binding<S>(
     work: &WorkContext,
 ) -> Result<(), RecoveryError> {
     let snapshot = db.snapshot(work)?;
+    let store_snapshot = db
+        .integration_store()
+        .snapshot(work)
+        .map_err(store_recovery_error)?;
+    if crate::codec::has_retired_history(&store_snapshot, work).map_err(store_recovery_error)? {
+        return Err(RecoveryError::Corrupt("retired migration records"));
+    }
     let frame = snapshot.frame(work);
     let bytes = frame
         .integration_host_record(BINDING_KEY)?
@@ -1208,9 +1215,8 @@ pub enum InstallOutcome {
 }
 
 /// Install a completed staged materialization as `<directory>/db` under the
-/// tenant directory fence — the install fence the migration-initialize
-/// bridge path calls (REC-01/MIG-14/FS-02; audit-log #12). The kernel
-/// directory lock is acquired FIRST, so the existence check and the rename
+/// tenant directory fence. The kernel directory lock is acquired first,
+/// so the existence check and the rename
 /// are one critical section (no TOCTOU with a racing initialize or open);
 /// the rename is followed by a parent-directory fsync so a power failure
 /// cannot lose the completed install.

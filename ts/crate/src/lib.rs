@@ -26,7 +26,6 @@ mod fingerprint_lock;
 pub mod log;
 pub mod log_wire;
 mod marshal;
-mod migration_wire;
 mod runtime;
 pub mod runtime_wire;
 pub use runtime::publication::runtime_arm_publication_cancel;

@@ -11,8 +11,15 @@ import { stageLogPackage, tarballFile, tarballFiles } from "./stage.ts"
 
 function build(): void {
 	const packageRoot = fileURLToPath(new URL("..", import.meta.url))
+	const admitted = spawnSync("node", ["scripts/build-family.mjs", "--check-source"], {
+		cwd: path.join(packageRoot, ".."),
+		stdio: "inherit"
+	})
+	if (admitted.status !== 0)
+		throw new BuildInputError({ message: "use pnpm run build to select an isolated package-family source" })
 	const distDir = path.join(packageRoot, "dist")
-	fs.rmSync(distDir, { recursive: true, force: true })
+	if (fs.existsSync(distDir))
+		throw new BuildInputError({ message: "build output already exists; start a fresh family attempt" })
 	const tsc = spawnSync("tsc", ["-p", "tsconfig.build.json"], {
 		stdio: "inherit",
 		cwd: packageRoot
@@ -31,7 +38,7 @@ function build(): void {
 /**
  * The tarball proof over IMMUTABLE STAGING: pack the staged tree for
  * real in a scratch dir and assert the shipped shape on the actual
- * tarball — dist entry points and the migrations CLI present, no src/
+ * tarball — dist entry points and the schema CLI present, no src/
  * leak, the packed manifest's exports/bin/imports map exact, no repo
  * tooling fields, and the committed manifest untouched (asserted again
  * inside stageLogPackage). The peer handshake (exact Effect RC, exact
@@ -45,18 +52,13 @@ function verifyPack(packageRoot: string): void {
 		const tarball = stageLogPackage(packageRoot, staging, scratch)
 
 		const files = tarballFiles(tarball)
-		for (const required of [
-			"package.json",
-			"dist/index.js",
-			"dist/index.d.ts",
-			"dist/schema.js",
-			"dist/migrations/index.js",
-			"dist/migrations/bin.js"
-		]) {
+		for (const required of ["package.json", "dist/index.js", "dist/index.d.ts", "dist/schema.js", "dist/bin.js"]) {
 			if (!files.includes(required)) {
 				throw new BuildInputError({ message: `package tarball is missing ${required}` })
 			}
 		}
+		if (files.some((file) => file.startsWith("dist/migrations/") || file === "dist/migration-ops.js"))
+			throw new BuildInputError({ message: "retired migration code must not ship" })
 		const leakedSrc = files.filter((file) => file.startsWith("src/"))
 		if (leakedSrc.length > 0) {
 			throw new BuildInputError({ message: `package tarball must not carry src/, found ${leakedSrc.join(", ")}` })
@@ -79,14 +81,13 @@ function verifyPack(packageRoot: string): void {
 		const table = exports as Record<string, unknown>
 		assertEntry(table, ".", "./dist/index.d.ts", "./dist/index.js")
 		assertEntry(table, "./schema", "./dist/schema.d.ts", "./dist/schema.js")
-		assertEntry(table, "./migrations", "./dist/migrations/index.d.ts", "./dist/migrations/index.js")
 		const bin = packed.success.bin
 		if (
 			typeof bin !== "object" ||
 			bin === null ||
-			(bin as Record<string, unknown>)["bumbledb-log"] !== "./dist/migrations/bin.js"
+			(bin as Record<string, unknown>)["bumbledb-log"] !== "./dist/bin.js"
 		) {
-			throw new BuildInputError({ message: 'package.json bin must map "bumbledb-log" to ./dist/migrations/bin.js' })
+			throw new BuildInputError({ message: 'package.json bin must map "bumbledb-log" to ./dist/bin.js' })
 		}
 	} finally {
 		fs.rmSync(scratch, { recursive: true, force: true })

@@ -35,14 +35,12 @@ import type {
 	IncarnationId,
 	OperationId,
 	OperationRef,
-	PlanSetDigest,
 	ReceiptEpoch,
 	RequestId,
 	RootId,
 	StateStamp
 } from "#identity.ts"
 import type {
-	ActivationRefWire,
 	AdminRequestWire,
 	AdminResultWire,
 	AdminValueWire,
@@ -62,22 +60,22 @@ import type {
 	HistoryInspectionWire,
 	HistoryRequestWire,
 	HistoryResultWire,
+	InstalledTransitionWire,
 	LogNative,
-	MigrateValueWire,
-	MigrationRefWire,
-	MigrationStatusWire,
 	OutcomeWire,
-	PlansWire,
+	PopulationHandle,
 	PreconditionWire,
 	ProvenanceWire,
-	PublicationPhaseWire,
 	ReceiptWire,
 	ResultWire,
 	SealRequestWire,
-	SourceAccessWire,
 	StampWire,
 	StateWire,
-	SubmitWire
+	SubmitWire,
+	TransitionCaptureWire,
+	TransitionContractWire,
+	TransitionRequestWire,
+	TransitionResultWire
 } from "#native.ts"
 import type {
 	CreationOptions,
@@ -93,9 +91,6 @@ import type {
 	TenantCacheOptions
 } from "#options.ts"
 import type {
-	AbortReport,
-	ActivationRef,
-	ActivationReport,
 	AdminOutcome,
 	BackupReport,
 	BackupVerification,
@@ -105,26 +100,30 @@ import type {
 	CommandScalar,
 	ErasureReport,
 	GcReport,
-	GeneratedMigrations,
 	HistoryInspection,
-	InitializeValue,
 	LocalMaterializationHealth,
-	MigrateValue,
-	MigrationRef,
-	MigrationStatus,
-	PublicationPhase,
 	ReceiptRetirementReport,
 	ReceiptRotationReport,
 	ResolveOutcome,
 	RestorePointReport,
 	RestoreReport,
 	RootReleaseReport,
-	SourceAccessReport,
 	SubmitOutcome,
 	TerminalOutcome,
 	TerminalReceipt
 } from "#outcome.ts"
 import type { Command, CommandInput, History, HistoryBorrow, PublishedSnapshot, TenantCache } from "#surface.ts"
+import type {
+	ActivatedTransition,
+	InstalledTransition,
+	Population,
+	ReadyTransition,
+	TransitionCapture,
+	TransitionContract,
+	TransitionOperations,
+	TransitionResolution,
+	TransitionStart
+} from "#transition.ts"
 
 // ── Shared core capabilities ─────────────────────────────────────────────
 
@@ -143,7 +142,6 @@ export type PublishedCompleteResult<A> = CompleteResult<A>
 export interface CoreChangesView {
 	readonly handle: unknown
 	readonly schemaId: SchemaId
-	readonly closed: boolean
 }
 
 export interface CoreIntegration {
@@ -154,8 +152,7 @@ export interface CoreIntegration {
 	reader<S extends AnySchema>(core: SnapshotHandle | Capability, schema: S): PublishedReadCapability<S>
 	/**
 	 * The core's private ChangeSet registry accessor (`internalChanges`):
-	 * `undefined` for a foreign dynamic object, `closed` mirrors the native
-	 * capability state, and `handle` is the retained native change — the
+	 * `undefined` for a foreign dynamic object; `handle` is the retained native change — the
 	 * exact accepted bytes, never a reconstruction.
 	 */
 	changes(value: ChangeSet<AnySchema> | object): CoreChangesView | undefined
@@ -252,18 +249,6 @@ function healthOf(operation: string, wire: HealthWire): LocalMaterializationHeal
 		return { kind: "ready", at: stampOf(wire.at) }
 	}
 	return { kind: "unavailable", error: errorOf(operation, wire.error) }
-}
-
-function phaseOf(operation: string, wire: PublicationPhaseWire): PublicationPhase {
-	switch (wire) {
-		case "prepared":
-		case "dispatchedUnresolved":
-		case "confirmed":
-		case "provedNonpublication":
-			return wire
-		default:
-			throw invalidInput(operation)
-	}
 }
 
 function inspectionOf(wire: HistoryInspectionWire): HistoryInspection {
@@ -472,39 +457,6 @@ function creationWire(operation: string, creation: CreationOptions) {
 	}
 }
 
-function snapshotsField(operation: string, plans: MigrationPlansInput): { readonly snapshots: readonly string[] } {
-	// Base schema snapshot first, then each entry's target: entries + 1 rows.
-	// Empty source still supplies the empty-schema render — never optional.
-	if (!Array.isArray(plans.snapshots) || plans.snapshots.length !== plans.manifest.entries.length + 1) {
-		throw invalidInput(operation)
-	}
-	return { snapshots: plans.snapshots.map((snapshot) => checkedString(operation, snapshot, 4 << 20)) }
-}
-
-function plansWire(operation: string, plans: MigrationPlansInput): PlansWire {
-	if (plans.manifest.entries.length !== plans.plans.length || plans.manifest.entries.length > 4096) {
-		throw invalidInput(operation)
-	}
-	return {
-		...snapshotsField(operation, plans),
-		manifestVersion: checkedNonNegative(operation, plans.manifest.manifestVersion, 0xffff),
-		planVersion: checkedNonNegative(operation, plans.manifest.planVersion, 0xffff),
-		baseSchemaId: checkedString(operation, plans.manifest.baseSchemaId, 64),
-		basePrefixDigest: checkedString(operation, plans.manifest.basePrefixDigest, 64),
-		entries: plans.manifest.entries.map((entry) => ({
-			sequence: checkedString(operation, entry.sequence, 20),
-			id: checkedString(operation, entry.id, 64),
-			fromSchemaId: checkedString(operation, entry.fromSchemaId, 64),
-			toSchemaId: checkedString(operation, entry.toSchemaId, 64),
-			planDigest: checkedString(operation, entry.planDigest, 64),
-			prefixDigest: checkedString(operation, entry.prefixDigest, 64)
-		})),
-		// Inert canonical transport of the generated plan data; the native
-		// migration codec is the one canonicalization/digest authority.
-		plans: plans.plans.map((plan) => JSON.stringify(plan))
-	}
-}
-
 // ── The machine ────────────────────────────────────────────────────────────
 
 interface CommandEntry {
@@ -513,6 +465,7 @@ interface CommandEntry {
 }
 
 export interface LogMachine {
+	readonly Transition: TransitionOperations
 	readonly LocalHistory: {
 		open<S extends AnySchema>(binding: LocalBinding, schema: S): OpenEffect<S>
 		create<S extends AnySchema>(binding: LocalBinding, schema: S, options: LocalCreateOptions): OpenEffect<S>
@@ -536,7 +489,6 @@ export interface LogMachine {
 		): Effect.Effect<TenantCache<S>, LogError, NativeRuntimeService | Scope.Scope>
 	}
 	readonly admin: AdminOperations
-	readonly migrations: MigrationOperations
 }
 
 type NativeRuntimeService = NativeRuntime
@@ -553,22 +505,6 @@ type OpenEffect<S extends AnySchema> = Effect.Effect<History<S>, LogError, Nativ
 export interface TenantOpenOptions {
 	readonly schema?: AnySchema
 }
-
-/**
- * Optional target-location inputs for `activateMigration`/`abortMigration`:
- * the SOURCE binding (locates the stable `<dir>/targets` namespace) and the
- * TARGET's core schema. Absent stays a typed native refusal.
- */
-export interface MigrationTargetOptions extends TenantOpenOptions {
-	readonly binding?: HistoryBinding
-}
-
-/**
- * The generated migrations including the mandatory snapshot chain
- * (empty-base first, then each entry's target). Digests alone cannot
- * reconstruct descriptors; empty source is not a compile shortcut.
- */
-export type MigrationPlansInput = GeneratedMigrations
 
 export interface AdminIdentityOptions extends TenantOpenOptions {
 	readonly operationId: OperationId
@@ -628,35 +564,10 @@ export type BackupDestination =
 			readonly credentials?: HostedCredentials
 	  }
 
-export interface MigrationOperations {
-	migrationStatus(
-		binding: HistoryBinding,
-		plans: MigrationPlansInput,
-		options: TenantOpenOptions
-	): Effect.Effect<MigrationStatus, LogError, NativeRuntimeService>
-	initialize(
-		binding: HistoryBinding,
-		plans: MigrationPlansInput,
-		options: AdminIdentityOptions
-	): Effect.Effect<AdminOutcome<InitializeValue>, never, NativeRuntimeService>
-	migrate(
-		binding: HistoryBinding,
-		plans: MigrationPlansInput,
-		options: AdminIdentityOptions & { readonly to?: string }
-	): Effect.Effect<AdminOutcome<MigrateValue>, never, NativeRuntimeService>
-	activateMigration(
-		ref: ActivationRef,
-		options: MigrationTargetOptions
-	): Effect.Effect<AdminOutcome<ActivationReport>, never, NativeRuntimeService>
-	abortMigration(
-		ref: MigrationRef,
-		options: MigrationTargetOptions
-	): Effect.Effect<AdminOutcome<AbortReport>, never, NativeRuntimeService>
-}
-
 export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine {
 	const cancel: CancelVerb = (operation, callback) => wire.runtimeCancel(operation, callback)
 	const commandEntries = new WeakMap<object, CommandEntry>()
+	const historyEntries = new WeakMap<object, { readonly capability: HistoryCapability; readonly schema: AnySchema }>()
 
 	function makeCommand<S extends AnySchema>(cw: CommandWire): Command<S> {
 		const state = { closed: false }
@@ -709,22 +620,19 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return {
 					kind: "decided",
 					receipt: receiptOf(outcome.receipt),
-					localHealth: healthOf(operation, outcome.localHealth),
-					phase: phaseOf(operation, outcome.publicationPhase)
+					localHealth: healthOf(operation, outcome.localHealth)
 				}
 			case "not-submitted":
 				return {
 					kind: "not-submitted",
 					command: ref,
-					error: errorOf(operation, outcome.error),
-					phase: phaseOf(operation, outcome.publicationPhase)
+					error: errorOf(operation, outcome.error)
 				}
 			case "outcome-unknown":
 				return {
 					kind: "outcome-unknown",
 					command: ref,
-					error: errorOf(operation, outcome.error),
-					phase: phaseOf(operation, outcome.publicationPhase)
+					error: errorOf(operation, outcome.error)
 				}
 		}
 	}
@@ -811,8 +719,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 						return Effect.succeed<SubmitOutcome>({
 							kind: "not-submitted",
 							command: ref,
-							error: closedHandle(operation),
-							phase: "prepared"
+							error: closedHandle(operation)
 						})
 					}
 					return certaintyOperation(
@@ -835,14 +742,12 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 						(error): SubmitOutcome => ({
 							kind: "not-submitted",
 							command: ref,
-							error,
-							phase: "prepared"
+							error
 						}),
 						(error): SubmitOutcome => ({
 							kind: "outcome-unknown",
 							command: ref,
-							error,
-							phase: "dispatchedUnresolved"
+							error
 						})
 					)
 				})
@@ -874,7 +779,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 	function makeHistory<S extends AnySchema>(schema: S, handle: HistoryHandleWire): History<S> {
 		const state = { closed: false }
 		const members = makeFacadeMembers(schema, handle.history, handle.meta, state)
-		return {
+		const history: History<S> = {
 			...members,
 			close: () =>
 				Effect.suspend(() => {
@@ -882,12 +787,14 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return drainClose("History.close", (callback) => wire.logHistoryClose(handle.history, callback))
 				})
 		}
+		historyEntries.set(history, { capability: handle.history, schema })
+		return history
 	}
 
 	function makeBorrow<S extends AnySchema>(schema: S, handle: HistoryHandleWire): HistoryBorrow<S> {
 		const state = { closed: false }
 		const members = makeFacadeMembers(schema, handle.history, handle.meta, state)
-		return {
+		const history: HistoryBorrow<S> = {
 			...members,
 			release: () =>
 				Effect.suspend(() => {
@@ -895,6 +802,8 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					return drainClose("HistoryBorrow.release", (callback) => wire.logBorrowRelease(handle.history, callback))
 				})
 		}
+		historyEntries.set(history, { capability: handle.history, schema })
+		return history
 	}
 
 	function openHistory<S extends AnySchema>(
@@ -957,14 +866,11 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			const acquire = Effect.suspend(() => {
 				// The exact core registry accessor: a foreign dynamic object
 				// refuses before any native dispatch (the Db.apply pattern);
-				// a spent/closed ChangeSet refuses as ClosedHandle; a scope/
-				// change schema mismatch refuses before native work.
+				// a scope/change schema mismatch refuses before native work.
+				// Native admission owns the ChangeSet's lifetime.
 				const internal = core.changes(input.changes)
 				if (internal === undefined) {
 					return Effect.fail<LogError>(invalidInput(operation))
-				}
-				if (internal.closed) {
-					return Effect.fail<LogError>(closedHandle(operation))
 				}
 				let request: SealRequestWire
 				try {
@@ -1041,13 +947,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 					try {
 						request = {
 							maxOpen: checkedCount(operation, options.maxOpen, 0xffffffff),
-							expected:
-								options.expected === undefined
-									? null
-									: {
-											schemaId: checkedString(operation, options.expected.schemaId, 64),
-											appliedPrefixDigest: checkedString(operation, options.expected.appliedPrefixDigest, 64)
-										},
 							schema: core.schemaSpec(schema)
 						}
 					} catch (cause) {
@@ -1148,22 +1047,19 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return {
 					kind: "completed",
 					ref,
-					value: decode(result.value),
-					phase: phaseOf(operation, result.publicationPhase)
+					value: decode(result.value)
 				}
 			case "not-started":
 				return {
 					kind: "not-started",
 					ref,
-					error: errorOf(operation, result.error),
-					phase: phaseOf(operation, result.publicationPhase)
+					error: errorOf(operation, result.error)
 				}
 			case "outcome-unknown":
 				return {
 					kind: "outcome-unknown",
 					ref,
-					error: errorOf(operation, result.error),
-					phase: phaseOf(operation, result.publicationPhase)
+					error: errorOf(operation, result.error)
 				}
 			case "report":
 				// A read-only certainty from a mutating verb is a wire defect.
@@ -1183,8 +1079,7 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				return {
 					kind: "not-started",
 					ref,
-					error: runtime.failure,
-					phase: "prepared"
+					error: runtime.failure
 				} satisfies AdminOutcome<Value>
 			}
 			// `ref` is the caller-supplied operationId, fixed before dispatch.
@@ -1196,12 +1091,11 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				(callback) => wire.logAdmin(runtime.success, request(), callback),
 				wire.logAdminTake,
 				(result) => decodeAdmin(operation, ref, result, decode),
-				(error): AdminOutcome<Value> => ({ kind: "not-started", ref, error, phase: "prepared" }),
+				(error): AdminOutcome<Value> => ({ kind: "not-started", ref, error }),
 				(error): AdminOutcome<Value> => ({
 					kind: "outcome-unknown",
 					ref,
-					error,
-					phase: "dispatchedUnresolved"
+					error
 				})
 			)
 		})
@@ -1243,17 +1137,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		return backup === undefined ? {} : { backup: checkedUuid(operation, backup) }
 	}
 
-	/** Optional source binding + target schema for activate/abort. */
-	function targetFields(
-		operation: string,
-		options: MigrationTargetOptions
-	): { readonly binding?: BindingWire; readonly schema?: unknown } {
-		return {
-			...(options.binding === undefined ? {} : { binding: bindingWire(operation, options.binding) }),
-			...schemaField(options.schema)
-		}
-	}
-
 	function destinationWire(operation: string, destination: BackupDestination): DestinationWire {
 		if (destination.kind === "filesystem") {
 			return { kind: "filesystem", directory: checkedString(operation, destination.directory, 4096) }
@@ -1279,111 +1162,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 				throw invalidInput(operation)
 			}
 			return value as Extract<AdminValueWire, { verb: Verb }>
-		}
-	}
-
-	function sourceAccessOf(wire: SourceAccessWire): SourceAccessReport {
-		return {
-			access: wire.access,
-			operation: wire.operationId === null ? null : (wire.operationId as OperationId)
-		}
-	}
-
-	// `ActivationRef` is declared in #migrations/types.ts:
-	// { operation: OperationId, planSetDigest, target, targetGenesis }.
-	function activationRefOf(wire: ActivationRefWire): ActivationRef {
-		return {
-			operation: wire.operationId as OperationId,
-			planSetDigest: wire.planSetDigest as PlanSetDigest,
-			target: identityOf(wire.target),
-			targetGenesis: wire.targetGenesis as ActivationRef["targetGenesis"]
-		}
-	}
-
-	function migrationRefOf(wire: MigrationRefWire): MigrationRef {
-		return {
-			operation: { identity: identityOf(wire.identity), operation: wire.operationId as OperationId },
-			planSetDigest: wire.planSetDigest as PlanSetDigest,
-			target: identityOf(wire.target)
-		}
-	}
-
-	function activationRefWire(operation: string, ref: ActivationRef): ActivationRefWire {
-		return {
-			operationId: checkedUuid(operation, ref.operation),
-			planSetDigest: checkedString(operation, ref.planSetDigest, 64),
-			target: identityWire(operation, ref.target),
-			targetGenesis: checkedString(operation, ref.targetGenesis, 64)
-		}
-	}
-
-	function migrationRefWire(operation: string, ref: MigrationRef): MigrationRefWire {
-		return {
-			identity: identityWire(operation, ref.operation.identity),
-			operationId: checkedUuid(operation, ref.operation.operation),
-			planSetDigest: checkedString(operation, ref.planSetDigest, 64),
-			target: identityWire(operation, ref.target)
-		}
-	}
-
-	function migrateValueOf(operation: string, wire: MigrateValueWire): MigrateValue {
-		switch (wire.kind) {
-			case "up-to-date":
-				return { kind: "up-to-date", binding: bindingOf(wire.binding) }
-			case "ready-to-switch":
-				return {
-					kind: "ready-to-switch",
-					deploymentBinding: bindingOf(wire.deploymentBinding),
-					activation: activationRefOf(wire.activation)
-				}
-			case "paused":
-				return {
-					kind: "paused",
-					error: errorOf(operation, wire.error),
-					sourceState: sourceAccessOf(wire.sourceState)
-				}
-		}
-	}
-
-	function migrationStatusOf(operation: string, wire: MigrationStatusWire): MigrationStatus {
-		switch (wire.kind) {
-			case "up-to-date":
-				return { kind: "up-to-date", appliedPrefixDigest: wire.appliedPrefixDigest }
-			case "pending":
-				return { kind: "pending", pending: wire.pending }
-			case "in-progress":
-				return { kind: "in-progress", operation: migrationRefOf(wire.operationRef).operation }
-			case "paused":
-				return {
-					kind: "paused",
-					operation: migrationRefOf(wire.operationRef).operation,
-					error: errorOf(operation, wire.error),
-					sourceState: sourceAccessOf(wire.sourceState)
-				}
-			case "ready-to-switch":
-				return {
-					kind: "ready-to-switch",
-					operation: migrationRefOf(wire.operationRef).operation,
-					activation: activationRefOf(wire.activation)
-				}
-			case "activated":
-				return {
-					kind: "activated",
-					operation: migrationRefOf(wire.operationRef).operation,
-					target: identityOf(wire.target)
-				}
-			case "aborted":
-				return { kind: "aborted", operation: migrationRefOf(wire.operationRef).operation }
-			case "outcome-unknown":
-				return {
-					kind: "outcome-unknown",
-					operation: migrationRefOf(wire.operationRef).operation,
-					error: errorOf(operation, wire.error)
-				}
-			case "drift":
-				return { kind: "drift", detail: wire.detail }
-			case "database-ahead":
-				return { kind: "database-ahead", detail: wire.detail }
 		}
 	}
 
@@ -1604,99 +1382,214 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 			)
 		}
 	}
-
-	const migrations: MigrationOperations = {
-		migrationStatus(binding, plans, options) {
-			const operation = "migrations.status"
-			return adminQuery(
-				operation,
-				() => ({
-					verb: "migration-status",
-					binding: bindingWire(operation, binding),
-					...schemaField(options.schema),
-					plans: plansWire(operation, plans)
-				}),
-				(value) => {
-					const report = expectVerb(operation, "migration-status")(value)
-					return migrationStatusOf(operation, report.status)
+	function contractWire(operation: string, contract: TransitionContract): TransitionContractWire {
+		return {
+			operationId: checkedUuid(operation, contract.operation),
+			source: identityWire(operation, contract.source),
+			target: identityWire(operation, contract.target),
+			commitment: checkedString(operation, contract.commitment, 64)
+		}
+	}
+	function contractOf(contract: TransitionContractWire): TransitionContract {
+		return {
+			operation: contract.operationId as OperationId,
+			source: identityOf(contract.source),
+			target: identityOf(contract.target),
+			commitment: contract.commitment
+		}
+	}
+	function captureOf(captured: TransitionCaptureWire): TransitionCapture {
+		return {
+			contract: contractOf(captured.contract),
+			decision: stampOf(captured.decision),
+			state: stateOf(captured.state)
+		}
+	}
+	function installedOf(installed: InstalledTransitionWire): InstalledTransition {
+		return {
+			captured: captureOf(installed.captured),
+			applicationDigest: installed.applicationDigest,
+			bytes: installed.bytes
+		}
+	}
+	function readyOf(result: Extract<TransitionResultWire, { kind: "ready" }>): ReadyTransition {
+		return {
+			kind: "ready",
+			installed: installedOf(result.installed),
+			binding: {
+				kind: "local",
+				directory: result.directory,
+				identity: identityOf(result.installed.captured.contract.target)
+			}
+		}
+	}
+	function resolutionOf(operation: string, result: TransitionResultWire): TransitionResolution {
+		switch (result.kind) {
+			case "ready":
+				return readyOf(result)
+			case "activated":
+				return {
+					kind: "activated",
+					contract: contractOf(result.contract),
+					genesis: result.genesis as DecisionDigest,
+					binding: { kind: "local", directory: result.directory, identity: identityOf(result.contract.target) }
 				}
-			)
-		},
-		initialize(binding, plans, options) {
-			const operation = "migrations.initialize"
-			return adminMutation(
+			case "uninstalled":
+				return { kind: "uninstalled" }
+			case "aborted":
+				return { kind: "aborted" }
+			default:
+				throw invalidInput(operation)
+		}
+	}
+	function transitionCall<A>(
+		operation: string,
+		history: object,
+		request: () => TransitionRequestWire,
+		accept: (result: TransitionResultWire) => A
+	): Effect.Effect<A, LogError> {
+		return Effect.suspend(() => {
+			const entry = historyEntries.get(history)
+			if (entry === undefined) return Effect.fail(invalidInput(operation))
+			let input: TransitionRequestWire
+			try {
+				input = request()
+			} catch (cause) {
+				return Effect.fail(logFailure(operation, cause))
+			}
+			return logOperation(
 				operation,
-				operationRef(binding, options.operationId),
-				() => ({
-					verb: "migration-initialize",
-					binding: bindingWire(operation, binding),
-					...schemaField(options.schema),
-					operationId: checkedUuid(operation, options.operationId),
-					plans: plansWire(operation, plans)
-				}),
-				(value) => {
-					const report = expectVerb(operation, "migration-initialize")(value)
-					return { binding: bindingOf(report.binding), genesis: report.genesis } satisfies InitializeValue
-				}
+				cancel,
+				(callback) => wire.logTransitionCall(entry.capability, input, callback),
+				wire.logTransitionResult,
+				accept
 			)
-		},
-		migrate(binding, plans, options) {
-			const operation = "migrations.migrate"
-			return adminMutation(
+		})
+	}
+	function makePopulation<T extends AnySchema>(schema: T, handle: PopulationHandle): Population<T> {
+		return {
+			schema,
+			apply(changes) {
+				const operation = "Population.apply"
+				return Effect.suspend(() => {
+					const entry = core.changes(changes)
+					if (entry === undefined) return Effect.fail(invalidInput(operation))
+					return logOperation(
+						operation,
+						cancel,
+						(callback) => wire.logPopulationApply(handle, entry.handle, callback),
+						wire.logTransitionResult,
+						(result) => {
+							if (result.kind !== "applied") throw invalidInput(operation)
+						}
+					)
+				})
+			},
+			finish() {
+				const operation = "Population.finish"
+				return logOperation(
+					operation,
+					cancel,
+					(callback) => wire.logPopulationFinish(handle, callback),
+					wire.logTransitionResult,
+					(result) => {
+						if (result.kind !== "ready") throw invalidInput(operation)
+						return readyOf(result)
+					}
+				)
+			},
+			close: () => drainClose("Population.close", (callback) => wire.logPopulationClose(handle, callback))
+		}
+	}
+	const TransitionNamespace: TransitionOperations = {
+		begin<S extends AnySchema, T extends AnySchema>(
+			source: History<S> | HistoryBorrow<S>,
+			target: T,
+			contract: TransitionContract
+		) {
+			const operation = "Transition.begin"
+			const acquire = transitionCall(
 				operation,
-				operationRef(binding, options.operationId),
-				() => ({
-					verb: "migration-migrate",
-					binding: bindingWire(operation, binding),
-					...schemaField(options.schema),
-					operationId: checkedUuid(operation, options.operationId),
-					plans: plansWire(operation, plans),
-					to: options.to === undefined ? null : checkedString(operation, options.to, 256)
-				}),
-				(value) => {
-					const report = expectVerb(operation, "migration-migrate")(value)
-					return migrateValueOf(operation, report.value)
-				}
-			)
-		},
-		activateMigration(ref, options) {
-			const operation = "migrations.activate"
-			return adminMutation(
-				operation,
-				{ identity: ref.target, operation: ref.operation },
-				() => ({
-					verb: "migration-activate",
-					ref: activationRefWire(operation, ref),
-					...targetFields(operation, options)
-				}),
-				(value) => {
-					const report = expectVerb(operation, "migration-activate")(value)
+				source,
+				() => ({ verb: "begin", contract: contractWire(operation, contract), schema: core.schemaSpec(target) }),
+				(result): TransitionStart<S, T> => {
+					if (result.kind === "activated") return resolutionOf(operation, result) as ActivatedTransition
+					if (result.kind === "aborted") return { kind: "aborted" }
+					if (result.kind !== "ready" && result.kind !== "populating") throw invalidInput(operation)
+					const entry = historyEntries.get(source)
+					if (entry === undefined || result.source === undefined) throw invalidInput(operation)
+					const reader = makeSnapshot(entry.schema as S, result.source.snapshot, result.source.provenance)
+					if (result.kind === "ready") return { ...readyOf(result), source: reader }
 					return {
-						target: identityOf(report.target),
-						accessMode: report.accessMode,
-						operation: report.operationId as OperationId,
-						activatedNow: report.activatedNow
-					} satisfies ActivationReport
+						kind: "populating",
+						captured: captureOf(result.captured),
+						source: reader,
+						population: makePopulation(target, result.population),
+						binding: {
+							kind: "local",
+							directory: result.directory,
+							identity: identityOf(result.captured.contract.target)
+						}
+					}
+				}
+			)
+			return scopedResource(operation, acquire, (value) =>
+				Effect.gen(function* () {
+					if (value.kind === "populating") {
+						const population = yield* value.population.close()
+						const source = yield* value.source.close()
+						return population.kind === "closed" ? source : population
+					}
+					if (value.kind === "ready") return yield* value.source.close()
+					return { kind: "closed" as const }
+				})
+			)
+		},
+		resolve(source, target, contract) {
+			const operation = "Transition.resolve"
+			return transitionCall(
+				operation,
+				source,
+				() => ({ verb: "resolve", contract: contractWire(operation, contract), schema: core.schemaSpec(target) }),
+				(result) => resolutionOf(operation, result)
+			)
+		},
+		inspect<T extends AnySchema>(target: History<T> | HistoryBorrow<T>, installed: InstalledTransition) {
+			const operation = "Transition.inspect"
+			const acquire = transitionCall(
+				operation,
+				target,
+				() => ({ verb: "inspect", evidence: installed.bytes }),
+				(result) => {
+					const entry = historyEntries.get(target)
+					if (entry === undefined || result.kind !== "ready" || result.source === undefined)
+						throw invalidInput(operation)
+					return makeSnapshot(entry.schema as T, result.source.snapshot, result.source.provenance)
+				}
+			)
+			return scopedResource(operation, acquire, (reader) => reader.close())
+		},
+		activate(source, target, installed) {
+			const operation = "Transition.activate"
+			return transitionCall(
+				operation,
+				source,
+				() => ({ verb: "activate", evidence: installed.bytes, schema: core.schemaSpec(target) }),
+				(result) => {
+					const value = resolutionOf(operation, result)
+					if (value.kind !== "activated") throw invalidInput(operation)
+					return value
 				}
 			)
 		},
-		abortMigration(ref, options) {
-			const operation = "migrations.abort"
-			return adminMutation(
+		abort(source, target, contract) {
+			const operation = "Transition.abort"
+			return transitionCall(
 				operation,
-				ref.operation,
-				() => ({
-					verb: "migration-abort",
-					ref: migrationRefWire(operation, ref),
-					...targetFields(operation, options)
-				}),
-				(value) => {
-					const report = expectVerb(operation, "migration-abort")(value)
-					return {
-						target: identityOf(report.target),
-						targetFenced: report.targetFenced,
-						sourceAccess: report.sourceAccess
-					} satisfies AbortReport
+				source,
+				() => ({ verb: "abort", contract: contractWire(operation, contract), schema: core.schemaSpec(target) }),
+				(result) => {
+					if (result.kind !== "aborted") throw invalidInput(operation)
 				}
 			)
 		}
@@ -1708,6 +1601,6 @@ export function makeLogMachine(wire: LogWire, core: CoreIntegration): LogMachine
 		Command: CommandNamespace,
 		TenantCache: TenantCacheNamespace,
 		admin,
-		migrations
+		Transition: TransitionNamespace
 	}
 }

@@ -1,7 +1,7 @@
 {
 	"name": "@bjornpagen/bumbledb-log",
-	"version": "1.3.0",
-	"description": "Durable named application commands over bumbledb: LocalHistory, HostedHistory, sealed commands with retained refs, published snapshots, one native TenantCache, and explicit maintenance/migration operations (Effect-only)",
+	"version": "1.3.1",
+	"description": "Durable application commands, coherent readers, native schema transitions and generated schema bindings for BumbleDB (Effect-only)",
 	"type": "module",
 	"exports": {
 		".": {
@@ -11,14 +11,10 @@
 		"./schema": {
 			"types": "./dist/schema.d.ts",
 			"default": "./dist/schema.js"
-		},
-		"./migrations": {
-			"types": "./dist/migrations/index.d.ts",
-			"default": "./dist/migrations/index.js"
 		}
 	},
 	"bin": {
-		"bumbledb-log": "./dist/migrations/bin.js"
+		"bumbledb-log": "./dist/bin.js"
 	},
 	"imports": {
 		"#test/*.ts": "./test/*.ts",
@@ -34,7 +30,7 @@
 		"README.md"
 	],
 	"scripts": {
-		"build": "node scripts/build.ts",
+		"build": "node ../scripts/build-family.mjs",
 		"typecheck": "tsc --noEmit",
 		"lint": "biome check .",
 		"test": "node --test 'test/**/*.test.ts'",
@@ -56,7 +52,7 @@
 	},
 	"homepage": "https://github.com/bjornpagen/bumbledb#readme",
 	"peerDependencies": {
-		"@bjornpagen/bumbledb": "1.3.0",
+		"@bjornpagen/bumbledb": "1.3.1",
 		"effect": "4.0.0-rc.112"
 	},
 	"devDependencies": {

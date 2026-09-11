@@ -87,7 +87,7 @@ fn validate_reach(
     refuse_self_in_base(rec, id)?;
     let rec_head = rec.head();
     let (base, rec_low) = lower_rec_pool(rec, id)?;
-    let base_typing = type_rules(
+    let (base_typing, rec_signature) = type_rules(
         schema,
         &InteriorSignatures::reach_open(&sealed, None, derived),
         &rec_head,
@@ -95,8 +95,7 @@ fn validate_reach(
         &mut params,
         true,
     )?;
-    let rec_signature = super::Signature::derive(&base[0], &base_typing[0]);
-    let rec_typing = type_rules(
+    let (rec_typing, _) = type_rules(
         schema,
         &InteriorSignatures::reach_sealed(&sealed, &rec_signature, derived),
         &rec_head,
@@ -104,10 +103,11 @@ fn validate_reach(
         &mut params,
         true,
     )?;
-    let base_row = input_row(&base[0], &base_typing[0]);
     for (rule_idx, (rule, typing)) in rec_low.iter().zip(&rec_typing).enumerate() {
-        let row = input_row(rule, typing);
-        if let Some(position) = (0..row.len()).find(|&i| row[i] != base_row[i]) {
+        let row = Signature::derive(rule, typing);
+        if let Some(position) =
+            (0..row.columns.len()).find(|&i| row.columns[i] != rec_signature.columns[i])
+        {
             return Err(ValidationError::HeadTypeMismatch {
                 rule: RuleIndex(rule_idx),
                 position: FindIndex(position),
@@ -171,8 +171,8 @@ fn seal_interiors(
             ValidationError::EmptyInterior { interior: id },
             true,
         )?;
-        let typings = type_rules(schema, &sigs(&sealed, id), &head, &lowered, params, false)?;
-        let signature = super::Signature::derive(&lowered[0], &typings[0]);
+        let (typings, signature) =
+            type_rules(schema, &sigs(&sealed, id), &head, &lowered, params, false)?;
         sealed.push(signature.clone());
         interiors_out.push(ValidatedInterior {
             lowered,
@@ -191,8 +191,7 @@ fn type_main(
     params: &mut ParamTables,
 ) -> Result<ValidatedMain, ValidationError> {
     let lowered = lower_rules(head, rules, ValidationError::EmptyRuleSet, true)?;
-    let typings = type_rules(schema, sigs, head, &lowered, params, false)?;
-    let signature = super::Signature::derive(&lowered[0], &typings[0]);
+    let (typings, signature) = type_rules(schema, sigs, head, &lowered, params, false)?;
     Ok(ValidatedMain {
         lowered,
         signature,
@@ -233,16 +232,18 @@ fn type_rules(
     lowered: &[LoweredRule],
     params: &mut ParamTables,
     rec_body: bool,
-) -> Result<Vec<RuleTyping>, ValidationError> {
-    let mut pinned_row: Vec<ValueType> = Vec::new();
+) -> Result<(Vec<RuleTyping>, Signature), ValidationError> {
+    let mut signature = Signature {
+        columns: Box::default(),
+    };
     let mut rules = Vec::with_capacity(lowered.len());
     for (rule_idx, rule) in lowered.iter().enumerate() {
         check_head_alignment(head, rule, rule_idx)?;
         let (typing, ctx) = validate_rule(schema, sigs, rule, rec_body)?;
-        let row = input_row(rule, &typing);
+        let row = Signature::derive(rule, &typing);
         if rule_idx == 0 {
-            pinned_row = row;
-        } else if let Some(position) = (0..row.len()).find(|i| row[*i] != pinned_row[*i]) {
+            signature = row;
+        } else if let Err(position) = signature.meet(&row, !rec_body) {
             return Err(ValidationError::HeadTypeMismatch {
                 rule: RuleIndex(rule_idx),
                 position: FindIndex(position),
@@ -251,7 +252,7 @@ fn type_rules(
         params.unify(ctx)?;
         rules.push(typing);
     }
-    Ok(rules)
+    Ok((rules, signature))
 }
 
 fn refuse_self_in_base(rec: &Rec, rec_id: InteriorId) -> Result<(), ValidationError> {
@@ -416,7 +417,7 @@ pub(crate) fn dnf_derived(lowered: &[LoweredRule]) -> Option<u16> {
         .then_some(first)
 }
 
-/// Head alignment, the shape half: arity, then var-vs-aggregate-op kind
+/// Head alignment, the shape half: arity, then projection-vs-aggregate-op
 /// position by position (types are checked against the pinned row after the
 /// rule's own typing fixpoint resolves them).
 fn check_head_alignment(
@@ -434,7 +435,13 @@ fn check_head_alignment(
         });
     }
     for (position, (term, head_term)) in rule.finds.iter().zip(head).enumerate() {
-        if term.head_term() != *head_term {
+        use crate::ir::HeadTerm::{Aggregate, Compute, Var};
+        let agrees = match (term.head_term(), head_term) {
+            (Var | Compute, Var | Compute) => true,
+            (Aggregate(actual), Aggregate(expected)) => actual == *expected,
+            _ => false,
+        };
+        if !agrees {
             return Err(ValidationError::HeadAggregateMismatch {
                 rule: RuleIndex(rule_idx),
                 position: FindIndex(position),
@@ -497,31 +504,6 @@ fn validate_rule(
         },
         ctx,
     ))
-}
-
-fn input_row(rule: &LoweredRule, typing: &RuleTyping) -> Vec<ValueType> {
-    let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
-    rule.finds
-        .iter()
-        .map(|term| match term {
-            FindTerm::Var(var) => var_type(var),
-            FindTerm::Segments { left, .. } => ValueType::Interval {
-                element: var_type(left)
-                    .interval_element()
-                    .expect("validated interval"),
-            },
-            FindTerm::Compute(expr) => expr
-                .result_type(|var| typing.var_types.get(&var).copied())
-                .expect("validated output expression"),
-            FindTerm::Count => ValueType::U64,
-            FindTerm::Aggregate { over, .. } => var_type(over),
-            FindTerm::Pack { over } => ValueType::Interval {
-                element: var_type(over)
-                    .interval_element()
-                    .expect("validated interval"),
-            },
-        })
-        .collect()
 }
 
 #[derive(Default)]

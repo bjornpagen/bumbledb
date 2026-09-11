@@ -229,6 +229,7 @@ pub fn runtime_changes_parse(
             use bumbledb::schema::ValidateDescriptor as _;
             work.checkpoint()?;
             let (descriptor, _) = parsed.map_err(|error| RuntimeError::Engine {
+                diagnostic: None,
                 kind: crate::tags::error_family::SCHEMA,
                 message: match error {
                     crate::OpenOutcome::SchemaError(message)
@@ -237,11 +238,9 @@ pub fn runtime_changes_parse(
             })?;
             let schema = Arc::new(
                 descriptor
+                    .clone()
                     .validate()
-                    .map_err(|error| RuntimeError::Engine {
-                        kind: crate::tags::error_family::SCHEMA,
-                        message: error.to_string(),
-                    })?,
+                    .map_err(|error| super::schema_error(&error, &descriptor))?,
             );
             let changes = ChangeSet::from_bytes(&schema, owned, work)
                 .map_err(|error| change_error(&error))?;

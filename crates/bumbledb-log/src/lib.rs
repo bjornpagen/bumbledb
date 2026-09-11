@@ -11,6 +11,8 @@ pub mod apply;
 #[doc(hidden)]
 pub mod backup;
 #[doc(hidden)]
+pub mod bindings;
+#[doc(hidden)]
 pub mod certainty;
 #[doc(hidden)]
 pub mod checkpointer;
@@ -27,11 +29,11 @@ pub mod identities;
 #[doc(hidden)]
 pub mod inspect;
 #[doc(hidden)]
+mod json;
+#[doc(hidden)]
 pub mod local_roots;
 #[doc(hidden)]
 pub mod manifest;
-#[doc(hidden)]
-pub mod migration;
 #[doc(hidden)]
 pub mod recovery;
 #[doc(hidden)]
@@ -44,5 +46,7 @@ pub mod schema_file;
 pub mod store;
 #[doc(hidden)]
 pub mod tenants;
+#[doc(hidden)]
+pub mod transition;
 #[doc(hidden)]
 pub mod writer;

@@ -12,7 +12,7 @@ import { Db } from "#db.ts"
 import { dbNative } from "#db-native.ts"
 import { query } from "#query/lower.ts"
 import { v } from "#query/scope.ts"
-import { internalAcquireRepositoryLock, NativeRuntime } from "#runtime.ts"
+import { NativeRuntime } from "#runtime.ts"
 import { Attempt, Learning, runtimeOptions, Student, storeDir } from "#test/fixtures/learning.ts"
 
 const allAttempts = query(Learning).rule((r) => {
@@ -62,46 +62,6 @@ test("retained JS tokens cannot prevent native drain; repeated close joins (D18)
 		assert.equal(first.kind, "closed")
 		assert.equal(second.kind, "closed")
 		assert.equal(kept.length, 1, "the wrapper stayed reachable through both closes")
-	} finally {
-		await Effect.runPromise(rt.disposeEffect)
-	}
-})
-
-test("interrupt during stamped lock acquire does not mint (D18)", async function interruptLockAcquire() {
-	const rt = runtime()
-	try {
-		const native = (await import("#runtime-native.ts")).runtimeNative
-		const acquire = native.logRepositoryLockAcquire
-		const take = native.logRepositoryLockTake
-		const completed = Promise.withResolvers<() => void>()
-		let takes = 0
-		native.logRepositoryLockTake = ((...args: Parameters<typeof take>) => {
-			takes += 1
-			return take.apply(native, args)
-		}) as typeof take
-		native.logRepositoryLockAcquire = ((runtimeHandle, directory, callback) =>
-			acquire.call(native, runtimeHandle, directory, () => completed.resolve(callback))) as typeof acquire
-		try {
-			const inspect = Effect.gen(function* () {
-				return yield* (yield* NativeRuntime).inspect()
-			})
-			const baseline = await rt.runPromise(inspect)
-			const path = storeDir("lock-acq")
-			const fiber = rt.runFork(Effect.scoped(internalAcquireRepositoryLock("lock.interrupt", path)))
-			const lateCallback = await completed.promise
-			await rt.runPromise(Fiber.interrupt(fiber))
-			const exit = await rt.runPromise(Fiber.await(fiber))
-			assert.ok(Exit.hasInterrupts(exit), "interruption is Cause")
-			lateCallback()
-			assert.equal(takes, 0, "interrupted acquire must not call take / mint_repository_lock")
-			const after = await rt.runPromise(inspect)
-			assert.equal(after.natives, baseline.natives, "no NativeKind::RepositoryLock row remains")
-			native.logRepositoryLockAcquire = acquire
-			await rt.runPromise(Effect.scoped(internalAcquireRepositoryLock("lock.reopen", path)))
-		} finally {
-			native.logRepositoryLockAcquire = acquire
-			native.logRepositoryLockTake = take
-		}
 	} finally {
 		await Effect.runPromise(rt.disposeEffect)
 	}

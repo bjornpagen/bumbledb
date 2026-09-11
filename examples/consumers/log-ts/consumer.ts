@@ -1,14 +1,12 @@
 /**
  * Packed log-TypeScript consumer (D07/D22/D27): the SAME core schema,
- * changes, QueryReader helper, and field-arithmetic intent as
+ * changes, QueryReader helper, and query values as
  * `core-ts/consumer.ts`, submitted through the durable envelope — sealed
- * commands with retained refs, same-ID retry/resolve, generated
- * initialize/migrate/reopen, backup/restore, and joined close.
+ * commands with retained refs, same-ID retry/resolve, explicit
+ * create/reopen, backup/restore, and joined close.
  *
  */
-import { ChangeSet, Uuid, Scalar } from "@bjornpagen/bumbledb"
-import * as fs from "node:fs"
-import * as path from "node:path"
+import { ChangeSet, Uuid, Compute } from "@bjornpagen/bumbledb"
 import { randomUUID } from "node:crypto"
 import {
 	backup,
@@ -24,33 +22,23 @@ import {
 	ReceiptEpoch,
 	RequestId,
 	restore,
-	type RuntimeExpectation,
 	type SubmitOptions,
 	type SubmitOutcome,
 	TenantCache,
 	verifyBackup
 } from "@bjornpagen/bumbledb-log"
-import {
-	decodeGeneratedMigrations,
-	decodeManifestData,
-	generateMigrations,
-	type GeneratedMigrations,
-	initialize,
-	migrate
-} from "@bjornpagen/bumbledb-log/migrations"
-import { convert, migrationIntent } from "@bjornpagen/bumbledb-log/schema"
+import { schemaSnapshot } from "@bjornpagen/bumbledb-log/schema"
 import { Effect, Option, Result, Schema } from "effect"
 import {
 	Attempt,
 	AttemptById,
-	incrementUnits,
 	Learning,
 	makeConsumerRuntime,
 	newAttempt,
 	readAttempts,
 } from "../core-ts/consumer.ts"
 
-export { incrementUnits, makeConsumerRuntime }
+export { makeConsumerRuntime }
 
 export interface Intent {
 	readonly studentId: Uuid
@@ -165,14 +153,12 @@ export const correctAttempt = (
 
 export const readPublished = (
 	binding: HistoryBinding,
-	student: Uuid,
-	expected: RuntimeExpectation
+	student: Uuid
 ) =>
 	Effect.scoped(
 		Effect.gen(function* () {
 			const cache = yield* TenantCache.make(Learning, {
-				maxOpen: 8,
-				expected
+				maxOpen: 8
 			})
 			const borrow = yield* cache.acquire(binding)
 			const snapshot = yield* borrow.snapshot({ consistency: { kind: "cached" } })
@@ -183,61 +169,15 @@ export const readPublished = (
 		})
 	)
 
-/** D27: convert existing u64 units by the unresolved field expression. */
-export const incrementUnitsIntent = migrationIntent(Learning, [convert(Attempt, "units", incrementUnits)])
-
-/** Runner input is the generated `{ manifest, plans, snapshots }` triple. */
-export function loadGeneratedMigrations(directory: string): GeneratedMigrations {
-	const manifest = JSON.parse(fs.readFileSync(path.join(directory, "manifest.json"), "utf8"))
-	const manifestDecoded = decodeManifestData(manifest)
-	if (!manifestDecoded.ok) {
-		throw new Error(`generated migrations refuse decoding: ${manifestDecoded.detail}`)
-	}
-	const plans = manifestDecoded.value.entries.map((entry) =>
-		JSON.parse(fs.readFileSync(path.join(directory, `${entry.id}.plan.json`), "utf8"))
-	)
-	const snapshots = JSON.parse(fs.readFileSync(path.join(directory, "snapshots.json"), "utf8"))
-	const decoded = decodeGeneratedMigrations({ manifest, plans, snapshots })
-	if (!decoded.ok) {
-		throw new Error(`generated migrations refuse decoding: ${decoded.detail}`)
-	}
-	return decoded.value
-}
-
-export const generateIncrementUnits = (repository: { readonly directory: string }) =>
-	Effect.gen(function* () {
-		const report = yield* generateMigrations({
-			schema: Learning,
-			intent: incrementUnitsIntent,
-			label: "increment-units",
-			repository,
-		})
-		return { report, generated: loadGeneratedMigrations(repository.directory) }
-	})
-
-export const initializeLearning = (
-	binding: HistoryBinding,
-	plans: GeneratedMigrations,
-	options: { readonly operationId: OperationId },
-	state: RequestState
-) =>
-	Effect.gen(function* () {
-		const outcome = yield* initialize(binding, plans, options)
-		yield* state.rememberAdminRef(outcome)
-		return outcome
-	})
-
-export const migrateLearning = (
-	binding: HistoryBinding,
-	plans: GeneratedMigrations,
-	options: { readonly operationId: OperationId },
-	state: RequestState
-) =>
-	Effect.gen(function* () {
-		const outcome = yield* migrate(binding, plans, options)
-		yield* state.rememberAdminRef(outcome)
-		return outcome
-	})
+export const initializeLearning = (binding: HistoryBinding, operationId: OperationId) => Effect.scoped(
+    Effect.gen(function* () {
+        const options = { creation: { operationId, artifact: new TextEncoder().encode(yield* schemaSnapshot(Learning)) } }
+        const history = binding.kind === "local"
+            ? yield* LocalHistory.create(binding, Learning, options)
+            : yield* HostedHistory.create(binding, Learning, options)
+        return history.identity
+    })
+)
 
 export const backupAndRestore = (
 	source: HistoryBinding,
@@ -264,7 +204,7 @@ export const parsedIdentityIsBounded: boolean = Result.isFailure(parseDatabaseId
 export const knownInvalidMixRefuses: boolean = (() => {
 	try {
 		// @ts-expect-error Deliberately exercise the runtime refusal for untyped callers.
-		Scalar.add(Scalar.i64(1n), Scalar.u64(1n))
+		Compute.add(Compute.i64(1n), Compute.u64(1n))
 		return false
 	} catch {
 		return true

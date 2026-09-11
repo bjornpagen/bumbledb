@@ -6,7 +6,7 @@
 //! decision/state counters start at zero; the executable command-receipt
 //! table starts EMPTY under the new incarnation (old receipts are archival
 //! recovery evidence, and old-scoped requests permanently refuse), while
-//! migration-history evidence records are copied forward. Application
+//! transition evidence records are copied forward. Application
 //! values, including ordinary application-owned 128-bit entity IDs, are
 //! preserved byte-for-byte: entity bytes encode no lineage and are not
 //! command/witness credentials. Reusing a live incarnation refuses.
@@ -36,7 +36,7 @@ use bumbledb::schema::Theory;
 use bumbledb::store::{HostResume, HostWindow};
 use bumbledb::{Db, WorkContext};
 
-use crate::checkpointer::{CheckpointPolicy, HISTORY_KEY_PREFIX};
+use crate::checkpointer::{CheckpointPolicy, TRANSITION_KEY_PREFIX};
 use crate::codec::{self, CheckpointManifest};
 use crate::history::authority::{Activation, ActivationCause, HeadAuthority, encode_control};
 use crate::history::command::Limits;
@@ -94,7 +94,7 @@ pub struct RestoredIncarnation<S> {
     pub source_state: StateStamp,
 }
 
-// Kept outside executable receipt (`r`) and migration-history (`m`) prefixes.
+// Kept outside executable receipt (`r`) and transition (`t`) prefixes.
 // The canonical genesis preimage proves which backup a completed restore used.
 const RESTORE_GENESIS_KEY: &[u8] = b"writable-restore-genesis";
 
@@ -238,7 +238,7 @@ where
     if new_incarnation == manifest.identity.incarnation_id {
         return Err(RestoreError::RewindRefused);
     }
-    // New incarnation: preserved migration-history evidence, EMPTY executable
+    // New incarnation: preserved transition evidence, EMPTY executable
     // receipt table, preserved application bytes. Receipt rows are filtered
     // out as the stream imports; the kept records are hashed incrementally in
     // exactly the stream's own framing.
@@ -330,7 +330,7 @@ where
 /// cleanup run on that unpublished owner before no-clobber publication.
 /// Replayed receipt rows are archival evidence and
 /// are dropped from the new incarnation's executable table in that genesis
-/// write, while migration-history evidence carries forward. The genesis
+/// write, while transition evidence carries forward. The genesis
 /// digests are recomputed from the reached state's unready export, never
 /// copied from the base checkpoint. `tail` yields [`ReceivedBody`]; replay
 /// decodes under that owner and does not copy the decision into a detached
@@ -609,7 +609,7 @@ fn project_unready(
             })?;
             let mut system = SystemProjection::new();
             reader.host_scan(
-                &[HISTORY_KEY_PREFIX],
+                &[TRANSITION_KEY_PREFIX],
                 work,
                 &mut |key, value| -> bumbledb::store::StoreResult<()> {
                     system.record(key, value);

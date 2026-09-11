@@ -1,7 +1,7 @@
 {
 	"name": "bumbledb-notes-example",
 	"private": true,
-	"description": "Server-only Next.js + Alchemy notes app over bumbledb: authenticated tenant bindings, one native runtime layer, LocalHistory dev flow, HostedHistory materialization, retained command refs, outbox idempotency, generated migrations",
+	"description": "Server-only Next.js + Alchemy notes app over bumbledb: authenticated tenant bindings, one native runtime layer, LocalHistory dev flow, HostedHistory materialization, retained command refs, outbox idempotency, explicit schema initialization",
 	"type": "module",
 	"scripts": {
 		"dev": "next dev",
@@ -10,17 +10,16 @@
 		"typecheck": "tsc --noEmit",
 		"test": "node --conditions react-server --experimental-strip-types --test 'test/routes.test.ts' 'test/specimens.test.ts'",
 		"test:deployed": "node --experimental-strip-types --test 'test/deployed.test.ts'",
-		"generate": "node --experimental-strip-types scripts/generate-history.ts",
-		"migrate": "node --experimental-strip-types scripts/migrate.ts",
 		"init-tenant": "node --experimental-strip-types scripts/init-tenant.ts",
 		"dispatch-outbox": "node --experimental-strip-types scripts/dispatch-outbox.ts",
 		"backup-restore": "node --experimental-strip-types scripts/backup-restore.ts",
-		"resolve-command": "node --experimental-strip-types scripts/resolve-command.ts"
+		"resolve-command": "node --experimental-strip-types scripts/resolve-command.ts",
+		"snapshot": "bumbledb-log snapshot --schema src/db/schema.ts --export App --out schema.json"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "3.955.0",
-		"@bjornpagen/bumbledb": "1.3.0",
-		"@bjornpagen/bumbledb-log": "1.3.0",
+		"@bjornpagen/bumbledb": "1.3.1",
+		"@bjornpagen/bumbledb-log": "1.3.1",
 		"alchemy": "2.0.0-beta.76",
 		"effect": "4.0.0-rc.112",
 		"next": "16.3.4",

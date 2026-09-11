@@ -267,8 +267,8 @@ fn command_size(
     limits: Limits,
 ) -> Result<usize, FrameError> {
     validate_condition(metadata.identity, metadata.condition)?;
-    check_limit(core_changes.len(), limits.change_bytes)?;
-    check_limit(result.len(), limits.result_bytes)?;
+    check_limit(core_changes.len(), limits.change_bytes, "change")?;
+    check_limit(result.len(), limits.result_bytes, "result")?;
     let condition_len = if matches!(metadata.condition, Condition::Unconditional) {
         1
     } else {
@@ -278,7 +278,7 @@ fn command_size(
         FAMILY.len(),
         &[88, condition_len, 8, core_changes.len(), 8, result.len()],
     )?;
-    check_limit(len, limits.envelope_bytes)?;
+    check_limit(len, limits.envelope_bytes, "envelope")?;
     Ok(len)
 }
 
@@ -340,8 +340,8 @@ fn parse_command_fields(bytes: &[u8], limits: Limits) -> Result<CommandFields<'_
         (at, got) => return Err(FrameError::Tag { at, got }),
     };
     validate_condition(identity, condition)?;
-    let core_changes = input.span(limits.change_bytes)?;
-    let result = input.span(limits.result_bytes)?;
+    let core_changes = input.span(limits.change_bytes, "change")?;
+    let result = input.span(limits.result_bytes, "result")?;
     input.end()?;
     Ok((
         CommandMetadata {
@@ -385,14 +385,14 @@ pub(crate) fn outcome_len(
 ) -> Result<usize, FrameError> {
     Ok(match outcome {
         UnverifiedOutcome::Committed { result, .. } => {
-            check_limit(result.len(), limits.result_bytes)?;
+            check_limit(result.len(), limits.result_bytes, "result")?;
             result
                 .len()
                 .checked_add(25)
                 .ok_or(FrameError::LengthOverflow)?
         }
         UnverifiedOutcome::NoChange { result } => {
-            check_limit(result.len(), limits.result_bytes)?;
+            check_limit(result.len(), limits.result_bytes, "result")?;
             result
                 .len()
                 .checked_add(9)
@@ -400,7 +400,7 @@ pub(crate) fn outcome_len(
         }
         UnverifiedOutcome::PreconditionFailed { .. } => 49,
         UnverifiedOutcome::InvariantRejected { core_evidence } => {
-            check_limit(core_evidence.len(), limits.evidence_bytes)?;
+            check_limit(core_evidence.len(), limits.evidence_bytes, "evidence")?;
             core_evidence
                 .len()
                 .checked_add(9)
@@ -447,18 +447,18 @@ pub(crate) fn read_outcome<'a>(
                 .ok_or(FrameError::EmptyChangeSummary)?;
             UnverifiedOutcome::Committed {
                 changed,
-                result: input.span(limits.result_bytes)?,
+                result: input.span(limits.result_bytes, "result")?,
             }
         }
         (_, 1) => UnverifiedOutcome::NoChange {
-            result: input.span(limits.result_bytes)?,
+            result: input.span(limits.result_bytes, "result")?,
         },
         (_, 2) => UnverifiedOutcome::PreconditionFailed {
             expected: input.state()?,
             observed: input.state()?,
         },
         (_, 3) => UnverifiedOutcome::InvariantRejected {
-            core_evidence: input.span(limits.evidence_bytes)?,
+            core_evidence: input.span(limits.evidence_bytes, "evidence")?,
         },
         (at, got) => return Err(FrameError::Tag { at, got }),
     })

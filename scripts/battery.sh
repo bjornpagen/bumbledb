@@ -6,6 +6,15 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+if [ ! -f .git/bumbledb-build.json ]; then
+  BUMBLEDB_FAMILY_BASE="$(mktemp -d "${TMPDIR:-/tmp}/bumbledb-battery.XXXXXX")"
+  node scripts/build-family.mjs --out "$BUMBLEDB_FAMILY_BASE/ready"
+  exec "$BUMBLEDB_FAMILY_BASE/ready/source/scripts/battery.sh"
+fi
+node scripts/build-family.mjs --check-source
+test -f ../family.json
+export CARGO_TARGET_DIR="$PWD/target"
+
 echo "==> benchmark scheduler regressions (no measurements)"
 python3 -m unittest discover -s scripts -p 'test_bench_*.py'
 
@@ -14,7 +23,7 @@ node --test scripts/release-results.test.mjs
 node --test scripts/release-ready.test.mjs
 
 echo "==> isolated consumer toolchain regressions"
-node --test scripts/packed-project.test.mjs
+node --test scripts/packed-project.test.mjs scripts/build-family.test.mjs
 
 echo "==> product absence gate (ts/scripts/absence-gate.ts)"
 node ts/scripts/absence-gate.ts
@@ -36,14 +45,8 @@ cargo fmt --manifest-path ts/crate/Cargo.toml --check
 echo "==> bridge: cargo clippy --all-targets -- -D warnings (ts/crate)"
 cargo clippy --manifest-path ts/crate/Cargo.toml --all-targets -- -D warnings
 
-echo "==> one current-addon build (or proven matching artifact)"
-if [ "${BUMBLEDB_SKIP_NATIVE_BUILD:-}" = 1 ]; then
-  node scripts/release-results.mjs --verify-native-provenance
-  echo "    reused native artifact with matching candidate/spec provenance"
-else
-  (cd ts && pnpm run build)
-  node scripts/release-results.mjs --write-native-provenance
-fi
+echo "==> native artifact belongs to this immutable build source"
+node scripts/release-results.mjs --verify-native-provenance
 
 echo "==> cargo nextest run --workspace"
 cargo nextest --version || cargo install cargo-nextest --version 0.9.143 --locked
@@ -69,11 +72,9 @@ echo "==> ts/ (test, typecheck, lint; no second native rebuild)"
 (cd ts && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)
 
 echo "==> ts-log/ (test, typecheck, lint; no second native rebuild)"
-(cd ts-log && pnpm run build && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)
+(cd ts-log && node --test 'test/**/*.test.ts' && pnpm typecheck && pnpm lint)
 
-echo "==> packed-tarball import gate (scripts/packed-import.sh)"
-# Rust consumer, D07 tiny-collect refusal, D27 addon-unavailable
-# authoring, and Notes specimens/routes run inside packed-import.
-scripts/packed-import.sh --host-only
+# The family was exposed only after the packed consumer gate passed.
+# Its exact tarball hashes and selected source tree are in ../family.json.
 
 echo "==> battery complete for this host — not all-platform qualification; evidence remains NotRun until pre-promotion validates real cells"

@@ -27,9 +27,6 @@ export type DecisionDigest = string & { readonly [decisionDigestBrand]: typeof d
 declare const rootIdBrand: unique symbol
 /** A named restore-point/hold identity (chapter 21 NamedRoot). */
 export type RootId = string & { readonly [rootIdBrand]: typeof rootIdBrand }
-declare const planSetDigestBrand: unique symbol
-/** The exact ordered pending-suffix commitment (chapter 33). */
-export type PlanSetDigest = string & { readonly [planSetDigestBrand]: typeof planSetDigestBrand }
 
 export interface DatabaseIdentity {
 	readonly databaseId: DatabaseId
@@ -192,12 +189,6 @@ export const RootId = {
 			}
 		}
 		return Result.succeed(raw as RootId)
-	}
-} as const
-
-export const PlanSetDigest = {
-	fromHex(raw: string): Result.Result<PlanSetDigest, DbError> {
-		return Result.map(hex64("PlanSetDigest.fromHex", raw), (hex) => hex as PlanSetDigest)
 	}
 } as const
 

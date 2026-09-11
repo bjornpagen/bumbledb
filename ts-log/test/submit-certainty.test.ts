@@ -85,8 +85,7 @@ describe("submit certainty arms", function suite() {
 								outcome: {
 									kind: "decided",
 									receipt: receiptWire,
-									localHealth: { kind: "ready", at: receiptWire.decisionAt },
-									publicationPhase: "confirmed"
+									localHealth: { kind: "ready", at: receiptWire.decisionAt }
 								}
 							}
 						})
@@ -99,7 +98,7 @@ describe("submit certainty arms", function suite() {
 		if (outcome.kind === "decided") {
 			assert.equal(outcome.receipt.outcome.kind, "no-change")
 			assert.equal(outcome.localHealth.kind, "ready")
-			assert.equal(outcome.phase, "confirmed")
+			assert.equal("phase" in outcome, false)
 			assert.equal(outcome.receipt.decisionAt.seq, 7n)
 		}
 	})
@@ -244,8 +243,7 @@ describe("interruption after publication", function suite() {
 							outcome: {
 								kind: "decided",
 								receipt: receiptWire,
-								localHealth: { kind: "ready", at: receiptWire.decisionAt },
-								publicationPhase: "confirmed"
+								localHealth: { kind: "ready", at: receiptWire.decisionAt }
 							}
 						}
 					})

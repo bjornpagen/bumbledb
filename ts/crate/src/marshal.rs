@@ -843,9 +843,8 @@ fn term_in(obj: &Object) -> napi::Result<Term> {
     }
 }
 
-/// The one bound on wire scalar-expression nesting (mirrors the migration
-/// plan grammar's depth fence; a hostile deep tree refuses before recursion
-/// can exhaust the stack).
+/// The bound on wire scalar-expression nesting: a hostile deep tree
+/// refuses before recursion can exhaust the stack.
 const MAX_SCALAR_DEPTH: usize = 128;
 
 fn exact_fields(obj: &Object, fields: &[&str]) -> napi::Result<()> {

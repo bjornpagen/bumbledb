@@ -79,6 +79,8 @@ pub enum ResolveOutcome {
 /// receipt data above: a durable rejection is a value, not an error.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LogError {
+    /// Retired transformation evidence has no compatibility interpretation.
+    UnsupportedArtifact,
     /// The command's identity/schema/witness does not match this authority.
     Identity,
     /// A durable identity conflict: same command ID, different digest.

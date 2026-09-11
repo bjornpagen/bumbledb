@@ -1,19 +1,11 @@
-/**
- * `@bjornpagen/bumbledb-log/schema` — ONLY pure schema-evolution intent
- * constructors. These build inert typed metadata over the core's
- * own schema/`ScalarExpr` values; generation, filesystem work, hashing and
- * execution live in `@bjornpagen/bumbledb-log/migrations` and the native
- * codec. Importing this module performs no native work.
- */
+import type { AnySchema } from "@bjornpagen/bumbledb"
+import { internalSchemaBindings, internalSchemaSnapshot, lower } from "@bjornpagen/bumbledb/internal/log"
+import { Effect } from "effect"
 
-export type { MigrationIntent, MigrationIntentEntry } from "#migrations/intent.ts"
-export {
-	backfill,
-	convert,
-	dropField,
-	dropRelation,
-	migrationIntent,
-	renameField,
-	renameRelation,
-	seed
-} from "#migrations/intent.ts"
+/** Admit an authored schema and render its canonical native snapshot. */
+export const schemaSnapshot = Effect.fn("bumbledb-log.schemaSnapshot")(function* (schema: AnySchema) {
+	return yield* internalSchemaSnapshot(lower(schema))
+})
+
+/** Emit ordinary, typed SDK declarations from one independently retained snapshot. */
+export const schemaBindings = internalSchemaBindings

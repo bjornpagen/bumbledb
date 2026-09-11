@@ -12,14 +12,7 @@ import type { AnySchema } from "@bjornpagen/bumbledb"
 import { Effect, Exit } from "effect"
 import { makeLogMachine } from "#machine.ts"
 import type { CommandInput } from "#surface.ts"
-import {
-	closeRegisteredChange,
-	makeIntegration,
-	makeWireDouble,
-	provideRuntime,
-	refWire,
-	registerChange
-} from "#test/double.ts"
+import { makeIntegration, makeWireDouble, provideRuntime, refWire, registerChange } from "#test/double.ts"
 
 const schema = { name: "TestSchema" } as unknown as AnySchema
 
@@ -116,17 +109,17 @@ describe("Command.seal", function suite() {
 		assert.equal(double.calls.length, 0)
 	})
 
-	test("a closed (spent) ChangeSet refuses with ClosedHandle before dispatch", async function closedChange() {
+	test("native ChangeSet admission failures retain their core error", async function closedChange() {
 		const double = makeWireDouble()
 		const machine = makeLogMachine(double.wire, makeIntegration())
 		const sealInput = input()
-		closeRegisteredChange(sealInput.changes as unknown as object)
+		double.plan("logCommandSeal", { failure: { _tag: "ClosedHandle" } })
 		const exit = await Effect.runPromiseExit(Effect.scoped(machine.Command.seal(sealInput)))
 		assert.ok(Exit.isFailure(exit))
 		const error = Exit.findErrorOption(exit)
 		assert.ok(error._tag === "Some")
 		assert.equal(error.value.code, "ClosedHandle")
-		assert.equal(double.calls.length, 0)
+		assert.equal(double.calls.filter((call) => call.verb === "logCommandSeal").length, 1)
 	})
 
 	test("a scope/ChangeSet schema mismatch refuses before dispatch", async function schemaMismatch() {

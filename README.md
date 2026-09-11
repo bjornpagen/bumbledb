@@ -146,7 +146,7 @@ sees structural value types and relational constraints.
 ## Durable application commands
 
 `bumbledb-log` adds named, retryable commands, retained outcomes, checkpoints,
-backup/restore, and migrations through its TypeScript API. Local history uses
+backup/restore, generated schema bindings, and native transitions through its TypeScript API. Local history uses
 durable local storage. Hosted history uses S3 as the authority and LMDB as a
 local cache; real S3/IAM deployments have not been qualified. There is
 no public Rust log SDK or C API.
@@ -155,8 +155,9 @@ The [Notes example](examples/notes/README.md) exercises a server-side Next.js
 application with tenant isolation. Node deployments are the target; browser
 and Edge runtimes are unsupported.
 
-Generated migrations are local-only. A hosted cache cannot be used as the
-authoritative database for a local migration.
+Applications write typechecked imperative transformations against independently
+generated old/new bindings. The TypeScript transition API supports local histories;
+a hosted cache cannot serve as the authoritative source for a local transition.
 
 ## Performance
 

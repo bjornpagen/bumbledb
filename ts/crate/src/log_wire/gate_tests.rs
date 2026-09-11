@@ -545,9 +545,8 @@ fn d13_cancelled_resolve_refuses_and_retry_returns_complete_evidence() {
                 TerminalOutcome::InvariantRejected { .. }
             ));
         }
-        SubmitOwned::NotSubmitted { fail, phase, .. }
-        | SubmitOwned::OutcomeUnknown { fail, phase, .. } => {
-            panic!("violating submit must decide, got {phase:?}: {fail:?}")
+        SubmitOwned::NotSubmitted { fail, .. } | SubmitOwned::OutcomeUnknown { fail, .. } => {
+            panic!("violating submit must decide, got {fail:?}")
         }
     }
     let cancelled = WorkContext::new();
@@ -741,13 +740,11 @@ fn refused_opens_release_the_directory_synchronously() {
 }
 
 // ---------------------------------------------------------------------------
-// Publication phase — D certainty contracts on the submit verb lane.
+// Returned certainty on the submit verb lane.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn submit_owned_carries_publication_phase() {
-    use bumbledb_log::certainty::PublicationPhase;
-
+fn submit_owned_carries_terminal_evidence() {
     let runtime = Runtime::start(options()).unwrap();
     let base = unique_dir("submit-phase");
     std::fs::create_dir_all(&base).unwrap();
@@ -767,12 +764,11 @@ fn submit_owned_carries_publication_phase() {
     );
     let owned = submit_via_verb(&opened.resource, command, &work);
     match owned {
-        SubmitOwned::Decided { phase, .. } => {
-            assert_eq!(phase, PublicationPhase::Confirmed);
+        SubmitOwned::Decided { receipt, .. } => {
+            assert!(matches!(receipt.outcome, TerminalOutcome::Committed { .. }));
         }
-        SubmitOwned::NotSubmitted { fail, phase, .. }
-        | SubmitOwned::OutcomeUnknown { fail, phase, .. } => {
-            panic!("expected confirmed decision, got {phase:?}: {fail:?}")
+        SubmitOwned::NotSubmitted { fail, .. } | SubmitOwned::OutcomeUnknown { fail, .. } => {
+            panic!("expected confirmed decision, got {fail:?}")
         }
     }
 

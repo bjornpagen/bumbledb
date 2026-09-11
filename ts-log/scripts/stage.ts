@@ -40,6 +40,9 @@ function readReleaseDigest(flag: "--candidate-digest" | "--specification-revisio
 }
 
 function packProvenance(packageName: string, version: string): PackProvenance {
+	const source = spawnSync("node", ["scripts/build-family.mjs", "--check-source"], { cwd: repoRoot, stdio: "inherit" })
+	if (source.status !== 0)
+		throw new BuildInputError({ message: "stage packages from the selected build-family source" })
 	return {
 		candidateSourceDigest: readReleaseDigest("--candidate-digest"),
 		specificationRevision: readReleaseDigest("--specification-revision"),
@@ -235,7 +238,8 @@ function main(): void {
 	}
 }
 
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
+const invokedDirectly =
+	process.argv[1] !== undefined && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href
 
 if (invokedDirectly) {
 	NodeRuntime.runMain(Effect.sync(main))

@@ -34,14 +34,7 @@ export const protocolErrorCodes = [
 	"SlotBorrowed",
 	"Contention",
 	"IncompleteRejectionEvidence",
-	// Migration workflow.
-	"MigrationRequired",
-	"MigrationDrift",
-	"MigrationIntentRequired",
-	"MigrationUnsupported",
-	"MigrationRepository",
-	"DatabaseAhead",
-	"MigrationOutputMismatch",
+	// Native transition identity.
 	"OperationConflict",
 	// Host feasibility and transport.
 	"InsufficientLocalDisk",

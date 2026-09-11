@@ -239,6 +239,20 @@ pub fn render_declared(descriptor: &SchemaDescriptor, id: StatementId) -> String
     render_materialized(descriptor, &materialized, &mirrors, id)
 }
 
+/// Render the exact materialized direction, without joining a mirror pair.
+/// Rejected descriptors need no successfully compiled schema to be rendered.
+/// # Panics
+/// If `id` is absent from this descriptor's materialized statements.
+#[must_use]
+pub fn render_expanded(descriptor: &SchemaDescriptor, id: StatementId) -> String {
+    render_materialized(
+        descriptor,
+        &descriptor.materialized_statements(),
+        &BTreeMap::new(),
+        id,
+    )
+}
+
 /// # Panics
 pub(super) fn render_materialized(
     descriptor: &SchemaDescriptor,

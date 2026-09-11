@@ -1,14 +1,12 @@
 //! The one `logAdmin` verb family: maintenance, retention,
-//! backup/restore/erase and the migration workflow, over P05's admin/
-//! checkpointer/gc/backup/restore/erase modules and P09's migration
-//! executor. Every request derives its ref-able identity BEFORE dispatch on
+//! backup/restore/erase over the native admin, checkpointer, GC and recovery
+//! operations. Every request derives its ref-able identity BEFORE dispatch on
 //! the TS side; the native side classifies its own refusals into the
 //! certainty union: refusals that PROVABLY dispatched no mutation return
 //! `not-started`, ambiguous hosted outcomes return `outcome-unknown`, and
 //! successes return `completed`/`report` values. Nothing here manufactures
 //! a receipt or resolves uncertainty by guessing.
 
-use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -20,25 +18,17 @@ use bumbledb_log::checkpointer::{
     CheckpointError, CheckpointKind, CheckpointOutcome, CheckpointPolicy,
 };
 use bumbledb_log::gc::GcPolicy;
-use bumbledb_log::history::authority::{Access, Lifecycle};
+use bumbledb_log::history::authority::Lifecycle;
 use bumbledb_log::history::receive_limits_for_object;
 use bumbledb_log::history::{
     DatabaseIdentity, DecisionStamp, OperationId, ReceiptEpoch, StateStamp,
 };
 use bumbledb_log::manifest::RootPolicy;
-use bumbledb_log::migration::executor::{
-    AbortRequest, ActivationRef, LocalMigration, MigrateOutcome, MigrationError, MigrationStatus,
-    StepInput, SuffixRequest, activate_target, initialize,
-};
-use bumbledb_log::migration::lock::TargetNamespace;
-use bumbledb_log::migration::manifest::{Manifest, parse_manifest, prefix_at};
-use bumbledb_log::migration::plan::parse_plan;
 use bumbledb_log::recovery::{self, RecoveryError};
-use bumbledb_log::store::fence::acquire_repository_lock;
+use bumbledb_log::store::fence::acquire_directory;
 use bumbledb_log::store::fs::FsStore;
 use bumbledb_log::store::s3::S3Store;
 use bumbledb_log::store::{TransportContext, get_verified};
-use bumbledb_log::writer::LocalHistory;
 use napi::bindgen_prelude::{BigInt, Env, External, Function, Object};
 
 use crate::marshal;
@@ -50,8 +40,8 @@ use crate::runtime_wire::{
 
 use super::{
     BackendSpec, CredentialsSpec, LIMITS, LogFail, MachineOutput, MachineResult, binding_spec_in,
-    fail_of_log, frame_object, hex32, identity_in, identity_wire, optional_object, optional_string,
-    protocol, publication_phase_tag, s3_store, stamp_wire, state_wire, targets_root, uuid_text,
+    frame_object, hex32, identity_wire, optional_object, optional_string, protocol, s3_store,
+    stamp_wire, state_wire, uuid_text,
 };
 
 // ---------------------------------------------------------------------------
@@ -125,245 +115,11 @@ pub enum AdminValueOwned {
         retained_roots: Vec<String>,
         residual: Vec<(String, String)>,
     },
-    MigrationStatus(StatusOwned),
-    MigrationInitialize {
-        directory: String,
-        identity: DatabaseIdentity,
-        genesis: [u8; 32],
-    },
-    Migrate(MigrateOwned),
-    MigrationActivate {
-        target: DatabaseIdentity,
-        access: &'static str,
-        operation: OperationId,
-        activated_now: bool,
-    },
-    MigrationAbort {
-        target: DatabaseIdentity,
-        target_fenced: bool,
-        source_access: &'static str,
-    },
-}
-
-pub enum StatusOwned {
-    UpToDate {
-        applied_prefix: [u8; 32],
-    },
-    Pending {
-        pending: Vec<String>,
-    },
-    InProgress {
-        source: DatabaseIdentity,
-        operation: OperationId,
-        plan_set: [u8; 32],
-        target: DatabaseIdentity,
-    },
-    Aborted {
-        source: DatabaseIdentity,
-        operation: OperationId,
-        plan_set: [u8; 32],
-        target: DatabaseIdentity,
-    },
-}
-
-pub enum MigrateOwned {
-    UpToDate {
-        directory: String,
-        identity: DatabaseIdentity,
-    },
-    ReadyToSwitch {
-        deployment_directory: String,
-        target: DatabaseIdentity,
-        activation: ActivationRef,
-    },
-    Paused {
-        fail: LogFail,
-        operation: Option<OperationId>,
-    },
 }
 
 // ---------------------------------------------------------------------------
 // Request parsing (JS thread) into one owned Send request.
 // ---------------------------------------------------------------------------
-
-pub(crate) struct PlansSpec {
-    manifest_text: String,
-    plan_texts: Vec<String>,
-    /// Canonical schema snapshots (`schema_file::render` texts): the base
-    /// schema first, then each entry's TARGET schema, order-matched —
-    /// entries + 1 rows. Requested `PlansWire` extension; absent
-    /// snapshots refuse the verbs that must compile steps.
-    snapshots: Vec<String>,
-}
-
-fn plans_in(obj: &Object, ctx: &str) -> napi::Result<PlansSpec> {
-    // The wire carries manifest FIELDS + plan bodies; the native side
-    // re-renders the manifest from its fields through the one canonical
-    // grammar by reconstructing the manifest JSON text.
-    let manifest_version =
-        marshal::ordinal(marshal::req::<f64>(obj, "manifestVersion", ctx)?, ctx)?;
-    let plan_version = marshal::ordinal(marshal::req::<f64>(obj, "planVersion", ctx)?, ctx)?;
-    let base_schema: String = marshal::req(obj, "baseSchemaId", ctx)?;
-    let base_prefix: String = marshal::req(obj, "basePrefixDigest", ctx)?;
-    let entries: napi::bindgen_prelude::Array = marshal::req(obj, "entries", ctx)?;
-    let mut manifest_text = String::from("{\n");
-    let _ = writeln!(manifest_text, "  \"manifestVersion\": {manifest_version},");
-    let _ = writeln!(manifest_text, "  \"planVersion\": {plan_version},");
-    let _ = writeln!(manifest_text, "  \"baseSchemaId\": \"{base_schema}\",");
-    let _ = writeln!(manifest_text, "  \"basePrefixDigest\": \"{base_prefix}\",");
-    manifest_text.push_str("  \"entries\": [");
-    for index in 0..entries.len() {
-        let entry = marshal::req_at::<Object>(&entries, index, ctx)?;
-        let sequence: String = marshal::req(&entry, "sequence", ctx)?;
-        let id: String = marshal::req(&entry, "id", ctx)?;
-        let from: String = marshal::req(&entry, "fromSchemaId", ctx)?;
-        let to: String = marshal::req(&entry, "toSchemaId", ctx)?;
-        let plan_digest: String = marshal::req(&entry, "planDigest", ctx)?;
-        let prefix_digest: String = marshal::req(&entry, "prefixDigest", ctx)?;
-        if index > 0 {
-            manifest_text.push(',');
-        }
-        let _ = write!(
-            manifest_text,
-            "\n    {{\n      \"sequence\": \"{sequence}\",\n      \"id\": \"{id}\",\n      \
-             \"fromSchemaId\": \"{from}\",\n      \"toSchemaId\": \"{to}\",\n      \
-             \"planDigest\": \"{plan_digest}\",\n      \"prefixDigest\": \"{prefix_digest}\"\n    }}"
-        );
-    }
-    if entries.len() > 0 {
-        manifest_text.push_str("\n  ");
-    }
-    manifest_text.push_str("]\n}\n");
-    let plans_arr: napi::bindgen_prelude::Array = marshal::req(obj, "plans", ctx)?;
-    let mut plan_texts = Vec::with_capacity(plans_arr.len() as usize);
-    for index in 0..plans_arr.len() {
-        plan_texts.push(marshal::req_at::<String>(&plans_arr, index, ctx)?);
-    }
-    let mut snapshots = Vec::new();
-    if let Some(snapshot_obj) = optional_object(obj, "snapshots")? {
-        // Arrays are objects; re-read the property as the typed array.
-        let _ = snapshot_obj;
-        if let Some(snapshot_arr) = obj.get::<napi::bindgen_prelude::Array>("snapshots")? {
-            for index in 0..snapshot_arr.len() {
-                snapshots.push(marshal::req_at::<String>(&snapshot_arr, index, ctx)?);
-            }
-        }
-    }
-    Ok(PlansSpec {
-        manifest_text,
-        plan_texts,
-        snapshots,
-    })
-}
-
-impl PlansSpec {
-    fn manifest(&self) -> MachineResult<Manifest> {
-        parse_manifest(&self.manifest_text, LIMITS.envelope_bytes)
-            .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))
-    }
-
-    fn plans(&self) -> MachineResult<Vec<bumbledb_log::migration::plan::Plan>> {
-        self.plan_texts
-            .iter()
-            .map(|text| {
-                parse_plan(text).map_err(|error| protocol("MigrationDrift", format!("{error:?}")))
-            })
-            .collect()
-    }
-
-    /// Parsed schema snapshots: base first, then one per entry.
-    fn descriptors(&self) -> MachineResult<Vec<SchemaDescriptor>> {
-        if self.snapshots.is_empty() {
-            return Err(protocol(
-                "UnsupportedArtifact",
-                "migration execution requires the schema snapshots (PlansWire.snapshots — \
-                 base first, then each entry's target)",
-            ));
-        }
-        self.snapshots
-            .iter()
-            .map(|text| {
-                bumbledb_log::schema_file::parse(text)
-                    .map_err(|error| protocol("UnsupportedArtifact", format!("{error:?}")))
-            })
-            .collect()
-    }
-
-    /// Bind snapshots to the manifest and compile every plan before any
-    /// status/migrate/freeze path trusts the chain (C8). Empty data is not
-    /// a shortcut: the base snapshot is still required.
-    fn verify_compiled_chain(
-        &self,
-        manifest: &Manifest,
-        context: &WorkContext,
-    ) -> MachineResult<()> {
-        let descriptors = self.descriptors()?;
-        if descriptors.len() != manifest.entries.len() + 1 {
-            return Err(protocol(
-                "UnsupportedArtifact",
-                "snapshots must carry the base schema plus one target per entry",
-            ));
-        }
-        let base_id = bumbledb_log::schema_file::schema_id(&descriptors[0])
-            .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
-        if base_id != manifest.base_schema {
-            return Err(protocol(
-                "MigrationDrift",
-                "the base snapshot does not match the manifest base schema id",
-            ));
-        }
-        for (index, entry) in manifest.entries.iter().enumerate() {
-            let snapshot_id = bumbledb_log::schema_file::schema_id(&descriptors[index + 1])
-                .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
-            if snapshot_id != entry.to_schema {
-                return Err(protocol(
-                    "MigrationDrift",
-                    format!(
-                        "snapshot {} schema id does not match manifest entry {}",
-                        index + 1,
-                        entry.label.as_str()
-                    ),
-                ));
-            }
-        }
-        let plans = self.plans()?;
-        if plans.len() != manifest.entries.len() {
-            return Err(protocol(
-                "MigrationDrift",
-                "recorded plans and manifest entries disagree in count",
-            ));
-        }
-        for (index, plan) in plans.iter().enumerate() {
-            context.checkpoint().map_err(RuntimeError::from)?;
-            bumbledb_log::migration::compile::compile(
-                plan,
-                &descriptors[index],
-                &descriptors[index + 1],
-            )
-            .map_err(|error| protocol("MigrationUnsupported", format!("{error:?}")))?;
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_chain(
-        manifest_text: String,
-        plan_texts: Vec<String>,
-        snapshots: Vec<String>,
-    ) -> Self {
-        Self {
-            manifest_text,
-            plan_texts,
-            snapshots,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_verify(&self, context: &WorkContext) -> MachineResult<()> {
-        let manifest = self.manifest()?;
-        self.verify_compiled_chain(&manifest, context)
-    }
-}
 
 enum DestinationSpec {
     Filesystem {
@@ -504,52 +260,6 @@ enum AdminVerb {
         operation: OperationId,
         retain_roots: Vec<OperationId>,
     },
-    MigrationStatus {
-        binding: BindingSpec,
-        plans: PlansSpec,
-    },
-    MigrationInitialize {
-        binding: BindingSpec,
-        operation: OperationId,
-        plans: PlansSpec,
-    },
-    Migrate {
-        binding: BindingSpec,
-        operation: OperationId,
-        plans: PlansSpec,
-        to: Option<String>,
-    },
-    MigrationActivate {
-        binding: Option<BindingSpec>,
-        reference: ActivationRefSpec,
-    },
-    MigrationAbort {
-        binding: Option<BindingSpec>,
-        reference: MigrationRefSpec,
-    },
-}
-
-struct ActivationRefSpec {
-    operation: OperationId,
-    plan_set_digest: [u8; 32],
-    target: DatabaseIdentity,
-    target_genesis: [u8; 32],
-}
-
-struct MigrationRefSpec {
-    /// The ref's SOURCE identity: parsed (wire-shape validation) but the
-    /// abort verb locates everything by operation/target — never read.
-    _identity: DatabaseIdentity,
-    operation: OperationId,
-    plan_set_digest: [u8; 32],
-    target: DatabaseIdentity,
-}
-
-fn optional_binding_in(env: Env, request: &Object, ctx: &str) -> napi::Result<Option<BindingSpec>> {
-    if optional_object(request, "binding")?.is_none() {
-        return Ok(None);
-    }
-    Ok(Some(binding_with_schema_in(env, request, ctx)?))
 }
 
 #[allow(clippy::too_many_lines)]
@@ -652,69 +362,6 @@ fn admin_verb_in(env: Env, request: &Object) -> napi::Result<AdminVerb> {
                 retain_roots,
             }
         }
-        "migration-status" => AdminVerb::MigrationStatus {
-            binding: binding_with_schema_in(env, request, ctx)?,
-            plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
-        },
-        "migration-initialize" => AdminVerb::MigrationInitialize {
-            binding: binding_with_schema_in(env, request, ctx)?,
-            operation: operation_in(request, ctx)?,
-            plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
-        },
-        "migration-migrate" => AdminVerb::Migrate {
-            binding: binding_with_schema_in(env, request, ctx)?,
-            operation: operation_in(request, ctx)?,
-            plans: plans_in(&marshal::req::<Object>(request, "plans", ctx)?, ctx)?,
-            to: optional_string(request, "to")?,
-        },
-        "migration-activate" => {
-            let reference: Object = marshal::req(request, "ref", ctx)?;
-            AdminVerb::MigrationActivate {
-                binding: optional_binding_in(env, request, ctx)?,
-                reference: ActivationRefSpec {
-                    operation: OperationId::from_core(marshal::uuid_in(
-                        &marshal::req::<String>(&reference, "operationId", ctx)?,
-                        ctx,
-                    )?),
-                    plan_set_digest: super::fingerprint_of_hex(&marshal::req::<String>(
-                        &reference,
-                        "planSetDigest",
-                        ctx,
-                    )?)?
-                    .0,
-                    target: identity_in(&marshal::req::<Object>(&reference, "target", ctx)?, ctx)?,
-                    target_genesis: super::fingerprint_of_hex(&marshal::req::<String>(
-                        &reference,
-                        "targetGenesis",
-                        ctx,
-                    )?)?
-                    .0,
-                },
-            }
-        }
-        "migration-abort" => {
-            let reference: Object = marshal::req(request, "ref", ctx)?;
-            AdminVerb::MigrationAbort {
-                binding: optional_binding_in(env, request, ctx)?,
-                reference: MigrationRefSpec {
-                    _identity: identity_in(
-                        &marshal::req::<Object>(&reference, "identity", ctx)?,
-                        ctx,
-                    )?,
-                    operation: OperationId::from_core(marshal::uuid_in(
-                        &marshal::req::<String>(&reference, "operationId", ctx)?,
-                        ctx,
-                    )?),
-                    plan_set_digest: super::fingerprint_of_hex(&marshal::req::<String>(
-                        &reference,
-                        "planSetDigest",
-                        ctx,
-                    )?)?
-                    .0,
-                    target: identity_in(&marshal::req::<Object>(&reference, "target", ctx)?, ctx)?,
-                },
-            }
-        }
         other => {
             return Err(marshal::err(format!(
                 "bumbledb-log marshal: unknown admin verb `{other}`"
@@ -795,7 +442,7 @@ fn open_admin_db(
              `schema` field (the lowered SchemaSpec)",
         ));
     };
-    let held = acquire_repository_lock(directory).map_err(|error| {
+    let held = acquire_directory(directory).map_err(|error| {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             LogFail::Core(RuntimeError::DirectoryBusy)
         } else {
@@ -814,14 +461,6 @@ fn open_admin_db(
     };
     verify_admin_identity(&db, binding, context)?;
     Ok(db)
-}
-
-/// The opened engine as the shared `Arc` (transient and leased alike).
-fn engine_arc(db: &AdminDb) -> Arc<crate::Engine> {
-    match db {
-        AdminDb::Leased(lease) => Arc::clone(&lease.inner_arc().db),
-        AdminDb::Transient { db, .. } => Arc::clone(db),
-    }
 }
 
 /// The origin binding the request claims, in the recorded grammar: local
@@ -878,7 +517,7 @@ fn recorded_binding(
 ///    database/incarnation/schema identity, and
 /// 2. a recorded origin binding, when present, must agree with the requested
 ///    backend origin (a hosted cache without a binding record is never
-///    adopted; a migration-installed local materialization may legitimately
+///    adopted; a transition-installed local materialization may legitimately
 ///    carry none — its authority identity is the dispositive gate).
 fn verify_admin_identity(
     db: &AdminDb,
@@ -930,22 +569,6 @@ fn validated_backend(
     )
     .map_err(fail_of_admin)?;
     Ok(Some((backend, prefix, head)))
-}
-
-fn local_history_of(db: &AdminDb) -> MachineResult<LocalHistory<SchemaDescriptor>> {
-    LocalHistory::open(engine_arc(db), LIMITS).map_err(fail_of_log)
-}
-
-fn access_of(db: &AdminDb) -> MachineResult<(&'static str, Option<OperationId>)> {
-    let authority = bumbledb_log::admin::local_authority(db.db(), LIMITS.envelope_bytes)
-        .map_err(|error| protocol("Corruption", format!("{error:?}")))?;
-    Ok(match &authority.lifecycle {
-        Lifecycle::Live(live) => match live.access {
-            Access::Active => ("active", None),
-            Access::Frozen { operation, .. } => ("frozen", Some(operation)),
-        },
-        Lifecycle::Deleted { .. } => ("deleted", None),
-    })
 }
 
 /// Runs one bounded closure against a destination/backend store.
@@ -1495,122 +1118,6 @@ fn run_admin(
                 }))
             }
         },
-        AdminVerb::MigrationStatus { binding, plans } => {
-            migration_status(runtime, &binding, &plans, context)
-        }
-        AdminVerb::MigrationInitialize {
-            binding,
-            operation,
-            plans,
-        } => migration_initialize(runtime, &binding, operation, &plans, context),
-        AdminVerb::Migrate {
-            binding,
-            operation,
-            plans,
-            to,
-        } => migrate(runtime, &binding, operation, &plans, to.as_deref(), context),
-        AdminVerb::MigrationActivate { binding, reference } => {
-            let Some(binding) = binding else {
-                return Ok(AdminOwned::Failed {
-                    fail: protocol(
-                        "Misuse",
-                        "migration-activate needs the source `binding` (and `schema` for \
-                         the target descriptor)",
-                    ),
-                    phase: PublicationPhase::Prepared,
-                });
-            };
-            let Some((descriptor, _)) = binding.descriptor.clone() else {
-                return Ok(AdminOwned::Failed {
-                    fail: protocol(
-                        "Misuse",
-                        "migration-activate needs the target `schema` (lowered SchemaSpec)",
-                    ),
-                    phase: PublicationPhase::Prepared,
-                });
-            };
-            require_local(&binding)?;
-            let reference = ActivationRef {
-                operation: reference.operation,
-                plan_set_digest: reference.plan_set_digest,
-                target: reference.target,
-                target_genesis: bumbledb_log::history::DecisionDigest::from_bytes(
-                    reference.target_genesis,
-                ),
-            };
-            let report = activate_target(
-                &targets_root(&binding.directory),
-                &reference,
-                &descriptor,
-                LIMITS,
-                context,
-            )
-            .map_err(fail_of_migration)?;
-            let access = match report.access {
-                bumbledb_log::history::AccessMode::Active => "active",
-                bumbledb_log::history::AccessMode::Frozen => "frozen",
-                bumbledb_log::history::AccessMode::Deleted => "deleted",
-            };
-            let activated_now = matches!(
-                report.activation,
-                bumbledb_log::history::authority::Activation::Activated { .. }
-            );
-            Ok(AdminOwned::Completed(AdminValueOwned::MigrationActivate {
-                target: reference.target,
-                access,
-                operation: reference.operation,
-                activated_now,
-            }))
-        }
-        AdminVerb::MigrationAbort { binding, reference } => {
-            let Some(binding) = binding else {
-                return Ok(AdminOwned::Failed {
-                    fail: protocol(
-                        "Misuse",
-                        "migration-abort needs the source `binding` (and `schema` for the \
-                         target descriptor)",
-                    ),
-                    phase: PublicationPhase::Prepared,
-                });
-            };
-            let Some((descriptor, _)) = binding.descriptor.clone() else {
-                return Ok(AdminOwned::Failed {
-                    fail: protocol(
-                        "Misuse",
-                        "migration-abort needs the target `schema` (lowered SchemaSpec)",
-                    ),
-                    phase: PublicationPhase::Prepared,
-                });
-            };
-            require_local(&binding)?;
-            let db = open_admin_db(runtime, &binding, context)?;
-            let history = local_history_of(&db)?;
-            let runner = LocalMigration::new(&history, &targets_root(&binding.directory), LIMITS);
-            let report = runner
-                .abort(
-                    &AbortRequest {
-                        operation: reference.operation,
-                        plan_set_digest: reference.plan_set_digest,
-                        target_database: reference.target.database_id,
-                        target_incarnation: reference.target.incarnation_id,
-                        target_schema: reference.target.schema_id,
-                        target_descriptor: &descriptor,
-                    },
-                    context,
-                )
-                .map_err(fail_of_migration)?;
-            let (source_access, _) = access_of(&db)?;
-            // Every `TargetFence` arm of a SUCCESSFUL abort means the target
-            // is fenced (tombstoned, deleted, or matching evidence already
-            // existed — the idempotent retry): the wire boolean is the state,
-            // not this-call attribution (the `activatedNow` precedent).
-            let _ = report.fence;
-            Ok(AdminOwned::Completed(AdminValueOwned::MigrationAbort {
-                target: reference.target,
-                target_fenced: true,
-                source_access,
-            }))
-        }
     }
 }
 
@@ -1748,485 +1255,6 @@ fn fail_of_local_root(error: bumbledb_log::local_roots::LocalRootError) -> LogFa
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn fail_of_migration(error: bumbledb_log::migration::executor::MigrationError) -> LogFail {
-    use bumbledb_log::migration::executor::MigrationError;
-    match &error {
-        MigrationError::Aborted { .. }
-        | MigrationError::SourceFrozenByOther { .. }
-        | MigrationError::ActivationWon
-        | MigrationError::StaleActivationRef => protocol("OperationConflict", format!("{error:?}")),
-        MigrationError::TargetConflict | MigrationError::OutputMismatch => {
-            protocol("MigrationOutputMismatch", format!("{error:?}"))
-        }
-        MigrationError::Log(log) => fail_of_log(log.clone()),
-        // Cancellation/allocation failure stays the exact core reason —
-        // never respelled as drift.
-        MigrationError::Work(work) => LogFail::Core(RuntimeError::Work(*work)),
-        _ => protocol("MigrationDrift", format!("{error:?}")),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Migration verbs (local bindings; hosted staged data plane is a recorded
-// C08 boundary).
-// ---------------------------------------------------------------------------
-
-/// Chain positions are u64 on the wire; a position past this host's address
-/// space cannot index the in-memory manifest (32-bit hosts) — refuse typed
-/// instead of truncating.
-fn chain_index(value: u64) -> Result<usize, LogFail> {
-    usize::try_from(value)
-        .map_err(|_| protocol("Misuse", "chain position exceeds this host's address space"))
-}
-
-fn require_local(binding: &BindingSpec) -> MachineResult<()> {
-    match binding.backend {
-        BackendSpec::Local => Ok(()),
-        BackendSpec::Hosted { .. } => Err(protocol(
-            "MigrationUnsupported",
-            "hosted migration execution awaits the staged hosted data plane (C08); run \
-             the local migration API only with an authoritative local history",
-        )),
-    }
-}
-
-fn migration_status(
-    runtime: &Arc<Runtime>,
-    binding: &BindingSpec,
-    plans: &PlansSpec,
-    context: &WorkContext,
-) -> MachineResult<AdminOwned> {
-    require_local(binding)?;
-    let manifest = plans.manifest()?;
-    plans.verify_compiled_chain(&manifest, context)?;
-    let db = open_migration_db(runtime, binding, plans, context)?;
-    let history = local_history_of(&db)?;
-    let runner = LocalMigration::new(&history, &targets_root(&binding.directory), LIMITS);
-    let status = runner
-        .status(&manifest, context)
-        .map_err(fail_of_migration)?;
-    let owned = match status {
-        MigrationStatus::UpToDate { applied } => {
-            let prefix = prefix_at(&manifest, chain_index(applied)?, LIMITS.envelope_bytes)
-                .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
-            StatusOwned::UpToDate {
-                applied_prefix: prefix,
-            }
-        }
-        MigrationStatus::Pending { applied, pending } => {
-            let labels = manifest
-                .entries
-                .iter()
-                .skip(chain_index(applied)?)
-                .take(chain_index(pending)?)
-                .map(|entry| entry.label.as_str().to_string())
-                .collect();
-            StatusOwned::Pending { pending: labels }
-        }
-        MigrationStatus::Frozen {
-            operation,
-            intent,
-            target_cancelled,
-            ..
-        } => {
-            let (target_incarnation, plan_set) = match intent {
-                bumbledb_log::history::authority::FreezeIntent::Migration {
-                    target,
-                    plan_set_digest,
-                } => (target, plan_set_digest),
-                bumbledb_log::history::authority::FreezeIntent::Erasure => {
-                    return Err(protocol(
-                        "DatabaseFrozen",
-                        "the source is frozen for erasure, not migration",
-                    ));
-                }
-            };
-            let target = DatabaseIdentity {
-                database_id: history.identity().database_id,
-                incarnation_id: target_incarnation,
-                schema_id: history.identity().schema_id,
-            };
-            if target_cancelled {
-                StatusOwned::Aborted {
-                    source: history.identity(),
-                    operation,
-                    plan_set,
-                    target,
-                }
-            } else {
-                StatusOwned::InProgress {
-                    source: history.identity(),
-                    operation,
-                    plan_set,
-                    target,
-                }
-            }
-        }
-    };
-    Ok(AdminOwned::Report(AdminValueOwned::MigrationStatus(owned)))
-}
-
-/// Migration snapshots are the source schema authority after the application
-/// has advanced to a new typed schema. A cold migration must not require the
-/// caller to keep an executable copy of its retired schema module.
-/// Call only after verifying the complete generated chain.
-fn open_migration_db(
-    runtime: &Arc<Runtime>,
-    binding: &BindingSpec,
-    plans: &PlansSpec,
-    context: &WorkContext,
-) -> MachineResult<AdminDb> {
-    let mut source = None;
-    for descriptor in plans.descriptors()? {
-        let schema_id = bumbledb_log::schema_file::schema_id(&descriptor)
-            .map_err(|error| protocol("MigrationDrift", format!("{error:?}")))?;
-        if schema_id == binding.identity.schema_id {
-            source = Some(descriptor);
-            break;
-        }
-    }
-    let descriptor = source.ok_or_else(|| {
-        protocol(
-            "MigrationDrift",
-            "source binding schema is absent from the verified snapshot chain",
-        )
-    })?;
-    let probe = BindingSpec {
-        directory: binding.directory.clone(),
-        identity: binding.identity,
-        backend: BackendSpec::Local,
-        descriptor: Some((descriptor, Vec::new())),
-    };
-    open_admin_db(runtime, &probe, context)
-}
-
-fn steps_of(
-    plans: &PlansSpec,
-    manifest: &Manifest,
-    first: usize,
-    count: usize,
-) -> MachineResult<(SchemaDescriptor, Vec<StepInput>)> {
-    let descriptors = plans.descriptors()?;
-    if descriptors.len() != manifest.entries.len() + 1 {
-        return Err(protocol(
-            "UnsupportedArtifact",
-            "snapshots must carry the base schema plus one target per entry",
-        ));
-    }
-    let parsed = plans.plans()?;
-    if parsed.len() != manifest.entries.len() {
-        return Err(protocol(
-            "MigrationDrift",
-            "recorded plans and manifest entries disagree in count",
-        ));
-    }
-    let source = descriptors[first].clone();
-    let mut steps = Vec::with_capacity(count);
-    for offset in 0..count {
-        let index = first + offset;
-        steps.push(StepInput {
-            plan: parsed[index].clone(),
-            to_descriptor: descriptors[index + 1].clone(),
-        });
-    }
-    Ok((source, steps))
-}
-
-#[allow(clippy::too_many_lines)]
-fn migrate(
-    runtime: &Arc<Runtime>,
-    binding: &BindingSpec,
-    operation: OperationId,
-    plans: &PlansSpec,
-    to: Option<&str>,
-    context: &WorkContext,
-) -> MachineResult<AdminOwned> {
-    require_local(binding)?;
-    let manifest = plans.manifest()?;
-    plans.verify_compiled_chain(&manifest, context)?;
-    let db = open_migration_db(runtime, binding, plans, context)?;
-    let history = local_history_of(&db)?;
-    let root = targets_root(&binding.directory);
-    let runner = LocalMigration::new(&history, &root, LIMITS);
-    let status = runner
-        .status(&manifest, context)
-        .map_err(fail_of_migration)?;
-    let applied = match status {
-        MigrationStatus::UpToDate { applied } => {
-            let _ = applied;
-            return Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
-                MigrateOwned::UpToDate {
-                    directory: binding.directory.clone(),
-                    identity: history.identity(),
-                },
-            )));
-        }
-        MigrationStatus::Pending { applied, .. } => chain_index(applied)?,
-        MigrationStatus::Frozen {
-            operation: held,
-            applied,
-            ..
-        } => {
-            if held != operation {
-                return Err(protocol(
-                    "OperationConflict",
-                    "the source is frozen by a different operation",
-                ));
-            }
-            // Resume under the held freeze: the applied prefix comes from
-            // the verified chain; the executor re-verifies everything.
-            chain_index(applied)?
-        }
-    };
-    let end = match to {
-        None => manifest.entries.len(),
-        Some(to) => {
-            let target = super::fingerprint_of_hex(to)
-                .map_err(|_| protocol("MigrationDrift", "malformed `to` schema id"))?;
-            let position = manifest
-                .entries
-                .iter()
-                .position(|entry| entry.to_schema == target)
-                .ok_or_else(|| protocol("MigrationDrift", "`to` names no entry's target schema"))?;
-            position + 1
-        }
-    };
-    if end <= applied {
-        return Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
-            MigrateOwned::UpToDate {
-                directory: binding.directory.clone(),
-                identity: history.identity(),
-            },
-        )));
-    }
-    let (source_descriptor, steps) = steps_of(plans, &manifest, applied, end - applied)?;
-    let target_incarnation = super::planned_target_incarnation(operation);
-    let request = SuffixRequest {
-        operation,
-        manifest: &manifest,
-        source_descriptor,
-        steps: &steps,
-        target_database: history.identity().database_id,
-        target_incarnation,
-    };
-    match runner.migrate(&request, context) {
-        Ok(MigrateOutcome::UpToDate { .. }) => Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
-            MigrateOwned::UpToDate {
-                directory: binding.directory.clone(),
-                identity: history.identity(),
-            },
-        ))),
-        Ok(MigrateOutcome::AlreadyActivated { .. }) => {
-            let deployment = TargetNamespace::new(&root, target_incarnation)
-                .map_err(MigrationError::from)
-                .map_err(fail_of_migration)?
-                .deployment_dir();
-            Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
-                MigrateOwned::UpToDate {
-                    directory: deployment.to_string_lossy().into_owned(),
-                    identity: DatabaseIdentity {
-                        database_id: history.identity().database_id,
-                        incarnation_id: target_incarnation,
-                        schema_id: steps
-                            .last()
-                            .expect("nonempty migration suffix")
-                            .plan
-                            .to_schema,
-                    },
-                },
-            )))
-        }
-        Ok(MigrateOutcome::ReadyToSwitch { activation_ref, .. }) => {
-            let namespace = TargetNamespace::new(&root, activation_ref.target.incarnation_id)
-                .map_err(MigrationError::from)
-                .map_err(fail_of_migration)?;
-            let deployment = namespace.deployment_dir();
-            let deployed = BindingSpec {
-                directory: deployment.to_string_lossy().into_owned(),
-                identity: activation_ref.target,
-                backend: BackendSpec::Local,
-                descriptor: None,
-            };
-            let descriptor = &steps
-                .last()
-                .expect("nonempty migration suffix")
-                .to_descriptor;
-            let target =
-                bumbledb::Db::open(&namespace.target_dir(), descriptor.clone(), context.clone())
-                    .map_err(|error| {
-                        LogFail::Core(crate::runtime::session::engine_error(&error))
-                    })?;
-            bumbledb_log::admin::verify_local_identity(
-                &target,
-                activation_ref.target,
-                LIMITS.envelope_bytes,
-            )
-            .map_err(fail_of_admin)?;
-            recovery::write_binding(&target, &expected_binding(&deployed), context)
-                .map_err(super::fail_of_recovery)?;
-            drop(target);
-            Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
-                MigrateOwned::ReadyToSwitch {
-                    deployment_directory: deployment.to_string_lossy().into_owned(),
-                    target: activation_ref.target,
-                    activation: activation_ref,
-                },
-            )))
-        }
-        Err(error) => {
-            // A failure after the durable freeze leaves the source frozen —
-            // reported HONESTLY as completed(paused), never a silent thaw.
-            let (access, held) = access_of(&db)?;
-            if access == "frozen" && held == Some(operation) {
-                Ok(AdminOwned::Completed(AdminValueOwned::Migrate(
-                    MigrateOwned::Paused {
-                        fail: fail_of_migration(error),
-                        operation: held,
-                    },
-                )))
-            } else {
-                Err(fail_of_migration(error))
-            }
-        }
-    }
-}
-
-fn migration_initialize(
-    runtime: &Arc<Runtime>,
-    binding: &BindingSpec,
-    operation: OperationId,
-    plans: &PlansSpec,
-    context: &WorkContext,
-) -> MachineResult<AdminOwned> {
-    require_local(binding)?;
-    let manifest = plans.manifest()?;
-    plans.verify_compiled_chain(&manifest, context)?;
-    if manifest.entries.is_empty() {
-        return Err(protocol(
-            "MigrationDrift",
-            "an empty chain initializes nothing",
-        ));
-    }
-    let (source_descriptor, steps) = steps_of(plans, &manifest, 0, manifest.entries.len())?;
-    // If the tenant directory already holds a ready materialization, it must
-    // be exactly this initialization's target identity (the idempotent
-    // completion) — validated BEFORE any staging is written under this
-    // directory or any install/adopt happens. A stranger's directory refuses
-    // typed with nothing touched.
-    let ready = recovery::materialization_path(Path::new(&binding.directory));
-    if ready.exists() {
-        let target_descriptor = steps
-            .last()
-            .map(|step| step.to_descriptor.clone())
-            .expect("nonempty steps");
-        let attrs = binding
-            .descriptor
-            .as_ref()
-            .map(|(_, attrs)| attrs.clone())
-            .unwrap_or_default();
-        let probe = BindingSpec {
-            directory: binding.directory.clone(),
-            identity: binding.identity,
-            backend: BackendSpec::Local,
-            descriptor: Some((target_descriptor, attrs)),
-        };
-        drop(open_admin_db(runtime, &probe, context)?);
-    }
-    let target_incarnation = binding.identity.incarnation_id;
-    let root = targets_root(&binding.directory);
-    std::fs::create_dir_all(&root)
-        .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
-    let request = SuffixRequest {
-        operation,
-        manifest: &manifest,
-        source_descriptor,
-        steps: &steps,
-        target_database: binding.identity.database_id,
-        target_incarnation,
-    };
-    let outcome = initialize(&root, &request, LIMITS, context).map_err(fail_of_migration)?;
-    let target_descriptor = &steps.last().expect("nonempty steps").to_descriptor;
-    let activation_ref = match outcome {
-        MigrateOutcome::ReadyToSwitch { activation_ref, .. } => activation_ref,
-        MigrateOutcome::AlreadyActivated { .. } | MigrateOutcome::UpToDate { .. } => {
-            // Idempotent completion: adopt the recorded evidence below.
-            return finish_initialize(binding, operation, &root, target_descriptor, None, context);
-        }
-    };
-    let report = activate_target(&root, &activation_ref, target_descriptor, LIMITS, context)
-        .map_err(fail_of_migration)?;
-    let _ = report;
-    finish_initialize(
-        binding,
-        operation,
-        &root,
-        target_descriptor,
-        Some(activation_ref),
-        context,
-    )
-}
-
-/// Installs the activated initialization target as the tenant's ready
-/// materialization (`<dir>/db`) and reports the genesis binding — the
-/// explicit creation artifact flow (chapter 33's generated-plan
-/// `initialize`): seeds ran exactly once inside the executor.
-fn finish_initialize(
-    binding: &BindingSpec,
-    operation: OperationId,
-    root: &Path,
-    descriptor: &SchemaDescriptor,
-    activation: Option<ActivationRef>,
-    context: &WorkContext,
-) -> MachineResult<AdminOwned> {
-    let _ = operation;
-    let target_incarnation = binding.identity.incarnation_id;
-    let target_dir = TargetNamespace::new(root, target_incarnation)
-        .map_err(MigrationError::from)
-        .map_err(fail_of_migration)?
-        .target_dir();
-    let ready = recovery::materialization_path(Path::new(&binding.directory));
-    if !ready.exists() {
-        if !target_dir.exists() {
-            return Err(protocol(
-                "MigrationDrift",
-                "no published initialization target to install",
-            ));
-        }
-        // Initialization builds a generic migration target. Attach the
-        // application's verified local origin before exposing it to the
-        // tenant-cache open path, which rightly refuses unidentified stores.
-        let target = bumbledb::Db::open(&target_dir, descriptor.clone(), context.clone())
-            .map_err(|error| LogFail::Core(crate::runtime::session::engine_error(&error)))?;
-        bumbledb_log::admin::verify_local_identity(
-            &target,
-            binding.identity,
-            LIMITS.envelope_bytes,
-        )
-        .map_err(fail_of_admin)?;
-        recovery::write_binding(&target, &expected_binding(binding), context)
-            .map_err(super::fail_of_recovery)?;
-        drop(target);
-        std::fs::rename(&target_dir, &ready)
-            .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
-    }
-    let genesis = match activation {
-        Some(reference) => *reference.target_genesis.as_bytes(),
-        None => [0u8; 32],
-    };
-    let _ = context;
-    Ok(AdminOwned::Completed(
-        AdminValueOwned::MigrationInitialize {
-            directory: binding.directory.clone(),
-            identity: DatabaseIdentity {
-                database_id: binding.identity.database_id,
-                incarnation_id: target_incarnation,
-                schema_id: binding.identity.schema_id,
-            },
-            genesis,
-        },
-    ))
-}
-
 /// One owned checkpoint chunk at a time. Restore borrows via `AsRef<[u8]>`
 /// and drops the owner as it consumes the iterator.
 pub(crate) fn verified_checkpoint_chunks<'a, B>(
@@ -2269,7 +1297,7 @@ fn run_restore(
         BackendSpec::Hosted { .. } => {
             return Ok(AdminOwned::Failed {
                 fail: protocol(
-                    "MigrationUnsupported",
+                    "UnsupportedArtifact",
                     "restore targets a local binding; hosted re-publication is the \
                      recorded C08 boundary",
                 ),
@@ -2299,7 +1327,7 @@ fn run_restore(
     std::fs::create_dir_all(&target.directory)
         .map_err(|error| LogFail::Core(crate::runtime::owners::io_error(error)))?;
     let target_dir = Path::new(&target.directory);
-    let _target_fence = acquire_repository_lock(target_dir).map_err(|error| {
+    let _target_fence = acquire_directory(target_dir).map_err(|error| {
         if error.kind() == std::io::ErrorKind::WouldBlock {
             LogFail::Core(RuntimeError::DirectoryBusy)
         } else {
@@ -2429,10 +1457,6 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
     let value = match owned {
         AdminOwned::Completed(value) => {
             wire.set("certainty", "completed")?;
-            wire.set(
-                "publicationPhase",
-                publication_phase_tag(PublicationPhase::Confirmed),
-            )?;
             value
         }
         AdminOwned::Report(value) => {
@@ -2441,7 +1465,6 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
         }
         AdminOwned::Failed { fail, phase } => {
             wire.set("certainty", admin_failed_certainty(phase))?;
-            wire.set("publicationPhase", publication_phase_tag(phase))?;
             wire.set("error", frame_object(&env, &fail)?)?;
             return Ok(wire);
         }
@@ -2545,145 +1568,9 @@ pub(crate) fn admin_wire<'e>(env: Env, owned: AdminOwned) -> napi::Result<Object
             }
             body.set("residual", rows)?;
         }
-        AdminValueOwned::MigrationStatus(status) => {
-            body.set("verb", "migration-status")?;
-            let mut wire_status = Object::new(&env)?;
-            match status {
-                StatusOwned::UpToDate { applied_prefix } => {
-                    wire_status.set("kind", "up-to-date")?;
-                    wire_status.set("appliedPrefixDigest", hex32(&applied_prefix))?;
-                }
-                StatusOwned::Pending { pending } => {
-                    wire_status.set("kind", "pending")?;
-                    wire_status.set("pending", pending)?;
-                }
-                StatusOwned::InProgress {
-                    source,
-                    operation,
-                    plan_set,
-                    target,
-                } => {
-                    wire_status.set("kind", "in-progress")?;
-                    wire_status.set(
-                        "operationRef",
-                        migration_ref_wire(&env, source, operation, plan_set, target)?,
-                    )?;
-                }
-                StatusOwned::Aborted {
-                    source,
-                    operation,
-                    plan_set,
-                    target,
-                } => {
-                    wire_status.set("kind", "aborted")?;
-                    wire_status.set(
-                        "operationRef",
-                        migration_ref_wire(&env, source, operation, plan_set, target)?,
-                    )?;
-                }
-            }
-            body.set("status", wire_status)?;
-        }
-        AdminValueOwned::MigrationInitialize {
-            directory,
-            identity,
-            genesis,
-        } => {
-            body.set("verb", "migration-initialize")?;
-            let mut binding = Object::new(&env)?;
-            binding.set("kind", "local")?;
-            binding.set("directory", directory)?;
-            binding.set("identity", identity_wire(&env, identity)?)?;
-            body.set("binding", binding)?;
-            body.set("genesis", hex32(&genesis))?;
-        }
-        AdminValueOwned::Migrate(outcome) => {
-            body.set("verb", "migration-migrate")?;
-            let mut value = Object::new(&env)?;
-            match outcome {
-                MigrateOwned::UpToDate {
-                    directory,
-                    identity,
-                } => {
-                    value.set("kind", "up-to-date")?;
-                    let mut binding = Object::new(&env)?;
-                    binding.set("kind", "local")?;
-                    binding.set("directory", directory)?;
-                    binding.set("identity", identity_wire(&env, identity)?)?;
-                    value.set("binding", binding)?;
-                }
-                MigrateOwned::ReadyToSwitch {
-                    deployment_directory,
-                    target,
-                    activation,
-                } => {
-                    value.set("kind", "ready-to-switch")?;
-                    let mut binding = Object::new(&env)?;
-                    binding.set("kind", "local")?;
-                    binding.set("directory", deployment_directory)?;
-                    binding.set("identity", identity_wire(&env, target)?)?;
-                    value.set("deploymentBinding", binding)?;
-                    let mut reference = Object::new(&env)?;
-                    reference.set("operationId", uuid_text(activation.operation.as_core()))?;
-                    reference.set("planSetDigest", hex32(&activation.plan_set_digest))?;
-                    reference.set("target", identity_wire(&env, activation.target)?)?;
-                    reference.set("targetGenesis", hex32(activation.target_genesis.as_bytes()))?;
-                    value.set("activation", reference)?;
-                }
-                MigrateOwned::Paused { fail, operation } => {
-                    value.set("kind", "paused")?;
-                    value.set("error", frame_object(&env, &fail)?)?;
-                    let mut source_state = Object::new(&env)?;
-                    source_state.set("access", "frozen")?;
-                    source_state.set(
-                        "operationId",
-                        operation.map(|operation| uuid_text(operation.as_core())),
-                    )?;
-                    value.set("sourceState", source_state)?;
-                }
-            }
-            body.set("value", value)?;
-        }
-        AdminValueOwned::MigrationActivate {
-            target,
-            access,
-            operation,
-            activated_now,
-        } => {
-            body.set("verb", "migration-activate")?;
-            body.set("target", identity_wire(&env, target)?)?;
-            body.set("accessMode", access)?;
-            body.set("operationId", uuid_text(operation.as_core()))?;
-            body.set("activatedNow", activated_now)?;
-        }
-        AdminValueOwned::MigrationAbort {
-            target,
-            target_fenced,
-            source_access,
-        } => {
-            body.set("verb", "migration-abort")?;
-            body.set("target", identity_wire(&env, target)?)?;
-            body.set("targetFenced", target_fenced)?;
-            body.set("sourceAccess", source_access)?;
-        }
     }
     wire.set("value", body)?;
     Ok(wire)
-}
-
-fn migration_ref_wire(
-    env: &Env,
-    source: DatabaseIdentity,
-    operation: OperationId,
-    plan_set: [u8; 32],
-    target: DatabaseIdentity,
-) -> napi::Result<Object<'_>> {
-    let mut reference = Object::new(env)?;
-    reference.set("identity", identity_wire(env, source)?)?;
-    reference.set("operationId", uuid_text(operation.as_core()))?;
-    reference.set("planSetDigest", hex32(&plan_set))?;
-    reference.set("target", identity_wire(env, target)?)?;
-    Ok(reference)
 }
 
 const _: fn() = || {

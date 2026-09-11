@@ -29,12 +29,12 @@ pub const LAYOUT: u16 = 1;
 const CONTROL: u8 = 1;
 
 /// Why an authority is frozen. The operation identity is fixed before
-/// dispatch; a different plan/operation cannot take over a frozen authority
+/// dispatch; a different contract/operation cannot take over a frozen authority
 /// by reusing its label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FreezeIntent {
-    Migration {
-        plan_set_digest: [u8; 32],
+    Transition {
+        contract_digest: [u8; 32],
         target: IncarnationId,
     },
     Erasure,
@@ -62,10 +62,10 @@ impl Access {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeletedReason {
     Erasure,
-    MigrationAborted {
+    TransitionAborted {
         source_database: super::DatabaseId,
         source_incarnation: IncarnationId,
-        plan_set_digest: [u8; 32],
+        contract_digest: [u8; 32],
     },
 }
 
@@ -73,7 +73,7 @@ pub enum DeletedReason {
 pub enum ActivationCause {
     Create,
     Restore,
-    Migration { plan_set_digest: [u8; 32] },
+    Transition { contract_digest: [u8; 32] },
 }
 
 /// One-time activation evidence. Preserved by later commands, maintenance,
@@ -100,7 +100,7 @@ pub struct LiveAuthority {
 pub enum Lifecycle {
     Live(LiveAuthority),
     /// Terminal tombstone: no current checkpoint/tip, receipt table or
-    /// migration-history dependency, and no transition back to Live.
+    /// transition evidence dependency, and no transition back to Live.
     Deleted {
         operation: OperationId,
         reason: DeletedReason,
@@ -230,7 +230,7 @@ impl HeadAuthority {
         })
     }
 
-    /// A conditional tombstone created **instead of** a migration target's
+    /// A conditional tombstone created **instead of** a transition target's
     /// genesis: cancelling an unpublished target durably fences its delayed
     /// genesis/activation. No fictitious checkpoint or decision stamp exists.
     #[must_use]
@@ -395,7 +395,7 @@ impl HeadAuthority {
         }
     }
 
-    /// Thaw the matching frozen operation. For a migration abort the caller
+    /// Thaw the matching frozen operation. For a transition abort the caller
     /// must already hold the durable target fence (target tombstone or
     /// refused activation); an uncertain target cancellation never authorizes
     /// thaw. That ordering is the runner's obligation — this value transition
@@ -484,7 +484,7 @@ impl HeadAuthority {
 
     /// Terminal deletion: the live state becomes a tombstone that preserves
     /// identity, revision continuity and prior activation evidence. A live
-    /// unactivated migration target may be cancelled this way only under its
+    /// unactivated transition target may be cancelled this way only under its
     /// matching operation; if activation already won, cancellation refuses.
     /// # Errors
     /// Refuses a conflicting recorded tombstone and post-activation
@@ -508,7 +508,7 @@ impl HeadAuthority {
             return Err(AuthorityError::OperationMismatch { held });
         }
         if let (
-            DeletedReason::MigrationAborted { .. },
+            DeletedReason::TransitionAborted { .. },
             Activation::Activated {
                 operation: activated,
                 ..
@@ -553,7 +553,7 @@ pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, 
                     1 + 16
                         + 1
                         + match intent {
-                            FreezeIntent::Migration { .. } => 48,
+                            FreezeIntent::Transition { .. } => 48,
                             FreezeIntent::Erasure => 0,
                         }
                 }
@@ -566,7 +566,7 @@ pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, 
                 + 1
                 + match reason {
                     DeletedReason::Erasure => 0,
-                    DeletedReason::MigrationAborted { .. } => 64,
+                    DeletedReason::TransitionAborted { .. } => 64,
                 }
         }
     };
@@ -577,7 +577,7 @@ pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, 
                 + 32
                 + 1
                 + match cause {
-                    ActivationCause::Migration { .. } => 32,
+                    ActivationCause::Transition { .. } => 32,
                     _ => 0,
                 }
         }
@@ -595,12 +595,12 @@ pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, 
                     out.push(1);
                     out.extend_from_slice(operation.as_core().as_bytes());
                     match intent {
-                        FreezeIntent::Migration {
-                            plan_set_digest,
+                        FreezeIntent::Transition {
+                            contract_digest,
                             target,
                         } => {
-                            out.push(0);
-                            out.extend_from_slice(&plan_set_digest);
+                            out.push(2);
+                            out.extend_from_slice(&contract_digest);
                             out.extend_from_slice(target.as_core().as_bytes());
                         }
                         FreezeIntent::Erasure => out.push(1),
@@ -617,15 +617,15 @@ pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, 
             out.extend_from_slice(operation.as_core().as_bytes());
             match reason {
                 DeletedReason::Erasure => out.push(0),
-                DeletedReason::MigrationAborted {
+                DeletedReason::TransitionAborted {
                     source_database,
                     source_incarnation,
-                    plan_set_digest,
+                    contract_digest,
                 } => {
-                    out.push(1);
+                    out.push(2);
                     out.extend_from_slice(source_database.as_core().as_bytes());
                     out.extend_from_slice(source_incarnation.as_core().as_bytes());
-                    out.extend_from_slice(plan_set_digest);
+                    out.extend_from_slice(contract_digest);
                 }
             }
         }
@@ -643,9 +643,9 @@ pub fn encode_control(authority: &HeadAuthority, cap: usize) -> Result<Vec<u8>, 
             match cause {
                 ActivationCause::Create => out.push(0),
                 ActivationCause::Restore => out.push(1),
-                ActivationCause::Migration { plan_set_digest } => {
-                    out.push(2);
-                    out.extend_from_slice(&plan_set_digest);
+                ActivationCause::Transition { contract_digest } => {
+                    out.push(3);
+                    out.extend_from_slice(&contract_digest);
                 }
             }
         }
@@ -674,8 +674,8 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
                     let operation =
                         OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
                     let intent = match input.tag()? {
-                        (_, 0) => FreezeIntent::Migration {
-                            plan_set_digest: input.array()?,
+                        (_, 2) => FreezeIntent::Transition {
+                            contract_digest: input.array()?,
                             target: IncarnationId::from_core(bumbledb::Uuid::from_bytes(
                                 input.array()?,
                             )),
@@ -711,14 +711,14 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
             let operation = OperationId::from_core(bumbledb::Uuid::from_bytes(input.array()?));
             let reason = match input.tag()? {
                 (_, 0) => DeletedReason::Erasure,
-                (_, 1) => DeletedReason::MigrationAborted {
+                (_, 2) => DeletedReason::TransitionAborted {
                     source_database: super::DatabaseId::from_core(bumbledb::Uuid::from_bytes(
                         input.array()?,
                     )),
                     source_incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(
                         input.array()?,
                     )),
-                    plan_set_digest: input.array()?,
+                    contract_digest: input.array()?,
                 },
                 (at, got) => return Err(FrameError::Tag { at, got }),
             };
@@ -734,8 +734,8 @@ pub fn decode_control(bytes: &[u8], cap: usize) -> Result<HeadAuthority, FrameEr
             let cause = match input.tag()? {
                 (_, 0) => ActivationCause::Create,
                 (_, 1) => ActivationCause::Restore,
-                (_, 2) => ActivationCause::Migration {
-                    plan_set_digest: input.array()?,
+                (_, 3) => ActivationCause::Transition {
+                    contract_digest: input.array()?,
                 },
                 (at, got) => return Err(FrameError::Tag { at, got }),
             };
@@ -816,8 +816,8 @@ mod tests {
     #[test]
     fn freeze_blocks_decisions_and_matching_retries_are_evidence_not_mutation() {
         let head = genesis();
-        let intent = FreezeIntent::Migration {
-            plan_set_digest: [5; 32],
+        let intent = FreezeIntent::Transition {
+            contract_digest: [5; 32],
             target: IncarnationId::from_core(Uuid::from_bytes([6; 16])),
         };
         let frozen = match head.freeze(op(10), intent).unwrap() {
@@ -858,8 +858,8 @@ mod tests {
             activation: Activation::NotActivated,
             ..genesis()
         };
-        let cause = ActivationCause::Migration {
-            plan_set_digest: [5; 32],
+        let cause = ActivationCause::Transition {
+            contract_digest: [5; 32],
         };
         let genesis_hash = DecisionDigest::from_bytes([9; 32]);
         // Activation requires the matching freeze (AwaitingCutover).
@@ -870,8 +870,8 @@ mod tests {
         let frozen = match target
             .freeze(
                 op(20),
-                FreezeIntent::Migration {
-                    plan_set_digest: [5; 32],
+                FreezeIntent::Transition {
+                    contract_digest: [5; 32],
                     target: identity().incarnation_id,
                 },
             )
@@ -933,17 +933,17 @@ mod tests {
             "refuse before hydration"
         );
         // A target whose activation already won cannot be auto-aborted.
-        let abort = DeletedReason::MigrationAborted {
+        let abort = DeletedReason::TransitionAborted {
             source_database: identity().database_id,
             source_incarnation: identity().incarnation_id,
-            plan_set_digest: [5; 32],
+            contract_digest: [5; 32],
         };
         let activated_target = HeadAuthority {
             activation: Activation::Activated {
                 operation: op(50),
                 target_genesis: DecisionDigest::from_bytes([9; 32]),
-                cause: ActivationCause::Migration {
-                    plan_set_digest: [5; 32],
+                cause: ActivationCause::Transition {
+                    contract_digest: [5; 32],
                 },
             },
             ..genesis()
@@ -969,8 +969,8 @@ mod tests {
             match genesis()
                 .freeze(
                     op(1),
-                    FreezeIntent::Migration {
-                        plan_set_digest: [5; 32],
+                    FreezeIntent::Transition {
+                        contract_digest: [5; 32],
                         target: IncarnationId::from_core(Uuid::from_bytes([6; 16])),
                     },
                 )
@@ -990,10 +990,10 @@ mod tests {
             HeadAuthority::cancelled_before_genesis(
                 identity(),
                 op(4),
-                DeletedReason::MigrationAborted {
+                DeletedReason::TransitionAborted {
                     source_database: identity().database_id,
                     source_incarnation: identity().incarnation_id,
-                    plan_set_digest: [7; 32],
+                    contract_digest: [7; 32],
                 },
             ),
         ];
@@ -1033,5 +1033,66 @@ mod tests {
             decode_control(&policy, 4096),
             Err(FrameError::InvalidPolicy)
         );
+    }
+
+    #[test]
+    fn retired_migration_control_tags_are_never_transition_contracts() {
+        let FreezeOutcome::Frozen(frozen) = genesis()
+            .freeze(
+                op(1),
+                FreezeIntent::Transition {
+                    contract_digest: [5; 32],
+                    target: IncarnationId::from_core(Uuid::from_bytes([6; 16])),
+                },
+            )
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        let mut bytes = encode_control(&frozen, 4096).unwrap();
+        let tag = FAMILY.len() + 3 + 64 + 8 + 1 + 1 + 16;
+        assert_eq!(bytes[tag], 2);
+        bytes[tag] = 0;
+        assert!(matches!(
+            decode_control(&bytes, 4096),
+            Err(FrameError::Tag { got: 0, .. })
+        ));
+
+        let deleted = HeadAuthority::cancelled_before_genesis(
+            identity(),
+            op(2),
+            DeletedReason::TransitionAborted {
+                source_database: identity().database_id,
+                source_incarnation: identity().incarnation_id,
+                contract_digest: [5; 32],
+            },
+        );
+        let mut bytes = encode_control(&deleted, 4096).unwrap();
+        let tag = FAMILY.len() + 3 + 64 + 8 + 1 + 16;
+        assert_eq!(bytes[tag], 2);
+        bytes[tag] = 1;
+        assert!(matches!(
+            decode_control(&bytes, 4096),
+            Err(FrameError::Tag { got: 1, .. })
+        ));
+
+        let activated = HeadAuthority {
+            activation: Activation::Activated {
+                operation: op(3),
+                target_genesis: genesis().position().unwrap().decision.hash,
+                cause: ActivationCause::Transition {
+                    contract_digest: [5; 32],
+                },
+            },
+            ..genesis()
+        };
+        let mut bytes = encode_control(&activated, 4096).unwrap();
+        let tag = bytes.len() - 33;
+        assert_eq!(bytes[tag], 3);
+        bytes[tag] = 2;
+        assert!(matches!(
+            decode_control(&bytes, 4096),
+            Err(FrameError::Tag { got: 2, .. })
+        ));
     }
 }

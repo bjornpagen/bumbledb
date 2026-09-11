@@ -260,8 +260,7 @@ wire_tags! {
 
 wire_tags! {
     /// `bumbledb::NumericCast` — the explicit-cast vocabulary nested in the
-    /// scalar-expression lane (the same four spellings as the migration
-    /// plan grammar).
+    /// scalar-expression lane.
     mod numeric_cast for unit bumbledb::NumericCast {
         TO_F64: bumbledb::NumericCast::ToF64 => "toF64",
         TO_F64_EXACT: bumbledb::NumericCast::ToF64Exact => "toF64Exact",

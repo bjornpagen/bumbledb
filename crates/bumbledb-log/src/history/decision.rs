@@ -87,7 +87,11 @@ impl UnverifiedDecisionEnvelope<'_> {
 /// Refuses inconsistent stamps/outcomes, oversized frames and allocation.
 pub fn encode_decision(parts: DecisionParts<'_>, limits: Limits) -> Result<Vec<u8>, FrameError> {
     validate_parts(&parts)?;
-    check_limit(parts.canonical_command.len(), limits.envelope_bytes)?;
+    check_limit(
+        parts.canonical_command.len(),
+        limits.envelope_bytes,
+        "command",
+    )?;
     let len = frame_len(
         FAMILY.len(),
         &[
@@ -148,7 +152,7 @@ pub fn decode_decision(
     };
     let before_state = input.state()?;
     let after_state = input.state()?;
-    let canonical_command = input.span(limits.envelope_bytes)?;
+    let canonical_command = input.span(limits.envelope_bytes, "command")?;
     let outcome = read_outcome(&mut input, limits)?;
     input.end()?;
     let nested = command::decode_command(canonical_command, limits)?;
@@ -288,10 +292,10 @@ pub enum GenesisProvenance {
     Restore {
         source_evidence: [u8; 32],
     },
-    Migration {
+    Transition {
         source_database: super::DatabaseId,
         source_incarnation: IncarnationId,
-        plan_set_digest: [u8; 32],
+        contract_digest: [u8; 32],
     },
 }
 
@@ -312,7 +316,7 @@ pub fn encode_genesis(record: &GenesisRecord, cap: usize) -> Result<Vec<u8>, Fra
     let provenance_len = match record.provenance {
         GenesisProvenance::Create => 1,
         GenesisProvenance::Restore { .. } => 33,
-        GenesisProvenance::Migration { .. } => 65,
+        GenesisProvenance::Transition { .. } => 65,
     };
     let len = frame_len(FAMILY.len(), &[64, 64, provenance_len])?;
     let mut out = begin_frame(FAMILY, LAYOUT, GENESIS, len, cap)?;
@@ -325,15 +329,15 @@ pub fn encode_genesis(record: &GenesisRecord, cap: usize) -> Result<Vec<u8>, Fra
             out.push(1);
             out.extend_from_slice(&source_evidence);
         }
-        GenesisProvenance::Migration {
+        GenesisProvenance::Transition {
             source_database,
             source_incarnation,
-            plan_set_digest,
+            contract_digest,
         } => {
-            out.push(2);
+            out.push(3);
             out.extend_from_slice(source_database.as_core().as_bytes());
             out.extend_from_slice(source_incarnation.as_core().as_bytes());
-            out.extend_from_slice(&plan_set_digest);
+            out.extend_from_slice(&contract_digest);
         }
     }
     debug_assert_eq!(out.len(), len);
@@ -352,14 +356,14 @@ pub fn decode_genesis(bytes: &[u8], cap: usize) -> Result<GenesisRecord, FrameEr
         (_, 1) => GenesisProvenance::Restore {
             source_evidence: input.array()?,
         },
-        (_, 2) => GenesisProvenance::Migration {
+        (_, 3) => GenesisProvenance::Transition {
             source_database: super::DatabaseId::from_core(bumbledb::Uuid::from_bytes(
                 input.array()?,
             )),
             source_incarnation: IncarnationId::from_core(bumbledb::Uuid::from_bytes(
                 input.array()?,
             )),
-            plan_set_digest: input.array()?,
+            contract_digest: input.array()?,
         },
         (at, got) => return Err(FrameError::Tag { at, got }),
     };
@@ -536,7 +540,11 @@ mod tests {
         };
         assert_eq!(
             encode_decision(parts, under),
-            Err(FrameError::LimitExceeded)
+            Err(FrameError::LimitExceeded {
+                section: "envelope",
+                required: expected,
+                limit: expected - 1
+            })
         );
         let decoded = decode_decision(&bytes, LIMITS).unwrap();
         assert_eq!(decoded.parent_object, Some(parent_ref));
@@ -558,7 +566,11 @@ mod tests {
         };
         assert_eq!(
             encode_decision(absent_parts, absent_under),
-            Err(FrameError::LimitExceeded)
+            Err(FrameError::LimitExceeded {
+                section: "envelope",
+                required: absent_expected,
+                limit: absent_expected - 1
+            })
         );
     }
 
@@ -669,14 +681,22 @@ mod tests {
             genesis_stamp(&other_identity, 4096).unwrap().hash
         );
         let migration = GenesisRecord {
-            provenance: GenesisProvenance::Migration {
+            provenance: GenesisProvenance::Transition {
                 source_database: identity().database_id,
                 source_incarnation: identity().incarnation_id,
-                plan_set_digest: [5; 32],
+                contract_digest: [5; 32],
             },
             ..record
         };
         let bytes = encode_genesis(&migration, 4096).unwrap();
         assert_eq!(decode_genesis(&bytes, 4096).unwrap(), migration);
+        let mut old = bytes;
+        let tag = old.len() - 65;
+        assert_eq!(old[tag], 3);
+        old[tag] = 2;
+        assert!(matches!(
+            decode_genesis(&old, 4096),
+            Err(FrameError::Tag { got: 2, .. })
+        ));
     }
 }

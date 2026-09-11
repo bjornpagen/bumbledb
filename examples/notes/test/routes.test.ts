@@ -1,10 +1,4 @@
-/**
- * Local request tests — the LocalHistory development flow end to end
- * through the REAL route handlers (APP-01/02/03 local halves): provision a
- * tenant from the generated plan chain, then drive Request objects at the
- * handlers. Requires the generated artifacts (run `pnpm run generate`
- * first); a missing chain fails the suite.
- */
+/** Provision current-schema tenants and exercise real request handlers. */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import * as fs from "node:fs"
@@ -33,61 +27,31 @@ async function jsonObject(response: Response): Promise<Record<string, unknown>> 
 }
 
 async function provision(tenantId: string): Promise<void> {
-	const [{ Effect }, { NativeRuntime }, log, migrations, bindings, policy, generated] = await Promise.all([
-		import("effect"),
-		import("@bjornpagen/bumbledb"),
-		import("@bjornpagen/bumbledb-log"),
-		import("@bjornpagen/bumbledb-log/migrations"),
-		import("../src/db/bindings.ts"),
-		import("../src/db/runtime-policy.ts"),
-		import("../src/db/generated.ts")
-	])
-	const { Uuid } = await import("@bjornpagen/bumbledb")
-	const { Result } = await import("effect")
-	const plans = generated.loadGeneratedMigrations()
-	assert.equal(plans.snapshots.length, plans.manifest.entries.length + 1, "snapshots are empty-base plus one target per entry")
-	const contractDecoded = migrations.decodeRuntimeContract(
-		JSON.parse(fs.readFileSync(path.join(generated.generatedDirectory(), "runtime-contract.json"), "utf8"))
+	const { Effect, Result } = await import("effect")
+	const { NativeRuntime, Schema } = await import("@bjornpagen/bumbledb")
+	const log = await import("@bjornpagen/bumbledb-log")
+	const { App } = await import("../src/db/schema.ts")
+	const { initializeTenant } = await import("../src/db/initialize.ts")
+	const { saveTenantBinding } = await import("../src/db/bindings.ts")
+	const { runtimePolicy } = await import("../src/db/runtime-policy.ts")
+	const databaseId = log.DatabaseId.parse(hex())
+	const incarnationId = log.IncarnationId.parse(hex())
+	const operationId = log.OperationId.parse(hex())
+	assert.ok(Result.isSuccess(databaseId) && Result.isSuccess(incarnationId) && Result.isSuccess(operationId))
+	const binding = await Effect.runPromise(
+		Effect.gen(function* () {
+			const identity = {
+				databaseId: databaseId.success,
+				incarnationId: incarnationId.success,
+				schemaId: (yield* Schema.compile(App)).schemaId
+			}
+			const binding = { kind: "local", directory: path.join(scratch, "tenants", tenantId), identity } as const
+			yield* initializeTenant(binding, operationId.success)
+			return yield* initializeTenant(binding, operationId.success)
+		}).pipe(Effect.provide(NativeRuntime.layer(runtimePolicy.native)))
 	)
-	assert.ok(contractDecoded.ok, "the runtime contract decodes")
-	const dbId = Uuid.parse(hex())
-	const incId = Uuid.parse(hex())
-	const opId = Uuid.parse(hex())
-	assert.ok(Result.isSuccess(dbId) && Result.isSuccess(incId) && Result.isSuccess(opId))
-	const databaseId = log.DatabaseId.from(dbId.success)
-	const incarnationId = log.IncarnationId.from(incId.success)
-	const operation = log.OperationId.from(opId.success)
-	const schemaId = log.parseSchemaId(contractDecoded.value.schemaId)
-	assert.ok(
-		Result.isSuccess(databaseId) && Result.isSuccess(incarnationId) && Result.isSuccess(operation) && Result.isSuccess(schemaId)
-	)
-	const outcome = await Effect.runPromise(
-		migrations
-			.initialize(
-				{
-					kind: "local",
-					directory: path.join(scratch, "tenants", tenantId),
-					identity: {
-						databaseId: databaseId.success,
-						incarnationId: incarnationId.success,
-						schemaId: schemaId.success
-					}
-				},
-				plans,
-				{ operationId: operation.success }
-			)
-			.pipe(Effect.provide(NativeRuntime.layer(policy.runtimePolicy.native)))
-	)
-	assert.equal(outcome.kind, "completed", `initialization completes: ${inspect(outcome, { depth: 6 })}`)
-	if (outcome.kind !== "completed") {
-		return
-	}
-	const binding = outcome.value.binding
-	assert.equal(binding.kind, "local")
-	if (binding.kind !== "local") {
-		return
-	}
-	bindings.saveTenantBinding(tenantId, {
+	assert.ok(binding.kind === "local")
+	saveTenantBinding(tenantId, {
 		kind: "local",
 		identity: log.renderDatabaseIdentity(binding.identity),
 		directory: binding.directory
@@ -107,11 +71,15 @@ before(async () => {
 	const { Effect, Exit } = await import("effect")
 	const { appRuntime, Databases } = await import("../src/db/server.ts")
 	const { bindingFor } = await import("../src/db/bindings.ts")
-	const opened = await appRuntime.runPromiseExit(Effect.scoped(Effect.gen(function* () {
-		const binding = yield* bindingFor(TENANT_A)
-		const databases = yield* Databases
-		yield* databases.acquire(binding)
-	})))
+	const opened = await appRuntime.runPromiseExit(
+		Effect.scoped(
+			Effect.gen(function* () {
+				const binding = yield* bindingFor(TENANT_A)
+				const databases = yield* Databases
+				yield* databases.acquire(binding)
+			})
+		)
+	)
 	assert.ok(Exit.isSuccess(opened), inspect(opened, { depth: 10 }))
 })
 

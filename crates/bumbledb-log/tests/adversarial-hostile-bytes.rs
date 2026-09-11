@@ -11,8 +11,7 @@
 //! sweep, and asserts the replay evaluator convicts each one with typed
 //! errors and zero state movement.
 
-#[path = "migration_support/mod.rs"]
-mod support;
+mod lane_support;
 
 use std::sync::Arc;
 
@@ -28,7 +27,36 @@ use bumbledb_log::history::{
 };
 use bumbledb_log::writer::{LocalHistory, LogError};
 
-use support::{LIMITS, base_schema, db_id, incarnation, op, temp_dir, work};
+use lane_support::{LIMITS, op, temp_dir, work};
+fn db_id(n: u8) -> DatabaseId {
+    DatabaseId::from_core(Uuid::from_bytes([n; 16]))
+}
+fn incarnation(n: u8) -> IncarnationId {
+    IncarnationId::from_core(Uuid::from_bytes([n; 16]))
+}
+fn base_schema() -> SchemaDescriptor {
+    use bumbledb::schema::{FieldDescriptor, RelationDescriptor, StatementDescriptor, ValueType};
+    SchemaDescriptor {
+        relations: vec![RelationDescriptor {
+            name: "Note".into(),
+            fields: vec![
+                FieldDescriptor {
+                    name: "id".into(),
+                    value_type: ValueType::U64,
+                },
+                FieldDescriptor {
+                    name: "body".into(),
+                    value_type: ValueType::String,
+                },
+            ],
+            extension: None,
+        }],
+        statements: vec![StatementDescriptor::Functionality {
+            relation: RelationId(0),
+            projection: Box::new([bumbledb::FieldId(0)]),
+        }],
+    }
+}
 
 /// One initialized keyed source: `Note(id: u64, body: string)` with a
 /// Functionality key on `id`, genesis authority attached.

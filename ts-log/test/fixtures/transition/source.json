@@ -1,0 +1,43 @@
+{
+  "relations": [
+    {
+      "name": "Kind",
+      "fields": [],
+      "extension": [
+        {"handle":"Imported","values":[]},
+        {"handle":"Electronic","values":[]},
+        {"handle":"Postal","values":[]}
+      ]
+    },
+    {
+      "name": "Submission",
+      "fields": [
+        {"name":"id","type":"u64"},
+        {"name":"method","type":"u64"},
+        {"name":"recordedAt","type":"i64"}
+      ]
+    },
+    {
+      "name": "Proof",
+      "fields": [
+        {"name":"submission","type":"u64"},
+        {"name":"reference","type":"string"}
+      ]
+    },
+    {
+      "name": "Document",
+      "fields": [
+        {"name":"id","type":"u64"},
+        {"name":"digest","type":"string"}
+      ]
+    }
+  ],
+  "statements": [
+    {"functionality":{"relation":1,"projection":[0]}},
+    {"functionality":{"relation":2,"projection":[0]}},
+    {"functionality":{"relation":3,"projection":[0]}},
+    {"containment":{"source":{"relation":1,"projection":[1]},"target":{"relation":0,"projection":[0]}}},
+    {"containment":{"source":{"relation":1,"projection":[0]},"target":{"relation":2,"projection":[0]}}},
+    {"containment":{"source":{"relation":2,"projection":[0]},"target":{"relation":1,"projection":[0]}}}
+  ]
+}

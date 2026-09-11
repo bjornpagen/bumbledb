@@ -21,6 +21,41 @@ fn amount_rule(var: u16) -> Rule {
 }
 
 #[test]
+fn projection_heads_admit_variables_and_computations_in_either_order() {
+    let projection = amount_rule(0);
+    let mut computed = amount_rule(0);
+    computed.finds = vec![FindTerm::Compute(crate::ScalarExpr::Var(VarId(0)))];
+    for head in [HeadTerm::Var, HeadTerm::Compute] {
+        for rules in [
+            vec![projection.clone(), computed.clone()],
+            vec![computed.clone(), projection.clone()],
+        ] {
+            validate(
+                &schema(),
+                &Query {
+                    interiors: vec![],
+                    head: vec![head],
+                    rules,
+                    rec: None,
+                },
+            )
+            .expect("both syntax forms have the same i64 projection signature");
+        }
+    }
+    computed.finds = vec![FindTerm::Compute(crate::ScalarExpr::Literal(Value::U64(1)))];
+    let query = Query {
+        interiors: vec![],
+        head: vec![HeadTerm::Var],
+        rules: vec![projection, computed],
+        rec: None,
+    };
+    assert!(matches!(
+        expect_err(&query),
+        ValidationError::HeadTypeMismatch { .. }
+    ));
+}
+
+#[test]
 fn the_empty_rule_set_is_rejected() {
     let query = Query {
         interiors: vec![],

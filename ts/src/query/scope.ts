@@ -369,7 +369,14 @@ function fieldAntiJoins(a: ClassedField, b: ClassedField): boolean {
  * joins cannot inherit provenance a rule never proved.
  */
 function headFieldJoins(a: ClassedField, b: ClassedField): boolean {
-	return fieldJoins(a, b) || u64BareWirePair(a, b)
+	return (
+		fieldJoins(a, b) ||
+		u64BareWirePair(a, b) ||
+		(a.class === b.class &&
+			a.field.kind === "interval" &&
+			b.field.kind === "interval" &&
+			a.field.element === b.field.element)
+	)
 }
 
 function renderFieldKind(slot: ClassedField): string {

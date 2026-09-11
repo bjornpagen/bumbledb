@@ -2,8 +2,8 @@
  * Faithful native-ledger acceptance specimen (TS-018 / D22): the durable
  * command vocabulary Edullm's adapter preserves — stable request IDs,
  * retained command/admin refs, terminal-slot conflict rules, witnessed
- * corrections against published StateStamp, QueryReader reuse, generated
- * initialize/migrate/reopen, field-arithmetic backfill, backup/restore,
+ * corrections against published StateStamp, QueryReader reuse, explicit
+ * create/reopen, backup/restore,
  * and joined close. Business observation keys stay strings. All-public
  * imports only; no Promise twin, no private protocol bytes.
  *
@@ -11,7 +11,6 @@
 import { ChangeSet, type ChangeSet as ChangeSetType, Uuid, type QueryReader } from "@bjornpagen/bumbledb"
 import {
 	Command,
-	type GeneratedMigrations,
 	LocalHistory,
 	type CommandRef,
 	type HistoryBinding,
@@ -19,7 +18,6 @@ import {
 	type OperationId,
 	RequestId,
 	ReceiptEpoch,
-	type RuntimeExpectation,
 	type SubmitOutcome,
 	type SubmitOptions
 } from "@bjornpagen/bumbledb-log"
@@ -28,22 +26,18 @@ import {
 	Attempt,
 	AttemptById,
 	attemptsFor,
-	incrementUnits,
 	Learning,
 	makeConsumerRuntime,
 	readAttempts,
 } from "../core-ts/consumer.ts"
 import {
 	backupAndRestore,
-	generateIncrementUnits,
-	incrementUnitsIntent,
 	initializeLearning,
-	migrateLearning,
 	resolveAfterInterrupt,
 	retrySameId
 } from "../log-ts/consumer.ts"
 
-export { incrementUnits, incrementUnitsIntent, makeConsumerRuntime, resolveAfterInterrupt }
+export { makeConsumerRuntime, resolveAfterInterrupt }
 
 /** Application-owned slot identity — never truncated or reminted on retry. */
 export interface NativeCommand {
@@ -166,31 +160,14 @@ export const readPublishedAttempts = (
 	student: Uuid
 ) => readAttempts(reader, student)
 
-export const provisionAndIncrement = (
-	binding: HistoryBinding,
-	plans: GeneratedMigrations,
-	operationId: OperationId,
-	state: OutboxState
-) =>
-	Effect.gen(function* () {
-		const initialized = yield* initializeLearning(binding, plans, { operationId }, asRequestState(state))
-		const generated = yield* generateIncrementUnits({ directory: "bumbledb/migrations" })
-		const migrated = yield* migrateLearning(
-			binding,
-			generated.generated,
-			{ operationId },
-			asRequestState(state)
-		)
-		return { initialized, generated, migrated }
-	})
+export const provision = initializeLearning
 
 export const backupRestoreClose = (
 	source: HistoryBinding,
 	destination: { readonly kind: "filesystem"; readonly directory: string },
 	target: HistoryBinding,
 	operationId: OperationId,
-	state: OutboxState,
-	expected: RuntimeExpectation
+	state: OutboxState
 ) =>
 	Effect.gen(function* () {
 		const cycle = yield* backupAndRestore(
@@ -200,5 +177,5 @@ export const backupRestoreClose = (
 			{ operationId },
 			asRequestState(state)
 		)
-		return { cycle, expected }
+		return cycle
 	})

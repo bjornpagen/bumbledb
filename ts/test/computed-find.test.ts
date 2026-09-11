@@ -112,7 +112,6 @@ describe("Compute construction walls (engine result_type parity)", function wall
 		const { score } = v(Attempt)
 		const expr = Compute.multiply(score, Compute.f64(2))
 		assert.equal(Object.isFrozen(expr), true)
-		assert.equal(expr.scope, "query-var")
 		assert.equal(expr.kind, "multiply")
 	})
 })

@@ -26,6 +26,103 @@ bumbledb::schema! {
     Item(a) -> Item;
 }
 
+#[test]
+fn schema_diagnostics_use_rejected_input_without_requiring_admission() {
+    use bumbledb::schema::{SchemaDescriptor, ValidateDescriptor as _};
+    let mut descriptor = Mini.descriptor();
+    descriptor.statements.push(descriptor.statements[0].clone());
+    let error = descriptor.clone().validate().unwrap_err();
+    let RuntimeError::Engine {
+        diagnostic: Some(diagnostic),
+        ..
+    } = schema_error(&error, &descriptor)
+    else {
+        panic!("native duplicate retains coordinates")
+    };
+    assert_eq!(diagnostic.statement.id, 1);
+    assert_eq!(diagnostic.statement.descriptor, "Item(a) -> Item");
+    assert_eq!(diagnostic.conflict.unwrap().id, 0);
+
+    let duplicate_relation = SchemaDescriptor {
+        relations: vec![
+            descriptor.relations[0].clone(),
+            descriptor.relations[0].clone(),
+        ],
+        statements: vec![],
+    };
+    let error = duplicate_relation.clone().validate().unwrap_err();
+    assert!(matches!(
+        schema_error(&error, &duplicate_relation),
+        RuntimeError::Engine {
+            diagnostic: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn schema_diagnostics_name_closed_identity_and_synthetic_key() {
+    use bumbledb::schema::{
+        FieldDescriptor, FieldId, RelationDescriptor, Row, Side, StatementDescriptor,
+        ValidateDescriptor as _, ValueType,
+    };
+    let mut descriptor = Mini.descriptor();
+    descriptor.relations.push(RelationDescriptor {
+        name: "Kind".into(),
+        fields: vec![FieldDescriptor {
+            name: "code".into(),
+            value_type: ValueType::U64,
+        }],
+        extension: Some(Box::new([Row {
+            handle: "First".into(),
+            values: Box::new([Value::U64(7)]),
+        }])),
+    });
+    descriptor
+        .statements
+        .push(StatementDescriptor::Functionality {
+            relation: RelationId(1),
+            projection: Box::new([FieldId(0)]),
+        });
+    let error = descriptor.clone().validate().unwrap_err();
+    let RuntimeError::Engine {
+        diagnostic: Some(diagnostic),
+        ..
+    } = schema_error(&error, &descriptor)
+    else {
+        panic!("synthetic key diagnostic")
+    };
+    assert_eq!(diagnostic.statement.id, 2);
+    assert_eq!(diagnostic.conflict.unwrap().id, 0);
+    assert_eq!(diagnostic.statement.descriptor, "Kind(id) -> Kind");
+
+    descriptor.statements[1] = StatementDescriptor::Containment {
+        source: Side {
+            relation: RelationId(0),
+            projection: Box::new([FieldId(0)]),
+            selection: Box::default(),
+        },
+        target: Side {
+            relation: RelationId(1),
+            projection: Box::new([FieldId(1)]),
+            selection: Box::default(),
+        },
+    };
+    let error = descriptor.clone().validate().unwrap_err();
+    let RuntimeError::Engine {
+        diagnostic: Some(diagnostic),
+        message,
+        ..
+    } = schema_error(&error, &descriptor)
+    else {
+        panic!("closed target diagnostic")
+    };
+    assert_eq!(diagnostic.statement.id, 2);
+    assert!(diagnostic.conflict.is_none());
+    assert_eq!(diagnostic.statement.descriptor, "Item(a) <= Kind(code)");
+    assert!(message.contains("synthetic"), "{message}");
+}
+
 fn options() -> Options {
     Options {
         workers: 2,
@@ -506,10 +603,12 @@ fn d12_adopt_and_abort_cannot_be_committed_by_a_fresh_ticket() {
 #[test]
 fn d12_backing_failure_stays_terminal() {
     let store = RuntimeError::Engine {
+        diagnostic: None,
         kind: crate::tags::error_family::STORE,
         message: "scratch page unreadable".into(),
     };
     let corruption = RuntimeError::Engine {
+        diagnostic: None,
         kind: crate::tags::error_family::CORRUPTION,
         message: "page unreadable".into(),
     };

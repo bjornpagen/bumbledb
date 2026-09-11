@@ -121,17 +121,6 @@ impl DirectoryLock {
     }
 }
 
-/// Selected repository-lock owner (C8): kernel-held directory exclusion
-/// over a persistent lock-file inode. Never unlink/replace as stale
-/// recovery; process death releases the OS lock. Drain is Drop.
-pub type RepositoryLock = DirectoryLock;
-
-/// Acquire the existing kernel directory exclusion (C8). Same-process
-/// duplicate generation must refuse. L11/L14 expose this to Effect.
-pub fn acquire_repository_lock(directory: &Path) -> io::Result<RepositoryLock> {
-    acquire_directory(directory)
-}
-
 fn refuse_symlink(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(io::Error::new(
@@ -349,19 +338,19 @@ mod tests {
     fn same_process_duplicate_generation_refuses_without_unlinking() {
         let root = scratch("same-proc");
         let tenant = root.join("tenant");
-        let first = acquire_repository_lock(&tenant).expect("first owner");
+        let first = acquire_directory(&tenant).expect("first owner");
         #[cfg(unix)]
         let inode = first.lock_inode().expect("inode");
         let lock_path = first.lock_path().to_path_buf();
         assert!(lock_path.exists(), "lock inode is persistent");
-        let second = acquire_repository_lock(&tenant);
+        let second = acquire_directory(&tenant);
         assert_eq!(
             second.expect_err("same-process contention").kind(),
             io::ErrorKind::WouldBlock
         );
         assert!(lock_path.exists(), "refusal does not delete the inode");
         drop(first);
-        let successor = acquire_repository_lock(&tenant).expect("released");
+        let successor = acquire_directory(&tenant).expect("released");
         assert_eq!(successor.lock_path(), lock_path.as_path());
         #[cfg(unix)]
         assert_eq!(

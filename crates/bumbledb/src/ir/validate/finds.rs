@@ -9,6 +9,31 @@ use bumbledb_theory::schema::ValueType;
 use std::collections::BTreeSet;
 
 impl Signature {
+    /// Retain only refinements shared by every arm. Recursive feedback keeps
+    /// exact types; nonrecursive interval outputs may forget a fixed width.
+    pub(super) fn meet(&mut self, other: &Self, widen: bool) -> Result<(), usize> {
+        for (position, (left, right)) in self.columns.iter_mut().zip(&other.columns).enumerate() {
+            if left.op() != right.op() {
+                return Err(position);
+            }
+            let ty = if left.ty() == right.ty() {
+                *left.ty()
+            } else if widen
+                && let Some(element) = left.ty().interval_element()
+                && right.ty().interval_element() == Some(element)
+            {
+                ValueType::Interval { element }
+            } else {
+                return Err(position);
+            };
+            match left {
+                SignatureColumn::Project { ty: current }
+                | SignatureColumn::Fold { ty: current, .. } => *current = ty,
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn derive(rule: &LoweredRule, typing: &RuleTyping) -> Self {
         let var_type = |var: &VarId| typing.var_types.get(var).copied().expect("typed var");
         let columns = rule

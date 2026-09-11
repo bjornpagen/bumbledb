@@ -56,8 +56,8 @@ export interface HostedOpenOptions {
  * Creation is explicit and validated: a retry after uncertain creation
  * validates this stable identity and completes genesis instead of adopting
  * an unrelated database. The artifact is the checked canonical
- * initialization data (ordinarily produced by the generated-plan
- * `initialize` operation), never fabricated migration history.
+ * schema snapshot emitted by `schemaSnapshot`; initial facts use ordinary
+ * commands after creation.
  */
 export interface CreationOptions {
 	readonly operationId: OperationId
@@ -91,20 +91,10 @@ export interface SubmitOptions {
 }
 
 /**
- * The generated `runtime-contract.json` expectation: exact canonical schema
- * and applied migration-prefix digests, checked when opening a tenant.
- */
-export interface RuntimeExpectation {
-	readonly schemaId: string
-	readonly appliedPrefixDigest: string
-}
-
-/**
  * One bounded native tenant registry configuration. There is no wall-clock
  * TTL, renewal, or pre-lock cleanup. The open-tenant count provides
  * admission backpressure; eviction of a borrowed slot refuses.
  */
 export interface TenantCacheOptions {
 	readonly maxOpen: number
-	readonly expected?: RuntimeExpectation
 }

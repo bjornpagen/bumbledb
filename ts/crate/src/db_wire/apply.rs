@@ -73,6 +73,7 @@ fn decide_change_set(
     if let ExpectedOwned::Exact { store, generation } = expected {
         if *store != store_hex {
             return Err(RuntimeError::Engine {
+                diagnostic: None,
                 kind: crate::tags::error_family::FOREIGN_WITNESS,
                 message: "expected-state witness names a different store".into(),
             });
@@ -148,11 +149,13 @@ pub(crate) fn integration_error(error: bumbledb::integration::IntegrationError) 
         IntegrationError::Core(error) => engine_error(&error),
         IntegrationError::Changes(error) => change_error(&error),
         IntegrationError::Host(error) => RuntimeError::Engine {
+            diagnostic: None,
             kind: "hostSeal",
             message: format!("{error:?}"),
         },
         IntegrationError::Work(error) => RuntimeError::Work(error),
         IntegrationError::ForeignSchema => RuntimeError::Engine {
+            diagnostic: None,
             kind: crate::tags::error_family::SCHEMA_MISMATCH,
             message: "the ChangeSet's schema is not this database's schema".into(),
         },

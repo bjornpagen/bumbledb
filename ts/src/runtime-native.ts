@@ -28,11 +28,6 @@ export interface DirectoryHandle {
 	readonly __directory: unique symbol
 }
 
-/** Stamped `NativeKind::RepositoryLock` mint — not a directory-owner twin. */
-export interface RepositoryLockHandle {
-	readonly __repositoryLock: unique symbol
-}
-
 /** Resource kinds installed in native worker tables. */
 export type NativeKind = "snapshot" | "prepared" | "result" | "cursor" | "draft" | "changes" | "repository-lock"
 
@@ -55,6 +50,7 @@ export type ManagedDbOutcome =
 			readonly tag: "refused"
 			readonly kind: "schemaError" | "newtypeMismatch" | "fingerprintMismatch" | "destinationExists"
 			readonly message: string
+			readonly diagnostic?: Extract<import("#runtime-errors.ts").DbError["reason"], { _tag: "Engine" }>["diagnostic"]
 	  }
 
 export type LogTakeWire =
@@ -179,10 +175,6 @@ interface RuntimeNative {
 		callback: () => void
 	): OperationHandle
 	runtimeLogTake(operation: OperationHandle): LogTakeWire
-	/** L14 mint: `Runtime::mint_repository_lock` stamps `NativeKind::RepositoryLock` at take. */
-	logRepositoryLockAcquire(runtime: RuntimeHandle, directory: string, callback: () => void): OperationHandle
-	logRepositoryLockTake(operation: OperationHandle): RepositoryLockHandle
-	logRepositoryLockRelease(owner: RepositoryLockHandle, callback: (report: CloseWire) => void): void
 }
 
 // The checked source/fresh-addon roster test pins this private declaration.
