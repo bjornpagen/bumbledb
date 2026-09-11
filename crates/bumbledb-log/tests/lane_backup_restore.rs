@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use bumbledb::RelationId;
 use bumbledb_log::backup::{
-    BackupError, backup_manifest_key, backup_root, read_backup_manifest, relocated_tail,
-    verify_backup,
+    BackupError, backup_local, backup_manifest_key, backup_root, read_backup_manifest,
+    relocated_tail, verify_backup,
 };
 use bumbledb_log::checkpointer::{CheckpointKind, CheckpointPolicy, publish_checkpoint};
 use bumbledb_log::history::IncarnationId;
@@ -20,6 +20,84 @@ use bumbledb_log::store::mem::{Behavior, MemStore, Op};
 use bumbledb_log::store::{ConditionalStore as _, ReceiveLimits, TransportContext, get_verified};
 use bumbledb_log::writer::{LocalHistory, LogError, SubmitOutcome};
 use lane_support::{HEAD_CAP, LIMITS, Mirror, insert_user, op, temp_dir, theory, work};
+
+#[test]
+fn local_backup_uses_the_standard_verified_artifact_and_retains_its_original_capture() {
+    let db = lane_support::fresh_db("local-backup");
+    let identity = lane_support::test_identity(&db);
+    let history = LocalHistory::create(
+        Arc::clone(&db),
+        identity.database_id,
+        identity.incarnation_id,
+        op(0xe0),
+        LIMITS,
+        &work(),
+    )
+    .expect("local history");
+    assert!(matches!(
+        history.submit(&insert_user(&db, identity, 1, 10), &work()),
+        SubmitOutcome::Decided { .. }
+    ));
+    let destination = MemStore::new();
+    let capture = || {
+        backup_local(
+            &db,
+            &destination,
+            "vault",
+            identity,
+            op(0xe1),
+            LIMITS,
+            &ckpt_policy(),
+            &work(),
+        )
+    };
+    destination.fail_next(Op::PutObject, Behavior::Error);
+    assert!(capture().is_err());
+    assert!(matches!(
+        read_backup_manifest(&destination, "vault", op(0xe1), &work()),
+        Err(BackupError::Incomplete { .. })
+    ));
+
+    let first = capture().expect("complete backup");
+    assert!(first.installed);
+    assert_eq!(first.manifest.base, first.manifest.tip);
+    assert!(first.manifest.decisions.is_empty());
+    assert!(matches!(
+        history.submit(&insert_user(&db, identity, 2, 20), &work()),
+        SubmitOutcome::Decided { .. }
+    ));
+    let again = capture().expect("resolve original capture");
+    assert!(!again.installed);
+    assert_eq!(again.manifest, first.manifest);
+    assert_eq!(again.manifest_digest, first.manifest_digest);
+    let verified = verify_backup(
+        &destination,
+        "vault",
+        op(0xe1),
+        LIMITS,
+        ckpt_policy().stream,
+        &work(),
+    )
+    .expect("native verification");
+    assert_eq!(verified.objects_verified, first.objects_copied);
+
+    let checkpoint_ref = first.manifest.checkpoint.expect("native checkpoint");
+    let bytes = fetch_verified(&destination, "vault", &checkpoint_ref);
+    let checkpoint = bumbledb_log::codec::decode_manifest(bytes.as_slice(), ckpt_policy().stream)
+        .expect("checkpoint");
+    assert_eq!(
+        checkpoint.rows, 1,
+        "the second command does not change the first backup"
+    );
+    let missing = checkpoint.chunks[0].key("vault");
+    destination
+        .delete_object(&missing)
+        .expect("remove a backed-up chunk");
+    assert!(
+        capture().is_err(),
+        "a corrupt completed artifact is never silently recaptured"
+    );
+}
 
 fn ckpt_policy() -> CheckpointPolicy {
     CheckpointPolicy {

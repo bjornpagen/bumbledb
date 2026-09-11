@@ -34,7 +34,7 @@ use crate::store::{
     backend as backend_error, get_verified, hex32, read_head_bounded,
 };
 
-use bumbledb::{WorkContext, WorkError};
+use bumbledb::{Db, WorkContext, WorkError};
 
 pub const BACKUP_FAMILY: &[u8] = b"bumbledb.backup.v1\0";
 pub const BACKUP_LAYOUT: u16 = 1;
@@ -48,7 +48,10 @@ const MANIFEST_CAP: usize = 64 * 1024 * 1024;
 pub fn backup_manifest_key(dest_prefix: &str, operation: OperationId) -> String {
     let mut digest = [0u8; 32];
     digest[..16].copy_from_slice(operation.as_core().as_bytes());
-    format!("{dest_prefix}/backup/{}/manifest", &hex32(&digest)[..32])
+    crate::store::prefixed_key(
+        dest_prefix,
+        &format!("backup/{}/manifest", &hex32(&digest)[..32]),
+    )
 }
 
 /// Explicit external-blob declaration. 1.0 supports exactly `DatabaseOnly`:
@@ -242,6 +245,95 @@ pub struct BackupReport {
     pub installed: bool,
     pub objects_copied: u64,
     pub bytes_copied: u64,
+}
+
+/// Local capture or independent-backup refusal. Local capture uses the same
+/// bounded checkpoint stream and backup format as a hosted recovery root.
+#[derive(Debug)]
+pub enum LocalBackupError {
+    Capture(crate::checkpointer::CheckpointError),
+    Backup(BackupError),
+}
+
+impl From<BackupError> for LocalBackupError {
+    fn from(error: BackupError) -> Self {
+        Self::Backup(error)
+    }
+}
+
+/// Capture one coherent local history into an independent destination, verify
+/// its objects there, then install the standard completion manifest last.
+/// The caller supplies the already-checked local authority identity. No live
+/// database files or local root directories are copied, and the source is not
+/// mutated. Retrying a completed operation returns its original capture even
+/// if later commands have advanced the source.
+///
+/// # Errors
+/// Failed capture leaves no completion manifest. A conflicting identity,
+/// corrupt completed artifact, or failed destination verification refuses.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one bounded local backup pipeline"
+)]
+pub fn backup_local<S, Dst>(
+    db: &Db<S>,
+    destination: &Dst,
+    dest_prefix: &str,
+    identity: DatabaseIdentity,
+    operation: OperationId,
+    limits: Limits,
+    policy: &crate::checkpointer::CheckpointPolicy,
+    work: &WorkContext,
+) -> Result<BackupReport, LocalBackupError>
+where
+    Dst: ReceivingStore,
+    Dst::Error: BackendError + ObservedError,
+{
+    match read_backup_manifest(destination, dest_prefix, operation, work) {
+        Ok((manifest, manifest_digest)) => {
+            if manifest.identity != identity {
+                return Err(BackupError::ConflictingOperation.into());
+            }
+            let verified = verify_backup(
+                destination,
+                dest_prefix,
+                operation,
+                limits,
+                policy.stream,
+                work,
+            )?;
+            return Ok(BackupReport {
+                manifest,
+                manifest_digest,
+                installed: false,
+                objects_copied: verified.objects_verified,
+                bytes_copied: verified.bytes_verified,
+            });
+        }
+        Err(BackupError::Incomplete { .. }) => {}
+        Err(error) => return Err(error.into()),
+    }
+    // Locally retired receipts have already been removed atomically from the
+    // source. Epoch zero is a destination object namespace, not a source scan.
+    let (captured, checkpoint) =
+        crate::checkpointer::upload_snapshot(db, destination, dest_prefix, 0, 0, policy, work)
+            .map_err(LocalBackupError::Capture)?;
+    let root = RecoveryRoot::checkpoint_only(Some(checkpoint), captured.decision, 0, 0);
+    // The snapshot is already independently uploaded. Reuse the standard
+    // closure verifier/completion protocol on those destination objects.
+    Ok(backup_root(
+        destination,
+        dest_prefix,
+        destination,
+        dest_prefix,
+        identity,
+        captured.state,
+        &root,
+        operation,
+        limits,
+        policy.stream,
+        work,
+    )?)
 }
 
 /// Copy one verified object from source to destination and prove the copy by

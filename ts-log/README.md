@@ -189,9 +189,10 @@ A later missing receipt is not proved loss.
 ## Backup and restore
 
 ```ts
-import { NativeRuntime } from "@bjornpagen/bumbledb"
+import { NativeRuntime, key, relation, schema, str, u64 } from "@bjornpagen/bumbledb"
 import {
 	backup,
+	IncarnationId,
 	OperationId,
 	restore,
 	verifyBackup,
@@ -200,22 +201,51 @@ import {
 import { Effect, Result } from "effect"
 
 declare const binding: LocalBinding
+// Ledger is the same declared schema used to create this history.
+const Entry = relation("Entry", { id: u64, body: str })
+const Ledger = schema("Ledger", { Entry }, [key(Entry, ["id"])])
 
 const unwrap = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 
 const cycle = Effect.gen(function* () {
 	const operationId = unwrap(OperationId.parse("a1a1a1a1-a1a1-a1a1-a1a1-a1a1a1a1a1a1"))
 	const destination = { kind: "filesystem" as const, directory: "/tmp/ledger-backup" }
-	const backed = yield* backup(binding, { operationId, destination })
+	const backed = yield* backup(binding, { operationId, destination, schema: Ledger })
 	if (backed.kind !== "completed") {
 		return backed
 	}
-	yield* verifyBackup(destination, {})
-	return yield* restore(destination, binding, { operationId })
+	yield* verifyBackup(destination, { backup: operationId })
+	const target: LocalBinding = {
+		...binding,
+		directory: "/tmp/restored-ledger",
+		identity: {
+			...binding.identity,
+			incarnationId: unwrap(IncarnationId.parse("b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2"))
+		}
+	}
+	return yield* restore(destination, target, {
+		operationId: unwrap(OperationId.parse("c3c3c3c3-c3c3-c3c3-c3c3-c3c3c3c3c3c3")),
+		backup: operationId,
+		schema: Ledger
+	})
 })
 void NativeRuntime.layer()
 void cycle
 ```
+
+Local and hosted histories produce the same independently verified backup
+format. A local capture streams one coherent native snapshot; it never copies
+live database files. The completion manifest is published last. Retry with the
+same backup operation ID to resolve the original capture, including after the
+source advances. A corrupt completed artifact refuses instead of being replaced.
+
+Persist both operation IDs and the fresh target incarnation ID before dispatch;
+the fixed IDs above are examples. Restore uses a separate operation ID, the
+backup's operation ID, and a new incarnation with the same database/schema
+identity. Adopt the completed restore's returned binding before opening it.
+Providing `schema` also supports cold administrative opens when the source is
+not already open in the runtime. Backup contains database facts and receipts;
+external documents referenced by those facts need their own retention.
 
 ## Migrations
 

@@ -17,6 +17,7 @@ import type { NativeRuntimeOptions } from "@bjornpagen/bumbledb"
 import { ChangeSet, key, NativeRuntime, relation, Schema, schema, str, u64 } from "@bjornpagen/bumbledb"
 import { lower } from "@bjornpagen/bumbledb/internal/log"
 import { Effect, Exit, ManagedRuntime, Result } from "effect"
+import { backup, restore, verifyBackup } from "#admin.ts"
 import { Command } from "#command.ts"
 import { LocalHistory } from "#history.ts"
 import type { DatabaseIdentity } from "#identity.ts"
@@ -43,7 +44,7 @@ function ok<A, E>(result: Result.Result<A, E>): A {
 	return result.success
 }
 
-test("create → seal → submit(decided) → receipt → resolve after reopen, over the real bridge", async () => {
+test("native command recovery and independent backup → verify → writable restore", async () => {
 	const runtime = ManagedRuntime.make(NativeRuntime.layer(runtimeOptions))
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bdb-roundtrip-"))
 	try {
@@ -116,6 +117,60 @@ test("create → seal → submit(decided) → receipt → resolve after reopen, 
 						if (fact._tag === "Some") {
 							assert.equal(fact.value.body, "round trip")
 						}
+					})
+				)
+				// A cold administrative open captures the standard backup artifact.
+				// Restore relies only on that destination, with a new incarnation.
+				const destination = { kind: "filesystem", directory: path.join(dir, "backup") } as const
+				const backupId = ok(OperationId.parse("11111111-1111-1111-1111-111111111111"))
+				const backed = yield* backup(binding, { operationId: backupId, destination, schema: Ledger })
+				assert.equal(backed.kind, "completed")
+				const verified = yield* verifyBackup(destination, { backup: backupId })
+				assert.deepEqual(verified.identity, tenant)
+				const again = yield* backup(binding, { operationId: backupId, destination, schema: Ledger })
+				assert.deepEqual(again, backed)
+				fs.rmSync(path.join(dir, "db"), { recursive: true })
+				const restored = yield* restore(
+					destination,
+					{
+						...binding,
+						directory: path.join(dir, "restored"),
+						identity: { ...tenant, incarnationId: ok(IncarnationId.parse("22222222-2222-2222-2222-222222222222")) }
+					},
+					{
+						operationId: ok(OperationId.parse("33333333-3333-3333-3333-333333333333")),
+						backup: backupId,
+						schema: Ledger
+					}
+				)
+				assert.equal(restored.kind, "completed")
+				if (restored.kind !== "completed") return yield* Effect.die("restore did not complete")
+				assert.notEqual(restored.value.identity.incarnationId, tenant.incarnationId)
+				const target = restored.value.binding
+				assert.equal(target.kind, "local")
+				if (target.kind !== "local") return yield* Effect.die("expected local restore")
+				yield* Effect.scoped(
+					Effect.gen(function* () {
+						const history = yield* LocalHistory.open(target, Ledger)
+						const snapshot = yield* history.snapshot(readOptions)
+						const fact = yield* snapshot.get(EntryById, { id: 42n })
+						assert.equal(fact._tag, "Some")
+						if (fact._tag === "Some") assert.deepEqual(fact.value, { id: 42n, body: "round trip" })
+						const draft = yield* ChangeSet.builder(Ledger)
+						yield* draft.insert(Entry, [{ id: 43n, body: "after restore" }])
+						const command = yield* Command.seal({
+							scope: history.identity,
+							id: {
+								receiptEpoch: history.receiptEpoch,
+								requestId: ok(RequestId.parse("44444444-4444-4444-4444-444444444444"))
+							},
+							changes: yield* draft.finish(),
+							precondition: { kind: "exact-state", at: snapshot.stateStamp },
+							result: {}
+						})
+						const posted = yield* history.submit(command, submitOptions)
+						assert.equal(posted.kind, "decided")
+						if (posted.kind === "decided") assert.equal(posted.receipt.outcome.kind, "committed")
 					})
 				)
 				return true

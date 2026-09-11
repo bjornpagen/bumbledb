@@ -1314,14 +1314,24 @@ fn run_admin(
             destination,
         } => {
             let Some((backend, prefix, head)) = validated_backend(&binding, context)? else {
-                return Ok(AdminOwned::Failed {
-                    fail: protocol(
-                        "Misuse",
-                        "LocalHistory backup is a named restore point (pin-root): the \
-                         self-contained root directory IS the backup artifact",
-                    ),
-                    phase: PublicationPhase::Prepared,
+                let db = open_admin_db(runtime, &binding, context)?;
+                let destination = store_of_destination(&destination)?;
+                let report = with_store!(destination, dest_prefix, store => {
+                    bumbledb_log::backup::backup_local(
+                        db.db(), store, &dest_prefix, binding.identity, operation,
+                        LIMITS, &CheckpointPolicy::DEFAULT, context,
+                    )
                 });
+                let report = match report {
+                    Ok(report) => report,
+                    Err(error) => return Ok(AdminOwned::failed_after_dispatch(format!("{error:?}"))),
+                };
+                return Ok(AdminOwned::Completed(AdminValueOwned::Backup {
+                    manifest_digest: report.manifest_digest,
+                    objects: report.objects_copied,
+                    bytes: report.bytes_copied,
+                    at: report.manifest.tip,
+                }));
             };
             let live = head
                 .control
@@ -1346,11 +1356,11 @@ fn run_admin(
                     bumbledb_log::codec::StreamLimits::DEFAULT,
                     context,
                 )
-                .map_err(|error| LogFail::Protocol {
-                    code: "Backend",
-                    detail: format!("{error:?}"),
-                })?
             });
+            let report = match report {
+                Ok(report) => report,
+                Err(error) => return Ok(AdminOwned::failed_after_dispatch(format!("{error:?}"))),
+            };
             Ok(AdminOwned::Completed(AdminValueOwned::Backup {
                 manifest_digest: report.manifest_digest,
                 objects: report.objects_copied,
@@ -1452,7 +1462,7 @@ fn run_admin(
                     Err(error) => {
                         // Durable erase progress is retained; a stopped pass
                         // is outcome-unknown, resumable under the same id.
-                        return Ok(AdminOwned::failed_hosted(format!("{error:?}")));
+                        return Ok(AdminOwned::failed_after_dispatch(format!("{error:?}")));
                     }
                 };
                 let mut residual = Vec::new();
@@ -1603,8 +1613,8 @@ fn run_admin(
 }
 
 impl AdminOwned {
-    pub(crate) fn failed_hosted(detail: String) -> Self {
-        // A hosted maintenance failure may have dispatched mutations before
+    pub(crate) fn failed_after_dispatch(detail: String) -> Self {
+        // A maintenance failure may have dispatched mutations before
         // stopping: durable progress is retained, and the certainty answer
         // is outcome-unknown, never a fabricated completion.
         Self::Failed {

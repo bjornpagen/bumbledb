@@ -149,24 +149,34 @@ pub fn object_digest(kind: ObjectKind, bytes: &[u8]) -> [u8; 32] {
 /// `<prefix>/HEAD` — the one mutable object of a database incarnation.
 #[must_use]
 pub fn head_key(prefix: &str) -> String {
-    format!("{prefix}/{HEAD_NAME}")
+    prefixed_key(prefix, HEAD_NAME)
+}
+
+/// Join an optional object namespace to a relative key. An empty namespace
+/// denotes the store root; it must not turn the key into an absolute path.
+#[must_use]
+pub fn prefixed_key(prefix: &str, key: &str) -> String {
+    if prefix.is_empty() {
+        key.to_owned()
+    } else {
+        format!("{prefix}/{key}")
+    }
 }
 
 /// `<prefix>/objects/<epoch>/<kind>/<digest-hex>` — canonical lower-case
 /// ASCII encoding of binary identities, never a user tenant name.
 #[must_use]
 pub fn object_key(prefix: &str, epoch: u64, kind: ObjectKind, digest: &[u8; 32]) -> String {
-    format!(
-        "{prefix}/objects/{epoch}/{}/{}",
-        kind.segment(),
-        hex32(digest)
+    prefixed_key(
+        prefix,
+        &format!("objects/{epoch}/{}/{}", kind.segment(), hex32(digest)),
     )
 }
 
 /// The listing prefix under which every immutable object of a database lives.
 #[must_use]
 pub fn objects_prefix(prefix: &str) -> String {
-    format!("{prefix}/objects/")
+    prefixed_key(prefix, "objects/")
 }
 
 /// Parse an `objects/` key back into its identity. Returns `None` for keys
@@ -174,8 +184,7 @@ pub fn objects_prefix(prefix: &str) -> String {
 /// parse.
 #[must_use]
 pub fn parse_object_key(prefix: &str, key: &str) -> Option<(u64, ObjectKind, [u8; 32])> {
-    let rest = key.strip_prefix(prefix)?.strip_prefix('/')?;
-    let rest = rest.strip_prefix("objects/")?;
+    let rest = key.strip_prefix(&objects_prefix(prefix))?;
     let mut parts = rest.split('/');
     let epoch_text = parts.next()?;
     // Canonical decimal only: no signs, no leading zeros beyond "0" itself.
@@ -520,6 +529,21 @@ pub fn key_ok(key: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_namespace_denotes_the_store_root() {
+        let digest = [0xabu8; 32];
+        let key = object_key("", 0, ObjectKind::Chunk, &digest);
+        assert!(key_ok(&key));
+        assert_eq!(head_key(""), "HEAD");
+        assert_eq!(objects_prefix(""), "objects/");
+        assert_eq!(
+            parse_object_key("", &key),
+            Some((0, ObjectKind::Chunk, digest))
+        );
+        assert_eq!(parse_object_key("", &format!("/{key}")), None);
+        assert_eq!(parse_object_key("", &format!("foreign/{key}")), None);
+    }
 
     #[test]
     fn object_keys_roundtrip_and_reserved_or_hostile_spellings_refuse() {
