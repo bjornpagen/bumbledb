@@ -36,8 +36,6 @@ use support::{
     manifest, op, pinned_schema, plan_pinned, plan_tagged, tagged_schema, work,
 };
 
-/// Hex directory name of a 16-byte id, as the executor stages targets.
-
 fn open_history(db: &Arc<Db<SchemaDescriptor>>) -> LocalHistory<SchemaDescriptor> {
     LocalHistory::create(
         Arc::clone(db),

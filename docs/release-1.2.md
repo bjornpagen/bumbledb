@@ -1,9 +1,9 @@
-# BumbleDB 1.2.0 candidate
+# BumbleDB 1.2.0
 
-This candidate provides structural schema declarations, checked query
+This release provides structural schema declarations, checked query
 descriptions, inspectable change sets, and noncommitting admission judgment.
-It is not yet published. Core, log, and all three native packages must use
-the same release version.
+Core, log, and all three native packages use the same release version.
+See [1.2.1](release-1.2.1.md) for the subsequent query and local-history fixes.
 
 ## Declarations and queries
 

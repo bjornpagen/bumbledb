@@ -51,8 +51,7 @@ jobs:
             findutils \
             ca-certificates \
             curl \
-            nodejs24 \
-            nodejs24-npm
+            nodejs24
           alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
       - name: Trust this checkout inside the container
@@ -74,13 +73,10 @@ jobs:
           restore-keys: |
             log-al2023-arm64-cargo-
       - name: Activate the pinned pnpm
-        # AL2023's nodejs24 does not ship corepack (official Node via
-        # setup-node does; this job stays on the dnf userspace so the
-        # napi .node is minted against glibc 2.34). nodejs24-npm can
-        # install corepack; corepack then activates the packageManager pin.
-        run: |
-          npm install -g corepack
-          corepack enable pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ts/package.json
+          run_install: false
       - uses: actions/cache@v5
         with:
           path: |
@@ -193,8 +189,7 @@ jobs:
             findutils \
             ca-certificates \
             curl \
-            nodejs24 \
-            nodejs24-npm
+            nodejs24
           alternatives --set node /usr/bin/node-24
       - uses: actions/checkout@v5
       - name: Trust this checkout inside the container
@@ -216,13 +211,10 @@ jobs:
           restore-keys: |
             log-al2023-x64-cargo-
       - name: Activate the pinned pnpm
-        # AL2023's nodejs24 does not ship corepack (official Node via
-        # setup-node does; this job stays on the dnf userspace so the
-        # napi .node is minted against glibc 2.34). nodejs24-npm can
-        # install corepack; corepack then activates the packageManager pin.
-        run: |
-          npm install -g corepack
-          corepack enable pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ts/package.json
+          run_install: false
       - uses: actions/cache@v5
         with:
           path: |

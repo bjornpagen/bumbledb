@@ -11,6 +11,7 @@ python3 -m unittest discover -s scripts -p 'test_bench_*.py'
 
 echo "==> release-evidence checker regressions (not release qualification)"
 node --test scripts/release-results.test.mjs
+node --test scripts/release-ready.test.mjs
 
 echo "==> isolated consumer toolchain regressions"
 node --test scripts/packed-project.test.mjs

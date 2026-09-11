@@ -2,7 +2,7 @@
 
 Durable named application commands over
 [Bumbledb](https://github.com/bjornpagen/bumbledb): a thin peer of
-`@bjornpagen/bumbledb` (exact peer `1.2.0`). The package adds a durable
+`@bjornpagen/bumbledb` (exact peer `1.2.1`). The package adds a durable
 envelope around the exact core change/read machinery — it never duplicates
 the engine surface. Core types (`ChangeSet`, `QueryReader`, `DbError`,
 `StorageInspection`) are the peer's own exports.
@@ -44,12 +44,12 @@ The surface is small:
 
 ## Install
 
-This guide follows the 1.2.0 source API. Use the guide from the Git tag matching
+This guide follows the 1.2.1 source API. Use the guide from the Git tag matching
 your installed package. GitHub release tarballs and npm publication are separate;
 the npm command below applies once that version is published.
 
 ```sh
-pnpm add @bjornpagen/bumbledb-log@1.2.0 @bjornpagen/bumbledb@1.2.0 effect@4.0.0-rc.112
+pnpm add @bjornpagen/bumbledb-log@1.2.1 @bjornpagen/bumbledb@1.2.1 effect@4.0.0-rc.112
 ```
 
 ## Quick start: one durable round trip
@@ -297,6 +297,6 @@ runtime:
 
 The native engine arrives through the peer `@bjornpagen/bumbledb`
 (darwin-arm64, linux-arm64, linux-x64); this package ships TypeScript only
-and declares both peers exactly (`@bjornpagen/bumbledb 1.2.0`, `effect
+and declares both peers exactly (`@bjornpagen/bumbledb 1.2.1`, `effect
 4.0.0-rc.112`). Version lockstep across the package family is enforced in
 CI.
