@@ -1487,8 +1487,9 @@ let draw = query!(Racks {
 
 Guarantee: Lean theorem + validator/runtime premises — the Duration weight
 sums each booking's interval measure against the room's own span measure
-(`lean/Bumbledb/Capacity.lean: CapacityLaw`; Duration weights pair with
-Duration-capable bounds, ruled 2026-07-24, C18; a ray-valued weight or
+(`lean/Bumbledb/Capacity.lean: CapacityLaw`; explicit scalar measures and
+Duration weights can use scalar or Duration bounds in the same application
+unit; unweighted row counts cannot use Duration bounds, C18; a ray-valued weight or
 bound refuses typed at the law site, ruled 2026-07-24, C10).
 
 "Total booked time per room stays within the room's span" — one statement.
@@ -1521,3 +1522,17 @@ by the intended constraint, not by a superficially similar count expression.
 
 The booked time per room is host arithmetic on the `booked` endpoints
 every answer row already carries (`end − start`).
+
+`Duration` measures discrete interval width; it does not imply a clock unit.
+For `interval<u64>` wage-base coordinates in cents, its width is cents.
+For civil-date coordinates counted in days, its width is calendar days.
+An explicit `u64` measure/bound must use the same unit as the other side;
+the schema does not infer seconds, days, or currency from scalar encoding.
+
+Two self-capacity bounds over a scalar key can prove a recorded measure:
+`Slice(id) <=[cents]{0..Duration(span)} Slice(id)` and
+`Slice(id) <=[Duration(span)]{0..cents} Slice(id)`.
+The key selects one row, so the inequalities prove `cents = end - start`.
+Finite interval measurement and overflow checks still apply. This uses the
+same capacity evaluator as every other weighted bound, with no conversion
+or second arithmetic interpretation.

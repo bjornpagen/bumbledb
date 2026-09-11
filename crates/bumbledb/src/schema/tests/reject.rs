@@ -1529,7 +1529,7 @@ fn rejects_a_unit_window_against_a_duration_bound() {
 }
 
 #[test]
-fn rejects_a_u64_weight_against_a_duration_bound() {
+fn accepts_a_u64_measure_against_a_duration_bound() {
     let mut decl = extension_tree();
     decl.relations[0].fields.push(field(
         "span",
@@ -1544,14 +1544,12 @@ fn rejects_a_u64_weight_against_a_duration_bound() {
         Some(Bound::TargetDuration(FieldId(1))),
         side(RelationId(1), &[FieldId(0)]),
     ));
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        StatementErrorKind::CapacityDimensionMixing { field: FieldId(1) }.at(StatementId(1))
-    );
+    decl.validate()
+        .expect("explicit scalar measures may use interval-width bounds");
 }
 
 #[test]
-fn rejects_a_duration_weight_against_a_u64_field_bound() {
+fn accepts_a_duration_measure_against_a_u64_field_bound() {
     let mut decl = extension_tree();
     decl.relations[0].fields.push(field("cap", ValueType::U64));
     decl.statements.push(capacity_weighted(
@@ -1561,10 +1559,8 @@ fn rejects_a_duration_weight_against_a_u64_field_bound() {
         Some(Bound::TargetField(FieldId(1))),
         side(RelationId(1), &[FieldId(0)]),
     ));
-    assert_eq!(
-        decl.validate().unwrap_err(),
-        StatementErrorKind::CapacityDimensionMixing { field: FieldId(1) }.at(StatementId(1))
-    );
+    decl.validate()
+        .expect("an interval width may use an explicit scalar bound in the same unit");
 }
 
 #[test]

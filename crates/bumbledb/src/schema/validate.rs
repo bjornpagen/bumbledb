@@ -781,9 +781,9 @@ fn validate_capacity(
                 }
                 .at(id));
             }
-            if matches!(weight, Weight::DurationOf(_)) {
-                return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
-            }
+            // A u64 field can carry the measured width of a discrete interval.
+            // Its unit is supplied by the application, just as for a literal
+            // bound. Do not confuse an explicit scalar measure with row count.
             SealedBound::TargetField(field)
         }
         Some(Bound::TargetDuration(field)) => {
@@ -797,7 +797,7 @@ fn validate_capacity(
                 .at(id));
             }
             let tail = descriptor.value_type;
-            if !matches!(weight, Weight::DurationOf(_)) {
+            if matches!(weight, Weight::Unit) {
                 return Err(StatementErrorKind::CapacityDimensionMixing { field }.at(id));
             }
             SealedBound::Duration { field, tail }

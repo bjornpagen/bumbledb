@@ -77,9 +77,10 @@ type RangeBan<Lo extends bigint, Hi extends bigint> = bigint extends Lo
  * The C18 dimension gate's ban row, unit instance (the engine's
  * `CapacityDimensionMixing` twin, ruled 2026-07-24): a unit (count)
  * window against a `duration` bound counts facts against a span of
- * time — a dimension error. Judged on the `capacity` UNIT overload
- * only: Duration weights pair with Duration-capable bounds, so the
- * weighted overload takes the same window freely.
+ * interval coordinates — a dimension error. Judged on the `capacity`
+ * UNIT overload only. Explicit scalar and Duration measures may use
+ * either scalar or Duration bounds; the application supplies their
+ * common unit (for example, cents or calendar days).
  */
 type UnitDimensionBan<W extends CapacityWindow> = W extends {
 	readonly hi: { readonly kind: "durationField" }
@@ -289,7 +290,9 @@ function ref<const F extends string>(field: F & PathBan<F>): FieldRef<F> {
  * `Duration(field)` — the interval-measure spelling, one mint for both
  * slots: handed to `weigh` it is the SOURCE row's interval measure;
  * in `within`'s hi slot it is the TARGET row's interval-measure bound
- * (Duration weights pair with Duration-capable bounds — C18).
+ * in the interval element's unit, not necessarily a clock unit.
+ * Explicit u64 measures/bounds may carry that same unit; an unweighted
+ * row count cannot be bounded by an interval measure (C18).
  */
 function duration<const F extends string>(field: F & PathBan<F>): DurationRef<F> {
 	return Object.freeze({ kind: "durationField", field: assertRowLocal(field, "Duration measure") })
