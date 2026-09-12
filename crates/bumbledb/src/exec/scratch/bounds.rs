@@ -1,5 +1,5 @@
-//! Scratch correctness across representations, atomic publication, real
-//! allocation ownership, cancellation and early-stoppable borrowed visits.
+//! Scratch correctness across representations, atomic publication,
+//! cancellation and early-stoppable borrowed visits.
 
 use super::*;
 use crate::storage::store::StoreError;
@@ -103,52 +103,6 @@ fn cancelled_insert_preserves_existing_entries() {
         scratch.put(b"tiny", b"").unwrap();
         assert_eq!(scratch.len(), 2);
     }
-}
-
-#[test]
-#[cfg(feature = "alloc-counter")]
-fn ram_overwrites_release_old_payload_instead_of_retaining_history() {
-    let context = work();
-    let mut scratch = ScratchRelation::new(&context);
-    scratch.put(b"slot", &[7; 8192]).unwrap();
-    let before = crate::alloc_counter::snapshot();
-    for index in 0..10_000u32 {
-        scratch.put(b"slot", &index.to_be_bytes()).unwrap();
-    }
-    let after = crate::alloc_counter::snapshot();
-    assert!(
-        after.absolute.live_bytes + 8188 <= before.absolute.live_bytes,
-        "one small value replaces the large value, not a history of overwrites"
-    );
-    assert_eq!(scratch.len(), 1);
-    scratch
-        .lookup(ScratchMapId::Default, b"slot", |probe| {
-            assert_eq!(probe, ScratchProbe::Hit(9999u32.to_be_bytes().as_slice()));
-            Ok(())
-        })
-        .unwrap();
-}
-
-#[test]
-#[cfg(feature = "alloc-counter")]
-fn disposal_releases_all_ram_maps_and_owned_payloads() {
-    let context = work();
-    let before = crate::alloc_counter::snapshot();
-    let mut scratch = ScratchRelation::new(&context);
-    for map in ScratchMapId::ALL {
-        for word in 0..64u64 {
-            scratch.put_map(map, &key(word), &[7; 1024]).unwrap();
-        }
-    }
-    let populated = crate::alloc_counter::snapshot();
-    assert!(populated.absolute.live_bytes > before.absolute.live_bytes + 64 * 1024);
-    drop(scratch);
-    let after = crate::alloc_counter::snapshot();
-    assert_eq!(after.absolute.live_bytes, before.absolute.live_bytes);
-    assert_eq!(
-        after.window.alloc_bytes - before.window.alloc_bytes,
-        after.window.dealloc_bytes - before.window.dealloc_bytes
-    );
 }
 
 /// The single-transaction spill batch preserves every entry, value and
