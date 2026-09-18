@@ -307,4 +307,49 @@ describe("parseQueryIr", function parseQueryIrSuite() {
 		}
 		void typePin
 	})
+	describe("raw Event query programs", () => {
+		const output = (find: unknown) => ({
+			...plainIr(),
+			head: [{ kind: "compute" }],
+			rules: [{ ...plainIr().rules[0], finds: [find] }]
+		})
+		test("owns all structural constructors and test operators", () => {
+			const a = { kind: "var", var: 0 }
+			const b = { kind: "full", var: 1 }
+			const expressions = [
+				a,
+				b,
+				{ kind: "empty", var: 0 },
+				{ kind: "not", expr: a },
+				{ kind: "ite", condition: a, high: b, low: a },
+				{ kind: "cardinality", minimum: 2n, maximum: 2n, events: [a, a, b] },
+				...Array.from({ length: 16 }, (_, bits) => ({ kind: "apply", bits, left: a, right: b }))
+			]
+			for (const expr of expressions) {
+				const parsed = parseQueryIr(output({ kind: "event", expr }))
+				assert.deepEqual(parsed.rules[0]?.finds[0], { kind: "event", expr })
+				assert.notEqual((parsed.rules[0]?.finds[0] as { expr: unknown }).expr, expr)
+			}
+			for (const kind of ["isEmpty", "isFull"])
+				assert.doesNotThrow(() => parseQueryIr(output({ kind: "test", expr: { kind, expr: a } })))
+			for (const kind of ["subset", "equal", "disjoint", "covers"])
+				assert.doesNotThrow(() => parseQueryIr(output({ kind: "test", expr: { kind, left: a, right: b } })))
+		})
+		test("refuses malformed, cyclic and oversized programs before native execution", () => {
+			const a = { kind: "var", var: 0 }
+			const cycle: { kind: "not"; expr?: unknown } = { kind: "not" }
+			cycle.expr = cycle
+			for (const expr of [
+				{ kind: "var", var: -1 },
+				{ kind: "full", var: 0, ignored: true },
+				{ kind: "apply", bits: 16, left: a, right: a },
+				{ kind: "ite", condition: a, high: a },
+				{ kind: "cardinality", minimum: 0n, maximum: 0n, events: [] },
+				{ kind: "cardinality", minimum: -1n, maximum: 0n, events: [a] },
+				{ kind: "cardinality", minimum: 0n, maximum: 0n, events: Array(4096).fill(a) },
+				cycle
+			])
+				assert.throws(() => parseQueryIr(output({ kind: "event", expr })), { name: "AuthoringError" })
+		})
+	})
 })

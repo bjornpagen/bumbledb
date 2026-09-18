@@ -725,6 +725,7 @@ impl fmt::Display for ValidationError {
         match self {
             Self::EmptyRuleSet => write!(f, "the rule set is empty — the empty union is no query"),
             Self::ScalarExpression { find, source } => write!(f, "find {find}: {source}"),
+            Self::EventExpression { find, source } => write!(f, "find {find}: {source}"),
             Self::TooManyRules { count } => {
                 write!(f, "{count} rules exceed the rule cap")
             }
@@ -1078,6 +1079,22 @@ impl fmt::Display for Error {
             }
             Self::Scalar { find, source } => write!(f, "find {find}: {source}"),
             Self::Event(source) => write!(f, "event: {source}"),
+            Self::EventFaults(faults) => {
+                write!(f, "{} participating Event operand fault(s)", faults.len())?;
+                for fault in faults {
+                    write!(
+                        f,
+                        "; stage {:?}, rule {}, find {}, operand {} (v{}): {:?}",
+                        fault.stage,
+                        fault.rule,
+                        fault.find,
+                        fault.operand,
+                        fault.variable.0,
+                        fault.category
+                    )?;
+                }
+                Ok(())
+            }
             Self::TransactionPoisoned { source } => {
                 write!(f, "write transaction poisoned: {source}")
             }

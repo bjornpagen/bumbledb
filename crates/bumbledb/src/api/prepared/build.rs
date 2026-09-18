@@ -255,7 +255,11 @@ fn prepare_witnessed<S>(
     let numeric_outputs = {
         let first_compute = |finds: &[FindSpec]| {
             finds.iter().find_map(|spec| match spec {
-                FindSpec::Compute(program) => Some(crate::error::FindIndex(program.find)),
+                FindSpec::Compute(program)
+                    if matches!(program.expression, FindTerm::Compute(_)) =>
+                {
+                    Some(crate::error::FindIndex(program.find))
+                }
                 _ => None,
             })
         };
@@ -514,6 +518,13 @@ fn ground_rules(
     let subsumed: std::collections::HashSet<usize> =
         crate::plan::ground::subsume(&normalized, finds)
             .into_iter()
+            // Distinct written Event programs have distinct fault identities.
+            // No current subsumption witness preserves their participation.
+            .filter(|deletion| {
+                !finds[deletion.rule]
+                    .iter()
+                    .any(|term| matches!(term, FindTerm::Event(_) | FindTerm::Test(_)))
+            })
             .map(|deletion| deletion.rule)
             .collect();
     normalized
@@ -591,6 +602,13 @@ fn ground_main(
     let subsumed: std::collections::HashSet<usize> =
         crate::plan::ground::subsume(&normalized, &finds)
             .into_iter()
+            // Distinct written Event programs have distinct fault identities.
+            // No current subsumption witness preserves their participation.
+            .filter(|deletion| {
+                !finds[deletion.rule]
+                    .iter()
+                    .any(|term| matches!(term, FindTerm::Event(_) | FindTerm::Test(_)))
+            })
             .map(|deletion| deletion.rule)
             .collect();
     normalized
@@ -739,6 +757,8 @@ fn prepare_rule(
                 // the computed sink declines every scan-fold pushdown.
                 FindTerm::Segments { .. }
                 | FindTerm::Compute(_)
+                | FindTerm::Event(_)
+                | FindTerm::Test(_)
                 | FindTerm::Count
                 | FindTerm::Aggregate { .. }
                 | FindTerm::Pack { .. } => None,
@@ -926,6 +946,7 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                     .collect();
                 FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
                     find: find_idx,
+                    rules: rule.minted().to_vec(),
                     expression: term.clone(),
                     inputs,
                 }))
@@ -933,11 +954,28 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
             FindTerm::Segments { left, right, .. } => {
                 FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
                     find: find_idx,
+                    rules: rule.minted().to_vec(),
                     expression: term.clone(),
                     inputs: [*left, *right]
                         .into_iter()
                         .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
                         .collect(),
+                }))
+            }
+            FindTerm::Event(_) | FindTerm::Test(_) => {
+                let inputs = term
+                    .event_variables()
+                    .expect("Event expression")
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .map(|var| (var, layout.slot_of(var), *rule.var_type(var)))
+                    .collect();
+                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
+                    find: find_idx,
+                    rules: rule.minted().to_vec(),
+                    expression: term.clone(),
+                    inputs,
                 }))
             }
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
@@ -1023,7 +1061,10 @@ fn group_radixes(rule: &RuleWitness<'_>) -> Vec<u16> {
             },
             // A computed output joins the group key through an appended
             // slot the radix table cannot cover: stay hashed.
-            FindTerm::Segments { .. } | FindTerm::Compute(_) => return Vec::new(),
+            FindTerm::Segments { .. }
+            | FindTerm::Compute(_)
+            | FindTerm::Event(_)
+            | FindTerm::Test(_) => return Vec::new(),
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
         }
     }

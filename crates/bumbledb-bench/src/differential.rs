@@ -47,6 +47,8 @@ pub enum ConditionalVerdict {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answers {
+    /// This oracle has no Event-head implementation; never a semantic verdict.
+    UnsupportedEvent,
     Ok(BTreeSet<Tuple>),
     Overflow,
 
@@ -106,6 +108,7 @@ pub fn run<S>(db: &Db<S>, naive: &mut NaiveDb, ops: &[Op]) -> Result<Summary, Di
                     Ok(answers) => Answers::Ok(answers),
                     Err(QueryError::Overflow { .. }) => Answers::Overflow,
                     Err(QueryError::Scalar { .. }) => Answers::Scalar,
+                    Err(QueryError::UnsupportedEvent) => Answers::UnsupportedEvent,
                 };
                 if engine != model {
                     return Err(Divergence::Query {

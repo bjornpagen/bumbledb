@@ -121,6 +121,27 @@ type FoldOpIr =
 	| { readonly kind: "min" }
 	| { readonly kind: "max" }
 
+/** Raw structural Event IR; all operands are body-bound Event columns. */
+type EventExprIr =
+	| { readonly kind: "var" | "empty" | "full"; readonly var: number }
+	| { readonly kind: "not"; readonly expr: EventExprIr }
+	| { readonly kind: "apply"; readonly bits: number; readonly left: EventExprIr; readonly right: EventExprIr }
+	| { readonly kind: "ite"; readonly condition: EventExprIr; readonly high: EventExprIr; readonly low: EventExprIr }
+	| {
+			readonly kind: "cardinality"
+			readonly minimum: bigint
+			readonly maximum: bigint
+			readonly events: readonly EventExprIr[]
+	  }
+
+type EventTestIr =
+	| { readonly kind: "isEmpty" | "isFull"; readonly expr: EventExprIr }
+	| {
+			readonly kind: "subset" | "equal" | "disjoint" | "covers"
+			readonly left: EventExprIr
+			readonly right: EventExprIr
+	  }
+
 type FindTermIr =
 	| {
 			readonly kind: "segments"
@@ -130,6 +151,8 @@ type FindTermIr =
 	  }
 	| { readonly kind: "var"; readonly var: number }
 	| { readonly kind: "compute"; readonly expr: ScalarExprIr }
+	| { readonly kind: "event"; readonly expr: EventExprIr }
+	| { readonly kind: "test"; readonly expr: EventTestIr }
 	| { readonly kind: "count" }
 	| { readonly kind: "aggregate"; readonly op: FoldOpIr; readonly over: number }
 	| { readonly kind: "pack"; readonly over: number }
@@ -676,6 +699,8 @@ export type {
 	F64IntervalValue,
 	FactValue,
 	FindTermIr,
+	EventExprIr,
+	EventTestIr,
 	HeadOpIr,
 	HeadTermIr,
 	InteriorIr,

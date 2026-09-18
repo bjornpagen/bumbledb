@@ -146,7 +146,10 @@ fn projection_sql(finds: &[FindTerm], b: &Builder) -> Result<String, String> {
                 }
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
-            FindTerm::Compute(_) | FindTerm::Segments { .. } => {
+            FindTerm::Compute(_)
+            | FindTerm::Segments { .. }
+            | FindTerm::Event(_)
+            | FindTerm::Test(_) => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
@@ -176,7 +179,10 @@ fn head_projection_sql(rule: &Rule, b: &Builder) -> Result<String, String> {
                 None => return Err(format!("find variable {} unbound", var.0)),
             },
             FindTerm::Count => cols.push(format!("0 AS h{position}")),
-            FindTerm::Compute(_) | FindTerm::Segments { .. } => {
+            FindTerm::Compute(_)
+            | FindTerm::Segments { .. }
+            | FindTerm::Event(_)
+            | FindTerm::Test(_) => {
                 return Err("computed heads are not translated to SQL".into());
             }
         }
@@ -209,7 +215,10 @@ fn union_fold_sql(finds: &[FindTerm], arms: &[String]) -> Result<String, String>
                 FoldOp::Min => format!("MIN(h{position})"),
                 FoldOp::Max => format!("MAX(h{position})"),
             }),
-            FindTerm::Compute(_) | FindTerm::Segments { .. } => {
+            FindTerm::Compute(_)
+            | FindTerm::Segments { .. }
+            | FindTerm::Event(_)
+            | FindTerm::Test(_) => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Pack { .. } => {
@@ -293,7 +302,10 @@ fn fold_sql(
                 };
                 format!("{agg}(v{})", over.0)
             }),
-            FindTerm::Compute(_) | FindTerm::Segments { .. } => {
+            FindTerm::Compute(_)
+            | FindTerm::Segments { .. }
+            | FindTerm::Event(_)
+            | FindTerm::Test(_) => {
                 return Err("computed heads are not translated to SQL".into());
             }
             FindTerm::Pack { .. } => {

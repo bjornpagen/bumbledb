@@ -225,9 +225,7 @@ fn seal_interior(
             derived.stash_finished(id, field_types, sink, work, generation)
         }
         EitherSink::Computed(computed) => {
-            if let Some(error) = &computed.error {
-                return Err(error.clone());
-            }
+            computed.finish_events()?;
             match &mut computed.inner {
                 EitherSink::Projection(sink) => {
                     derived.stash_finished(id, field_types, sink, work, generation)
@@ -312,6 +310,7 @@ impl<S> PreparedQuery<S> {
                     interiors[i]
                         .sink
                         .begin_execution(Some(images.source().work().clone()));
+                    interiors[i].sink.bind_events(images.generation(), Some(i));
                 }
                 let rule_count = self.pipeline.interiors()[i].rules.len();
                 for rule_idx in 0..rule_count {

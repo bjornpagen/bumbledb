@@ -12,6 +12,7 @@ fn fixture(producers: usize, project_one: bool) -> ComputedSink {
                 4 + 2 * find,
                 Arc::new(OutputProgram {
                     find,
+                    rules: vec![0],
                     expression: FindTerm::Segments {
                         op: SegmentOp::Difference,
                         left: VarId(0),
@@ -137,6 +138,7 @@ fn batch_stops_after_product_cancellation_before_evaluating_later_scalars() {
         24,
         Arc::new(OutputProgram {
             find: 10,
+            rules: vec![0],
             expression: FindTerm::Compute(E::Divide(
                 Box::new(E::Literal(Value::U64(1))),
                 Box::new(E::Var(VarId(2))),
@@ -169,4 +171,118 @@ fn batch_stops_after_product_cancellation_before_evaluating_later_scalars() {
             .for_each_answer(&mut |_| panic!("cancelled output must not drain"))
             .is_err()
     );
+}
+
+fn event_fixture(
+    expression: crate::EventExpr,
+) -> (
+    ComputedSink,
+    crate::event::Space,
+    crate::work::GenerationHandle,
+) {
+    let source = crate::event::Space::new(crate::event::SpaceId([31; 32]), 2, &()).unwrap();
+    let generation = crate::image::test_generation();
+    let program = Arc::new(OutputProgram {
+        find: 0,
+        rules: vec![0],
+        expression: FindTerm::Event(expression),
+        inputs: vec![
+            (VarId(0), 0, ValueType::Event),
+            (VarId(1), 2, ValueType::Event),
+        ],
+    });
+    let projection = ProjectionSink::new(vec![4, 5]);
+    let mut sink = ComputedSink::new(EitherSink::Projection(projection), vec![(4, program)], 4, 6);
+    sink.work = Some(WorkContext::new());
+    sink.bind_events(&generation, None);
+    (sink, source, generation)
+}
+
+fn set_event(
+    sink: &mut ComputedSink,
+    generation: &crate::work::GenerationHandle,
+    slot: usize,
+    value: &crate::Event,
+) {
+    let value = generation
+        .lock_resolver()
+        .events
+        .intern(value, &())
+        .unwrap();
+    let words = value.key().words();
+    sink.bindings.set(slot, words[0]);
+    sink.bindings.set(slot + 1, words[1]);
+}
+
+#[test]
+fn constructed_events_survive_spill_and_empty_values_do_not_eliminate_bindings() {
+    use crate::{EventExpr as E, event::BoolOp4};
+    let (mut sink, source, generation) = event_fixture(E::Apply {
+        op: BoolOp4::AND,
+        left: Box::new(E::Var(VarId(0))),
+        right: Box::new(E::Not(Box::new(E::Var(VarId(1))))),
+    });
+    for spill in [false, true] {
+        sink.reset();
+        projection(&mut sink).begin(Some(WorkContext::new()));
+        if spill {
+            projection(&mut sink).force_spill().unwrap();
+        }
+        for bits in 0..16 {
+            let a = source.table(3, &[bits], &()).unwrap();
+            set_event(&mut sink, &generation, 0, &a);
+            set_event(&mut sink, &generation, 2, &source.empty());
+            sink.row();
+        }
+        sink.finish_events().unwrap();
+        let rows = rows(&mut sink);
+        assert_eq!(rows.len(), 16);
+        let mut masks = Vec::new();
+        for row in rows {
+            let event = generation
+                .lock_resolver()
+                .events
+                .resolve([row[0], row[1]], &())
+                .unwrap();
+            masks.push(
+                (0..4)
+                    .filter(|&w| event.contains(w).unwrap())
+                    .fold(0u64, |bits, w| bits | (1 << w)),
+            );
+        }
+        masks.sort_unstable();
+        assert_eq!(masks, (0..16).collect::<Vec<_>>());
+    }
+}
+
+#[test]
+fn cancellation_during_fault_collection_is_not_reported_as_a_complete_set() {
+    use crate::{EventExpr as E, event::BoolOp4};
+    let (mut sink, source, generation) = event_fixture(E::Apply {
+        op: BoolOp4::TRUE,
+        left: Box::new(E::Var(VarId(0))),
+        right: Box::new(E::Var(VarId(1))),
+    });
+    let foreign = crate::event::Space::new(crate::event::SpaceId([32; 32]), 2, &()).unwrap();
+    set_event(&mut sink, &generation, 0, &source.full());
+    set_event(&mut sink, &generation, 2, &foreign.empty());
+    sink.row();
+    assert!(!sink.faults.is_empty());
+    assert!(
+        !sink.flow_after_row().is_terminal(),
+        "semantic faults must keep collecting"
+    );
+    sink.work.as_ref().unwrap().cancel();
+    sink.row();
+    assert!(sink.flow_after_row().is_terminal());
+    assert!(!matches!(
+        sink.finish_events(),
+        Ok(()) | Err(Error::EventFaults(_))
+    ));
+    sink.reset();
+    sink.work = Some(WorkContext::new());
+    set_event(&mut sink, &generation, 2, &source.empty());
+    sink.row();
+    sink.finish_events().unwrap();
+    assert_eq!(rows(&mut sink).len(), 1);
 }

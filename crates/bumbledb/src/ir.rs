@@ -175,6 +175,11 @@ pub enum FindTerm {
 
     Compute(crate::ScalarExpr),
 
+    /// One owned region per binding, including scoped empty.
+    Event(crate::EventExpr),
+    /// A structural statement about whole regions.
+    Test(crate::EventTest),
+
     /// Fully bound binary interval constructor. Independent outputs combine
     /// relationally; no result drops the input binding. Nonrecursive stages only.
     Segments {
@@ -196,11 +201,21 @@ pub enum FindTerm {
 }
 
 impl FindTerm {
+    pub(crate) fn event_variables(&self) -> Option<Vec<VarId>> {
+        match self {
+            Self::Event(expr) => Some(expr.variables().collect()),
+            Self::Test(test) => Some(test.variables().collect()),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn head_term(&self) -> HeadTerm {
         match self {
             Self::Var(_) => HeadTerm::Var,
-            Self::Compute(_) | Self::Segments { .. } => HeadTerm::Compute,
+            Self::Compute(_) | Self::Event(_) | Self::Test(_) | Self::Segments { .. } => {
+                HeadTerm::Compute
+            }
             Self::Count => HeadTerm::Aggregate(HeadOp::Count),
             Self::Aggregate { op, .. } => HeadTerm::Aggregate(op.head_op()),
             Self::Pack { .. } => HeadTerm::Aggregate(HeadOp::Pack),

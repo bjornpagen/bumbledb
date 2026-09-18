@@ -7,9 +7,22 @@ impl EitherSink {
     /// Install this execution's cooperative cancellation context.
     pub(super) fn begin_execution(&mut self, work: Option<crate::work::WorkContext>) {
         match self {
-            Self::Computed(sink) => sink.inner.begin_execution(work),
+            Self::Computed(sink) => {
+                sink.work.clone_from(&work);
+                sink.inner.begin_execution(work);
+            }
             Self::Projection(sink) => sink.begin(work),
             Self::Aggregate(sink) => sink.begin(work),
+        }
+    }
+
+    pub(super) fn bind_events(
+        &mut self,
+        generation: &crate::work::GenerationHandle,
+        stage: Option<usize>,
+    ) {
+        if let Self::Computed(sink) = self {
+            sink.bind_events(generation, stage);
         }
     }
 

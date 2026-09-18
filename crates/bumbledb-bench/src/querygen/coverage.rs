@@ -435,7 +435,10 @@ impl Coverage {
                     interval_finds += 1;
                     projected_words += 2;
                 }
-                FindTerm::Compute(_) => {
+                FindTerm::Event(_) => {
+                    projected_words += 2;
+                }
+                FindTerm::Test(_) | FindTerm::Compute(_) => {
                     projected_words += 1;
                 }
                 FindTerm::Aggregate { op, over } => {

@@ -38,7 +38,19 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 type Expect<T extends true> = T extends true ? true : never
 
 const ROSTERS = {
-	value: ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "intervalU64", "intervalI64", "intervalF64", "event"],
+	value: [
+		"bool",
+		"u64",
+		"i64",
+		"f64",
+		"uuid",
+		"string",
+		"fixedBytes",
+		"intervalU64",
+		"intervalI64",
+		"intervalF64",
+		"event"
+	],
 	valueType: ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "interval", "event"],
 	intervalElement: ["u64", "i64", "f64"],
 	literal: ["handle", "value"],
@@ -66,7 +78,7 @@ const ROSTERS = {
 	numericCast: ["toF64", "toF64Exact", "toI64Exact", "toU64Exact"],
 	aggregateOp: ["sum", "mean", "min", "max", "count", "pack"],
 	headTerm: ["var", "compute", "aggregate"],
-	findTerm: ["var", "segments", "compute", "count", "aggregate", "pack"],
+	findTerm: ["var", "segments", "compute", "event", "test", "count", "aggregate", "pack"],
 	atomSource: ["edb", "interior"],
 	cmpOp: ["eq", "ne", "lt", "le", "gt", "ge", "allen", "pointIn"],
 	condition: ["leaf", "and", "or"],

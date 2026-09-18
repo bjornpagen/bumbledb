@@ -549,6 +549,10 @@ pub enum ValidationError {
         find: FindIndex,
         source: crate::ScalarError,
     },
+    EventExpression {
+        find: FindIndex,
+        source: crate::EventExprError,
+    },
 
     TooManyRules {
         count: usize,
@@ -1356,6 +1360,9 @@ pub enum Error {
 
     Overflow(OverflowKind),
     Event(crate::event::Error),
+    /// Complete, sorted, duplicate-free faults of the first failing Event
+    /// stage. Operational refusal instead returns its own error directly.
+    EventFaults(Box<[crate::EventOperandFault]>),
     Scalar {
         find: FindIndex,
         source: crate::ScalarError,
@@ -1475,6 +1482,7 @@ impl Error {
             Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),
             Self::Event(source) => family_source(ErrorFamily::Event, source),
+            Self::EventFaults(_) => family_only(ErrorFamily::Event),
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),

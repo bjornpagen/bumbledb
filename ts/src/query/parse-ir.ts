@@ -4,6 +4,8 @@ import type {
 	CmpOpIr,
 	ConditionTreeIr,
 	FindTermIr,
+	EventExprIr,
+	EventTestIr,
 	HeadTermIr,
 	ParsedQuery,
 	QueryIr,
@@ -111,6 +113,72 @@ function headTerm(context: string, input: unknown): HeadTermIr {
 	return Object.freeze({ kind: raw.kind, op })
 }
 
+function eventCount(context: string, input: unknown): bigint {
+	if (typeof input !== "bigint" || input < 0n || input > 0xffffffffffffffffn)
+		return fail(context, "expected a nonnegative u64 bigint")
+	return input
+}
+
+function eventExpr(context: string, input: unknown, depth = 1, budget = { remaining: 4096 }): EventExprIr {
+	if (depth > 128 || budget.remaining-- <= 0) return fail(context, "Event expression exceeds shape budget")
+	const raw = tagged(context, input)
+	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], depth + 1, budget)
+	switch (raw.kind) {
+		case "var":
+		case "empty":
+		case "full":
+			recordValue(context, raw, ["kind", "var"])
+			return Object.freeze({ kind: raw.kind, var: ordinal(context, raw.var) })
+		case "not":
+			recordValue(context, raw, ["kind", "expr"])
+			return Object.freeze({ kind: raw.kind, expr: child("expr") })
+		case "apply":
+			recordValue(context, raw, ["kind", "bits", "left", "right"])
+			return Object.freeze({
+				kind: raw.kind,
+				bits: ordinal(context, raw.bits, 15),
+				left: child("left"),
+				right: child("right")
+			})
+		case "ite":
+			recordValue(context, raw, ["kind", "condition", "high", "low"])
+			return Object.freeze({ kind: raw.kind, condition: child("condition"), high: child("high"), low: child("low") })
+		case "cardinality": {
+			recordValue(context, raw, ["kind", "minimum", "maximum", "events"])
+			if (!Array.isArray(raw.events) || raw.events.length === 0 || raw.events.length > budget.remaining)
+				return fail(context, "Event roster needs 1..4096 scope-bearing positions")
+			return Object.freeze({
+				kind: raw.kind,
+				minimum: eventCount(context, raw.minimum),
+				maximum: eventCount(context, raw.maximum),
+				events: array(`${context}.events`, raw.events, (path, value) => eventExpr(path, value, depth + 1, budget))
+			})
+		}
+		default:
+			return fail(context, "unknown Event expression kind")
+	}
+}
+
+function eventTest(context: string, input: unknown): EventTestIr {
+	const raw = tagged(context, input)
+	const budget = { remaining: 4096 }
+	const child = (key: string) => eventExpr(`${context}.${key}`, raw[key], 1, budget)
+	switch (raw.kind) {
+		case "isEmpty":
+		case "isFull":
+			recordValue(context, raw, ["kind", "expr"])
+			return Object.freeze({ kind: raw.kind, expr: child("expr") })
+		case "subset":
+		case "equal":
+		case "disjoint":
+		case "covers":
+			recordValue(context, raw, ["kind", "left", "right"])
+			return Object.freeze({ kind: raw.kind, left: child("left"), right: child("right") })
+		default:
+			return fail(context, "unknown Event test kind")
+	}
+}
+
 function find(context: string, input: unknown): FindTermIr {
 	const raw = tagged(context, input)
 	if (raw.kind === "segments") {
@@ -131,6 +199,12 @@ function find(context: string, input: unknown): FindTermIr {
 			if (Object.hasOwn(raw, "over")) return fail(context, "Count carries no over")
 			recordValue(context, raw, ["kind"])
 			return Object.freeze({ kind: raw.kind })
+		case "event":
+			recordValue(context, raw, ["kind", "expr"])
+			return Object.freeze({ kind: raw.kind, expr: eventExpr(`${context}.expr`, raw.expr) })
+		case "test":
+			recordValue(context, raw, ["kind", "expr"])
+			return Object.freeze({ kind: raw.kind, expr: eventTest(`${context}.expr`, raw.expr) })
 		case "compute":
 			if (!Object.hasOwn(raw, "expr")) return fail(context, "compute requires expr")
 			recordValue(context, raw, ["kind", "expr"])
@@ -231,7 +305,12 @@ function align(context: string, head: readonly HeadTermIr[], rules: readonly Rul
 		if (rule.finds.length !== head.length) fail(`${context}.rules[${index}]`, "finds width does not match head width")
 		for (const [position, find] of rule.finds.entries()) {
 			const term = head[position]
-			const projects = find.kind === "var" || find.kind === "compute" || find.kind === "segments"
+			const projects =
+				find.kind === "var" ||
+				find.kind === "compute" ||
+				find.kind === "segments" ||
+				find.kind === "event" ||
+				find.kind === "test"
 			if (term === undefined || (term.kind === "aggregate") === projects)
 				fail(`${context}.rules[${index}].finds[${position}]`, "find family does not match head")
 			if (term.kind === "aggregate") {

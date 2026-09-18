@@ -234,6 +234,8 @@ wire_tags! {
         VAR: FindTerm::Var(_) => "var",
         SEGMENTS: FindTerm::Segments { .. } => "segments",
         COMPUTE: FindTerm::Compute(_) => "compute",
+        EVENT: FindTerm::Event(_) => "event",
+        TEST: FindTerm::Test(_) => "test",
         COUNT: FindTerm::Count => "count",
         AGGREGATE: FindTerm::Aggregate { .. } => "aggregate",
         PACK: FindTerm::Pack { .. } => "pack",

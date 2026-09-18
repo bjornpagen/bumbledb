@@ -980,6 +980,129 @@ fn scalar_child(obj: &Object, key: &str, depth: usize) -> napi::Result<ScalarExp
     scalar_expr_in(&child, depth + 1)
 }
 
+fn event_child(
+    obj: &Object,
+    key: &str,
+    depth: usize,
+    remaining: &mut usize,
+) -> napi::Result<bumbledb::EventExpr> {
+    let child: Object = req(obj, key, "Event expression")?;
+    event_expr_in(&child, depth + 1, remaining)
+}
+
+fn event_expr_in(
+    obj: &Object,
+    depth: usize,
+    remaining: &mut usize,
+) -> napi::Result<bumbledb::EventExpr> {
+    use bumbledb::EventExpr as E;
+    if depth > 128 || *remaining == 0 {
+        return Err(err("Event expression exceeds shape budget".into()));
+    }
+    *remaining -= 1;
+    let kind = req_text(obj, "kind", "Event expression")?;
+    match kind.as_str() {
+        "var" | "empty" | "full" => {
+            exact_fields(obj, &["kind", "var"])?;
+            let var = var_in(obj, "var", "Event operand")?;
+            Ok(match kind.as_str() {
+                "var" => E::Var(var),
+                "empty" => E::Empty(var),
+                _ => E::Full(var),
+            })
+        }
+        "not" => {
+            exact_fields(obj, &["kind", "expr"])?;
+            Ok(E::Not(Box::new(event_child(
+                obj, "expr", depth, remaining,
+            )?)))
+        }
+        "apply" => {
+            exact_fields(obj, &["kind", "bits", "left", "right"])?;
+            let bits = ordinal(req(obj, "bits", "Event truth table")?, "Event truth table")?;
+            let op = u8::try_from(bits)
+                .ok()
+                .and_then(bumbledb::event::BoolOp4::new)
+                .ok_or_else(|| err("Event truth function must have four bits".into()))?;
+            Ok(E::Apply {
+                op,
+                left: Box::new(event_child(obj, "left", depth, remaining)?),
+                right: Box::new(event_child(obj, "right", depth, remaining)?),
+            })
+        }
+        "ite" => {
+            exact_fields(obj, &["kind", "condition", "high", "low"])?;
+            Ok(E::Ite {
+                condition: Box::new(event_child(obj, "condition", depth, remaining)?),
+                high: Box::new(event_child(obj, "high", depth, remaining)?),
+                low: Box::new(event_child(obj, "low", depth, remaining)?),
+            })
+        }
+        "cardinality" => {
+            exact_fields(obj, &["kind", "minimum", "maximum", "events"])?;
+            let minimum = u64_in(
+                &req(obj, "minimum", "Event cardinality")?,
+                "Event cardinality minimum",
+            )?;
+            let maximum = u64_in(
+                &req(obj, "maximum", "Event cardinality")?,
+                "Event cardinality maximum",
+            )?;
+            let events: Array = req(obj, "events", "Event cardinality")?;
+            let len = events.len() as usize;
+            if len == 0 || len > *remaining {
+                return Err(err(
+                    "Event roster needs 1..4096 scope-bearing positions".into()
+                ));
+            }
+            let mut values = Vec::with_capacity(len);
+            for index in 0..events.len() {
+                let value: Object = events
+                    .get(index)?
+                    .ok_or_else(|| err("missing Event roster position".into()))?;
+                values.push(event_expr_in(&value, depth + 1, remaining)?);
+            }
+            Ok(E::Cardinality {
+                minimum: usize::try_from(minimum)
+                    .map_err(|_| err("Event cardinality exceeds usize".into()))?,
+                maximum: usize::try_from(maximum)
+                    .map_err(|_| err("Event cardinality exceeds usize".into()))?,
+                events: values,
+            })
+        }
+        _ => Err(err("unknown Event expression kind".into())),
+    }
+}
+
+fn event_test_in(obj: &Object) -> napi::Result<bumbledb::EventTest> {
+    use bumbledb::EventTest as T;
+    let kind = req_text(obj, "kind", "Event test")?;
+    let mut remaining = 4096;
+    match kind.as_str() {
+        "isEmpty" | "isFull" => {
+            exact_fields(obj, &["kind", "expr"])?;
+            let value = event_child(obj, "expr", 0, &mut remaining)?;
+            Ok(if kind == "isEmpty" {
+                T::IsEmpty(value)
+            } else {
+                T::IsFull(value)
+            })
+        }
+        "subset" | "equal" | "disjoint" | "covers" => {
+            exact_fields(obj, &["kind", "left", "right"])?;
+            let left = event_child(obj, "left", 0, &mut remaining)?;
+            let right = event_child(obj, "right", 0, &mut remaining)?;
+            Ok(match kind.as_str() {
+                "subset" => T::Subset(left, right),
+                "equal" => T::Equal(left, right),
+                "disjoint" => T::Disjoint(left, right),
+                _ => T::Covers(left, right),
+            })
+        }
+        _ => Err(err("unknown Event test kind".into())),
+    }
+}
+
 fn head_term_in(obj: &Object) -> napi::Result<HeadTerm> {
     let kind: String = req_text(obj, "kind", "head term")?;
     match kind.as_str() {
@@ -1036,6 +1159,16 @@ fn find_term_in(obj: &Object) -> napi::Result<FindTerm> {
         tags::find_term::COMPUTE => {
             let expr: Object = req(obj, "expr", "compute find")?;
             Ok(FindTerm::Compute(scalar_expr_in(&expr, 1)?))
+        }
+        tags::find_term::EVENT => {
+            exact_fields(obj, &["kind", "expr"])?;
+            let expr: Object = req(obj, "expr", "Event find")?;
+            Ok(FindTerm::Event(event_expr_in(&expr, 1, &mut 4096)?))
+        }
+        tags::find_term::TEST => {
+            exact_fields(obj, &["kind", "expr"])?;
+            let expr: Object = req(obj, "expr", "Event test find")?;
+            Ok(FindTerm::Test(event_test_in(&expr)?))
         }
         tags::find_term::COUNT => {
             if obj.get::<f64>("over")?.is_some() {

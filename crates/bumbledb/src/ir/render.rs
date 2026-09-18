@@ -193,6 +193,12 @@ fn find_term(out: &mut String, term: &FindTerm) {
             use std::fmt::Write as _;
             write!(out, "Compute({expr:?})").expect("writing to String");
         }
+        FindTerm::Event(expr) => {
+            write!(out, "Event({expr:?})").expect("writing to String");
+        }
+        FindTerm::Test(test) => {
+            write!(out, "Test({test:?})").expect("writing to String");
+        }
         FindTerm::Count => out.push_str("Count"),
         FindTerm::Aggregate { op, over } => {
             aggregate(out, *op, *over);

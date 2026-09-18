@@ -53,6 +53,12 @@ impl Signature {
                         .result_type(|var| typing.var_types.get(&var).copied())
                         .expect("validated output expression"),
                 },
+                FindTerm::Event(_) => SignatureColumn::Project {
+                    ty: ValueType::Event,
+                },
+                FindTerm::Test(_) => SignatureColumn::Project {
+                    ty: ValueType::Bool,
+                },
                 FindTerm::Count => SignatureColumn::Fold {
                     ty: ValueType::U64,
                     op: AggKind::Count,
@@ -100,6 +106,19 @@ impl Context {
         for (find_idx, term) in rule.finds.iter().enumerate() {
             let find = FindIndex(find_idx);
             match term {
+                FindTerm::Event(_) | FindTerm::Test(_) => {
+                    for var in term.event_variables().expect("Event expression") {
+                        if !self.atom_vars.contains(&var) {
+                            return Err(ValidationError::UnboundFindVariable { var });
+                        }
+                        if *self.resolved_var_type(var) != ValueType::Event {
+                            return Err(ValidationError::EventExpression {
+                                find,
+                                source: crate::EventExprError::NotEvent(var),
+                            });
+                        }
+                    }
+                }
                 FindTerm::Segments { left, right, .. } => {
                     for var in [left, right] {
                         if !self.atom_vars.contains(var) {

@@ -22,6 +22,7 @@ use crate::exec::sink::FindSpec;
 use crate::schema::ValueType;
 use crate::{Error, F64, FindIndex, FindTerm, ScalarError, Value, VarId};
 
+mod events;
 #[cfg(test)]
 mod tests;
 
@@ -32,6 +33,9 @@ mod tests;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutputProgram {
     pub(crate) find: usize,
+    /// Every written rule represented by this normalized arm. DNF collapse
+    /// must not discard the logical identities used by Event diagnostics.
+    pub(crate) rules: Vec<u16>,
     pub(crate) expression: FindTerm,
     pub(crate) inputs: Vec<(VarId, usize, ValueType)>,
 }
@@ -48,6 +52,10 @@ pub(in crate::api) struct ComputedSink {
     pieces: Vec<(usize, [[u64; 2]; 2], usize, usize)>,
     /// The first scalar failure of this execution; sticky until reset.
     pub(super) error: Option<Error>,
+    faults: events::Faults,
+    pub(super) work: Option<crate::work::WorkContext>,
+    generation: Option<crate::work::GenerationHandle>,
+    stage: Option<usize>,
 }
 
 /// A lowered find-spec list: the rewritten specs, the `(slot, program)`
@@ -65,7 +73,10 @@ pub(super) fn lower(finds: &[FindSpec], slots: usize) -> Lowered {
         .map(|find| match find {
             FindSpec::Compute(program) => {
                 let slot = next;
-                let width = if matches!(program.expression, FindTerm::Segments { .. }) {
+                let width = if matches!(
+                    program.expression,
+                    FindTerm::Segments { .. } | FindTerm::Event(_)
+                ) {
                     2
                 } else {
                     1
@@ -83,6 +94,7 @@ pub(super) fn lower(finds: &[FindSpec], slots: usize) -> Lowered {
 impl ComputedSink {
     pub(super) fn reset(&mut self) {
         self.error = None;
+        self.faults.clear();
         if self.bindings.slot_count() == 0 {
             self.bindings.resize(
                 self.slots
@@ -90,7 +102,10 @@ impl ComputedSink {
                         .programs
                         .iter()
                         .map(|(_, p)| {
-                            if matches!(p.expression, FindTerm::Segments { .. }) {
+                            if matches!(
+                                p.expression,
+                                FindTerm::Segments { .. } | FindTerm::Event(_)
+                            ) {
                                 2
                             } else {
                                 1
@@ -104,6 +119,9 @@ impl ComputedSink {
 
     pub(super) fn release_memory(&mut self) {
         self.error = None;
+        self.faults = events::Faults::default();
+        self.generation = None;
+        self.work = None;
         self.bindings = Bindings::new(0);
         self.pieces = Vec::new();
         self.inner.release_memory();
@@ -122,7 +140,54 @@ impl ComputedSink {
             slots,
             error: None,
             pieces: Vec::new(),
+            faults: events::Faults::default(),
+            work: None,
+            generation: None,
+            stage: None,
         }
+    }
+
+    pub(super) fn bind_events(
+        &mut self,
+        generation: &crate::work::GenerationHandle,
+        stage: Option<usize>,
+    ) {
+        self.generation = Some(generation.clone());
+        self.stage = stage;
+    }
+
+    /// Called once at the stage boundary, after every arm and binding. Resource
+    /// and scalar errors are separate immediate refusals; partial sets never escape.
+    pub(super) fn finish_events(&mut self) -> crate::Result<()> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+        self.faults.finish()
+    }
+
+    fn event_outputs(&mut self) -> crate::Result<()> {
+        for (slot, program) in &self.programs {
+            if !matches!(program.expression, FindTerm::Event(_) | FindTerm::Test(_)) {
+                continue;
+            }
+            let words = events::evaluate(
+                &self.bindings,
+                program,
+                self.stage,
+                self.generation
+                    .as_ref()
+                    .ok_or(crate::event::Error::UnknownKey)?,
+                self.work.as_ref().ok_or(crate::event::Error::UnknownKey)?,
+                &mut self.faults,
+            )?;
+            if let Some(words) = words {
+                self.bindings.set(*slot, words[0]);
+                if matches!(program.expression, FindTerm::Event(_)) {
+                    self.bindings.set(*slot + 1, words[1]);
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn aim(&mut self, finds: &[FindSpec], slots: usize, shared: &[(usize, usize)]) {
@@ -138,6 +203,10 @@ impl ComputedSink {
     /// product without recursion or materializing a product-sized buffer.
     fn row(&mut self) {
         if self.error.is_some() {
+            return;
+        }
+        if let Err(error) = self.event_outputs() {
+            self.error = Some(error);
             return;
         }
         self.pieces.clear();
@@ -197,6 +266,9 @@ impl ComputedSink {
                 Ok(_) => unreachable!("validated scalar output type"),
             };
             self.bindings.set(*slot, word);
+        }
+        if !self.faults.is_empty() {
+            return;
         }
         loop {
             for &(slot, values, _, position) in &self.pieces {

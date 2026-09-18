@@ -652,6 +652,9 @@ impl<'a> RuleWitness<'a> {
             matches!(
                 term,
                 FindTerm::Compute(_)
+                    | FindTerm::Event(_)
+                    | FindTerm::Test(_)
+                    | FindTerm::Segments { .. }
                     | FindTerm::Count
                     | FindTerm::Aggregate { .. }
                     | FindTerm::Pack { .. }

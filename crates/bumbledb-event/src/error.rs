@@ -17,6 +17,7 @@ pub enum Capacity {
     ProgramSteps,
     FixedPointIterations,
     PartitionCells,
+    Diagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

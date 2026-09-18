@@ -300,6 +300,7 @@ fn randomized_generator_queries_agree_folded_and_unfolded() {
                 Ok(rows) => Answers::Ok(rows),
                 Err(QueryError::Overflow { .. }) => Answers::Overflow,
                 Err(QueryError::Scalar { .. }) => Answers::Scalar,
+                Err(QueryError::UnsupportedEvent) => Answers::UnsupportedEvent,
             };
             assert_eq!(on, off, "folded and unfolded disagree: {query:?}");
             assert_eq!(on, model, "engine and model disagree: {query:?}");

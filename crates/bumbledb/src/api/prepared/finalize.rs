@@ -25,9 +25,7 @@ pub(super) fn finalize(
     memo.clear();
     match sink {
         EitherSink::Computed(sink) => {
-            if let Some(error) = &sink.error {
-                return Err(error.clone());
-            }
+            sink.finish_events()?;
             finalize(
                 &mut sink.inner,
                 answer_scratch,

@@ -142,6 +142,7 @@ impl<S> PreparedQuery<S> {
         // Point probes copy directly into Answers; empty CQs emit nothing.
         self.sink
             .begin_execution(Some(images.source().work().clone()));
+        self.sink.bind_events(images.generation(), None);
         // ONE numerical guard per whole engine operation:
         // queries with computed scalar outputs establish the canonical FPU
         // environment here, hold it across every rule/derived stage and

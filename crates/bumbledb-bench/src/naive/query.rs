@@ -16,6 +16,8 @@ pub enum ParamValue {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueryError {
+    /// Event query conformance uses its separate finite-world oracle.
+    UnsupportedEvent,
     Overflow {
         find: usize,
     },
@@ -379,6 +381,15 @@ impl NaiveDb {
         query: &Query,
         params: &[ParamValue],
     ) -> Result<BTreeSet<Tuple>, QueryError> {
+        if query
+            .rules
+            .iter()
+            .chain(query.interiors.iter().flat_map(|i| i.rules.iter()))
+            .flat_map(|r| r.finds.iter())
+            .any(|f| matches!(f, FindTerm::Event(_) | FindTerm::Test(_)))
+        {
+            return Err(QueryError::UnsupportedEvent);
+        }
         let mut sets: Vec<BTreeSet<Tuple>> = Vec::new();
         let mut interval: Vec<Vec<bool>> = Vec::new();
         let (interiors, rec, head, rules) = match query {
@@ -482,7 +493,11 @@ impl NaiveDb {
                 FindTerm::Pack { .. } | FindTerm::Segments { .. } => true,
                 // Scalar expressions (including measurement) and numeric
                 // counts/folds have scalar outputs. Segments are separate.
-                FindTerm::Compute(_) | FindTerm::Count | FindTerm::Aggregate { .. } => false,
+                FindTerm::Compute(_)
+                | FindTerm::Count
+                | FindTerm::Aggregate { .. }
+                | FindTerm::Event(_)
+                | FindTerm::Test(_) => false,
             })
             .collect()
     }
@@ -579,6 +594,7 @@ impl NaiveDb {
 
                         FindTerm::Segments { .. } => unreachable!("segments do not mix with folds"),
                         FindTerm::Compute(expr) => eval_scalar(expr, binding, index),
+                        FindTerm::Event(_) | FindTerm::Test(_) => Err(QueryError::UnsupportedEvent),
 
                         FindTerm::Count => Ok(Value::Bool(false)),
                     })
@@ -608,9 +624,11 @@ impl NaiveDb {
                         .iter()
                         .enumerate()
                         .map(|(index, term)| match term {
-                            FindTerm::Var(_) | FindTerm::Compute(_) | FindTerm::Segments { .. } => {
-                                Ok(group[0].0[index].clone())
-                            }
+                            FindTerm::Var(_)
+                            | FindTerm::Compute(_)
+                            | FindTerm::Segments { .. }
+                            | FindTerm::Event(_)
+                            | FindTerm::Test(_) => Ok(group[0].0[index].clone()),
                             FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                             FindTerm::Count
                             | FindTerm::Aggregate { .. }
@@ -627,9 +645,11 @@ impl NaiveDb {
                 .iter()
                 .enumerate()
                 .map(|(index, term)| match term {
-                    FindTerm::Var(_) | FindTerm::Compute(_) | FindTerm::Segments { .. } => {
-                        Ok(group[0].0[index].clone())
-                    }
+                    FindTerm::Var(_)
+                    | FindTerm::Compute(_)
+                    | FindTerm::Segments { .. }
+                    | FindTerm::Event(_)
+                    | FindTerm::Test(_) => Ok(group[0].0[index].clone()),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),
@@ -734,6 +754,16 @@ fn count_vars(rule: &Rule) -> usize {
             FindTerm::Segments { left, right, .. } => {
                 see(&mut count, *left);
                 see(&mut count, *right);
+            }
+            FindTerm::Event(expr) => {
+                for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Test(test) => {
+                for var in test.variables() {
+                    see(&mut count, var);
+                }
             }
             FindTerm::Count => {}
         }
@@ -1063,6 +1093,7 @@ fn pack_group_rows(
                 FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
                 FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                 FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
+                FindTerm::Event(_) | FindTerm::Test(_) => Err(QueryError::UnsupportedEvent),
                 FindTerm::Pack { .. } if index == position => Ok(segment.clone()),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {
                     unreachable!("validated: Pack mixes with no other aggregate")
@@ -1088,6 +1119,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                 // value distinguishes rows, so it joins the group key.
                 FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                 FindTerm::Compute(expr) => key.push(eval_scalar(expr, binding, index)?),
+                FindTerm::Event(_) | FindTerm::Test(_) => return Err(QueryError::UnsupportedEvent),
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {}
             }
         }
@@ -1106,6 +1138,7 @@ fn project(finds: &[FindTerm], bindings: &BTreeSet<Tuple>) -> Result<BTreeSet<Tu
                     FindTerm::Var(var) => Ok(group[0].0[usize::from(var.0)].clone()),
                     FindTerm::Segments { .. } => unreachable!("segments projected before folds"),
                     FindTerm::Compute(expr) => eval_scalar(expr, group[0], index),
+                    FindTerm::Event(_) | FindTerm::Test(_) => Err(QueryError::UnsupportedEvent),
                     FindTerm::Count => Ok(Value::U64(
                         u64::try_from(group.len()).expect("group sizes fit u64"),
                     )),

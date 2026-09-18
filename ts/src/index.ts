@@ -109,6 +109,8 @@ export type {
 	ComparisonIr,
 	ConditionTreeIr,
 	FindTermIr,
+	EventExprIr,
+	EventTestIr,
 	HeadTermIr,
 	InteriorIr,
 	QueryIr,

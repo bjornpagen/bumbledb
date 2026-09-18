@@ -215,7 +215,10 @@ fn rule_arms(
                     }
                     None => return Err(format!("find variable {} unbound", var.0)),
                 },
-                FindTerm::Compute(_) | FindTerm::Segments { .. } => {
+                FindTerm::Compute(_)
+                | FindTerm::Segments { .. }
+                | FindTerm::Event(_)
+                | FindTerm::Test(_) => {
                     return Err("computed heads are not translated to SQL".into());
                 }
                 FindTerm::Count | FindTerm::Aggregate { .. } | FindTerm::Pack { .. } => {

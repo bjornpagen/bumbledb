@@ -358,6 +358,17 @@ fn lower_rules(
     }
 
     for (rule_idx, rule) in rules.iter().enumerate() {
+        for (find, term) in rule.finds.iter().enumerate() {
+            let shape = match term {
+                FindTerm::Event(expr) => expr.validate_shape(),
+                FindTerm::Test(test) => test.validate_shape(),
+                _ => Ok(()),
+            };
+            shape.map_err(|source| ValidationError::EventExpression {
+                find: FindIndex(find),
+                source,
+            })?;
+        }
         let depth = nesting_depth(&rule.conditions);
         if depth > MAX_CONDITION_DEPTH {
             return Err(ValidationError::ConditionNestingTooDeep {
@@ -481,6 +492,8 @@ fn validate_rule(
             FindTerm::Var(var) => Some(*var),
             FindTerm::Segments { .. }
             | FindTerm::Compute(_)
+            | FindTerm::Event(_)
+            | FindTerm::Test(_)
             | FindTerm::Count
             | FindTerm::Aggregate { .. }
             | FindTerm::Pack { .. } => None,

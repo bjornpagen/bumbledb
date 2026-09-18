@@ -444,7 +444,10 @@ fn push_find(out: &mut String, find: &FindTerm) -> Result<(), Exclusion> {
         FindTerm::Var(v) => {
             let _ = write!(out, "{{\"var\":{}}}", v.0);
         }
-        FindTerm::Compute(_) | FindTerm::Segments { .. } => return Err(Exclusion::ComputedHead),
+        FindTerm::Compute(_)
+        | FindTerm::Segments { .. }
+        | FindTerm::Event(_)
+        | FindTerm::Test(_) => return Err(Exclusion::ComputedHead),
         FindTerm::Count => out.push_str("{\"agg\":{\"op\":\"count\"}}"),
         FindTerm::Pack { over } => {
             let _ = write!(out, "{{\"agg\":{{\"op\":\"pack\",\"over\":{}}}}}", over.0);
@@ -516,6 +519,16 @@ fn count_vars(rule: &Rule) -> u16 {
             FindTerm::Segments { left, right, .. } => {
                 see(&mut count, *left);
                 see(&mut count, *right);
+            }
+            FindTerm::Event(expr) => {
+                for var in expr.variables() {
+                    see(&mut count, var);
+                }
+            }
+            FindTerm::Test(test) => {
+                for var in test.variables() {
+                    see(&mut count, var);
+                }
             }
             FindTerm::Count => {}
         }
@@ -1172,6 +1185,7 @@ fn execute_case(
         Ok(rows) => Answers::Ok(rows),
         Err(crate::naive::query::QueryError::Overflow { .. }) => Answers::Overflow,
         Err(crate::naive::query::QueryError::Scalar { .. }) => Answers::Scalar,
+        Err(crate::naive::query::QueryError::UnsupportedEvent) => Answers::UnsupportedEvent,
     };
     let naive_ms = started.elapsed().as_millis();
     let engine = differential::engine_query(&world.db, query, params);
@@ -1183,6 +1197,9 @@ fn execute_case(
     match engine {
         Answers::Ok(answers) => (Some(answers), naive_ms),
         Answers::Overflow | Answers::Scalar => (None, naive_ms),
+        Answers::UnsupportedEvent => {
+            panic!("Event queries are excluded before this conformance runner")
+        }
     }
 }
 
