@@ -27,7 +27,7 @@ impl Faults {
         self.values.is_empty()
     }
 
-    fn insert(&mut self, fault: EventOperandFault) -> crate::Result<()> {
+    pub(super) fn insert(&mut self, fault: EventOperandFault) -> crate::Result<()> {
         if let Some(error) = self.refusal {
             return Err(error.into());
         }

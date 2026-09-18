@@ -39,7 +39,8 @@ async function main() {
     const valid = expressions.map(expr => ({ kind: 'event', expr }));
     valid.push(...['isEmpty', 'isFull'].map(kind => ({ kind: 'test', expr: { kind, expr: a } })),
       ...['subset', 'equal', 'disjoint', 'covers'].map(kind => ({ kind: 'test', expr: { kind, left: a, right: a } })));
-    const query = find => ({ kind: 'cq', interiors: [], head: [{ kind: 'compute' }], rules: [{ finds: [find],
+    valid.push({ kind: 'pack', over: 0 });
+    const query = find => ({ kind: 'cq', interiors: [], head: [find.kind === 'pack' ? { kind: 'aggregate', op: 'pack' } : { kind: 'compute' }], rules: [{ finds: [find],
       atoms: [{ source: { kind: 'edb', relation: 0 }, bindings: [[0, { kind: 'var', var: 0 }]] }], negated: [], conditions: [] }] });
     for (const find of valid) {
       const prepared = await operation(cb => native.runtimeSnapshotPrepare(snapshot, query(find), cb), native.runtimePreparedTake);
@@ -57,8 +58,53 @@ async function main() {
     for (const expr of malformed) {
       await assert.rejects(() => operation(cb => native.runtimeSnapshotPrepare(snapshot, query({ kind: 'event', expr }), cb), native.runtimePreparedTake));
     }
+    const collect = async ir => {
+      const result = await operation(cb => native.runtimeSnapshotExecute(snapshot, ir, [], cb), native.runtimeResultTake);
+      try { return await operation(cb => native.runtimeResultCollect(result, cb), native.runtimeRowsTake); }
+      finally { await close(native.runtimeResultClose, result); }
+    };
+    const pack = query({ kind: 'pack', over: 0 });
+    assert.deepEqual(await collect(pack), []);
+    // The pinned canonical row fixture contains one coordinate predicate.
+    // Complement toggles its root; terminal full/empty need no graph nodes.
+    const fixture = Buffer.from(fs.readFileSync(path.join(__dirname, '../crates/bumbledb/tests/fixtures/event-v1-row.hex'), 'utf8').trim(), 'hex').subarray(11);
+    assert.equal(fixture.subarray(0, 4).toString(), 'BEVT');
+    const complement = Buffer.from(fixture);
+    complement.writeUInt32LE(fixture.readUInt32LE(48) ^ 1, 48);
+    const full = Buffer.alloc(52); fixture.copy(full, 0, 0, 40);
+    full.writeUInt32LE(1, 44); full.writeUInt32LE(1, 48);
+    const empty = Buffer.from(full); empty.writeUInt32LE(0, 48);
+    const insert = async values => {
+      const draft = await operation(cb => native.runtimeDraftOpen(runtime, spec, cb), native.runtimeDraftTake);
+      let changes;
+      try {
+        await operation(cb => native.runtimeDraftInsert(draft, 0, BigInt(values.length), values, cb), native.runtimeReportTake);
+        changes = (await operation(cb => native.runtimeDraftFinish(draft, cb), native.runtimeChangesTake)).changes;
+        const applied = await operation(cb => native.runtimeDbApply(db, changes, { kind: 'any' }, cb), native.runtimeApplyTake);
+        assert.equal(applied.tag, 'accepted');
+      } finally {
+        if (changes) await close(native.runtimeChangesClose, changes);
+        await close(native.runtimeDraftClose, draft);
+      }
+      await close(native.runtimeSnapshotClose, snapshot);
+      snapshot = (await operation(cb => native.runtimeDbSnapshot(db, cb), native.runtimeSnapshotTake)).snapshot;
+    };
+    await insert([fixture, complement, fixture]);
+    const packed = await collect(pack);
+    assert.equal(packed.length, 1);
+    assert.deepEqual(Buffer.from(packed[0][0]), full);
+    const staged = query({ kind: 'event', expr: { kind: 'not', expr: a } });
+    staged.interiors = [{ head: pack.head, rules: pack.rules }];
+    staged.rules[0].atoms[0].source = { kind: 'interior', interior: 0 };
+    const missing = await collect(staged);
+    assert.equal(missing.length, 1);
+    assert.deepEqual(Buffer.from(missing[0][0]), empty);
+    const foreign = Buffer.from(empty); foreign.fill(43, 8, 40);
+    await insert([foreign]);
+    await assert.rejects(() => collect(pack));
     console.log(JSON.stringify({ passed: true, constructors_admitted: valid.length,
       malformed_programs_refused: malformed.length,
+      event_pack_evaluations: 4,
       addon_sha256: createHash('sha256').update(fs.readFileSync(binary)).digest('hex') }));
   } finally {
     if (snapshot) await close(native.runtimeSnapshotClose, snapshot);

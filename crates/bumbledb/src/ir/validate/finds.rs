@@ -68,10 +68,9 @@ impl Signature {
                     op: AggKind::of(*op),
                 },
                 FindTerm::Pack { over } => SignatureColumn::Fold {
-                    ty: ValueType::Interval {
-                        element: var_type(over)
-                            .interval_element()
-                            .expect("validated interval"),
+                    ty: match var_type(over).interval_element() {
+                        Some(element) => ValueType::Interval { element },
+                        None => ValueType::Event,
                     },
                     op: AggKind::Pack,
                 },
@@ -209,7 +208,9 @@ impl Context {
                     if group_key.contains(over) {
                         return Err(ValidationError::AggregateOverGroupKey { find });
                     }
-                    if !self.resolved_var_type(*over).is_interval() {
+                    if !self.resolved_var_type(*over).is_interval()
+                        && *self.resolved_var_type(*over) != ValueType::Event
+                    {
                         return Err(ValidationError::PackInputType { find });
                     }
                     if fold_seen {

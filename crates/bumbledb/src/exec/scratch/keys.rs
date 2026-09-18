@@ -25,18 +25,21 @@ pub enum ScratchMapId {
     /// Exact token → text bytes for nonresident reverse lookup. Same env
     /// as [`Self::TextForward`]; not a second `ScratchRelation`.
     TextReverse = 5,
+    /// Event Pack: group token → canonical context and a retained anchor key.
+    EventPackContext = 6,
 }
 
 impl ScratchMapId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Default,
         Self::GroupToToken,
         Self::TokenToGroup,
         Self::OrderLog,
         Self::TextForward,
         Self::TextReverse,
+        Self::EventPackContext,
     ];
-    pub const COUNT: usize = 6;
+    pub const COUNT: usize = 7;
 
     #[must_use]
     pub const fn index(self) -> usize {
@@ -52,6 +55,7 @@ impl ScratchMapId {
             Self::OrderLog => "order_log",
             Self::TextForward => "text_forward",
             Self::TextReverse => "text_reverse",
+            Self::EventPackContext => "event_pack_context",
         }
     }
 }

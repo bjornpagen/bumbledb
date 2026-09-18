@@ -23,6 +23,7 @@ use crate::schema::ValueType;
 use crate::{Error, F64, FindIndex, FindTerm, ScalarError, Value, VarId};
 
 mod events;
+mod pack;
 #[cfg(test)]
 mod tests;
 
@@ -53,6 +54,7 @@ pub(in crate::api) struct ComputedSink {
     /// The first scalar failure of this execution; sticky until reset.
     pub(super) error: Option<Error>,
     faults: events::Faults,
+    pack: Option<pack::Pack>,
     pub(super) work: Option<crate::work::WorkContext>,
     generation: Option<crate::work::GenerationHandle>,
     stage: Option<usize>,
@@ -75,7 +77,7 @@ pub(super) fn lower(finds: &[FindSpec], slots: usize) -> Lowered {
                 let slot = next;
                 let width = if matches!(
                     program.expression,
-                    FindTerm::Segments { .. } | FindTerm::Event(_)
+                    FindTerm::Segments { .. } | FindTerm::Event(_) | FindTerm::Pack { .. }
                 ) {
                     2
                 } else {
@@ -95,6 +97,9 @@ impl ComputedSink {
     pub(super) fn reset(&mut self) {
         self.error = None;
         self.faults.clear();
+        if let Some(pack) = &mut self.pack {
+            pack.reset();
+        }
         if self.bindings.slot_count() == 0 {
             self.bindings.resize(
                 self.slots
@@ -104,7 +109,9 @@ impl ComputedSink {
                         .map(|(_, p)| {
                             if matches!(
                                 p.expression,
-                                FindTerm::Segments { .. } | FindTerm::Event(_)
+                                FindTerm::Segments { .. }
+                                    | FindTerm::Event(_)
+                                    | FindTerm::Pack { .. }
                             ) {
                                 2
                             } else {
@@ -120,6 +127,9 @@ impl ComputedSink {
     pub(super) fn release_memory(&mut self) {
         self.error = None;
         self.faults = events::Faults::default();
+        if let Some(pack) = &mut self.pack {
+            pack.reset();
+        }
         self.generation = None;
         self.work = None;
         self.bindings = Bindings::new(0);
@@ -132,8 +142,14 @@ impl ComputedSink {
         programs: Vec<(usize, Arc<OutputProgram>)>,
         slots: usize,
         total: usize,
+        finds: &[FindSpec],
     ) -> Self {
+        let pack = programs
+            .iter()
+            .find(|(_, p)| matches!(p.expression, FindTerm::Pack { .. }))
+            .map(|(slot, p)| pack::Pack::new(finds, *slot, p.find));
         Self {
+            pack,
             inner,
             programs,
             bindings: Bindings::new(total),
@@ -162,10 +178,30 @@ impl ComputedSink {
         if let Some(error) = &self.error {
             return Err(error.clone());
         }
-        self.faults.finish()
+        if let Some(pack) = &mut self.pack {
+            let result = pack.finish(
+                self.generation
+                    .as_ref()
+                    .ok_or(crate::event::Error::UnknownKey)?,
+                self.work.as_ref().ok_or(crate::event::Error::UnknownKey)?,
+                self.stage,
+                &mut self.faults,
+                &mut self.inner,
+            );
+            if let Err(error) = result {
+                self.error = Some(error.clone());
+                return Err(error);
+            }
+        }
+        let result = self.faults.finish();
+        if let Err(error) = &result {
+            self.error = Some(error.clone());
+        }
+        result
     }
 
-    fn event_outputs(&mut self) -> crate::Result<()> {
+    fn event_outputs(&mut self) -> crate::Result<bool> {
+        let mut admitted = true;
         for (slot, program) in &self.programs {
             if !matches!(program.expression, FindTerm::Event(_) | FindTerm::Test(_)) {
                 continue;
@@ -185,13 +221,22 @@ impl ComputedSink {
                 if matches!(program.expression, FindTerm::Event(_)) {
                     self.bindings.set(*slot + 1, words[1]);
                 }
+            } else {
+                admitted = false;
             }
         }
-        Ok(())
+        Ok(admitted)
     }
 
     pub(super) fn aim(&mut self, finds: &[FindSpec], slots: usize, shared: &[(usize, usize)]) {
         let (finds, programs, total) = lower(finds, slots);
+        if let Some(pack) = &mut self.pack {
+            let (slot, _) = programs
+                .iter()
+                .find(|(_, p)| matches!(p.expression, FindTerm::Pack { .. }))
+                .expect("Event Pack heads stay Event Pack");
+            pack.aim(&finds, *slot);
+        }
         self.slots = slots;
         self.programs = programs;
         self.bindings.resize(total);
@@ -205,10 +250,13 @@ impl ComputedSink {
         if self.error.is_some() {
             return;
         }
-        if let Err(error) = self.event_outputs() {
-            self.error = Some(error);
-            return;
-        }
+        let admitted = match self.event_outputs() {
+            Ok(admitted) => admitted,
+            Err(error) => {
+                self.error = Some(error);
+                return;
+            }
+        };
         self.pieces.clear();
         for (slot, program) in &self.programs {
             let FindTerm::Segments { op, left, right } = &program.expression else {
@@ -267,7 +315,13 @@ impl ComputedSink {
             };
             self.bindings.set(*slot, word);
         }
-        if !self.faults.is_empty() {
+        if !admitted {
+            return;
+        }
+        if let Some(result) = self.pack_row() {
+            if let Err(error) = result {
+                self.error = Some(error);
+            }
             return;
         }
         loop {
@@ -291,6 +345,25 @@ impl ComputedSink {
                 return;
             }
         }
+    }
+
+    fn pack_row(&mut self) -> Option<crate::Result<()>> {
+        let pack = self.pack.as_mut()?;
+        let (_, program) = self
+            .programs
+            .iter()
+            .find(|(_, p)| matches!(p.expression, FindTerm::Pack { .. }))
+            .expect("Event Pack program");
+        Some((|| {
+            pack.observe(
+                &self.bindings,
+                program,
+                self.generation
+                    .as_ref()
+                    .ok_or(crate::event::Error::UnknownKey)?,
+                self.work.as_ref().ok_or(crate::event::Error::UnknownKey)?,
+            )
+        })())
     }
 
     fn flow_after_row(&self) -> Flow {

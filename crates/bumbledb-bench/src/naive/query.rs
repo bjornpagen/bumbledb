@@ -260,7 +260,10 @@ pub fn dnf_width(rule: &Rule) -> usize {
     rule.conditions.iter().map(width).product()
 }
 
-fn pack_segments(claims: &[&Value]) -> Vec<Value> {
+fn pack_segments(claims: &[&Value]) -> Result<Vec<Value>, QueryError> {
+    if claims.iter().any(|value| matches!(value, Value::Event(_))) {
+        return Err(QueryError::UnsupportedEvent);
+    }
     let mut segments: Vec<(i128, i128)> = claims.iter().map(|value| endpoints(value)).collect();
     segments.sort_unstable();
     let mut merged: Vec<(i128, i128)> = Vec::new();
@@ -304,7 +307,7 @@ fn pack_segments(claims: &[&Value]) -> Vec<Value> {
         }
         other => panic!("validated: Pack takes an interval, got {other:?}"),
     };
-    merged.into_iter().map(rebuild).collect()
+    Ok(merged.into_iter().map(rebuild).collect())
 }
 
 fn pack_position(finds: &[FindTerm]) -> Option<(usize, VarId)> {
@@ -619,7 +622,7 @@ impl NaiveDb {
         for group in groups.values() {
             if let Some((position, _)) = pack {
                 let claims: Vec<&Value> = group.iter().map(|row| &row.0[position]).collect();
-                for segment in pack_segments(&claims) {
+                for segment in pack_segments(&claims)? {
                     let row: Result<Vec<Value>, QueryError> = head
                         .iter()
                         .enumerate()
@@ -1085,7 +1088,7 @@ fn pack_group_rows(
         .iter()
         .map(|binding| &binding.0[usize::from(over.0)])
         .collect();
-    for segment in pack_segments(&claims) {
+    for segment in pack_segments(&claims)? {
         let row: Result<Vec<Value>, QueryError> = finds
             .iter()
             .enumerate()
@@ -1277,7 +1280,7 @@ fn project_segments(
                 }
                 // Adjacent retained cells belong to one maximal piece.
                 let refs = pieces.iter().collect::<Vec<_>>();
-                let pieces = pack_segments(&refs);
+                let pieces = pack_segments(&refs)?;
                 absent |= pieces.is_empty();
                 choices.push(pieces);
             } else {

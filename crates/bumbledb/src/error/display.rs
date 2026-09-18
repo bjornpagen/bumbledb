@@ -893,7 +893,7 @@ impl fmt::Display for ValidationError {
                 write!(f, "find {find}: Pack and fold aggregates may not mix")
             }
             Self::PackInputType { find } => {
-                write!(f, "find {find}: Pack folds an interval variable only")
+                write!(f, "find {find}: Pack folds an interval or Event variable")
             }
             Self::TooManyAtoms { count } => {
                 write!(f, "{count} atom occurrences exceed the planner cap")

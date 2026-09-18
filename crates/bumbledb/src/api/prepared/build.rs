@@ -370,11 +370,7 @@ fn prepare_interior(
     let witnesses: Vec<_> = witness.interior_rules(index).collect();
     let normalized =
         crate::ir::normalize::normalize_rules(schema, signatures, witnesses.iter().copied());
-    let finds: Vec<&[crate::ir::FindTerm]> = witnesses
-        .iter()
-        .map(|rule| rule.rule().finds.as_slice())
-        .collect();
-    let survivors = ground_rules(normalized, &finds, schema);
+    let survivors = ground_rules(normalized, &witnesses, schema);
     let mut rules = Vec::with_capacity(survivors.len());
     let mut written = Vec::with_capacity(survivors.len());
     for (rule_idx, normalized_rule) in survivors {
@@ -436,12 +432,8 @@ fn prepare_reach(
     let base_norm =
         crate::ir::normalize::normalize_rules(schema, signatures, base_w.iter().copied());
     let rec_norm = crate::ir::normalize::normalize_rules(schema, signatures, rec_w.iter().copied());
-    let base_finds: Vec<&[crate::ir::FindTerm]> =
-        base_w.iter().map(|r| r.rule().finds.as_slice()).collect();
-    let rec_finds: Vec<&[crate::ir::FindTerm]> =
-        rec_w.iter().map(|r| r.rule().finds.as_slice()).collect();
-    let base_surv = ground_rules(base_norm, &base_finds, schema);
-    let rec_surv = ground_rules(rec_norm, &rec_finds, schema);
+    let base_surv = ground_rules(base_norm, &base_w, schema);
+    let rec_surv = ground_rules(rec_norm, &rec_w, schema);
     let mut base = Vec::new();
     for (rule_idx, normalized_rule) in base_surv {
         if normalized_rule.dead.is_some() {
@@ -504,11 +496,20 @@ fn prepare_reach(
     })
 }
 
+fn has_event_diagnostics(rule: crate::ir::validate::RuleWitness<'_>) -> bool {
+    rule.rule().finds.iter().any(|term| match term {
+        FindTerm::Event(_) | FindTerm::Test(_) => true,
+        FindTerm::Pack { over } => *rule.var_type(*over) == ValueType::Event,
+        _ => false,
+    })
+}
+
 fn ground_rules(
     mut normalized: Vec<NormalizedQuery>,
-    finds: &[&[crate::ir::FindTerm]],
+    rules: &[crate::ir::validate::RuleWitness<'_>],
     schema: &Schema,
 ) -> Vec<(usize, NormalizedQuery)> {
+    let finds: Vec<_> = rules.iter().map(|r| r.rule().finds.as_slice()).collect();
     for (rule_idx, normalized_rule) in normalized.iter_mut().enumerate() {
         if normalized_rule.dead.is_some() {
             continue;
@@ -516,15 +517,11 @@ fn ground_rules(
         crate::plan::ground::ground(normalized_rule, schema, finds[rule_idx]);
     }
     let subsumed: std::collections::HashSet<usize> =
-        crate::plan::ground::subsume(&normalized, finds)
+        crate::plan::ground::subsume(&normalized, &finds)
             .into_iter()
             // Distinct written Event programs have distinct fault identities.
             // No current subsumption witness preserves their participation.
-            .filter(|deletion| {
-                !finds[deletion.rule]
-                    .iter()
-                    .any(|term| matches!(term, FindTerm::Event(_) | FindTerm::Test(_)))
-            })
+            .filter(|deletion| !has_event_diagnostics(rules[deletion.rule]))
             .map(|deletion| deletion.rule)
             .collect();
     normalized
@@ -604,11 +601,7 @@ fn ground_main(
             .into_iter()
             // Distinct written Event programs have distinct fault identities.
             // No current subsumption witness preserves their participation.
-            .filter(|deletion| {
-                !finds[deletion.rule]
-                    .iter()
-                    .any(|term| matches!(term, FindTerm::Event(_) | FindTerm::Test(_)))
-            })
+            .filter(|deletion| !has_event_diagnostics(witness.rule(deletion.rule)))
             .map(|deletion| deletion.rule)
             .collect();
     normalized
@@ -979,6 +972,14 @@ fn find_specs(rule: &RuleWitness<'_>, layout: &impl SlotLayout) -> Vec<FindSpec>
                 }))
             }
             FindTerm::Count => FindSpec::Agg(crate::exec::sink::AggSpec::Count),
+            FindTerm::Pack { over } if *rule.var_type(*over) == ValueType::Event => {
+                FindSpec::Compute(Arc::new(crate::api::prepared::computed::OutputProgram {
+                    find: find_idx,
+                    rules: rule.minted().to_vec(),
+                    expression: term.clone(),
+                    inputs: vec![(*over, layout.slot_of(*over), ValueType::Event)],
+                }))
+            }
             FindTerm::Pack { over } => FindSpec::Pack {
                 slot: layout.slot_of(*over),
             },
@@ -1115,7 +1116,7 @@ fn make_sink(
         let (lowered, programs, total) = crate::api::prepared::computed::lower(finds, slot_count);
         let inner = make_plain_sink(&lowered, total, regime, hint, &[]);
         return EitherSink::Computed(Box::new(crate::api::prepared::computed::ComputedSink::new(
-            inner, programs, slot_count, total,
+            inner, programs, slot_count, total, &lowered,
         )));
     }
     make_plain_sink(finds, slot_count, regime, hint, dense_groups)

@@ -38,7 +38,7 @@ fn fixture(producers: usize, project_one: bool) -> ComputedSink {
             )
         })
         .collect();
-    let mut sink = ComputedSink::new(EitherSink::Projection(projection), programs, 4, total);
+    let mut sink = ComputedSink::new(EitherSink::Projection(projection), programs, 4, total, &[]);
     sink.bindings.set(0, 0);
     sink.bindings.set(1, 10);
     sink.bindings.set(2, 3);
@@ -192,7 +192,13 @@ fn event_fixture(
         ],
     });
     let projection = ProjectionSink::new(vec![4, 5]);
-    let mut sink = ComputedSink::new(EitherSink::Projection(projection), vec![(4, program)], 4, 6);
+    let mut sink = ComputedSink::new(
+        EitherSink::Projection(projection),
+        vec![(4, program)],
+        4,
+        6,
+        &[],
+    );
     sink.work = Some(WorkContext::new());
     sink.bind_events(&generation, None);
     (sink, source, generation)
