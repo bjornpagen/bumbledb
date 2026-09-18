@@ -30,6 +30,9 @@ pub enum Error {
     InvalidEncoding,
     UnsupportedVersion(u8),
     UnknownKey,
+    MapArity,
+    MapOutsideSupport,
+    IncompleteImage,
 }
 
 impl fmt::Display for Error {
@@ -50,6 +53,13 @@ impl fmt::Display for Error {
                 write!(f, "unsupported Event encoding version {version}")
             }
             Self::UnknownKey => f.write_str("unknown or unowned Event binding key"),
+            Self::MapArity => f.write_str("event map needs one readout per target coordinate"),
+            Self::MapOutsideSupport => {
+                f.write_str("event map sends a legal source world outside target support")
+            }
+            Self::IncompleteImage => {
+                f.write_str("event map does not reach every legal target world")
+            }
         }
     }
 }

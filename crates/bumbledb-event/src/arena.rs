@@ -143,6 +143,9 @@ impl Arena {
     pub fn dimensions(&self) -> usize {
         self.order.len()
     }
+    pub fn order(&self) -> &[u8] {
+        &self.order
+    }
     pub fn mask(&self) -> u64 {
         (1 << self.dimensions()) - 1
     }
@@ -682,5 +685,75 @@ impl<'a> Operation<'a> {
         memo.try_reserve(1)?;
         memo.insert(regular, result);
         Ok(result ^ (root & 1))
+    }
+
+    /// Simultaneous Boolean substitution. A missing source means this arena;
+    /// node snapshots let resident substitution append without aliasing a view.
+    /// The caller scopes `memo` to one source and one replacement vector.
+    pub fn substitute(
+        &mut self,
+        source: Option<&Arena>,
+        root: Ref,
+        replacements: &[Ref],
+        memo: &mut HashMap<Ref, Ref>,
+    ) -> Result<Ref> {
+        self.step()?;
+        if root < 2 {
+            return Ok(root);
+        }
+        let regular = root & !1;
+        if let Some(&result) = memo.get(&regular) {
+            return Ok(result ^ (root & 1));
+        }
+        let result = match source.unwrap_or(self.arena).view(regular) {
+            View::Constant(_) => unreachable!("nonconstant reference"),
+            View::Table {
+                variables, words, ..
+            } => {
+                let mut data = [0; 8];
+                data[..words.len()].copy_from_slice(words);
+                self.substitute_table(variables, &data, 0, 0, replacements)?
+            }
+            View::Split {
+                variable,
+                low,
+                high,
+            } => {
+                let low = self.substitute(source, low, replacements, memo)?;
+                let high = self.substitute(source, high, replacements, memo)?;
+                self.ite(replacements[usize::from(variable)], high, low)?
+            }
+        };
+        if memo.len() >= self.limits().memo_entries {
+            return Err(Error::Capacity(Capacity::MemoEntries));
+        }
+        memo.try_reserve(1)?;
+        memo.insert(regular, result);
+        Ok(result ^ (root & 1))
+    }
+
+    fn substitute_table(
+        &mut self,
+        variables: u64,
+        data: &[u64; 8],
+        position: u32,
+        index: usize,
+        replacements: &[Ref],
+    ) -> Result<Ref> {
+        self.step()?;
+        if variables == 0 {
+            return Ok(Ref::from(cell(data, index)));
+        }
+        let variable = variables.trailing_zeros() as usize;
+        let remaining = variables & (variables - 1);
+        let low = self.substitute_table(remaining, data, position + 1, index, replacements)?;
+        let high = self.substitute_table(
+            remaining,
+            data,
+            position + 1,
+            index | (1 << position),
+            replacements,
+        )?;
+        self.ite(replacements[variable], high, low)
     }
 }

@@ -4,9 +4,10 @@
 use super::FieldId;
 
 /// The ordinary field tuple, optionally followed by the full Event of the
-/// statement group's checked world context. Only the trailing region position
-/// is supported by the dependency language. Fields before a full constant must
-/// be scalar; schema admission establishes that premise.
+/// statement group's checked world context. The full constant is supported only
+/// in the trailing region position. Fields before it must be scalar; schema
+/// admission establishes that premise. Field-only containments may permute their
+/// region position along with the other fields.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Projection<F = FieldId> {
     Fields(Box<[F]>),

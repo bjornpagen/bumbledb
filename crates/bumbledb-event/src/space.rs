@@ -30,21 +30,21 @@ impl EventKey {
 }
 
 #[derive(Debug)]
-struct Owner {
+pub(crate) struct Owner {
     token: u64,
     identity: SpaceId,
     dimensions: u8,
-    support: Ref,
+    pub(crate) support: Ref,
     anchor: u64,
     arena: Arc<Mutex<Arena>>,
 }
 
 impl Owner {
-    fn lock(&self) -> Result<MutexGuard<'_, Arena>> {
+    pub(crate) fn lock(&self) -> Result<MutexGuard<'_, Arena>> {
         self.arena.lock().map_err(|_| Error::Poisoned)
     }
 
-    fn complete(&self, op: &mut Operation<'_>, raw: Ref) -> Result<Ref> {
+    pub(crate) fn complete(&self, op: &mut Operation<'_>, raw: Ref) -> Result<Ref> {
         // rho fixes legal worlds and sends all other codes to one legal anchor.
         // ITE, rather than masking, makes complement a single polarity bit.
         let anchor_value = Ref::from(op.arena.evaluate(raw, self.anchor));
@@ -61,13 +61,13 @@ fn token() -> Result<u64> {
 /// An inhabited world space. Clones retain the same owner and source identity.
 /// Coordinates are semantic bit indices; physical split order is separate.
 #[derive(Debug, Clone)]
-pub struct Space(Arc<Owner>);
+pub struct Space(pub(crate) Arc<Owner>);
 
 /// An owned canonical condition. Empty/full values retain this owner too.
 #[derive(Debug, Clone)]
 pub struct Event {
     owner: Arc<Owner>,
-    root: Ref,
+    pub(crate) root: Ref,
 }
 
 /// Retained arena capacity includes intermediates and all sharing spaces.
@@ -139,10 +139,32 @@ impl Space {
         self.event(1)
     }
 
-    fn event(&self, root: Ref) -> Event {
+    pub(crate) fn event(&self, root: Ref) -> Event {
         Event {
             owner: self.0.clone(),
             root,
+        }
+    }
+
+    /// Lock a pair once, in the same total order used by checked alignment.
+    /// `None` means both contexts use the first arena (possibly with different
+    /// support). No raw reference crosses an arena without an explicit rebuild.
+    pub(crate) fn with_arena_pair<T>(
+        &self,
+        other: &Self,
+        run: impl FnOnce(&mut Arena, Option<&mut Arena>) -> Result<T>,
+    ) -> Result<T> {
+        if Arc::ptr_eq(&self.0.arena, &other.0.arena) {
+            let mut arena = self.0.lock()?;
+            run(&mut arena, None)
+        } else if Arc::as_ptr(&self.0.arena).addr() < Arc::as_ptr(&other.0.arena).addr() {
+            let mut first = self.0.lock()?;
+            let mut second = other.0.lock()?;
+            run(&mut first, Some(&mut second))
+        } else {
+            let mut second = other.0.lock()?;
+            let mut first = self.0.lock()?;
+            run(&mut first, Some(&mut second))
         }
     }
 

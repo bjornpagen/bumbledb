@@ -11,13 +11,18 @@ mod arena;
 mod boolean;
 mod codec;
 mod error;
+mod map;
 mod registry;
 mod space;
 
 pub use boolean::{BoolOp4, Signature};
 pub use error::{Capacity, Control, Error, Limits, Result};
+pub use map::{CoordinateMap, SurjectiveMap};
 pub use registry::Registry;
 pub use space::{Event, EventKey, Space, SpaceId, Statistics};
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod map_tests;
