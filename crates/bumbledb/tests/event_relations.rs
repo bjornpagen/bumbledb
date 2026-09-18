@@ -91,5 +91,13 @@ fn computed_permissions_reopen_join_and_recover_their_relation_view() {
         let output = states.coordinate(0, &()).unwrap().complement();
         assert!(permission.must(&output, &()).unwrap().is_full());
         assert_eq!(permission.readout(&()).unwrap().map_world(1).unwrap(), 0);
+        // Inspection is also available to an external database consumer. The
+        // snapshot retains support after both database and row owners go away.
+        let diagram = region.diagram(&common::work()).unwrap();
+        let rebuilt = diagram.rebuild(pair.space(), &common::work()).unwrap();
+        assert_eq!(rebuilt, *permission.region());
+        for code in 0..4 {
+            assert_eq!(diagram.contains(code).unwrap(), code < 2);
+        }
     }
 }

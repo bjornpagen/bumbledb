@@ -10,6 +10,7 @@ compile_error!("bumbledb-event currently requires a 64-bit target");
 mod arena;
 mod boolean;
 mod codec;
+mod diagram;
 mod error;
 mod map;
 mod product;
@@ -18,6 +19,7 @@ mod relation;
 mod space;
 
 pub use boolean::{BoolOp4, Signature};
+pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
@@ -33,3 +35,6 @@ mod map_tests;
 
 #[cfg(test)]
 mod relation_tests;
+
+#[cfg(test)]
+mod diagram_tests;

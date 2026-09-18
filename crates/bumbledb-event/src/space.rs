@@ -277,6 +277,24 @@ impl Space {
 }
 
 impl Event {
+    /// Capture the reachable completed-function and original-support diagrams.
+    /// The snapshot owns its records. Borrowed views hold no manager lock, so a
+    /// caller can inspect a graph while constructing Events in the same space.
+    /// This is a working representation, not a canonical persistence encoding.
+    /// # Errors
+    /// Refuses cancellation, allocation or inspection-capacity exhaustion.
+    pub fn diagram(&self, control: &dyn Control) -> Result<crate::Diagram> {
+        control.checkpoint()?;
+        let mut arena = self.owner.lock()?;
+        crate::diagram::capture(
+            self.owner.identity,
+            self.owner.support,
+            self.root,
+            &mut arena,
+            control,
+        )
+    }
+
     /// Canonical versioned bytes of this unmeasured space and region. Allocation,
     /// decoder aliases, working order and local-table cutoff do not determine
     /// these bytes. Conversion can exceed an explicit resource limit.
