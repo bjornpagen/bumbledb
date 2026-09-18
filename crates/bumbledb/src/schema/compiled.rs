@@ -86,6 +86,10 @@ pub enum DistinctnessWitness {
     /// a pointwise key. This does not make the scalar routing bucket unique:
     /// it may contain many rows with disjoint intervals.
     IntervalKeyUnique { projection: ProjectionId },
+    /// A pointwise Event key has no unconditional uniqueness witness: distinct
+    /// empty-valued facts may share its complete projected value. A consumer
+    /// needs separate nonemptiness evidence or an ordinary scalar key.
+    EventKeyMayBeEmpty { projection: ProjectionId },
     /// Existence-only suffix may stop after the first sufficient witness.
     ExistenceOnly { projection: ProjectionId },
 }
@@ -97,9 +101,9 @@ pub enum DistinctnessWitness {
 pub struct ProjectionBinding {
     /// Interned physical index, if this side has one.
     pub projection: Option<ProjectionId>,
-    /// Statement-side projection (interval included). Logical group order.
+    /// Statement-side projection (region included). Logical group order.
     pub logical: Box<[FieldId]>,
-    /// Intern/key field order (interval included). Identity when unindexed.
+    /// Intern/key field order (region included). Identity when unindexed.
     pub intern_order: Box<[FieldId]>,
     /// Statement-side scalar fields, logical group coordinates.
     pub logical_scalars: Box<[FieldId]>,
@@ -112,7 +116,7 @@ pub struct ProjectionBinding {
 }
 
 impl ProjectionBinding {
-    /// Logical group scalars from a full row (statement order, no interval).
+    /// Logical group scalars from a full row (statement order, no region).
     /// Independent of whether this side has a physical index.
     #[must_use]
     pub fn logical_group(&self, row: &[Value]) -> Vec<Value> {
@@ -202,8 +206,8 @@ pub enum VisitOutcome {
     Stopped { visited: usize },
 }
 
-/// One compiled access path: relation, scalar routing and logical interval
-/// metadata. Interval values are read from canonical rows, not index keys.
+/// One compiled access path: relation, scalar routing and logical region
+/// metadata. Region values are read from canonical rows, not index keys.
 #[derive(Debug, Clone)]
 pub struct CompiledProjection {
     pub id: ProjectionId,
@@ -215,9 +219,9 @@ pub struct CompiledProjection {
     pub scalar_positions: Box<[usize]>,
     pub scalar_fields: Box<[FieldDescriptor]>,
     pub encoding: KeyEncoding,
-    /// Optional logical interval position within `projection`.
-    pub interval_position: Option<usize>,
-    pub interval_type: Option<ValueType>,
+    /// Optional logical region position within `projection`.
+    pub region_position: Option<usize>,
+    pub region_type: Option<ValueType>,
 }
 
 impl CompiledProjection {
@@ -256,8 +260,8 @@ impl CompiledProjection {
     }
 
     #[must_use]
-    pub fn interval_field(&self) -> Option<FieldId> {
-        self.interval_position
+    pub fn region_field(&self) -> Option<FieldId> {
+        self.region_position
             .map(|position| self.projection[position])
     }
 
@@ -710,6 +714,12 @@ fn compile_key(
         KeyForm::Scalar => DistinctnessWitness::ScalarKeyUnique {
             projection: ProjectionId(0),
         },
+        KeyForm::Pointwise {
+            tail: ValueType::Event,
+            ..
+        } => DistinctnessWitness::EventKeyMayBeEmpty {
+            projection: ProjectionId(0),
+        },
         KeyForm::Pointwise { .. } => DistinctnessWitness::IntervalKeyUnique {
             projection: ProjectionId(0),
         },
@@ -761,6 +771,11 @@ fn compile_containment(
             key_projection,
         }
         | Enforcement::IntervalCoverage {
+            target_key,
+            key_projection,
+            ..
+        }
+        | Enforcement::EventCoverage {
             target_key,
             key_projection,
             ..
@@ -996,7 +1011,7 @@ fn scalar_fields_of(projection: &[FieldId], descriptors: &[FieldDescriptor]) -> 
     projection
         .iter()
         .copied()
-        .filter(|field| !descriptors[usize::from(field.0)].value_type.is_interval())
+        .filter(|field| !descriptors[usize::from(field.0)].value_type.is_region())
         .collect()
 }
 
@@ -1013,6 +1028,9 @@ fn placed_witness(id: ProjectionId, witness: DistinctnessWitness) -> Distinctnes
         }
         DistinctnessWitness::IntervalKeyUnique { .. } => {
             DistinctnessWitness::IntervalKeyUnique { projection: id }
+        }
+        DistinctnessWitness::EventKeyMayBeEmpty { .. } => {
+            DistinctnessWitness::EventKeyMayBeEmpty { projection: id }
         }
         DistinctnessWitness::ExistenceOnly { .. } => {
             DistinctnessWitness::ExistenceOnly { projection: id }
@@ -1034,6 +1052,10 @@ fn stronger_witness(left: DistinctnessWitness, right: DistinctnessWitness) -> Di
         (DistinctnessWitness::FullRowEquality, _) | (_, DistinctnessWitness::FullRowEquality) => {
             DistinctnessWitness::FullRowEquality
         }
+        (DistinctnessWitness::EventKeyMayBeEmpty { projection }, _)
+        | (_, DistinctnessWitness::EventKeyMayBeEmpty { projection }) => {
+            DistinctnessWitness::EventKeyMayBeEmpty { projection }
+        }
         (
             DistinctnessWitness::ExistenceOnly { projection },
             DistinctnessWitness::ExistenceOnly { .. },
@@ -1049,13 +1071,13 @@ fn compile_projection(
 ) -> CompiledProjection {
     let mut scalar_positions = Vec::new();
     let mut scalar_fields = Vec::new();
-    let mut interval_position = None;
-    let mut interval_type = None;
+    let mut region_position = None;
+    let mut region_type = None;
     for (position, field) in projection.iter().enumerate() {
         let descriptor = &descriptors[usize::from(field.0)];
-        if descriptor.value_type.is_interval() {
-            interval_position = Some(position);
-            interval_type = Some(descriptor.value_type);
+        if descriptor.value_type.is_region() {
+            region_position = Some(position);
+            region_type = Some(descriptor.value_type);
         } else {
             scalar_positions.push(position);
             scalar_fields.push(descriptor.clone());
@@ -1069,8 +1091,8 @@ fn compile_projection(
         scalar_positions: scalar_positions.into_boxed_slice(),
         scalar_fields: scalar_fields.into_boxed_slice(),
         encoding,
-        interval_position,
-        interval_type,
+        region_position,
+        region_type,
     }
 }
 
@@ -1316,8 +1338,8 @@ mod tests {
             scalar_positions: Box::new([0, 1]),
             scalar_fields: Box::new([field("b", ValueType::U64), field("a", ValueType::I64)]),
             encoding: KeyEncoding::ExactBounded { scalar_width: 16 },
-            interval_position: None,
-            interval_type: None,
+            region_position: None,
+            region_type: None,
         };
         let row = [Value::I64(-1), Value::U64(42)];
         let mut stack = [0; MAX_EXACT_SCALAR_BYTES];
@@ -1671,8 +1693,8 @@ mod tests {
             key.encoding,
             KeyEncoding::ExactBounded { scalar_width: 8 }
         ));
-        assert_eq!(key.interval_position, Some(1));
-        assert_eq!(key.interval_type, Some(iv));
+        assert_eq!(key.region_position, Some(1));
+        assert_eq!(key.region_type, Some(iv));
         assert_eq!(key.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8);
         assert_eq!(
             theory.distinctness_witness(key.id),
@@ -1686,8 +1708,8 @@ mod tests {
         let source = theory
             .source_projection(StatementId(1))
             .expect("coverage source");
-        assert_eq!(source.interval_position, Some(1));
-        assert_eq!(source.interval_type, Some(iv));
+        assert_eq!(source.region_position, Some(1));
+        assert_eq!(source.region_type, Some(iv));
         assert_eq!(source.complete_key_width(), DETERMINANT_KEY_OVERHEAD + 8);
     }
 

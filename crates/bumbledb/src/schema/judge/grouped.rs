@@ -263,6 +263,12 @@ impl<E> GroupedMap<E> {
         self.apply(|inner| inner.put(key, value))
     }
 
+    /// Reuse caller-owned bytes for a variable-width exact summary. Both the
+    /// resident and spilled tiers preserve the complete checked Event codec.
+    pub(super) fn get(&mut self, key: &[u8], out: &mut Vec<u8>) -> Result<bool, JudgeError<E>> {
+        self.apply(|inner| inner.get(key, out))
+    }
+
     pub(super) fn contains(&mut self, key: &[u8]) -> Result<bool, JudgeError<E>> {
         let mut out = std::mem::take(&mut self.scratch_value);
         let found = self.apply(|inner| inner.get(key, &mut out));
@@ -421,7 +427,7 @@ fn corrupt(what: &'static str) -> Error {
 pub(super) fn encode_value(value: &Value, out: &mut Vec<u8>) {
     match value {
         Value::Event(_) => {
-            unreachable!("schema sealing refuses Event scalar determinants until M3")
+            unreachable!("Event positions are pointwise regions, never scalar determinants")
         }
         Value::Bool(v) => out.extend_from_slice(&[0, u8::from(*v)]),
         Value::U64(v) => {

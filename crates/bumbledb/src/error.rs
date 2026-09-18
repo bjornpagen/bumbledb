@@ -219,8 +219,8 @@ pub enum CorruptionError {
 /// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
-    /// Storage is available, but this Event schema contract has not passed
-    /// the pointwise-admission gate. Refuse instead of applying scalar laws.
+    /// This Event position (selection, capacity or closed roster) has not
+    /// passed its native contract gate. Pointwise field dependencies are supported.
     EventContractPending {
         relation: RelationId,
         field: FieldId,
@@ -388,6 +388,16 @@ pub enum StatementErrorKind {
         field: FieldId,
     },
 
+    FunctionalityMultipleRegions {
+        relation: RelationId,
+        field: FieldId,
+    },
+
+    FunctionalityEventNotLast {
+        relation: RelationId,
+        field: FieldId,
+    },
+
     DuplicateFunctionality {
         earlier: StatementId,
     },
@@ -494,6 +504,13 @@ pub enum FactShapeError {
         mismatch: Mismatch<usize>,
     },
     TypeMismatch {
+        relation: RelationId,
+        field: FieldId,
+    },
+
+    /// A single-result key lookup needs a nonempty Event or a separately
+    /// sufficient scalar key. The empty Event remains a valid stored value.
+    EmptyEventLookup {
         relation: RelationId,
         field: FieldId,
     },

@@ -40,8 +40,8 @@ fn exact_projection(
         encoding: KeyEncoding::ExactBounded {
             scalar_width: u8::try_from(width).unwrap(),
         },
-        interval_position: None,
-        interval_type: None,
+        region_position: None,
+        region_type: None,
     }
 }
 

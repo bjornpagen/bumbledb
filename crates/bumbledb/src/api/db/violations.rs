@@ -24,6 +24,7 @@ use crate::work::WorkContext;
 /// neither is a domain rejection.
 pub(super) fn judge_refusal<E: Into<Error>>(error: crate::schema::judge::JudgeError<E>) -> Error {
     match error {
+        crate::schema::judge::JudgeError::Event(source) => source.into(),
         crate::schema::judge::JudgeError::Work(work) => {
             Error::from_store(crate::storage::store::StoreError::Work(work))
         }

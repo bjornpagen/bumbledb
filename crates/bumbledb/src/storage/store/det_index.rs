@@ -278,8 +278,8 @@ mod tests {
             scalar_positions: (0..fields.len()).collect(),
             scalar_fields: fields.into(),
             encoding,
-            interval_position: None,
-            interval_type: None,
+            region_position: None,
+            region_type: None,
         }
     }
 

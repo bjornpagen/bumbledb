@@ -184,8 +184,8 @@ fn judgment_over_the_store_agrees_with_the_reference_map_state() {
     let schema = user_schema();
     // Proposed final state: {user1, user2-with-same-email}.
     let mut reference = MapState::new();
-    reference.insert(USER, user(1, "a@example"));
-    reference.insert(USER, user(2, "a@example"));
+    reference.insert(USER, user(1, "a@example")).unwrap();
+    reference.insert(USER, user(2, "a@example")).unwrap();
     let reference_verdict = judge_final_state(&schema, &reference, &work(), JudgeBudget::default())
         .expect("reference judgment");
     let store_verdict = judged_commit(&store, &user_changes(&[user(2, "a@example")], &[]));

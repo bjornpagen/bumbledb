@@ -43,6 +43,8 @@ impl CitationTopK {
         let fields = schema.relation(relation).fields();
         let key = canonical::fact_sort_key(fields, values, work).map_err(|error| match error {
             RowError::Work(work) => JudgeError::Work(work),
+            RowError::Allocation => JudgeError::Allocation,
+            RowError::Event { source, .. } => JudgeError::from(source),
             _ => unreachable!("citation keys follow already-decoded rows"),
         })?;
         let at = self.chosen.binary_search_by(|(existing, fact)| {

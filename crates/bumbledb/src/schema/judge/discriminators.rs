@@ -552,8 +552,12 @@ fn d05_rejection_evidence_is_portable() {
     let mut forward = MapState::new();
     let mut reverse = MapState::new();
     for id in 0..8u64 {
-        forward.insert(RelationId(0), user(id, "shared@ex"));
-        reverse.insert(RelationId(0), user(7 - id, "shared@ex"));
+        forward
+            .insert(RelationId(0), user(id, "shared@ex"))
+            .unwrap();
+        reverse
+            .insert(RelationId(0), user(7 - id, "shared@ex"))
+            .unwrap();
     }
     let budget = JudgeBudget {
         examples_per_statement: 3,
@@ -602,7 +606,7 @@ fn d05_rejection_evidence_is_portable() {
     let reminted = {
         let mut state = MapState::new();
         for id in (0..8u64).rev() {
-            state.insert(RelationId(0), user(id, "shared@ex"));
+            state.insert(RelationId(0), user(id, "shared@ex")).unwrap();
         }
         state
     };
@@ -637,8 +641,8 @@ fn d05_rejection_evidence_is_portable() {
 fn d26_complete_judgment_cannot_borrow_a_lawful_parent() {
     let schema = keyed_users();
     let mut populated = MapState::new();
-    populated.insert(RelationId(0), user(1, "dup@ex"));
-    populated.insert(RelationId(0), user(2, "dup@ex"));
+    populated.insert(RelationId(0), user(1, "dup@ex")).unwrap();
+    populated.insert(RelationId(0), user(2, "dup@ex")).unwrap();
     let complete =
         judge_complete(&schema, &populated, &work(), JudgeBudget::default()).expect("complete");
     assert!(
@@ -712,7 +716,7 @@ fn d26_valid_nonempty_required_state_admits() {
         "empty nonempty-required state rejects"
     );
     let mut filled = MapState::new();
-    filled.insert(RelationId(1), vec![Value::U64(1)]);
+    filled.insert(RelationId(1), vec![Value::U64(1)]).unwrap();
     assert_eq!(
         judge_complete(&schema, &filled, &work(), JudgeBudget::default()).expect("filled"),
         Judgment::Admitted
@@ -725,7 +729,7 @@ fn cancellation_is_not_rejection() {
     let schema = keyed_users();
     let mut state = MapState::new();
     for id in 0..20u64 {
-        state.insert(RelationId(0), user(id, "shared@ex"));
+        state.insert(RelationId(0), user(id, "shared@ex")).unwrap();
     }
     let context = WorkContext::new();
     context.cancel();

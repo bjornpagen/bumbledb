@@ -33,6 +33,7 @@ use crate::schema::{
 use crate::{Value, WorkContext, WorkError};
 
 mod citation;
+mod events;
 mod grouped;
 
 pub use grouped::{JudgeScratch, ScratchFault, store_fault};
@@ -219,7 +220,14 @@ pub trait DeltaFacts: CandidateFacts {
 /// [`CandidateFacts`] used by oracles, models and the judge's own tests.
 #[derive(Debug, Default)]
 pub struct MapState {
-    relations: std::collections::BTreeMap<RelationId, Vec<Box<[Value]>>>,
+    relations: std::collections::BTreeMap<RelationId, Vec<MapRow>>,
+}
+
+#[derive(Debug)]
+struct MapRow {
+    values: Box<[Value]>,
+    /// Event handle equality is owner-local; reference fact identity is not.
+    events: Vec<(usize, Vec<u8>)>,
 }
 
 impl MapState {
@@ -228,12 +236,59 @@ impl MapState {
         Self::default()
     }
 
-    /// Inserts one proposed final row; exact duplicates collapse (a set).
-    pub fn insert(&mut self, relation: RelationId, values: Vec<Value>) {
-        let rows = self.relations.entry(relation).or_default();
-        if !rows.iter().any(|row| row.as_ref() == values.as_slice()) {
-            rows.push(values.into_boxed_slice());
+    /// Inserts one proposed final row; canonical whole-fact duplicates collapse.
+    /// Returns whether the fact was new. Use [`Self::insert_with_control`] for
+    /// cancellable Event encoding. This small reference state is not a schema
+    /// validator: callers still supply rows of the sealed field types.
+    ///
+    /// # Errors
+    /// Event encoding or allocation failure; no row is inserted on failure.
+    pub fn insert(
+        &mut self,
+        relation: RelationId,
+        values: Vec<Value>,
+    ) -> crate::event::Result<bool> {
+        self.insert_with_control(relation, values, &())
+    }
+
+    /// [`Self::insert`] under the caller's Event operation control.
+    ///
+    /// # Errors
+    /// As [`Self::insert`], including cancellation before publication.
+    pub fn insert_with_control(
+        &mut self,
+        relation: RelationId,
+        values: Vec<Value>,
+        control: &dyn crate::event::Control,
+    ) -> crate::event::Result<bool> {
+        control.checkpoint()?;
+        let mut events = Vec::new();
+        for (index, value) in values.iter().enumerate() {
+            if let Value::Event(value) = value {
+                events.try_reserve(1)?;
+                events.push((index, value.to_bytes(control)?));
+            }
         }
+        let rows = self.relations.entry(relation).or_default();
+        for row in rows.iter() {
+            control.checkpoint()?;
+            if row.events == events
+                && row.values.len() == values.len()
+                && row
+                    .values
+                    .iter()
+                    .zip(&values)
+                    .all(|(a, b)| matches!((a, b), (Value::Event(_), Value::Event(_))) || a == b)
+            {
+                return Ok(false);
+            }
+        }
+        rows.try_reserve(1)?;
+        rows.push(MapRow {
+            values: values.into_boxed_slice(),
+            events,
+        });
+        Ok(true)
     }
 }
 
@@ -247,7 +302,7 @@ impl CandidateFacts for MapState {
     ) -> Result<(), Self::Error> {
         if let Some(rows) = self.relations.get(&relation) {
             for row in rows {
-                if !visit(row.as_ref())? {
+                if !visit(&row.values)? {
                     break;
                 }
             }
@@ -316,6 +371,7 @@ pub enum Judgment {
 pub enum JudgeError<E> {
     Work(WorkError),
     State(E),
+    Event(crate::event::Error),
     /// Host allocation capacity was unavailable.
     Allocation,
     UndefinedDuration {
@@ -331,6 +387,16 @@ pub enum JudgeError<E> {
 impl<E> From<WorkError> for JudgeError<E> {
     fn from(error: WorkError) -> Self {
         Self::Work(error)
+    }
+}
+
+impl<E> From<crate::event::Error> for JudgeError<E> {
+    fn from(error: crate::event::Error) -> Self {
+        match error {
+            crate::event::Error::Cancelled => Self::Work(WorkError::Cancelled),
+            crate::event::Error::Allocation => Self::Allocation,
+            _ => Self::Event(error),
+        }
     }
 }
 
@@ -705,6 +771,17 @@ impl<E> Judge<'_, '_, E> {
         state: &S,
         statement: &KeyStatement,
     ) -> Result<bool, JudgeError<E>> {
+        if matches!(
+            statement.form(),
+            crate::schema::KeyForm::Pointwise {
+                tail: crate::schema::ValueType::Event,
+                ..
+            }
+        ) {
+            // Event summaries currently rebuild the affected statement from its
+            // complete final state, including deletion and empty contributions.
+            return Ok(false);
+        }
         let relation = statement.relation;
         let fields = self.schema.relation(relation).fields();
         let mut scalar_fields = Vec::new();
@@ -985,7 +1062,7 @@ impl<E> Judge<'_, '_, E> {
         let mut interval_field = None;
         for field in &statement.projection {
             let idx = usize::from(field.0);
-            if fields[idx].value_type.is_interval() {
+            if fields[idx].value_type.is_region() {
                 interval_field = Some(idx);
             } else {
                 scalar_fields.push(idx);
@@ -995,7 +1072,11 @@ impl<E> Judge<'_, '_, E> {
         match interval_field {
             None => self.key_scalar(state, relation, &scalar_fields, &mut pending)?,
             Some(tail) => {
-                self.key_pointwise(state, relation, &scalar_fields, tail, &mut pending)?;
+                if fields[tail].value_type == crate::schema::ValueType::Event {
+                    self.key_event(state, relation, &scalar_fields, tail, &mut pending)?;
+                } else {
+                    self.key_pointwise(state, relation, &scalar_fields, tail, &mut pending)?;
+                }
             }
         }
         self.finish(pending);
@@ -1114,17 +1195,21 @@ impl<E> Judge<'_, '_, E> {
             })?;
         } else {
             let target_fields = self.schema.relation(statement.target.relation).fields();
-            // At most one trailing interval position (validation's rule);
+            // At most one trailing region position (validation's rule);
             // its presence selects coverage instead of tuple existence.
             let coverage_position = statement
                 .target
                 .projection
                 .iter()
-                .position(|field| target_fields[usize::from(field.0)].value_type.is_interval());
+                .position(|field| target_fields[usize::from(field.0)].value_type.is_region());
             match coverage_position {
                 None => self.containment_scalar(state, statement, &mut pending)?,
                 Some(position) => {
-                    self.containment_pointwise(state, statement, position, &mut pending)?;
+                    if matches!(statement.enforcement, Enforcement::EventCoverage { .. }) {
+                        self.containment_event(state, statement, position, &mut pending)?;
+                    } else {
+                        self.containment_pointwise(state, statement, position, &mut pending)?;
+                    }
                 }
             }
         }
@@ -1434,6 +1519,9 @@ impl<E> Judge<'_, '_, E> {
         state: &S,
         statement: &ContainmentStatement,
     ) -> Result<(), JudgeError<E>> {
+        if matches!(statement.enforcement, Enforcement::EventCoverage { .. }) {
+            return self.containment(state, statement);
+        }
         if let Enforcement::Closed { members } = &statement.enforcement {
             return self.containment_closed_delta(state, statement, members);
         }

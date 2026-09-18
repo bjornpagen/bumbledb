@@ -399,7 +399,7 @@ impl<S> InstanceBuilder<S> {
         };
         for row in rows {
             let decoded = crate::canonical::decode(fields, row, &self.work).map_err(row_error)?;
-            if get_path::projection_matches(decoded.values(), projection, key_values) {
+            if get_path::projection_matches(decoded.values(), projection, key_values, &self.work)? {
                 return Ok(Some(row));
             }
         }

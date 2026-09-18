@@ -66,21 +66,27 @@ fn wide_state(rows: u64, conflict: bool) -> MapState {
         // ~200 bytes of distinct text per row: the grouped determinant
         // membership dwarfs the small working budgets below.
         let text = format!("{id:0190}-note");
-        state.insert(
-            RelationId(0),
-            vec![Value::U64(id), Value::String(text.into())],
-        );
+        state
+            .insert(
+                RelationId(0),
+                vec![Value::U64(id), Value::String(text.into())],
+            )
+            .unwrap();
     }
     if conflict {
         // Two extra rows fighting over one text value.
-        state.insert(
-            RelationId(0),
-            vec![Value::U64(rows + 1), Value::String("duplicate".into())],
-        );
-        state.insert(
-            RelationId(0),
-            vec![Value::U64(rows + 2), Value::String("duplicate".into())],
-        );
+        state
+            .insert(
+                RelationId(0),
+                vec![Value::U64(rows + 1), Value::String("duplicate".into())],
+            )
+            .unwrap();
+        state
+            .insert(
+                RelationId(0),
+                vec![Value::U64(rows + 2), Value::String("duplicate".into())],
+            )
+            .unwrap();
     }
     state
 }
@@ -205,8 +211,10 @@ fn storage_error_channel_and_plain_judgments_are_identical() {
     .expect("valid");
 
     let mut map = MapState::new();
-    map.insert(RelationId(0), vec![Value::U64(7), Value::U64(5)]);
-    map.insert(RelationId(0), vec![Value::U64(8), Value::U64(100)]);
+    map.insert(RelationId(0), vec![Value::U64(7), Value::U64(5)])
+        .unwrap();
+    map.insert(RelationId(0), vec![Value::U64(8), Value::U64(100)])
+        .unwrap();
     for id in 0..200u64 {
         let parent = 7 + (id % 2);
         map.insert(
@@ -217,7 +225,8 @@ fn storage_error_channel_and_plain_judgments_are_identical() {
                 Value::U64(1),
                 Value::IntervalU64(Interval::new(id * 10, id * 10 + 5).expect("span")),
             ],
-        );
+        )
+        .unwrap();
     }
     // One overlapping pointwise pair, one dangling child, capacity 7 blown.
     map.insert(
@@ -228,7 +237,8 @@ fn storage_error_channel_and_plain_judgments_are_identical() {
             Value::U64(1),
             Value::IntervalU64(Interval::new(3, 12).expect("span")),
         ],
-    );
+    )
+    .unwrap();
     map.insert(
         RelationId(1),
         vec![
@@ -237,7 +247,8 @@ fn storage_error_channel_and_plain_judgments_are_identical() {
             Value::U64(1),
             Value::IntervalU64(Interval::new(9000, 9010).expect("span")),
         ],
-    );
+    )
+    .unwrap();
 
     let resident = {
         let work = WorkContext::new();
@@ -313,8 +324,8 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
 
     // The ray's group (parent 99) has no parent row: latent, admitted.
     let mut latent = MapState::new();
-    latent.insert(RelationId(0), vec![Value::U64(7)]);
-    latent.insert(RelationId(1), ray_booking(1, 99));
+    latent.insert(RelationId(0), vec![Value::U64(7)]).unwrap();
+    latent.insert(RelationId(1), ray_booking(1, 99)).unwrap();
     let work = WorkContext::new();
     assert_eq!(
         judge_final_state(
@@ -329,8 +340,10 @@ fn unreferenced_group_failures_stay_latent_referenced_ones_refuse() {
 
     // The same ray under a selected parent refuses explicitly.
     let mut referenced = MapState::new();
-    referenced.insert(RelationId(0), vec![Value::U64(7)]);
-    referenced.insert(RelationId(1), ray_booking(1, 7));
+    referenced
+        .insert(RelationId(0), vec![Value::U64(7)])
+        .unwrap();
+    referenced.insert(RelationId(1), ray_booking(1, 7)).unwrap();
     let work = WorkContext::new();
     assert!(matches!(
         judge_final_state(
@@ -393,9 +406,15 @@ fn adjacent_target_spans_cover_through_the_run_table() {
     let span = |a: u64, b: u64| Value::IntervalU64(Interval::new(a, b).expect("span"));
     for _ in 0..2 {
         let mut covered = MapState::new();
-        covered.insert(RelationId(1), vec![Value::U64(1), span(1, 2)]);
-        covered.insert(RelationId(1), vec![Value::U64(1), span(2, 3)]);
-        covered.insert(RelationId(0), vec![Value::U64(1), span(1, 3)]);
+        covered
+            .insert(RelationId(1), vec![Value::U64(1), span(1, 2)])
+            .unwrap();
+        covered
+            .insert(RelationId(1), vec![Value::U64(1), span(2, 3)])
+            .unwrap();
+        covered
+            .insert(RelationId(0), vec![Value::U64(1), span(1, 3)])
+            .unwrap();
         let work = WorkContext::new();
         assert_eq!(
             judge_final_state(
@@ -410,9 +429,15 @@ fn adjacent_target_spans_cover_through_the_run_table() {
         );
 
         let mut gapped = MapState::new();
-        gapped.insert(RelationId(1), vec![Value::U64(1), span(1, 2)]);
-        gapped.insert(RelationId(1), vec![Value::U64(1), span(3, 4)]);
-        gapped.insert(RelationId(0), vec![Value::U64(1), span(1, 4)]);
+        gapped
+            .insert(RelationId(1), vec![Value::U64(1), span(1, 2)])
+            .unwrap();
+        gapped
+            .insert(RelationId(1), vec![Value::U64(1), span(3, 4)])
+            .unwrap();
+        gapped
+            .insert(RelationId(0), vec![Value::U64(1), span(1, 4)])
+            .unwrap();
         let work = WorkContext::new();
         let Judgment::Rejected(violations) = judge_final_state(
             &schema,
@@ -445,7 +470,9 @@ fn clone_map(map: &MapState) -> MapState {
     let mut cloned = MapState::new();
     for relation in 0..8u32 {
         map.visit_rows(RelationId(relation), &mut |values| {
-            cloned.insert(RelationId(relation), values.to_vec());
+            cloned
+                .insert(RelationId(relation), values.to_vec())
+                .unwrap();
             Ok(true)
         })
         .unwrap();

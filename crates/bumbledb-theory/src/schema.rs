@@ -109,6 +109,13 @@ impl ValueType {
         matches!(self, Self::Interval { .. } | Self::FixedInterval { .. })
     }
 
+    /// A projection position denoting a region whose points participate in
+    /// a pointwise key or union coverage law. This does not imply nonemptiness.
+    #[must_use]
+    pub const fn is_region(self) -> bool {
+        self.is_interval() || matches!(self, Self::Event)
+    }
+
     #[must_use]
     pub const fn interval_element(self) -> Option<IntervalElement> {
         match self {

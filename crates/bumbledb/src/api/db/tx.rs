@@ -688,7 +688,7 @@ impl<'a, S> WriteTx<'a, S> {
             }
             work.checkpoint().map_err(store_work)?;
             let decoded = crate::canonical::decode(fields, row, work).map_err(row_error)?;
-            if get_path::projection_matches(decoded.values(), projection, key_values) {
+            if get_path::projection_matches(decoded.values(), projection, key_values, work)? {
                 return Ok(Some(row));
             }
         }

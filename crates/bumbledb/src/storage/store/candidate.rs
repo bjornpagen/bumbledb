@@ -475,7 +475,7 @@ impl CandidateState<'_, '_> {
                 .det
                 .projection_of(statement)
                 .is_some_and(|projection| {
-                    projection.interval_field().is_none()
+                    projection.region_field().is_none()
                         && self.store.inner.det.is_home_compiled(projection)
                 })
     }

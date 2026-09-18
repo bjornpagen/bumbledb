@@ -1,3 +1,8 @@
+#![expect(
+    clippy::mutable_key_type,
+    reason = "Tuple orders immutable canonical Event meanings; arena growth never changes an existing value's ordering key"
+)]
+
 pub mod appperf;
 pub mod boost;
 pub mod calendar;

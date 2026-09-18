@@ -70,6 +70,19 @@ pub(super) fn check_key_shape(
         if let Err(mismatch) = value_matches(value, &rel.field(field).value_type) {
             return Err(shape_mismatch(relation, field, mismatch).into());
         }
+        if let Value::Event(event) = value
+            && event.is_empty()
+            && !rel.keys().iter().any(|&key| {
+                let key = schema.key(key);
+                matches!(key.form(), crate::schema::KeyForm::Scalar)
+                    && key
+                        .projection
+                        .iter()
+                        .all(|field| projection.contains(field))
+            })
+        {
+            return Err(crate::error::FactShapeError::EmptyEventLookup { relation, field }.into());
+        }
     }
     Ok(())
 }
@@ -79,17 +92,30 @@ pub(super) fn projection_matches(
     row: &[Value],
     projection: &[FieldId],
     key_values: &[Value],
-) -> bool {
-    projection.iter().zip(key_values).all(|(&field, key)| {
-        row.get(usize::from(field.0))
-            .is_some_and(|value| value == key)
-    })
+    control: &dyn crate::event::Control,
+) -> crate::event::Result<bool> {
+    for (&field, key) in projection.iter().zip(key_values) {
+        let Some(value) = row.get(usize::from(field.0)) else {
+            return Ok(false);
+        };
+        let equal = match (value, key) {
+            (Value::Event(a), Value::Event(b)) => {
+                control.checkpoint()?;
+                a == b || a.to_bytes(control)? == b.to_bytes(control)?
+            }
+            _ => value == key,
+        };
+        if !equal {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Indexed keyed lookup over one committed snapshot: project the key's
 /// scalar determinant with the store's one projection convention, enumerate
 /// that determinant bucket, and confirm each candidate row by exact decoded
-/// projection equality (the full projection — a pointwise key's interval
+/// projection equality (the full projection — a pointwise key's region
 /// tail included). Work is proportional to the bucket, never the relation.
 pub(super) fn find_snapshot_row<'s>(
     snapshot: &'s crate::storage::store::OwnedSnapshot,
@@ -118,7 +144,7 @@ pub(super) fn find_snapshot_row<'s>(
         .visit_projection(key.id, &projected, work, &mut |_id, bytes| {
             work.checkpoint()?;
             let decoded = crate::canonical::decode(fields, bytes, work)?;
-            if projection_matches(decoded.values(), projection, key_values) {
+            if projection_matches(decoded.values(), projection, key_values, work)? {
                 hit = Some(bytes);
                 return Ok(false);
             }
@@ -147,7 +173,7 @@ pub(super) fn find_snapshot_row_scan<'s>(
         work.checkpoint().map_err(store_work)?;
         let (_, row) = entry.map_err(crate::error::Error::from_store)?;
         let decoded = crate::canonical::decode(fields, row, work).map_err(super::tx::row_error)?;
-        if projection_matches(decoded.values(), projection, key_values) {
+        if projection_matches(decoded.values(), projection, key_values, work)? {
             return Ok(Some(row));
         }
     }
@@ -164,8 +190,18 @@ pub(super) fn closed_row_by_key<'c>(
     statement: &KeyStatement,
     key_values: &[Value],
 ) -> Option<&'c super::closed::ClosedRow> {
-    rows.iter()
-        .find(|row| projection_matches(&row.values, &statement.projection, key_values))
+    // Closed schemas refuse Event fields; their validated keys remain scalar.
+    rows.iter().find(|row| {
+        statement
+            .projection
+            .iter()
+            .zip(key_values)
+            .all(|(&field, key)| {
+                row.values
+                    .get(usize::from(field.0))
+                    .is_some_and(|value| value == key)
+            })
+    })
 }
 
 /// One keyed row hit from [`get_with_work`]: closed relations carry

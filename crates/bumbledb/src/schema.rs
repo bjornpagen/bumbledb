@@ -104,6 +104,12 @@ pub(crate) enum Enforcement {
         target_tail: ValueType,
     },
 
+    EventCoverage {
+        target_key: KeyId,
+        key_projection: Box<[FieldId]>,
+        disjoint: DisjointDeterminantProof,
+    },
+
     Closed {
         members: MemberSet,
     },
@@ -112,9 +118,9 @@ pub(crate) enum Enforcement {
 impl Enforcement {
     pub(crate) const fn target_key(&self) -> Option<KeyId> {
         match self {
-            Self::ScalarProbe { target_key, .. } | Self::IntervalCoverage { target_key, .. } => {
-                Some(*target_key)
-            }
+            Self::ScalarProbe { target_key, .. }
+            | Self::IntervalCoverage { target_key, .. }
+            | Self::EventCoverage { target_key, .. } => Some(*target_key),
             Self::Closed { .. } => None,
         }
     }

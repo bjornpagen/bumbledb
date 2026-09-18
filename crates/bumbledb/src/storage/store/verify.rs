@@ -597,6 +597,7 @@ pub(crate) fn sweep(
         Err(JudgeError::Work(error)) => return Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => return Err(error),
         Err(JudgeError::Allocation) => return Err(StoreError::Allocation),
+        Err(JudgeError::Event(source)) => return Err(StoreError::Event(source)),
         Err(JudgeError::Compile(error)) => return Err(StoreError::Compile(error)),
         Err(JudgeError::UndefinedDuration { statement }) => {
             return Err(StoreError::JudgeRefused {

@@ -128,8 +128,8 @@ mod tests {
         );
 
         let mut both = MapState::new();
-        both.insert(ITEM, left.clone());
-        both.insert(ITEM, right.clone());
+        both.insert(ITEM, left.clone()).unwrap();
+        both.insert(ITEM, right.clone()).unwrap();
         match judge(&schema, &both) {
             Judgment::Rejected(violations) => {
                 assert!(
@@ -143,12 +143,12 @@ mod tests {
         }
 
         let mut only_left = MapState::new();
-        only_left.insert(ITEM, left);
+        only_left.insert(ITEM, left).unwrap();
         assert!(matches!(judge(&schema, &only_left), Judgment::Admitted));
         // Deleting by the other payload's identity must not remove this row:
         // MapState still has the left fact; the right encoding never landed.
         let mut only_right = MapState::new();
-        only_right.insert(ITEM, right);
+        only_right.insert(ITEM, right).unwrap();
         assert!(matches!(judge(&schema, &only_right), Judgment::Admitted));
         assert_ne!(
             rejected_statements(&judge(&schema, &only_left)),
@@ -186,7 +186,7 @@ mod tests {
     fn c_g03_mutable_support_leaves_untouched_statements() {
         let schema = capacity_schema();
         let mut parent_only = MapState::new();
-        parent_only.insert(PARENT, vec![Value::U64(0)]);
+        parent_only.insert(PARENT, vec![Value::U64(0)]).unwrap();
         let admitted = judge(&schema, &parent_only);
         assert!(
             matches!(admitted, Judgment::Admitted),
@@ -194,9 +194,13 @@ mod tests {
         );
 
         let mut with_bad_child = MapState::new();
-        with_bad_child.insert(PARENT, vec![Value::U64(0)]);
-        with_bad_child.insert(CHILD, vec![Value::U64(7), Value::U64(0)]);
-        with_bad_child.insert(CHILD, vec![Value::U64(7), Value::U64(1)]);
+        with_bad_child.insert(PARENT, vec![Value::U64(0)]).unwrap();
+        with_bad_child
+            .insert(CHILD, vec![Value::U64(7), Value::U64(0)])
+            .unwrap();
+        with_bad_child
+            .insert(CHILD, vec![Value::U64(7), Value::U64(1)])
+            .unwrap();
         let rejected = judge(&schema, &with_bad_child);
         let cited = rejected_statements(&rejected);
         assert!(
@@ -205,10 +209,14 @@ mod tests {
         );
 
         let mut extra_parent = MapState::new();
-        extra_parent.insert(PARENT, vec![Value::U64(0)]);
-        extra_parent.insert(PARENT, vec![Value::U64(1)]);
-        extra_parent.insert(CHILD, vec![Value::U64(7), Value::U64(0)]);
-        extra_parent.insert(CHILD, vec![Value::U64(7), Value::U64(1)]);
+        extra_parent.insert(PARENT, vec![Value::U64(0)]).unwrap();
+        extra_parent.insert(PARENT, vec![Value::U64(1)]).unwrap();
+        extra_parent
+            .insert(CHILD, vec![Value::U64(7), Value::U64(0)])
+            .unwrap();
+        extra_parent
+            .insert(CHILD, vec![Value::U64(7), Value::U64(1)])
+            .unwrap();
         let after_unrelated = judge(&schema, &extra_parent);
         assert_eq!(
             cited,
@@ -255,13 +263,13 @@ mod tests {
         let child_b = vec![Value::U64(1), Value::U64(0)];
 
         let mut ab = MapState::new();
-        ab.insert(PARENT, parent.clone());
-        ab.insert(CHILD, child_a.clone());
-        ab.insert(CHILD, child_b.clone());
+        ab.insert(PARENT, parent.clone()).unwrap();
+        ab.insert(CHILD, child_a.clone()).unwrap();
+        ab.insert(CHILD, child_b.clone()).unwrap();
         let mut ba = MapState::new();
-        ba.insert(PARENT, parent.clone());
-        ba.insert(CHILD, child_b.clone());
-        ba.insert(CHILD, child_a.clone());
+        ba.insert(PARENT, parent.clone()).unwrap();
+        ba.insert(CHILD, child_b.clone()).unwrap();
+        ba.insert(CHILD, child_a.clone()).unwrap();
 
         let union = judge(&schema, &ab);
         assert_eq!(
@@ -275,11 +283,11 @@ mod tests {
         );
 
         let mut only_a = MapState::new();
-        only_a.insert(PARENT, parent.clone());
-        only_a.insert(CHILD, child_a);
+        only_a.insert(PARENT, parent.clone()).unwrap();
+        only_a.insert(CHILD, child_a).unwrap();
         let mut only_b = MapState::new();
-        only_b.insert(PARENT, parent);
-        only_b.insert(CHILD, child_b);
+        only_b.insert(PARENT, parent).unwrap();
+        only_b.insert(CHILD, child_b).unwrap();
         assert!(matches!(judge(&schema, &only_a), Judgment::Admitted));
         assert!(matches!(judge(&schema, &only_b), Judgment::Admitted));
     }

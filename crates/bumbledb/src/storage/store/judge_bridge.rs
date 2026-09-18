@@ -94,6 +94,7 @@ fn map_judged(
         Err(JudgeError::Work(error)) => Err(StoreError::Work(error)),
         Err(JudgeError::State(error)) => Err(error),
         Err(JudgeError::Allocation) => Err(StoreError::Allocation),
+        Err(JudgeError::Event(error)) => Err(StoreError::Event(error)),
         Err(JudgeError::UndefinedDuration { statement }) => {
             Err(StoreError::UndefinedDuration { statement })
         }

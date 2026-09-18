@@ -512,24 +512,32 @@ fn pointwise_law_rejects_distinct_rows_with_equal_complete_keys() {
         let schema = pointwise_schema(element);
         let work = crate::api::db::test_operation();
         let mut equal_keys = MapState::new();
-        equal_keys.insert(
-            RelationId(0),
-            vec![Value::U64(1), Value::U64(10), first.clone()],
-        );
-        equal_keys.insert(
-            RelationId(0),
-            vec![Value::U64(1), Value::U64(20), first.clone()],
-        );
+        equal_keys
+            .insert(
+                RelationId(0),
+                vec![Value::U64(1), Value::U64(10), first.clone()],
+            )
+            .unwrap();
+        equal_keys
+            .insert(
+                RelationId(0),
+                vec![Value::U64(1), Value::U64(20), first.clone()],
+            )
+            .unwrap();
         assert!(matches!(
             judge_final_state(&schema, &equal_keys, &work, JudgeBudget::default()).expect("judge"),
             Judgment::Rejected(_)
         ));
         let mut lawful = MapState::new();
         let first_row = vec![Value::U64(1), Value::U64(10), first.clone()];
-        lawful.insert(RelationId(0), first_row.clone());
-        lawful.insert(RelationId(0), first_row); // Exact duplicates remain one set element.
-        lawful.insert(RelationId(0), vec![Value::U64(1), Value::U64(20), adjacent]);
-        lawful.insert(RelationId(0), vec![Value::U64(2), Value::U64(30), first]);
+        lawful.insert(RelationId(0), first_row.clone()).unwrap();
+        lawful.insert(RelationId(0), first_row).unwrap(); // Exact duplicates remain one set element.
+        lawful
+            .insert(RelationId(0), vec![Value::U64(1), Value::U64(20), adjacent])
+            .unwrap();
+        lawful
+            .insert(RelationId(0), vec![Value::U64(2), Value::U64(30), first])
+            .unwrap();
         assert_eq!(
             judge_final_state(&schema, &lawful, &work, JudgeBudget::default()).expect("judge"),
             Judgment::Admitted

@@ -74,7 +74,7 @@ fn two_fresh_rows_sharing_an_email_report_the_key_with_both_rows() {
     for rows in permutations {
         let mut state = MapState::new();
         for row in rows {
-            state.insert(RelationId(0), row);
+            state.insert(RelationId(0), row).unwrap();
         }
         let violations = rejected(&schema, &state);
         assert_eq!(violations.len(), 1, "exactly the email key is violated");
@@ -100,29 +100,33 @@ fn every_violated_statement_is_reported_in_canonical_order() {
     let schema = user_schema();
     let mut state = MapState::new();
     // Same id AND same email across two distinct rows: both keys violated.
-    state.insert(RelationId(0), user(1, "a@example"));
-    state.insert(
-        RelationId(0),
-        vec![
-            Value::Uuid(Uuid::from_bytes([1; 16])),
-            Value::String("a@example".into()),
-        ],
-    );
+    state.insert(RelationId(0), user(1, "a@example")).unwrap();
+    state
+        .insert(
+            RelationId(0),
+            vec![
+                Value::Uuid(Uuid::from_bytes([1; 16])),
+                Value::String("a@example".into()),
+            ],
+        )
+        .unwrap();
     // The two rows above are identical, so they collapse to one: no
     // violation at all — repeated facts are a no-op (set semantics).
     assert_eq!(judge(&schema, &state), Judgment::Admitted);
 
     let mut state = MapState::new();
-    state.insert(RelationId(0), user(1, "a@example"));
+    state.insert(RelationId(0), user(1, "a@example")).unwrap();
     // Distinct full row, same id, same email: both key statements fire.
-    state.insert(
-        RelationId(0),
-        vec![
-            Value::Uuid(Uuid::from_bytes([1; 16])),
-            Value::String("a@example ".into()),
-        ],
-    );
-    state.insert(RelationId(0), user(2, "a@example"));
+    state
+        .insert(
+            RelationId(0),
+            vec![
+                Value::Uuid(Uuid::from_bytes([1; 16])),
+                Value::String("a@example ".into()),
+            ],
+        )
+        .unwrap();
+    state.insert(RelationId(0), user(2, "a@example")).unwrap();
     let violations = rejected(&schema, &state);
     let ids: Vec<_> = violations
         .iter()
@@ -142,7 +146,9 @@ fn example_truncation_is_labeled_never_silent() {
     let schema = user_schema();
     let mut state = MapState::new();
     for id in 0..10u8 {
-        state.insert(RelationId(0), user(id, "shared@example"));
+        state
+            .insert(RelationId(0), user(id, "shared@example"))
+            .unwrap();
     }
     let violations = rejected(&schema, &state);
     assert_eq!(violations.len(), 1);
@@ -172,7 +178,9 @@ fn cancelled_work_refuses_instead_of_returning_a_partial_verdict() {
     let schema = user_schema();
     let mut state = MapState::new();
     for id in 0..50u8 {
-        state.insert(RelationId(0), user(id, "shared@example"));
+        state
+            .insert(RelationId(0), user(id, "shared@example"))
+            .unwrap();
     }
     let context = WorkContext::new();
     context.cancel();
@@ -213,7 +221,9 @@ fn containment_judges_the_final_state_not_the_landing_order() {
     .expect("valid");
 
     let mut dangling = MapState::new();
-    dangling.insert(RelationId(1), vec![Value::U64(1), Value::U64(7)]);
+    dangling
+        .insert(RelationId(1), vec![Value::U64(1), Value::U64(7)])
+        .unwrap();
     let violations = rejected(&schema, &dangling);
     assert_eq!(violations.len(), 1);
     assert_eq!(violations[0].statement, StatementId(2));
@@ -221,8 +231,10 @@ fn containment_judges_the_final_state_not_the_landing_order() {
     assert_eq!(violations[0].examples[0].relation, RelationId(1));
 
     let mut repaired = MapState::new();
-    repaired.insert(RelationId(1), vec![Value::U64(1), Value::U64(7)]);
-    repaired.insert(RelationId(0), vec![Value::U64(7)]);
+    repaired
+        .insert(RelationId(1), vec![Value::U64(1), Value::U64(7)])
+        .unwrap();
+    repaired.insert(RelationId(0), vec![Value::U64(7)]).unwrap();
     assert_eq!(judge(&schema, &repaired), Judgment::Admitted);
 }
 
@@ -285,7 +297,9 @@ fn empty_parent_zero_totals_and_missing_parent_vacuity_are_distinct() {
     // Ceiling only: empty group total is zero, admitted.
     let ceiling = capacity_schema(Weight::Unit, 0, Some(Bound::Lit(2)));
     let mut state = MapState::new();
-    state.insert(RelationId(0), vec![Value::U64(7), Value::U64(10)]);
+    state
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(10)])
+        .unwrap();
     assert_eq!(judge(&ceiling, &state), Judgment::Admitted);
 
     // Floor 1 (the existence window): the same empty group violates, with
@@ -299,7 +313,9 @@ fn empty_parent_zero_totals_and_missing_parent_vacuity_are_distinct() {
 
     // No parent at all: no group, no window, admitted even under the floor.
     let mut orphans = MapState::new();
-    orphans.insert(RelationId(1), attempt(1, 7, 1, (0, 10)));
+    orphans
+        .insert(RelationId(1), attempt(1, 7, 1, (0, 10)))
+        .unwrap();
     // (The attempt's student has no containment law in this fixture.)
     assert_eq!(judge(&floor, &orphans), Judgment::Admitted);
 }
@@ -311,9 +327,15 @@ fn empty_parent_zero_totals_and_missing_parent_vacuity_are_distinct() {
 fn unit_count_over_distinct_children_exceeds_the_ceiling() {
     let schema = capacity_schema(Weight::Unit, 0, Some(Bound::Lit(1)));
     let mut state = MapState::new();
-    state.insert(RelationId(0), vec![Value::U64(7), Value::U64(10)]);
-    state.insert(RelationId(1), attempt(1, 7, 1, (0, 10)));
-    state.insert(RelationId(1), attempt(2, 7, 1, (0, 10)));
+    state
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(10)])
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(1, 7, 1, (0, 10)))
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(2, 7, 1, (0, 10)))
+        .unwrap();
     let violations = rejected(&schema, &state);
     assert_eq!(violations[0].measure, Some(2));
     // The parent and both children are cited within the budget.
@@ -327,9 +349,15 @@ fn unit_count_over_distinct_children_exceeds_the_ceiling() {
 fn zero_weight_children_are_membership_not_absence() {
     let weighted = capacity_schema(Weight::Field(FieldId(2)), 0, Some(Bound::Lit(10)));
     let mut state = MapState::new();
-    state.insert(RelationId(0), vec![Value::U64(7), Value::U64(10)]);
-    state.insert(RelationId(1), attempt(1, 7, 0, (0, 10)));
-    state.insert(RelationId(1), attempt(2, 7, 0, (10, 20)));
+    state
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(10)])
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(1, 7, 0, (0, 10)))
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(2, 7, 0, (10, 20)))
+        .unwrap();
     // Weighted total is zero: the weighted ceiling admits…
     assert_eq!(judge(&weighted, &state), Judgment::Admitted);
     // …while the unit count of the same group is two.
@@ -345,10 +373,16 @@ fn zero_weight_children_are_membership_not_absence() {
 fn overlapping_durations_sum_completely_not_pointwise() {
     let schema = capacity_schema(Weight::DurationOf(FieldId(3)), 0, Some(Bound::Lit(15)));
     let mut state = MapState::new();
-    state.insert(RelationId(0), vec![Value::U64(7), Value::U64(10)]);
+    state
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(10)])
+        .unwrap();
     // [0,10) and [5,15): pointwise union is 15, whole-group total is 20.
-    state.insert(RelationId(1), attempt(1, 7, 1, (0, 10)));
-    state.insert(RelationId(1), attempt(2, 7, 1, (5, 15)));
+    state
+        .insert(RelationId(1), attempt(1, 7, 1, (0, 10)))
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(2, 7, 1, (5, 15)))
+        .unwrap();
     let violations = rejected(&schema, &state);
     assert_eq!(violations[0].measure, Some(20));
 }
@@ -364,9 +398,15 @@ fn dependent_bounds_and_ray_duration_refusal() {
         Some(Bound::TargetField(FieldId(1))),
     );
     let mut state = MapState::new();
-    state.insert(RelationId(0), vec![Value::U64(7), Value::U64(5)]);
-    state.insert(RelationId(1), attempt(1, 7, 3, (0, 10)));
-    state.insert(RelationId(1), attempt(2, 7, 3, (10, 20)));
+    state
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(5)])
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(1, 7, 3, (0, 10)))
+        .unwrap();
+    state
+        .insert(RelationId(1), attempt(2, 7, 3, (10, 20)))
+        .unwrap();
     // 3 + 3 > budget 5.
     let violations = rejected(&schema, &state);
     assert_eq!(violations[0].measure, Some(6));
@@ -374,16 +414,20 @@ fn dependent_bounds_and_ray_duration_refusal() {
     // A ray in the duration weight is an explicit refusal, not a verdict.
     let duration = capacity_schema(Weight::DurationOf(FieldId(3)), 0, Some(Bound::Lit(100)));
     let mut rayed = MapState::new();
-    rayed.insert(RelationId(0), vec![Value::U64(7), Value::U64(10)]);
-    rayed.insert(
-        RelationId(1),
-        vec![
-            Value::U64(1),
-            Value::U64(7),
-            Value::U64(1),
-            Value::IntervalU64(Interval::ray(5).expect("ray")),
-        ],
-    );
+    rayed
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(10)])
+        .unwrap();
+    rayed
+        .insert(
+            RelationId(1),
+            vec![
+                Value::U64(1),
+                Value::U64(7),
+                Value::U64(1),
+                Value::IntervalU64(Interval::ray(5).expect("ray")),
+            ],
+        )
+        .unwrap();
     assert!(matches!(
         judge_final_state(&duration, &rayed, &work(), JudgeBudget::default()),
         Err(JudgeError::UndefinedDuration {
@@ -421,51 +465,63 @@ fn pointwise_float_interval_keys_use_exact_dense_endpoint_order() {
     let one = F64::from(1.0);
     let next_up = F64::from_bits(one.to_bits() + 1);
     let mut adjacent = MapState::new();
-    adjacent.insert(
-        RelationId(0),
-        vec![
-            Value::U64(9),
-            Value::IntervalF64(Interval::<F64>::new(one, next_up).expect("gap")),
-        ],
-    );
-    adjacent.insert(
-        RelationId(0),
-        vec![
-            Value::U64(9),
-            Value::IntervalF64(Interval::<F64>::new(next_up, F64::from(2.0)).expect("rest")),
-        ],
-    );
+    adjacent
+        .insert(
+            RelationId(0),
+            vec![
+                Value::U64(9),
+                Value::IntervalF64(Interval::<F64>::new(one, next_up).expect("gap")),
+            ],
+        )
+        .unwrap();
+    adjacent
+        .insert(
+            RelationId(0),
+            vec![
+                Value::U64(9),
+                Value::IntervalF64(Interval::<F64>::new(next_up, F64::from(2.0)).expect("rest")),
+            ],
+        )
+        .unwrap();
     assert_eq!(judge(&schema, &adjacent), Judgment::Admitted);
 
     // Overlap on the dense line, including through an unbounded endpoint.
     let mut overlapping = MapState::new();
-    overlapping.insert(
-        RelationId(0),
-        vec![Value::U64(9), Value::IntervalF64(dense(0.0, 1.5))],
-    );
-    overlapping.insert(
-        RelationId(0),
-        vec![
-            Value::U64(9),
-            Value::IntervalF64(
-                Interval::<F64>::new(F64::from(1.0), F64::INFINITY).expect("right ray"),
-            ),
-        ],
-    );
+    overlapping
+        .insert(
+            RelationId(0),
+            vec![Value::U64(9), Value::IntervalF64(dense(0.0, 1.5))],
+        )
+        .unwrap();
+    overlapping
+        .insert(
+            RelationId(0),
+            vec![
+                Value::U64(9),
+                Value::IntervalF64(
+                    Interval::<F64>::new(F64::from(1.0), F64::INFINITY).expect("right ray"),
+                ),
+            ],
+        )
+        .unwrap();
     let violations = rejected(&schema, &overlapping);
     assert_eq!(violations[0].statement, StatementId(0));
     assert_eq!(violations[0].examples.len(), 2);
 
     // Different sensors never conflict: the group key is the scalar prefix.
     let mut split = MapState::new();
-    split.insert(
-        RelationId(0),
-        vec![Value::U64(1), Value::IntervalF64(dense(0.0, 10.0))],
-    );
-    split.insert(
-        RelationId(0),
-        vec![Value::U64(2), Value::IntervalF64(dense(0.0, 10.0))],
-    );
+    split
+        .insert(
+            RelationId(0),
+            vec![Value::U64(1), Value::IntervalF64(dense(0.0, 10.0))],
+        )
+        .unwrap();
+    split
+        .insert(
+            RelationId(0),
+            vec![Value::U64(2), Value::IntervalF64(dense(0.0, 10.0))],
+        )
+        .unwrap();
     assert_eq!(judge(&schema, &split), Judgment::Admitted);
 }
 
@@ -480,8 +536,8 @@ fn forced_fingerprint_collisions_cannot_merge_judged_facts() {
     let schema = user_schema();
     let long = "x".repeat(4096);
     let mut state = MapState::new();
-    state.insert(RelationId(0), user(1, &long));
-    state.insert(RelationId(0), user(2, &long));
+    state.insert(RelationId(0), user(1, &long)).unwrap();
+    state.insert(RelationId(0), user(2, &long)).unwrap();
     // The two rows collide under the forced fingerprinter…
     assert_eq!(
         forced.row(RelationId(0), format!("{:?}", user(1, &long)).as_bytes()),

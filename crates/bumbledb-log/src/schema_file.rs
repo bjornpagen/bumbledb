@@ -81,7 +81,6 @@ pub fn schema_id(descriptor: &SchemaDescriptor) -> Result<SchemaFingerprint, bum
 /// reproduces `d` exactly; repo snapshot files are byte-stable.
 /// # Errors
 /// Returns an Event codec resource refusal while rendering owned literals.
-#[must_use]
 pub fn render(descriptor: &SchemaDescriptor) -> Result<String, bumbledb::event::Error> {
     let mut out = String::new();
     out.push_str("{\n  \"relations\": [");

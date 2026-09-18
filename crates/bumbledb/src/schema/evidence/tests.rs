@@ -73,10 +73,12 @@ fn attempt(id: u64, student: u64, units: u64) -> Vec<Value> {
 /// containment source, and a capacity group of two over ceiling one.
 fn violating_state() -> MapState {
     let mut state = MapState::new();
-    state.insert(RelationId(0), vec![Value::U64(7), Value::U64(5)]);
-    state.insert(RelationId(1), attempt(1, 9, 3));
-    state.insert(RelationId(1), attempt(1, 7, 3));
-    state.insert(RelationId(1), attempt(2, 7, 3));
+    state
+        .insert(RelationId(0), vec![Value::U64(7), Value::U64(5)])
+        .unwrap();
+    state.insert(RelationId(1), attempt(1, 9, 3)).unwrap();
+    state.insert(RelationId(1), attempt(1, 7, 3)).unwrap();
+    state.insert(RelationId(1), attempt(2, 7, 3)).unwrap();
     state
 }
 
@@ -665,11 +667,13 @@ fn d05_evidence_bytes_survive_opposite_insertion_and_remint() {
     let mut reverse = MapState::new();
     for id in 0..6u64 {
         let row = vec![Value::U64(id), Value::String("shared@ex".into())];
-        forward.insert(RelationId(0), row.clone());
-        reverse.insert(
-            RelationId(0),
-            vec![Value::U64(5 - id), Value::String("shared@ex".into())],
-        );
+        forward.insert(RelationId(0), row.clone()).unwrap();
+        reverse
+            .insert(
+                RelationId(0),
+                vec![Value::U64(5 - id), Value::String("shared@ex".into())],
+            )
+            .unwrap();
     }
     let budget = JudgeBudget {
         examples_per_statement: 2,

@@ -121,6 +121,7 @@ fn order_cost(
                     crate::schema::DistinctnessWitness::ScalarKeyUnique { .. } => {}
                     crate::schema::DistinctnessWitness::FullRowEquality
                     | crate::schema::DistinctnessWitness::IntervalKeyUnique { .. }
+                    | crate::schema::DistinctnessWitness::EventKeyMayBeEmpty { .. }
                     | crate::schema::DistinctnessWitness::ExistenceOnly { .. } => return None,
                 }
                 let projection = theory.projection(*id)?;

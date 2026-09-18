@@ -99,6 +99,7 @@ fn compiled_scalar_key_var_sets(
                 DistinctnessWitness::ScalarKeyUnique { .. } => {}
                 DistinctnessWitness::FullRowEquality
                 | DistinctnessWitness::IntervalKeyUnique { .. }
+                | DistinctnessWitness::EventKeyMayBeEmpty { .. }
                 | DistinctnessWitness::ExistenceOnly { .. } => return None,
             }
             let projection = theory.projection(*id)?;

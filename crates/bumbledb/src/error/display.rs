@@ -186,6 +186,11 @@ impl fmt::Display for FactShapeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Id(err) => write!(f, "{err}"),
+            Self::EmptyEventLookup { relation, field } => write!(
+                f,
+                "relation {}, field {}: an empty Event key can match multiple facts; use a query or a sufficient scalar key",
+                relation.0, field.0
+            ),
             Self::ArityMismatch { relation, mismatch } => write!(
                 f,
                 "relation {}: {} values for {} fields",
@@ -447,7 +452,7 @@ impl fmt::Display for SchemaError {
             ),
             Self::EventContractPending { relation, field } => write!(
                 f,
-                "Event schema contract at {relation:?}.{field:?} requires pointwise admission (not yet implemented)"
+                "Event schema position at {relation:?}.{field:?} is not implemented for selections, capacity or closed rosters"
             ),
             Self::StrOnClosedRelation {
                 relation: r,
@@ -506,6 +511,16 @@ impl fmt::Display for StatementErrorKind {
             Self::DuplicateFunctionality { earlier } => {
                 write!(f, "statement {} already keys this field set", earlier.0)
             }
+            Self::FunctionalityMultipleRegions { relation, field } => write!(
+                f,
+                "second region field {} on relation {}: a pointwise determinant has one region position",
+                field.0, relation.0
+            ),
+            Self::FunctionalityEventNotLast { relation, field } => write!(
+                f,
+                "Event field {} on relation {} must be the final projection position",
+                field.0, relation.0
+            ),
             Self::DeterminantKeyTooWide { width } => write!(
                 f,
                 "{width}-byte determinant key exceeds the key-size ceiling"

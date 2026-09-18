@@ -1,0 +1,134 @@
+   Compiling bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.54s
+     Running tests/api.rs (target/debug/build/bumbledb/d8eddefe244f7302/out/api-d8eddefe244f7302)
+
+running 25 tests
+test deleting_a_never_interned_string_is_a_mint_free_noop ... ok
+test a_plain_query_executes_as_today ... ok
+test aborted_writes_leave_prior_state_intact ... ok
+test create_refuses_a_foreign_lmdb_environment ... ok
+test a_nets_to_nothing_write_is_not_a_state_change ... ok
+test a_second_handle_on_a_live_path_is_locked_out ... ok
+test disk_size_and_generation_report_store_state ... ok
+test concurrent_readers_while_writing ... ok
+test cover_choice_iterates_the_selected_side ... ok
+test a_prepared_query_refuses_a_foreign_snapshot ... ok
+test nested_write_is_a_typed_refusal_instead_of_deadlocking ... ok
+test out_of_range_relation_ids_are_typed_errors ... ok
+test prepare_executes_recursion_under_the_driver ... ok
+test open_mismatches_and_snapshot_usability ... ok
+test pinned_snapshot_reads_its_generation_across_later_commits ... ok
+test reach_execute_answers_the_closure ... ok
+test reach_diagonal_is_empty_on_a_dag ... ok
+test export_scan_inserts_into_a_fresh_database ... ok
+test recursive_answers_agree_scalar_and_vectorized ... ok
+test statement_violations_surface_from_commit_through_the_public_api ... ok
+test usage_shapes_end_to_end ... ok
+test collection_insert_equals_sequential_inserts ... ok
+test typed_collection_insert_is_idempotent_and_judgment_rejects_the_write ... ok
+test prepared_executions_observe_exactly_one_generation ... ok
+test compaction_drops_the_freelist_and_preserves_content ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+
+     Running tests/event_dependencies.rs (target/debug/build/bumbledb/e90561aeb4bfe589/out/event_dependencies-e90561aeb4bfe589)
+
+running 13 tests
+test event_keys_keep_exact_target_and_region_shape_requirements ... ok
+test empty_facts_coexist_but_scalar_roster_law_still_applies ... ok
+test cancellation_before_admission_preserves_the_lawful_parent ... ok
+test reference_state_deduplicates_event_meaning_and_refuses_cancelled_insertion ... ok
+test empty_uncovered_source_groups_still_require_a_common_context ... ok
+test keyed_reads_require_nonempty_event_or_an_independent_scalar_key ... ok
+test free_join_deduplicates_empty_key_projections ... ok
+test groups_route_independently_and_same_name_does_not_erase_support ... ok
+test canonical_duplicates_collapse_but_distinct_whole_facts_conflict ... ok
+test final_state_repair_and_contributor_deletion_preserve_exact_coverage ... ok
+test rejection_citations_are_stable_and_exclude_empty_or_disjoint_facts ... ok
+test incompatible_context_refuses_even_for_empty_values ... ok
+test native_partitions_match_four_world_bitset_oracle ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.08s
+
+     Running tests/event_storage.rs (target/debug/build/bumbledb/59c5ae7e21fb6701/out/event_storage-59c5ae7e21fb6701)
+
+running 10 tests
+test one_decoded_row_aligns_its_event_fields_and_keeps_foreign_sources_separate ... ok
+test version_one_row_fixture_pins_the_graph_and_field_envelope ... ok
+test canonical_event_corruption_and_cancellation_are_not_nonmatches ... ok
+test event_runtime_keys_never_supply_a_public_order ... ok
+test canonical_facts_deduplicate_reopen_and_retain_owned_results ... ok
+test rollback_and_concurrent_publication_preserve_whole_fact_identity ... ok
+test event_pages_own_values_and_cancelled_delivery_does_not_advance ... ok
+test event_sets_collapse_semantic_duplicates_and_keep_equal_mass_regions_distinct ... ok
+test free_join_uses_shared_semantic_identity_on_resident_and_cursor_paths ... ok
+test independently_owned_literals_and_parameters_match_canonical_values ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/keyed_get.rs (target/debug/build/bumbledb/3cbf19b9b14b87fd/out/keyed_get-3cbf19b9b14b87fd)
+
+running 5 tests
+test __bumbledb_weld_kind::host_enum_weld ... ok
+test keyed_get_string_keys_resolve_pending_first_and_never_mint ... ok
+test keyed_get_observes_the_final_state_overlay ... ok
+test keyed_get_reads_through_a_declared_key_on_both_scopes ... ok
+test keyed_get_statement_ids_survive_mirror_offsets ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/schema_macro.rs (target/debug/build/bumbledb/5ed8b5b75dc7b79f/out/schema_macro-5ed8b5b75dc7b79f)
+
+running 49 tests
+test closed_column_accessors::__bumbledb_weld_plan::host_enum_weld ... ok
+test __bumbledb_weld_kind::host_enum_weld ... ok
+test closed_column_accessors::__bumbledb_weld_tier::host_enum_weld ... ok
+test closed_relations::the_host_enum_welds_to_row_ids ... ok
+test closed_relations::__bumbledb_weld_kind::host_enum_weld ... ok
+test closed_relations::__bumbledb_weld_status::host_enum_weld ... ok
+test closed_relations::id_constants_address_the_sealed_field_list ... ok
+test discriminated_union::__bumbledb_weld_gk::host_enum_weld ... ok
+test closed_relations::the_descriptor_carries_the_extension ... ok
+test closed_relations::the_manifest_carries_the_extension ... ok
+test duration_named_field::a_field_named_duration_is_an_ordinary_ident_in_both_slots ... ok
+test closed_relations::handles_resolve_to_declaration_order_row_ids ... ok
+test closed_column_accessors::every_column_projects_as_a_const_accessor ... ok
+test extension_forms::__bumbledb_weld_priority::host_enum_weld ... ok
+test extension_forms::the_capacity_descriptor_is_target_left ... ok
+test fact_structs_carry_host_types ... ok
+test equality_reverse_key::macro_equality_rejects_the_reverse_half_when_the_left_projection_is_not_a_key ... ok
+test fact_and_key_structs_are_value_types ... ok
+test extension_forms::the_extension_forms_lower_and_validate ... ok
+test capacity_forms::the_weighted_forms_lower_and_validate ... ok
+test closed_relations::the_two_tiers_expand_and_validate ... ok
+test fixed_width_intervals::the_width_is_the_type_and_the_encoding_is_the_start ... ok
+test element_domain_typing::a_slot_past_the_span_aborts ... ok
+test fixed_width_intervals::the_fixed_pointwise_key_rejects_overlap_and_accepts_adjacency ... ok
+test id_constants_are_declaration_order_named_data ... ok
+test fixed_bytes_host_type::fixed_bytes_round_trip_through_the_typed_surface ... ok
+test interval_newtype::interval_as_newtype_wraps_the_interval ... ok
+test element_domain_typing::a_gap_delta_aborts ... ok
+test invalid_declaration::invalid_declaration_is_a_typed_schema_error_from_create ... ok
+test element_domain_typing::an_overlap_delta_aborts ... ok
+test macro_output_is_exactly_sugar ... ok
+test discriminated_union::the_du_pattern_survives_the_closed_discriminator ... ok
+test radix_literals::every_integer_position_reads_rustc_literals ... ok
+test selection_literals::every_literal_kind_resolves_typed ... ok
+test selection_literals::the_fact_structs_construct ... ok
+test element_domain_typing::the_playlist_recipe_validates_and_a_tiling_commits ... ok
+test statements_land_in_source_order_with_equality_lowered ... ok
+test the_equality_pair_seals_mirror_links ... ok
+test the_manifest_is_the_constants_runtime_twin ... ok
+test element_domain_typing::a_mixed_width_allen_query_classifies_with_hand_answers ... ok
+test fixed_width_intervals::membership_and_allen_run_over_derived_bounds ... ok
+test fixed_width_intervals::a_width_matched_ray_is_rejected_at_the_typed_boundary ... ok
+test newtype_coherence_pass::bare_pairs_with_bare_and_the_theory_seals ... ok
+test redundant_superkey_enforcement::a_redundant_superkey_still_enforces_both_keys ... ok
+test fixed_width_intervals::the_key_probe_lane_finds_an_exact_fixed_tuple ... ok
+test fixed_width_intervals::typed_writes_check_the_declared_width_and_round_trip ... ok
+test keyed_equality::three_field_reordered_key_equality_validates_and_enforces_both_directions ... ok
+test typed_round_trip_through_fact_bytes ... ok
+test two_schemas_per_module::two_schemas_coexist_in_one_module ... ok
+
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.39s
+

@@ -20,6 +20,7 @@ impl Error {
     /// Box a successor-store condition into the shared error surface.
     pub(crate) fn from_store(error: crate::storage::store::StoreError) -> Self {
         match error {
+            crate::storage::store::StoreError::Event(source) => Self::from(source),
             crate::storage::store::StoreError::UndefinedDuration { statement } => {
                 Self::CapacityRayMeasure { statement }
             }

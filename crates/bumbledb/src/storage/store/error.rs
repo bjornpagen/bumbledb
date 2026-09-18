@@ -104,6 +104,8 @@ pub enum StoreError {
     Work(WorkError),
     /// A fallible in-memory allocation was refused by the host.
     Allocation,
+    /// Checked Event operations refused; never an admission verdict.
+    Event(crate::event::Error),
     /// Malformed input change/row bytes (from the canonical boundary).
     Changes(crate::changes::ChangeError),
     /// The recognized store contains impossible bytes.
@@ -159,9 +161,20 @@ impl From<crate::schema::CompileError> for StoreError {
     }
 }
 
+impl From<crate::event::Error> for StoreError {
+    fn from(error: crate::event::Error) -> Self {
+        match error {
+            crate::event::Error::Cancelled => Self::Work(WorkError::Cancelled),
+            crate::event::Error::Allocation => Self::Allocation,
+            _ => Self::Event(error),
+        }
+    }
+}
+
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Event(error) => write!(f, "Event operation refused: {error}"),
             Self::Io(io) => write!(f, "store I/O failure: {:?}", io.kind),
             Self::Lmdb(err) => write!(f, "store LMDB failure: {err:?}"),
             Self::UnrecognizedStore { path } => {

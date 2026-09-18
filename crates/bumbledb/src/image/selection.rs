@@ -40,7 +40,7 @@ pub(super) fn build(
         .iter()
         .filter_map(|&id| theory.projection(id))
         .filter(|p| {
-            p.interval_position.is_none()
+            p.region_position.is_none()
                 && !p.projection.is_empty()
                 && p.scalar_fields.iter().all(|field| {
                     matches!(

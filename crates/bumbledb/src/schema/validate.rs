@@ -53,8 +53,8 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         let descriptors = self.materialized_statements();
-        // Until M3 seals the pointwise Event contract, no descriptor may
-        // accidentally treat an Event position as a scalar determinant.
+        // Pointwise Event fields are admitted below. Selections, capacity
+        // positions and closed Event rosters still need their own contracts.
         let check_event = |relation: RelationId, field: FieldId| -> Result<(), SchemaError> {
             let Some(decl) = self.relations.get(relation.0 as usize) else {
                 return Ok(());
@@ -70,19 +70,14 @@ impl ValidateDescriptor for SchemaDescriptor {
         };
         for descriptor in &descriptors {
             match descriptor {
-                StatementDescriptor::Functionality {
-                    relation,
-                    projection,
-                } => {
-                    for &field in projection {
-                        check_event(*relation, field)?;
-                    }
-                }
+                StatementDescriptor::Functionality { .. } => {}
                 StatementDescriptor::Containment { source, target }
                 | StatementDescriptor::Capacity { source, target, .. } => {
                     for side in [source, target] {
-                        for &field in &side.projection {
-                            check_event(side.relation, field)?;
+                        if matches!(descriptor, StatementDescriptor::Capacity { .. }) {
+                            for &field in &side.projection {
+                                check_event(side.relation, field)?;
+                            }
                         }
                         for (field, literals) in &side.selection {
                             check_event(side.relation, *field)?;
@@ -379,16 +374,11 @@ fn positional_types_match(a: &ValueType, b: &ValueType) -> bool {
     }
 }
 
-fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec<usize> {
+fn region_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec<usize> {
     projection
         .iter()
         .enumerate()
-        .filter(|(_, field)| {
-            matches!(
-                fields[usize::from(field.0)].value_type,
-                ValueType::Interval { .. } | ValueType::FixedInterval { .. }
-            )
-        })
+        .filter(|(_, field)| fields[usize::from(field.0)].value_type.is_region())
         .map(|(pos, _)| pos)
         .collect()
 }
@@ -528,6 +518,55 @@ impl StatementIdentity {
     }
 }
 
+/// A pointwise key has exactly one region, in its last logical position.
+fn validate_key_region(
+    id: StatementId,
+    relation_id: RelationId,
+    fields: &[FieldDescriptor],
+    projection: &[FieldId],
+) -> Result<Option<(usize, ValueType)>, SchemaError> {
+    let positions = region_positions(fields, projection);
+    if positions.len() > 1 {
+        if positions
+            .iter()
+            .any(|&at| fields[usize::from(projection[at].0)].value_type == ValueType::Event)
+        {
+            return Err(StatementErrorKind::FunctionalityMultipleRegions {
+                relation: relation_id,
+                field: projection[positions[1]],
+            }
+            .at(id));
+        }
+        return Err(StatementErrorKind::FunctionalityMultipleIntervals {
+            relation: relation_id,
+            field: projection[positions[1]],
+        }
+        .at(id));
+    }
+    let interval_position = positions.first().copied();
+    if let Some(pos) = interval_position
+        && pos != projection.len() - 1
+    {
+        if fields[usize::from(projection[pos].0)].value_type == ValueType::Event {
+            return Err(StatementErrorKind::FunctionalityEventNotLast {
+                relation: relation_id,
+                field: projection[pos],
+            }
+            .at(id));
+        }
+        return Err(StatementErrorKind::FunctionalityIntervalNotLast {
+            relation: relation_id,
+            field: projection[pos],
+        }
+        .at(id));
+    }
+
+    Ok(interval_position.map(|pos| {
+        let idx = usize::from(projection[pos].0);
+        (pos, fields[idx].value_type)
+    }))
+}
+
 fn validate_functionality(
     id: StatementId,
     relation_id: RelationId,
@@ -538,32 +577,8 @@ fn validate_functionality(
     let relation = known_relation(id, relation_id, relations)?;
     let projection = validate_projection(id, relation_id, projection, relation)?;
 
-    let positions = interval_positions(&relation.fields, projection.ordered());
-    if positions.len() > 1 {
-        return Err(StatementErrorKind::FunctionalityMultipleIntervals {
-            relation: relation_id,
-            field: projection.ordered()[positions[1]],
-        }
-        .at(id));
-    }
-    let interval_position = positions.first().copied();
-    if let Some(pos) = interval_position
-        && pos != projection.ordered().len() - 1
-    {
-        return Err(StatementErrorKind::FunctionalityIntervalNotLast {
-            relation: relation_id,
-            field: projection.ordered()[pos],
-        }
-        .at(id));
-    }
-
-    let tail = interval_position.map(|pos| {
-        let idx = usize::from(projection.ordered()[pos].0);
-        match relation.fields[idx].value_type {
-            ty if ty.is_interval() => ty,
-            _ => unreachable!("interval_positions found an interval field"),
-        }
-    });
+    let region = validate_key_region(id, relation_id, &relation.fields, projection.ordered())?;
+    let tail = region.map(|(_, ty)| ty);
 
     let this_set = projection.fields();
     for (idx, earlier) in descriptors[..usize::from(id.0)].iter().enumerate() {
@@ -584,11 +599,7 @@ fn validate_functionality(
     let scalar_fields: Vec<_> = projection
         .ordered()
         .iter()
-        .filter(|field| {
-            !relation.fields[usize::from(field.0)]
-                .value_type
-                .is_interval()
-        })
+        .filter(|field| !relation.fields[usize::from(field.0)].value_type.is_region())
         .map(|field| relation.fields[usize::from(field.0)].clone())
         .collect();
     let routing = select_key_encoding_width(&scalar_fields);
@@ -598,7 +609,7 @@ fn validate_functionality(
 
     if let Some(rows) = relation.body.closed_rows() {
         let layout = &relation.layout;
-        let scalar_len = projection.ordered().len() - usize::from(interval_position.is_some());
+        let scalar_len = projection.ordered().len() - usize::from(region.is_some());
         for (row_idx, row) in rows.iter().enumerate() {
             for earlier in &rows[..row_idx] {
                 let scalars_agree = projection.ordered()[..scalar_len].iter().all(|field| {
@@ -609,7 +620,7 @@ fn validate_functionality(
                 if !scalars_agree {
                     continue;
                 }
-                let collide = match interval_position.zip(tail) {
+                let collide = match region {
                     None => true,
                     Some((pos, tail)) => {
                         let idx = usize::from(projection.ordered()[pos].0);
@@ -666,7 +677,7 @@ fn validate_containment(
         RelationBody::Closed { .. }
     );
     if (source_closed || target_closed)
-        && !interval_positions(target_fields, &target.projection).is_empty()
+        && !region_positions(target_fields, &target.projection).is_empty()
     {
         return Err(StatementErrorKind::ClosedContainmentInterval {
             relation: if target_closed {
@@ -685,7 +696,7 @@ fn validate_containment(
         &target_projection,
         relations,
         descriptors,
-        relations[source.relation.0 as usize].interval_tail(&source.projection),
+        relations[source.relation.0 as usize].region_tail(&source.projection),
     )?;
 
     if let (Enforcement::Closed { members }, Some(rows)) = (
@@ -760,7 +771,7 @@ fn validate_capacity(
     // The v0 interval refusal, narrowed to projections: capacity
 
     let source_fields = &relations[source.relation.0 as usize].fields;
-    let positions = interval_positions(source_fields, &source.projection);
+    let positions = region_positions(source_fields, &source.projection);
     if let Some(pos) = positions.first() {
         return Err(StatementErrorKind::CapacityIntervalPosition {
             relation: source.relation,
@@ -1234,7 +1245,7 @@ fn resolve_target_key(
     }
 
     let target_fields = &target_relation.fields;
-    let positions = interval_positions(target_fields, &target.projection);
+    let positions = region_positions(target_fields, &target.projection);
 
     if positions.len() > 1 {
         return Err(missing_target_key(id, target, relations, descriptors, true));
@@ -1267,18 +1278,26 @@ fn resolve_target_key(
             descriptors,
         )?
         else {
-            unreachable!("a set-equal interval projection resolves to a pointwise key")
+            unreachable!("a set-equal region projection resolves to a pointwise key")
         };
         let Some(source_tail) = source_tail else {
-            unreachable!("positional type match: a coverage target implies an interval source");
+            unreachable!("positional type match: a coverage target implies a region source");
         };
-        Ok(Enforcement::IntervalCoverage {
-            target_key,
-            key_projection: key_projection_in_order,
-            disjoint,
-            source_tail,
-            target_tail,
-        })
+        if target_tail == ValueType::Event {
+            Ok(Enforcement::EventCoverage {
+                target_key,
+                key_projection: key_projection_in_order,
+                disjoint,
+            })
+        } else {
+            Ok(Enforcement::IntervalCoverage {
+                target_key,
+                key_projection: key_projection_in_order,
+                disjoint,
+                source_tail,
+                target_tail,
+            })
+        }
     } else {
         Ok(Enforcement::ScalarProbe {
             target_key,

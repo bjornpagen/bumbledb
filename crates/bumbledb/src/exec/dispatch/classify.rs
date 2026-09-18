@@ -119,6 +119,7 @@ fn key_probe_candidate(
             Some(
                 DistinctnessWitness::FullRowEquality
                 | DistinctnessWitness::IntervalKeyUnique { .. }
+                | DistinctnessWitness::EventKeyMayBeEmpty { .. }
                 | DistinctnessWitness::ExistenceOnly { .. },
             )
             | None => {}

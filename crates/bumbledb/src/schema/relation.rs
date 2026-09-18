@@ -54,10 +54,10 @@ impl Relation {
     }
 
     #[must_use]
-    pub(crate) fn interval_tail(&self, projection: &[FieldId]) -> Option<ValueType> {
+    pub(crate) fn region_tail(&self, projection: &[FieldId]) -> Option<ValueType> {
         projection.iter().find_map(|field| {
             let ty = self.field(*field).value_type;
-            ty.is_interval().then_some(ty)
+            ty.is_region().then_some(ty)
         })
     }
 }

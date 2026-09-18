@@ -315,7 +315,7 @@ impl<S> OwnedInstance<S> {
         let fields = self.schema.relation(relation).fields();
         for row in self.relation_rows(relation) {
             let decoded = crate::canonical::decode(fields, row, work).map_err(row_error)?;
-            if get_path::projection_matches(decoded.values(), projection, key_values) {
+            if get_path::projection_matches(decoded.values(), projection, key_values, work)? {
                 return Ok(Some(row));
             }
         }
