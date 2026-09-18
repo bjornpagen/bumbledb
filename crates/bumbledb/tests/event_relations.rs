@@ -91,6 +91,16 @@ fn computed_permissions_reopen_join_and_recover_their_relation_view() {
         let output = states.coordinate(0, &()).unwrap().complement();
         assert!(permission.must(&output, &()).unwrap().is_full());
         assert_eq!(permission.readout(&()).unwrap().map_world(1).unwrap(), 0);
+        let observation = permission.readout(&()).unwrap();
+        let information = observation
+            .information(
+                &states.coordinate(0, &()).unwrap(),
+                &states.full(),
+                &common::work(),
+            )
+            .unwrap();
+        assert!(information.ambiguous().is_full());
+        assert!(information.guaranteed().is_empty());
         // Inspection is also available to an external database consumer. The
         // snapshot retains support after both database and row owners go away.
         let diagram = region.diagram(&common::work()).unwrap();

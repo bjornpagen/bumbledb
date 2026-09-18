@@ -12,6 +12,7 @@ mod boolean;
 mod codec;
 mod diagram;
 mod error;
+mod information;
 mod map;
 mod product;
 mod registry;
@@ -21,6 +22,7 @@ mod space;
 pub use boolean::{BoolOp4, Signature};
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
+pub use information::InformationCases;
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
 pub use registry::Registry;
@@ -38,3 +40,6 @@ mod relation_tests;
 
 #[cfg(test)]
 mod diagram_tests;
+
+#[cfg(test)]
+mod information_tests;
