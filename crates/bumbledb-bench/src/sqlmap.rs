@@ -21,6 +21,7 @@ fn sql_type(ty: &ValueType) -> &'static str {
         }
         | ValueType::FixedBytes { .. }
         | ValueType::F64
+        | ValueType::Event
         | ValueType::Uuid => "BLOB",
     }
 }
@@ -202,6 +203,7 @@ pub fn schema_ddl(schema: &Schema) -> Vec<String> {
 /// # Panics
 fn sql_literal(value: &Value) -> String {
     match value {
+        Value::Event(v) => sql_literal(&Value::FixedBytes(crate::compare::event_bytes(v).into())),
         Value::Bool(v) => format!("{}", i64::from(*v)),
         Value::U64(v) => {
             format!(
@@ -313,6 +315,7 @@ pub fn insert_sql(relation: &Relation) -> String {
 pub fn to_sql_value(value: &Value) -> rusqlite::types::Value {
     use rusqlite::types::Value as Sql;
     match value {
+        Value::Event(v) => Sql::Blob(crate::compare::event_bytes(v)),
         Value::Bool(v) => Sql::Integer(i64::from(*v)),
         Value::U64(v) => {
             Sql::Integer(i64::try_from(*v).expect("the SQLite mapping axiom: u64 < 2^63"))
@@ -375,6 +378,9 @@ pub fn from_sql_value(
 ) -> Result<Value, String> {
     use rusqlite::types::Value as Sql;
     match (value, expected) {
+        (Sql::Blob(raw), ValueType::Event) => bumbledb::Event::from_bytes(raw, &())
+            .map(Value::Event)
+            .map_err(|error| error.to_string()),
         (Sql::Integer(v), ValueType::Bool) => match v {
             0 => Ok(Value::Bool(false)),
             1 => Ok(Value::Bool(true)),

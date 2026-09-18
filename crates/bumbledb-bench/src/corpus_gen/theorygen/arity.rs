@@ -304,6 +304,9 @@ fn fact(arity: usize, discriminator: u64, payload: u64) -> Vec<Value> {
 fn value(value_type: &ValueType, discriminator: u64, index: usize) -> Value {
     let salt = discriminator.wrapping_mul(257).wrapping_add(index as u64);
     match value_type {
+        ValueType::Event => unreachable!(
+            "this generator draws only the legacy type roster; Event qualification has its own fixtures"
+        ),
         ValueType::Bool => Value::Bool(salt & 1 == 0),
         ValueType::U64 => Value::U64(salt),
         ValueType::I64 => Value::I64(i64::try_from(salt).expect("small generated value")),
@@ -344,6 +347,9 @@ fn type_counts(types: &[ValueType]) -> [usize; 6] {
         let index = match value_type {
             ValueType::U64 => 0,
             ValueType::I64 => 1,
+            ValueType::Event => unreachable!(
+                "this generator draws only the legacy type roster; Event qualification has its own fixtures"
+            ),
             ValueType::Bool => 2,
             ValueType::String => 3,
             ValueType::FixedBytes { .. } => 4,

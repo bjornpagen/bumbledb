@@ -74,6 +74,9 @@ pub enum ValueType {
     /// and no database issuance/reservation authority exists for it.
     Uuid,
 
+    /// A scoped region; its two resident words are an owned registry key.
+    Event,
+
     FixedBytes {
         len: u16,
     },
@@ -96,7 +99,7 @@ impl ValueType {
         match self {
             Self::Bool => 1,
             Self::U64 | Self::I64 | Self::F64 | Self::String | Self::FixedInterval { .. } => 8,
-            Self::Uuid | Self::Interval { .. } => 16,
+            Self::Uuid | Self::Event | Self::Interval { .. } => 16,
             Self::FixedBytes { len } => (len as usize).div_ceil(8) * 8,
         }
     }
@@ -166,6 +169,7 @@ pub fn value_matches(value: &Value, expected: &ValueType) -> Result<(), ValueMis
         | (Value::F64(_), ValueType::F64)
         | (Value::Uuid(_), ValueType::Uuid)
         | (Value::String(_), ValueType::String)
+        | (Value::Event(_), ValueType::Event)
         | (
             Value::IntervalU64(_),
             ValueType::Interval {

@@ -55,6 +55,7 @@ pub use self::result::{
 /// borrows .
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindValue<'a> {
+    Event(&'a crate::Event),
     Bool(bool),
     U64(u64),
     I64(i64),
@@ -167,6 +168,7 @@ impl<'a> BindArgs<'a> for &'a Vec<ParamArg<'a>> {
 /// One decoded answer cell, borrowed from [`Answers`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnswerValue<'a> {
+    Event(&'a crate::Event),
     Bool(bool),
     U64(u64),
     I64(i64),
@@ -192,6 +194,7 @@ pub enum AnswerValue<'a> {
 /// span collapses at materialization).
 #[derive(Debug, Clone, Copy)]
 enum Cell {
+    Event(usize),
     Bool(bool),
     U64(u64),
     I64(i64),
@@ -219,6 +222,8 @@ pub struct Answers {
     text: String,
     /// The `bytes<N>` cells' heap: raw payloads, no text contract.
     blob: Vec<u8>,
+    events: Vec<crate::Event>,
+    event_indices: std::collections::HashMap<[u64; 2], usize>,
 }
 
 /// Per-finalize intern resolution. Text is copied only into the answer heap.

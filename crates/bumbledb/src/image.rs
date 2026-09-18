@@ -103,7 +103,7 @@ pub fn column_spans(field_types: &[bumbledb_theory::schema::ValueType]) -> Box<[
                 // Sixteen exact identity bytes: two big-endian word
                 // columns — byte order IS the value's one total order,
                 // so two-word lexicographic comparison is exact.
-                ValueType::Uuid => ColumnWidth::Words { count: 2 },
+                ValueType::Uuid | ValueType::Event => ColumnWidth::Words { count: 2 },
                 ValueType::FixedBytes { len } => {
                     match u16::try_from(crate::encoding::fixed_bytes_words(*len))
                         .expect("bytes width is at most 8 words")

@@ -360,6 +360,13 @@ pub fn decode_field(
         }
         ValueType::String => Ok(ValueRef::String(InternId::from_raw(decode_u64(word())))),
         ValueType::Uuid => Ok(ValueRef::Uuid(decode_uuid(fact, field_idx))),
+        ValueType::Event => {
+            let bytes = field_bytes(fact, field_idx);
+            Ok(ValueRef::Event([
+                u64::from_be_bytes(bytes[..8].try_into().expect("Event layout width")),
+                u64::from_be_bytes(bytes[8..].try_into().expect("Event layout width")),
+            ]))
+        }
         ValueType::FixedBytes { .. } => decode_fixed_bytes(fact, field_idx).map(ValueRef::bytes),
         ValueType::Interval {
             element: IntervalElement::U64,
@@ -420,6 +427,9 @@ pub(crate) fn decode_values_keyed_into(
             continue;
         }
         out.push(match decode_field(fact, idx)? {
+            // This decoder serves only sealed intrinsic rows; Events require
+            // canonical-row decoding or a retained registry, never raw words.
+            ValueRef::Event(_) => return Err(crate::event::Error::UnknownKey.into()),
             ValueRef::Bool(v) => Value::Bool(v),
             ValueRef::U64(v) => Value::U64(v),
             ValueRef::I64(v) => Value::I64(v),

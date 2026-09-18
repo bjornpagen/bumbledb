@@ -140,6 +140,7 @@ pub(crate) fn bind_value(value: &Value) -> BindValue<'_> {
         Value::IntervalU64(interval) => BindValue::IntervalU64(interval.start(), interval.end()),
         Value::IntervalI64(interval) => BindValue::IntervalI64(interval.start(), interval.end()),
         Value::IntervalF64(interval) => BindValue::IntervalF64(*interval),
+        Value::Event(event) => BindValue::Event(event),
     }
 }
 

@@ -60,6 +60,10 @@ fn const_words(
         Const::ParamSet(_) | Const::WordSet(_) => {
             unreachable!("classification: a set binding never reaches the key-probe path")
         }
+        Const::PendingEvent(event) => {
+            out.words
+                .extend(interner.intern_event(event)?.key().words());
+        }
         Const::PendingIntern { bytes } => {
             let text = std::str::from_utf8(bytes)
                 .expect("IR string literals are UTF-8 by construction (Value::String)");
@@ -73,8 +77,13 @@ fn const_words(
 /// canonical-bytes reconstruction. Exact inverses of the walker's word
 /// conventions; a probe word that cannot embed refuses as a mismatch.
 /// Resolver failures are operational errors, never successful nonmatches.
-fn value_of_words(interner: &InternerHandle<'_>, ty: &ValueType, words: &[u64]) -> Option<Value> {
-    match ty {
+fn value_of_words(
+    interner: &InternerHandle<'_>,
+    ty: &ValueType,
+    words: &[u64],
+) -> Result<Option<Value>> {
+    Ok(match ty {
+        ValueType::Event => Some(Value::Event(interner.resolve_event([words[0], words[1]])?)),
         ValueType::Bool => Some(Value::Bool(words[0] != 0)),
         ValueType::U64 => Some(Value::U64(words[0])),
         ValueType::I64 => Some(Value::I64((words[0] ^ (1 << 63)).cast_signed())),
@@ -123,7 +132,7 @@ fn value_of_words(interner: &InternerHandle<'_>, ty: &ValueType, words: &[u64]) 
             .zip(bumbledb_theory::F64::from_order_key(words[1]).ok())
             .and_then(|(start, end)| bumbledb_theory::Interval::new(start, end))
             .map(Value::IntervalF64),
-    }
+    })
 }
 
 /// Residual-filter operands over one decoded row's words.
@@ -214,7 +223,7 @@ pub(crate) fn key_probe_row(
             let mut ok = true;
             for part in key_words {
                 let ty = &fields[usize::from(part.field.0)].value_type;
-                if let Some(value) = value_of_words(interner, ty, &scratch[part.words()]) {
+                if let Some(value) = value_of_words(interner, ty, &scratch[part.words()])? {
                     values.push(value);
                 } else {
                     ok = false;
@@ -325,7 +334,7 @@ fn probe_uniqueness_indexed(
             for &position in &key.scalar_positions {
                 let part = &key_words[position];
                 let ty = &fields[usize::from(part.field.0)].value_type;
-                match value_of_words(interner, ty, &scratch[part.words()]) {
+                match value_of_words(interner, ty, &scratch[part.words()])? {
                     Some(value) => determinant.push(value),
                     None => return Ok(Some(false)),
                 }
@@ -335,7 +344,7 @@ fn probe_uniqueness_indexed(
             &encoded
         }
     };
-    let has_text = row.has_text();
+    let has_text = row.needs_resolver();
     let mut hit = false;
     let mut visit_err: Option<Error> = None;
     projection
@@ -419,7 +428,10 @@ fn encode_exact_field(ty: &ValueType, words: &[u64], out: &mut [u8]) -> Option<u
         }
         ValueType::Uuid => 16,
         ValueType::FixedBytes { len } => usize::from(*len),
-        ValueType::String | ValueType::Interval { .. } | ValueType::FixedInterval { .. } => {
+        ValueType::Event
+        | ValueType::String
+        | ValueType::Interval { .. }
+        | ValueType::FixedInterval { .. } => {
             return None;
         }
     };
@@ -452,7 +464,7 @@ fn probe_uniqueness_scan(
     row: &mut RowWords,
 ) -> Result<bool> {
     let mut found = false;
-    let has_text = row.has_text();
+    let has_text = row.needs_resolver();
     let theory = schema
         .compiled_theory()
         .map_err(crate::api::prepared::source::compile_error)?;

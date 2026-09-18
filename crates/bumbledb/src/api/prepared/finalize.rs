@@ -143,6 +143,17 @@ fn fill_resident_rows<'a>(
                 }
                 1
             }
+            ValueType::Event => {
+                let mut answers = answers.clone();
+                for row in 0..rows {
+                    work.checkpoint().map_err(work_error)?;
+                    let answer = answers.next().expect("resident sink length");
+                    let value = interner.resolve_event([answer[offset], answer[offset + 1]])?;
+                    let cell = out.event_cell(&value);
+                    out.cells.spare_capacity_mut()[row * arity + col].write(cell);
+                }
+                2
+            }
             ValueType::FixedBytes { len } => {
                 let width = crate::encoding::fixed_bytes_words(*len);
                 let mut answers = answers.clone();
@@ -261,6 +272,7 @@ fn fill_fixed_chunk<'a>(
             }
             return Ok(2);
         }
+        ValueType::Event => unreachable!("Event columns resolve through the registry"),
         ValueType::String => {
             unreachable!("string columns resolve through the memo (fill_resolved_answers)")
         }
@@ -300,6 +312,10 @@ fn push_resolved_answer(
             ValueType::String => {
                 let (start, len) = memo.resolve(interner, answer[word], out)?;
                 (Cell::String { start, len }, 1)
+            }
+            ValueType::Event => {
+                let value = interner.resolve_event([answer[word], answer[word + 1]])?;
+                (out.event_cell(&value), 2)
             }
             ValueType::FixedBytes { len } => {
                 let width = crate::encoding::fixed_bytes_words(*len);

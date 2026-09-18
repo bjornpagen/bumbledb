@@ -857,7 +857,7 @@ fn push_value(out: &mut String, value: &Value, ty: Option<&ValueType>) {
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::String(_) | Value::Uuid(_) | Value::IntervalF64(_) => {
+        Value::Event(_) | Value::String(_) | Value::Uuid(_) | Value::IntervalF64(_) => {
             unreachable!(
                 "judgment fixtures carry no strings, identities or dense intervals — \
                  the judgment interchange grammar spells none of them"

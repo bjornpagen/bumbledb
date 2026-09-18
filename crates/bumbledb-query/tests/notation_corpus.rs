@@ -175,6 +175,9 @@ fn json_string(text: &str) -> String {
 
 fn value_json(value: &Value) -> String {
     match value {
+        Value::Event(_) => {
+            panic!("Event is supplied as a typed parameter; this text corpus has no Event literals")
+        }
         Value::Bool(b) => format!("{{\"kind\":\"bool\",\"value\":{b}}}"),
         Value::U64(v) => format!("{{\"kind\":\"u64\",\"value\":\"{v}\"}}"),
         Value::I64(v) => format!("{{\"kind\":\"i64\",\"value\":\"{v}\"}}"),

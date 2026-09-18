@@ -287,7 +287,7 @@ fn sealed_operand(
         ValueType::U64 | ValueType::I64 | ValueType::F64 | ValueType::String => FactOperand::Word(
             u64::from_be_bytes(bytes.try_into().expect("word field: layout-derived width")),
         ),
-        ValueType::Uuid => {
+        ValueType::Uuid | ValueType::Event => {
             let mut words = [0u64; 8];
             words[0] = u64::from_be_bytes(bytes[..8].try_into().expect("uuid is sixteen bytes"));
             words[1] = u64::from_be_bytes(bytes[8..].try_into().expect("uuid is sixteen bytes"));

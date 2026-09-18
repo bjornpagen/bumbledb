@@ -2,8 +2,14 @@ use std::cmp::Ordering;
 
 use bumbledb::Value;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct Tuple(pub Vec<Value>);
+
+impl PartialEq for Tuple {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
 
 impl Ord for Tuple {
     fn cmp(&self, other: &Self) -> Ordering {
@@ -25,6 +31,7 @@ impl PartialOrd for Tuple {
 
 fn rank(value: &Value) -> u8 {
     match value {
+        Value::Event(_) => 10,
         Value::Bool(_) => 0,
         Value::U64(_) => 1,
         Value::I64(_) => 2,
@@ -40,6 +47,9 @@ fn rank(value: &Value) -> u8 {
 
 pub(crate) fn cmp_value(a: &Value, b: &Value) -> Ordering {
     match (a, b) {
+        (Value::Event(x), Value::Event(y)) => {
+            crate::compare::event_bytes(x).cmp(&crate::compare::event_bytes(y))
+        }
         (Value::Bool(x), Value::Bool(y)) => x.cmp(y),
         (Value::U64(x), Value::U64(y)) => x.cmp(y),
         (Value::I64(x), Value::I64(y)) => x.cmp(y),

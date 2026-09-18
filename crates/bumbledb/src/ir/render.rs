@@ -393,6 +393,9 @@ pub(crate) fn mask_names(out: &mut String, mask: AllenMask) {
 
 pub(crate) fn literal(out: &mut String, value: &Value) {
     match value {
+        Value::Event(event) => {
+            let _ = write!(out, "event:{:?}", event.space().identity());
+        }
         Value::Bool(v) => {
             let _ = write!(out, "{v}");
         }

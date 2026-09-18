@@ -1401,7 +1401,9 @@ pub fn runtime_schema_snapshot(
                 .clone()
                 .validate()
                 .map_err(|error| schema_error(&error, &descriptor))?;
-            let bytes = bumbledb_log::schema_file::render(&descriptor).into_bytes();
+            let bytes = bumbledb_log::schema_file::render(&descriptor)
+                .map_err(|error| engine_error(&error.into()))?
+                .into_bytes();
             context.checkpoint()?;
             Ok(Output::Bytes(QueuedBytes::admit(context, bytes)?))
         }))

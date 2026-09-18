@@ -126,6 +126,17 @@ impl<S> PreparedQuery<S> {
         match &self.params[idx] {
             ParamSpec::Set { .. } => Err(Error::ParamSetExpected { param }),
             ParamSpec::Scalar { ty, point } => {
+                if let (ValueType::Event, BindValue::Event(event)) = (ty, value) {
+                    let generation = self
+                        .text_generation
+                        .as_ref()
+                        .and_then(crate::work::cache::WeakGenerationHandle::upgrade)
+                        .unwrap_or_else(|| self.cache.acquire());
+                    let value = InternerHandle::new(&generation, work).intern_event(event)?;
+                    self.resolved_params[idx] = Const::Words(Box::from(value.key().words()));
+                    self.missed_params[idx] = false;
+                    return Ok(());
+                }
                 if let ValueType::FixedBytes { len } = ty {
                     let mismatch = Error::ParamTypeMismatch {
                         param,
@@ -210,11 +221,7 @@ impl<S> PreparedQuery<S> {
             }
         };
 
-        let element_width = match expected {
-            ValueType::FixedBytes { len } => crate::encoding::fixed_bytes_words(*len),
-            ValueType::Uuid => 2,
-            _ => 1,
-        };
+        let element_width = crate::ir::normalize::SlotWidth::of(expected).slots();
 
         let mut words = match std::mem::replace(&mut self.resolved_params[idx], Const::Word(0)) {
             Const::WordSet(mut words) => {
@@ -234,6 +241,11 @@ impl<S> PreparedQuery<S> {
                 .unwrap_or_else(|| cache.acquire())
         });
         for (element, value) in values.iter().enumerate() {
+            if let (ValueType::Event, Value::Event(event)) = (expected, value) {
+                let value = InternerHandle::new(&generation, work).intern_event(event)?;
+                words.words.extend(value.key().words());
+                continue;
+            }
             let Some(word_count) = element_words(value, expected, &mut words, |text| {
                 let interner = InternerHandle::new(&generation, work);
                 interner.intern(text).map(Const::Text)
@@ -343,7 +355,11 @@ fn element_words(
             out.words.extend_from_slice(&words);
             words.len()
         }
-        Const::Param(_) | Const::ParamSet(_) | Const::WordSet(_) | Const::PendingIntern { .. } => {
+        Const::Param(_)
+        | Const::ParamSet(_)
+        | Const::WordSet(_)
+        | Const::PendingEvent(_)
+        | Const::PendingIntern { .. } => {
             unreachable!("convert_scalar resolves scalar kinds to inline column form")
         }
     }))
@@ -422,6 +438,12 @@ impl LiteralResolution<'_, '_> {
         out: &mut ResolvedWords,
     ) -> Result<bool> {
         self.work.checkpoint().map_err(super::source::work_error)?;
+        if let Const::PendingEvent(event) = &selection.value {
+            out.clear();
+            let value = self.interner.intern_event(event)?;
+            out.words.extend(value.key().words());
+            return Ok(true);
+        }
         if let Const::PendingIntern { bytes } = &selection.value {
             if matches!(out.texts.as_slice(), [text] if out.words.as_slice() == [text.word]) {
                 return Ok(true);
@@ -442,6 +464,7 @@ impl LiteralResolution<'_, '_> {
             Const::WordSet(_)
             | Const::Param(_)
             | Const::ParamSet(_)
+            | Const::PendingEvent(_)
             | Const::PendingIntern { .. } => {
                 unreachable!("bind resolved parameters to column form")
             }
@@ -471,7 +494,7 @@ impl LiteralResolution<'_, '_> {
             }
 
             Const::WordSet(words) => out.clone_from(words),
-            Const::PendingIntern { .. } => unreachable!("resolved above"),
+            Const::PendingEvent(_) | Const::PendingIntern { .. } => unreachable!("resolved above"),
         }
         Ok(true)
     }
@@ -479,6 +502,7 @@ impl LiteralResolution<'_, '_> {
 
 fn element_view(value: &Value) -> BindValue<'_> {
     match value {
+        Value::Event(value) => BindValue::Event(value),
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),

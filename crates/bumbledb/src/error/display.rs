@@ -445,6 +445,10 @@ impl fmt::Display for SchemaError {
                 "relation {}, row {row}: ray axiom at field {} — a still-running span is policy, not an intrinsic property",
                 r.0, fd.0
             ),
+            Self::EventContractPending { relation, field } => write!(
+                f,
+                "Event schema contract at {relation:?}.{field:?} requires pointwise admission (not yet implemented)"
+            ),
             Self::StrOnClosedRelation {
                 relation: r,
                 field: fd,
@@ -775,6 +779,10 @@ impl fmt::Display for ValidationError {
                 "comparison {index}: order operator on bytes<N> — a digest's \
                  lexicographic order is an encoding artifact; identity only"
             ),
+            Self::OrderComparisonOnEvent { index } => write!(
+                f,
+                "comparison {index}: Event supports equality; resident keys have no logical order"
+            ),
             Self::OrderComparisonOnString { index } => write!(
                 f,
                 "comparison {index}: order operator on String — strings are equality-only"
@@ -1036,6 +1044,7 @@ impl fmt::Display for Error {
                 write!(f, "aggregate binding cardinality exceeds u64::MAX")
             }
             Self::Scalar { find, source } => write!(f, "find {find}: {source}"),
+            Self::Event(source) => write!(f, "event: {source}"),
             Self::TransactionPoisoned { source } => {
                 write!(f, "write transaction poisoned: {source}")
             }

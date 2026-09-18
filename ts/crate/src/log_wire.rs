@@ -635,7 +635,10 @@ fn result_record_wire<'e>(env: &'e Env, bytes: &[u8]) -> napi::Result<Object<'e>
             // record from TS respells the cell as tag 4: a NEW command with
             // its own digest, never a mutation of the recorded one.
             Value::Uuid(value) => obj.set(&*key, uuid_text(value))?,
-            Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
+            Value::IntervalU64(_)
+            | Value::IntervalI64(_)
+            | Value::IntervalF64(_)
+            | Value::Event(_) => {
                 return Err(throw_frame(
                     *env,
                     &protocol("Corruption", "non-scalar result record"),

@@ -480,6 +480,7 @@ type ErrorFamilyKind =
 	| "resultBytesOverflow"
 	| "corruption"
 	| "store"
+	| "event"
 
 type AdmissionTag = "accepted" | "rejected"
 type WriteTag = "accepted" | "rejected" | "abandoned" | "moved"

@@ -284,6 +284,7 @@ pub(crate) fn engine_query<S>(db: &Db<S>, query: &Query, params: &[ParamValue]) 
 
 fn owned_value(value: AnswerValue<'_>) -> Value {
     match value {
+        AnswerValue::Event(v) => Value::Event(v.clone()),
         AnswerValue::Bool(v) => Value::Bool(v),
         AnswerValue::U64(v) => Value::U64(v),
         AnswerValue::I64(v) => Value::I64(v),

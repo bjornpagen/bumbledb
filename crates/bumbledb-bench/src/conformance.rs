@@ -334,7 +334,7 @@ fn push_value(
         Value::IntervalI64(iv) => {
             let _ = write!(out, "{{\"interval_i64\":[{},{}]}}", iv.start(), iv.end());
         }
-        Value::Uuid(_) | Value::IntervalF64(_) => {
+        Value::Event(_) | Value::Uuid(_) | Value::IntervalF64(_) => {
             return Err(Exclusion::UnrepresentableValue);
         }
     }
@@ -617,6 +617,7 @@ fn mentioned(rules: &[LoweredRule<'_>]) -> BTreeSet<RelationId> {
 
 fn type_name(value_type: &ValueType) -> String {
     match value_type {
+        ValueType::Event => "event".into(),
         ValueType::Bool => "bool".into(),
         ValueType::U64 => "u64".into(),
         ValueType::I64 => "i64".into(),

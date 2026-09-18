@@ -92,6 +92,7 @@ enum FieldTy {
     I64,
     F64,
     Uuid,
+    Event,
     Str,
 
     FixedBytes(u64),
@@ -288,18 +289,19 @@ fn parse_relation(name: String, body: TokenStream) -> Relation {
     relation
 }
 
-fn parse_field(name: String, tokens: &mut Tokens) -> Field {
+fn parse_field_type(name: &str, tokens: &mut Tokens) -> FieldTy {
     let ty_name = expect_ident(
         tokens,
-        "a type (bool/u64/i64/f64/uuid/str/bytes<N>/interval)",
+        "a type (bool/u64/i64/f64/uuid/event/str/bytes<N>/interval)",
     );
     reject_deleted_word(&ty_name);
-    let ty = match ty_name.as_str() {
+    match ty_name.as_str() {
         "bool" => FieldTy::Bool,
         "u64" => FieldTy::U64,
         "i64" => FieldTy::I64,
         "f64" => FieldTy::F64,
         "uuid" => FieldTy::Uuid,
+        "event" => FieldTy::Event,
         "str" => FieldTy::Str,
 
         "bytes" => {
@@ -326,7 +328,7 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
                     panic!("schema!: interval element must be i64, u64 or f64, found `{other}`")
                 }
             };
-            let ty = match parse_interval_width(&name, tokens) {
+            let ty = match parse_interval_width(name, tokens) {
                 None => FieldTy::Interval(element),
                 Some(width) => match element {
                     IntervalElement::U64 => {
@@ -346,7 +348,11 @@ fn parse_field(name: String, tokens: &mut Tokens) -> Field {
             ty
         }
         other => panic!("schema!: unknown type `{other}`"),
-    };
+    }
+}
+
+fn parse_field(name: String, tokens: &mut Tokens) -> Field {
+    let ty = parse_field_type(&name, tokens);
     let mut field = Field {
         name,
         ty,
@@ -1341,6 +1347,7 @@ fn field_value_type(relation: &str, field: &Field) -> ValueType {
         FieldTy::I64 => ValueType::I64,
         FieldTy::F64 => ValueType::F64,
         FieldTy::Uuid => ValueType::Uuid,
+        FieldTy::Event => ValueType::Event,
         FieldTy::Str => ValueType::String,
         FieldTy::FixedBytes(len) => ValueType::FixedBytes {
             len: u16::try_from(*len).unwrap_or_else(|_| {
@@ -1969,6 +1976,7 @@ fn value_type_tokens(value_type: &ValueType) -> String {
         ValueType::I64 => format!("{path}::I64"),
         ValueType::F64 => format!("{path}::F64"),
         ValueType::Uuid => format!("{path}::Uuid"),
+        ValueType::Event => format!("{path}::Event"),
         ValueType::String => format!("{path}::String"),
         ValueType::FixedBytes { len } => format!("{path}::FixedBytes {{ len: {len} }}"),
         ValueType::Interval { element } => {
@@ -1993,6 +2001,9 @@ fn value_type_tokens(value_type: &ValueType) -> String {
 fn value_tokens(value: &Value) -> String {
     let path = "::bumbledb::Value";
     match value {
+        Value::Event(_) => {
+            unreachable!("the schema parser does not construct owned Event literals")
+        }
         Value::Bool(v) => format!("{path}::Bool({v})"),
         Value::U64(v) => format!("{path}::U64({v})"),
         Value::I64(v) => format!("{path}::I64({v})"),
@@ -2450,6 +2461,9 @@ fn emit_closed(out: &mut String, relations: &[Relation], descriptor: &SchemaDesc
 
 fn const_value_tokens(value: &Value, field: &Field) -> String {
     let raw = match value {
+        Value::Event(_) => {
+            unreachable!("the schema parser does not construct owned Event literals")
+        }
         Value::Bool(v) => format!("{v}"),
         Value::U64(v) => format!("{v}u64"),
         Value::I64(v) => format!("{v}i64"),
@@ -2506,6 +2520,7 @@ fn rust_field_ty(field: &Field) -> String {
         FieldTy::I64 => "i64".to_owned(),
         FieldTy::F64 => "::bumbledb::F64".to_owned(),
         FieldTy::Uuid => "::bumbledb::Uuid".to_owned(),
+        FieldTy::Event => "::bumbledb::Event".to_owned(),
         FieldTy::Str => "&'a str".to_owned(),
         FieldTy::FixedBytes(len) => format!("[u8; {len}]"),
         FieldTy::Interval(element) => {
@@ -2539,6 +2554,7 @@ fn append_value_stmt(field: &Field, idx: usize, cx: &EncodeCx<'_>) -> String {
         FieldTy::I64 => format!("::bumbledb::Value::I64({access})"),
         FieldTy::F64 => format!("::bumbledb::Value::F64({access})"),
         FieldTy::Uuid => format!("::bumbledb::Value::Uuid({access})"),
+        FieldTy::Event => format!("::bumbledb::Value::Event({access}.clone())"),
         FieldTy::Str => format!("::bumbledb::Value::String(::std::boxed::Box::from({access}))"),
         FieldTy::FixedBytes(_) => {
             format!("::bumbledb::Value::FixedBytes(::std::boxed::Box::from(&{access}[..]))")
@@ -2574,6 +2590,7 @@ fn decode_stmt(field: &Field) -> String {
         FieldTy::I64 => wrap("row.next_i64()?".to_owned()),
         FieldTy::F64 => wrap("row.next_f64()?".to_owned()),
         FieldTy::Uuid => wrap("row.next_uuid()?".to_owned()),
+        FieldTy::Event => "row.next_event()?".to_owned(),
         FieldTy::Str => "row.next_str()?".to_owned(),
         FieldTy::Interval(element) => wrap(format!(
             "row.next_interval_{}()?",
@@ -2602,6 +2619,15 @@ fn decode_stmt(field: &Field) -> String {
 
 fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation: &Relation) {
     let name = &relation.name;
+    let copy = if relation
+        .fields
+        .iter()
+        .any(|f| matches!(f.ty, FieldTy::Event))
+    {
+        ""
+    } else {
+        ", Copy"
+    };
 
     let borrowed = relation.fields.iter().any(is_borrowed);
     let (struct_params, self_ty) = if borrowed {
@@ -2638,7 +2664,7 @@ fn emit_fact_struct(out: &mut String, schema_name: &str, index: usize, relation:
 
     let _ = write!(
         out,
-        "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n\
+        "#[derive(Debug, Clone{copy}, PartialEq, Eq, Hash)]\n\
          pub struct {name}{struct_params} {{ {struct_fields} }}\n\
          impl<'a> ::bumbledb::Fact<'a> for {self_ty} {{\n\
              type Schema = {schema_name};\n\
@@ -2741,6 +2767,11 @@ fn emit_key_struct(
             .map(|(name, _)| pascal(name))
             .collect::<String>()
     );
+    let copy = if fields.iter().any(|(_, f)| matches!(f.ty, FieldTy::Event)) {
+        ""
+    } else {
+        ", Copy"
+    };
     let borrowed = fields.iter().any(|(_, field)| is_borrowed(field));
     let fact_borrowed = relation.fields.iter().any(is_borrowed);
     let (struct_params, impl_params, impl_ty) = if borrowed {
@@ -2784,7 +2815,7 @@ fn emit_key_struct(
         out,
         "/// The typed key of `{spelling}` — `snap.get(..)` / `tx.get(..)`\n\
          /// return `Option<{rel_name}>`.\n\
-         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]\n\
+         #[derive(Debug, Clone{copy}, PartialEq, Eq, Hash)]\n\
          pub struct {key_name}{struct_params} {{ {struct_fields} }}\n\
          impl{impl_params} ::bumbledb::Key<'a> for {impl_ty} {{\n\
              type Schema = {schema_name};\n\

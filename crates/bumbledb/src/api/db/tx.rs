@@ -556,12 +556,14 @@ impl<'a, S> WriteTx<'a, S> {
         )?;
         if let Some(rows) = self.closed.get(relation) {
             return match get_path::closed_row_by_key(rows, statement, &key_values) {
-                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                Some(row) => {
+                    K::Fact::decode(RowReader::with_work(&row.canonical, self.work)?).map(Some)
+                }
                 None => Ok(None),
             };
         }
         match self.find_by_key(relation, &statement.projection, &key_values, self.work)? {
-            Some(bytes) => K::Fact::decode(RowReader::new(bytes)?).map(Some),
+            Some(bytes) => K::Fact::decode(RowReader::with_work(bytes, self.work)?).map(Some),
             None => Ok(None),
         }
     }
@@ -593,12 +595,14 @@ impl<'a, S> WriteTx<'a, S> {
         )?;
         if let Some(rows) = self.closed.get(relation) {
             return match get_path::closed_row_by_key(rows, statement, &key_values) {
-                Some(row) => K::Fact::decode(RowReader::new(&row.canonical)?).map(Some),
+                Some(row) => {
+                    K::Fact::decode(RowReader::with_work(&row.canonical, &work)?).map(Some)
+                }
                 None => Ok(None),
             };
         }
         match self.find_by_key(relation, &statement.projection, &key_values, &work)? {
-            Some(bytes) => K::Fact::decode(RowReader::new(bytes)?).map(Some),
+            Some(bytes) => K::Fact::decode(RowReader::with_work(bytes, &work)?).map(Some),
             None => Ok(None),
         }
     }

@@ -1,0 +1,2 @@
+# Evidence preserves exact source/log bytes, including trailing blank lines.
+docs/event-evidence/** whitespace=-blank-at-eof

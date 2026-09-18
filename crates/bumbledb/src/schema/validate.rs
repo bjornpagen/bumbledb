@@ -53,6 +53,54 @@ impl ValidateDescriptor for SchemaDescriptor {
         }
 
         let descriptors = self.materialized_statements();
+        // Until M3 seals the pointwise Event contract, no descriptor may
+        // accidentally treat an Event position as a scalar determinant.
+        let check_event = |relation: RelationId, field: FieldId| -> Result<(), SchemaError> {
+            let Some(decl) = self.relations.get(relation.0 as usize) else {
+                return Ok(());
+            };
+            let index = usize::from(field.0).checked_sub(usize::from(decl.extension.is_some()));
+            if index
+                .and_then(|i| decl.fields.get(i))
+                .is_some_and(|f| f.value_type == ValueType::Event)
+            {
+                return Err(SchemaError::EventContractPending { relation, field });
+            }
+            Ok(())
+        };
+        for descriptor in &descriptors {
+            match descriptor {
+                StatementDescriptor::Functionality {
+                    relation,
+                    projection,
+                } => {
+                    for &field in projection {
+                        check_event(*relation, field)?;
+                    }
+                }
+                StatementDescriptor::Containment { source, target }
+                | StatementDescriptor::Capacity { source, target, .. } => {
+                    for side in [source, target] {
+                        for &field in &side.projection {
+                            check_event(side.relation, field)?;
+                        }
+                        for (field, literals) in &side.selection {
+                            check_event(side.relation, *field)?;
+                            if literals
+                                .literals()
+                                .iter()
+                                .any(|value| matches!(value, Value::Event(_)))
+                            {
+                                return Err(SchemaError::EventContractPending {
+                                    relation: side.relation,
+                                    field: *field,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // The materialized roster must fit every typed statement arena.
         if descriptors.len() > 1 << 16 {
@@ -348,6 +396,7 @@ fn interval_positions(fields: &[FieldDescriptor], projection: &[FieldId]) -> Vec
 fn literal_cmp(a: &Value, b: &Value) -> std::cmp::Ordering {
     fn rank(value: &Value) -> u8 {
         match value {
+            Value::Event(_) => 10,
             Value::Bool(_) => 0,
             Value::U64(_) => 1,
             Value::I64(_) => 2,
@@ -1495,6 +1544,12 @@ fn validate_relation(
         // dictionary writes at open. No `fresh` refusal survives: the
         // generation attribute itself is deleted (ENG-004/ENG-007).
 
+        if extension.is_some() && field.value_type == ValueType::Event {
+            return Err(SchemaError::EventContractPending {
+                relation: rel_id,
+                field: field_id,
+            });
+        }
         if extension.is_some() && field.value_type == ValueType::String {
             return Err(SchemaError::StrOnClosedRelation {
                 relation: rel_id,

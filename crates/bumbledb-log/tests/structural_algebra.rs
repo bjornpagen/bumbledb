@@ -7,7 +7,7 @@ fn old_unbounded_capacity_snapshots_keep_their_identity() {
         {"capacity":{"target":{"relation":0,"projection":[0]},
         "weight":"unit","lo":"0","source":{"relation":0,"projection":[0]}}}]}"#;
     let descriptor = schema_file::parse(old).unwrap();
-    let canonical = schema_file::render(&descriptor);
+    let canonical = schema_file::render(&descriptor).unwrap();
     assert!(canonical.contains("\"hi\":null"));
     assert_eq!(schema_file::parse(&canonical).unwrap(), descriptor);
     assert_eq!(

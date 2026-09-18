@@ -91,7 +91,7 @@ pub fn encode_literal(value: &Value, ty: ValueType, out: &mut Vec<u8>) {
         Value::IntervalU64(interval) => ValueRef::IntervalU64(*interval),
         Value::IntervalI64(interval) => ValueRef::IntervalI64(*interval),
         Value::IntervalF64(interval) => ValueRef::IntervalF64(*interval),
-        Value::String(_) => {
+        Value::Event(_) | Value::String(_) => {
             unreachable!("interned literals resolve at their consumer's boundary")
         }
     };
@@ -118,6 +118,11 @@ pub fn append_field(value: ValueRef, ty: ValueType, out: &mut Vec<u8>) {
 
 pub(crate) fn append_key_field(value: ValueRef, out: &mut Vec<u8>) {
     match value {
+        ValueRef::Event(words) => {
+            for word in words {
+                out.extend_from_slice(&word.to_be_bytes());
+            }
+        }
         ValueRef::Bool(v) => {
             out.push(encode_bool(v));
         }

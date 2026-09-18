@@ -11,6 +11,7 @@ use crate::sqlmap;
 
 fn owned(value: &Value) -> Owned {
     match value {
+        Value::Event(v) => Owned::Event(crate::compare::event_bytes(v)),
         Value::Bool(v) => Owned::Bool(*v),
         Value::U64(v) => Owned::U64(*v),
         Value::I64(v) => Owned::I64(*v),

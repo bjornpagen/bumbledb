@@ -1,6 +1,6 @@
 {
-	"value": ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "intervalU64", "intervalI64", "intervalF64"],
-	"valueType": ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "interval"],
+	"value": ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "intervalU64", "intervalI64", "intervalF64", "event"],
+	"valueType": ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "interval", "event"],
 	"intervalElement": ["u64", "i64", "f64"],
 	"literal": ["handle", "value"],
 	"literalSet": ["one", "many"],
@@ -58,7 +58,8 @@
 		"scalar",
 		"resultBytesOverflow",
 		"corruption",
-		"store"
+		"store",
+		"event"
 	],
 	"admissionTag": ["accepted", "rejected"],
 	"writeTag": ["accepted", "rejected", "abandoned", "moved"],

@@ -420,6 +420,9 @@ fn corrupt(what: &'static str) -> Error {
 /// never a hash and never a lossy fold.
 pub(super) fn encode_value(value: &Value, out: &mut Vec<u8>) {
     match value {
+        Value::Event(_) => {
+            unreachable!("schema sealing refuses Event scalar determinants until M3")
+        }
         Value::Bool(v) => out.extend_from_slice(&[0, u8::from(*v)]),
         Value::U64(v) => {
             out.push(1);

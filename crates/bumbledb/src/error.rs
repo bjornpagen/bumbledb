@@ -219,6 +219,12 @@ pub enum CorruptionError {
 /// [`crate::schema::StatementDescriptor::Functionality`] carries neither a
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SchemaError {
+    /// Storage is available, but this Event schema contract has not passed
+    /// the pointwise-admission gate. Refuse instead of applying scalar laws.
+    EventContractPending {
+        relation: RelationId,
+        field: FieldId,
+    },
     DuplicateRelationName {
         name: Box<str>,
     },
@@ -613,6 +619,9 @@ pub enum ValidationError {
         index: usize,
     },
 
+    OrderComparisonOnEvent {
+        index: usize,
+    },
     OrderComparisonOnString {
         index: usize,
     },
@@ -1323,6 +1332,7 @@ pub enum Error {
     },
 
     Overflow(OverflowKind),
+    Event(crate::event::Error),
     Scalar {
         find: FindIndex,
         source: crate::ScalarError,
@@ -1366,6 +1376,7 @@ pub enum ErrorFamily {
     Param,
     CapacityRayMeasure,
     Overflow,
+    Event,
     Scalar,
     ResultBytesOverflow,
     Corruption,
@@ -1440,6 +1451,7 @@ impl Error {
             | Self::PointParamAtCeiling { .. } => family_only(ErrorFamily::Param),
             Self::CapacityRayMeasure { .. } => family_only(ErrorFamily::CapacityRayMeasure),
             Self::Overflow(_) => family_only(ErrorFamily::Overflow),
+            Self::Event(source) => family_source(ErrorFamily::Event, source),
             Self::Scalar { .. } => family_only(ErrorFamily::Scalar),
             Self::ResultBytesOverflow => family_only(ErrorFamily::ResultBytesOverflow),
             Self::Corruption(_) => family_only(ErrorFamily::Corruption),

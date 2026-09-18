@@ -25,6 +25,7 @@ fn bivalent_admits(interval: &ValueType, candidate: &ValueType) -> bool {
 
 fn literal_anchor_type(value: &Value) -> ValueType {
     match value {
+        Value::Event(_) => ValueType::Event,
         Value::Bool(_) => ValueType::Bool,
         Value::U64(_) => ValueType::U64,
         Value::I64(_) => ValueType::I64,
@@ -262,6 +263,7 @@ fn screen_order_operand(index: usize, operand: Option<&ValueType>) -> Result<(),
         Some(ValueType::FixedBytes { .. }) => {
             Err(ValidationError::OrderComparisonOnFixedBytes { index })
         }
+        Some(ValueType::Event) => Err(ValidationError::OrderComparisonOnEvent { index }),
         Some(ValueType::String) => Err(ValidationError::OrderComparisonOnString { index }),
         _ => Ok(()),
     }

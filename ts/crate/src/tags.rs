@@ -93,6 +93,7 @@ wire_tags! {
         INTERVAL_U64: Value::IntervalU64(_) => "intervalU64",
         INTERVAL_I64: Value::IntervalI64(_) => "intervalI64",
         INTERVAL_F64: Value::IntervalF64(_) => "intervalF64",
+        EVENT: Value::Event(_) => "event",
     }
 }
 
@@ -109,6 +110,7 @@ wire_tags! {
         STRING: ValueType::String => "string",
         FIXED_BYTES: ValueType::FixedBytes { .. } => "fixedBytes",
         INTERVAL: ValueType::Interval { .. } | ValueType::FixedInterval { .. } => "interval",
+        EVENT: ValueType::Event => "event",
     }
 }
 
@@ -356,6 +358,7 @@ wire_tags! {
         RESULT_BYTES_OVERFLOW: ErrorFamily::ResultBytesOverflow => "resultBytesOverflow",
         CORRUPTION: ErrorFamily::Corruption => "corruption",
         STORE: ErrorFamily::Store => "store",
+        EVENT: ErrorFamily::Event => "event",
     }
 }
 

@@ -64,6 +64,20 @@ impl From<CorruptionError> for Error {
     }
 }
 
+impl From<crate::event::Error> for Error {
+    fn from(error: crate::event::Error) -> Self {
+        match error {
+            crate::event::Error::Cancelled => Self::from_store(
+                crate::storage::store::StoreError::Work(crate::WorkError::Cancelled),
+            ),
+            crate::event::Error::Allocation => {
+                Self::from_store(crate::storage::store::StoreError::Allocation)
+            }
+            other => Self::Event(other),
+        }
+    }
+}
+
 /// Infallible operand sources (heap image rows) satisfy the generic
 /// `Error: From<O::Error>` bounds; no value ever exists to convert.
 impl From<std::convert::Infallible> for Error {

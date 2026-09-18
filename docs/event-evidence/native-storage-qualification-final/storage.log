@@ -1,0 +1,18 @@
+   Compiling bumbledb v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running tests/event_storage.rs (target/debug/build/bumbledb/59c5ae7e21fb6701/out/event_storage-59c5ae7e21fb6701)
+
+running 10 tests
+test version_one_row_fixture_pins_the_graph_and_field_envelope ... ok
+test canonical_event_corruption_and_cancellation_are_not_nonmatches ... ok
+test one_decoded_row_aligns_its_event_fields_and_keeps_foreign_sources_separate ... ok
+test rollback_and_concurrent_publication_preserve_whole_fact_identity ... ok
+test event_pages_own_values_and_cancelled_delivery_does_not_advance ... ok
+test event_runtime_keys_never_supply_a_public_order ... ok
+test free_join_uses_shared_semantic_identity_on_resident_and_cursor_paths ... ok
+test event_sets_collapse_semantic_duplicates_and_keep_equal_mass_regions_distinct ... ok
+test independently_owned_literals_and_parameters_match_canonical_values ... ok
+test canonical_facts_deduplicate_reopen_and_retain_owned_results ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+

@@ -218,10 +218,7 @@ pub enum CloseReport {
     Failed,
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "keep completed outputs inline in the operation slot, without another per-operation allocation"
-)]
+// Completed outputs stay inline in the operation slot.
 pub enum Output {
     Ready,
     Hash([u8; 32]),

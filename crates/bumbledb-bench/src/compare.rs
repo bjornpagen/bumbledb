@@ -14,6 +14,7 @@ pub enum Owned {
     Uuid([u8; 16]),
     Str(String),
     Bytes(Vec<u8>),
+    Event(Vec<u8>),
     IntervalU64(u64, u64),
     IntervalI64(i64, i64),
     /// Canonical binary64 endpoint payloads — bit-exact, like [`Owned::F64`].
@@ -22,6 +23,13 @@ pub enum Owned {
 
 pub type Answer = Vec<Owned>;
 
+/// Persistence identity adapter only; not an independent Event algebra oracle.
+pub(crate) fn event_bytes(value: &bumbledb::Event) -> Vec<u8> {
+    value
+        .to_bytes(&())
+        .expect("benchmark Event fits the explicit codec limits")
+}
+
 #[must_use]
 pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
     answers
@@ -29,6 +37,7 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
         .map(|answer| {
             (0..types.len())
                 .map(|column| match answer.get(column) {
+                    AnswerValue::Event(v) => Owned::Event(event_bytes(v)),
                     AnswerValue::Bool(v) => Owned::Bool(v),
                     AnswerValue::U64(v) => Owned::U64(v),
                     AnswerValue::I64(v) => Owned::I64(v),
@@ -49,6 +58,7 @@ pub fn from_answers(answers: &Answers, types: &[ValueType]) -> Vec<Answer> {
 
 fn owned_value(value: &Value) -> Owned {
     match value {
+        Value::Event(v) => Owned::Event(event_bytes(v)),
         Value::Bool(v) => Owned::Bool(*v),
         Value::U64(v) => Owned::U64(*v),
         Value::I64(v) => Owned::I64(*v),

@@ -756,8 +756,8 @@ fn shape_errors_refuse_and_zero_field_rows_roundtrip() {
 
 #[test]
 fn image_walker_and_strict_decode_agree_on_interval_laws() {
-    use crate::image::canon::{TextWords, row_words};
-    use crate::image::intern::TextInterner;
+    use crate::image::canon::{ValueWords, row_words};
+    use crate::image::intern::ValueResolver;
 
     let fields = fields(&[ValueType::FixedInterval {
         element: FixedIntervalElement::U64,
@@ -770,8 +770,8 @@ fn image_walker_and_strict_decode_agree_on_interval_laws() {
         &ctx,
     )
     .expect("canonical");
-    let interner = TextInterner::default();
-    let mut text = TextWords::Lookup(&interner);
+    let mut interner = ValueResolver::default();
+    let mut text = ValueWords::Lookup(&mut interner, &ctx);
     let mut words = Vec::new();
     row_words(
         &fields,

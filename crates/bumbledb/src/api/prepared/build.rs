@@ -335,16 +335,22 @@ pub(super) fn seal_no_text_probe(
     let PreparedPipeline::PointProbe { rule, finds } = pipeline else {
         return false;
     };
-    !rule.row.has_text()
+    !rule.row.needs_resolver()
         && schema
             .relation(rule.plan.relation)
             .fields()
             .iter()
-            .all(|field| field.value_type != ValueType::String)
-        && finds.iter().all(|(_, ty)| *ty != ValueType::String)
+            .all(|field| !matches!(field.value_type, ValueType::String | ValueType::Event))
+        && finds
+            .iter()
+            .all(|(_, ty)| !matches!(ty, ValueType::String | ValueType::Event))
         && params.iter().all(|param| match param {
-            super::ParamSpec::Scalar { ty, .. } => *ty != ValueType::String,
-            super::ParamSpec::Set { elem, .. } => *elem != ValueType::String,
+            super::ParamSpec::Scalar { ty, .. } => {
+                !matches!(ty, ValueType::String | ValueType::Event)
+            }
+            super::ParamSpec::Set { elem, .. } => {
+                !matches!(elem, ValueType::String | ValueType::Event)
+            }
         })
 }
 

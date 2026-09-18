@@ -4,6 +4,7 @@ use crate::ir::Value;
 
 pub(crate) fn lower_literal(value: &Value) -> Const {
     match value {
+        Value::Event(event) => Const::PendingEvent(event.clone()),
         Value::Bool(b) => Const::Byte(encode_bool(*b)),
         Value::U64(v) => Const::Word(*v),
         Value::I64(v) => Const::Word(i64_word(*v)),

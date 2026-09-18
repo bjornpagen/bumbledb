@@ -151,6 +151,7 @@ fn rosters(schema: &SchemaDescriptor) -> Result<Rosters, BindingError> {
 
 fn field_type(value: &ValueType) -> String {
     match value {
+        ValueType::Event => "db.event".into(),
         ValueType::Bool => "db.bool".into(),
         ValueType::U64 => "db.u64".into(),
         ValueType::I64 => "db.i64".into(),
@@ -209,6 +210,12 @@ fn value(
         ));
     }
     Ok(match value {
+        Value::Event(_) => {
+            return Err(refuse(
+                coordinate(schema, at),
+                "owned Event schema literals require a declared source",
+            ));
+        }
         Value::Bool(v) => v.to_string(),
         Value::U64(v) => format!("{v}n"),
         Value::I64(v) => format!("{v}n"),
@@ -291,6 +298,12 @@ pub fn emit(schema: &SchemaDescriptor) -> Result<String, BindingError> {
     for relation in &schema.relations {
         name(&relation.name, &relation.name)?;
         for field in &relation.fields {
+            if field.value_type == ValueType::Event {
+                return Err(refuse(
+                    format!("{}.{}", relation.name, field.name),
+                    "Event SDK declarations await the native Event bridge",
+                ));
+            }
             name(&field.name, &format!("{}.{}", relation.name, field.name))?;
         }
     }

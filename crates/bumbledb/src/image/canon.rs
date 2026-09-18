@@ -10,7 +10,7 @@
 //! | `U64` | the value |
 //! | `I64` | sign-biased order word (`v ^ 1<<63`) |
 //! | `F64` | canonical total-order key |
-//! | `String` | interner token ([`TextInterner`]); scans use lookup-only |
+//! | `String` | interner token ([`ValueResolver`]); scans use lookup-only |
 //! | `Bytes<N>` | ⌈N/8⌉ zero-padded big-endian words |
 //! | `Uuid` | two big-endian words (byte order = total order) |
 //! | `Interval<U64/I64/F64>` | two order words (start, end) |
@@ -22,7 +22,7 @@
 
 use bumbledb_theory::schema::{FieldDescriptor, ValueType};
 
-use super::intern::{SENTINEL_WORD, TextInterner};
+use super::intern::{SENTINEL_WORD, ValueResolver};
 use crate::canonical::field::{
     self, interval_f64_order_words, interval_i64_order_words, interval_u64_order_words,
 };
@@ -34,10 +34,10 @@ use crate::work::WorkContext;
 /// `Handle*` arms lock per text field (single-row probes and fallback
 /// cursors, where holding a guard across caller-supplied closures would
 /// invite deadlock).
-pub(crate) enum TextWords<'i> {
+pub(crate) enum ValueWords<'i> {
     /// Mint (or find) the token — image builds and captured probe rows.
     Intern {
-        interner: &'i mut TextInterner,
+        interner: &'i mut ValueResolver,
         work: &'i WorkContext,
         texts: &'i mut super::TextOwners,
     },
@@ -51,14 +51,28 @@ pub(crate) enum TextWords<'i> {
                       corruption/fixed-bytes suites drive it directly"
         )
     )]
-    Lookup(&'i TextInterner),
+    Lookup(&'i mut ValueResolver, &'i WorkContext),
     /// As `Intern`, locking per field through the shared handle.
     HandleIntern(&'i crate::image::intern::InternerHandle<'i>),
     /// As `Lookup`, locking per field through the shared handle.
     HandleLookup(&'i crate::image::intern::InternerHandle<'i>),
 }
 
-impl TextWords<'_> {
+impl ValueWords<'_> {
+    fn event(&mut self, bytes: &[u8]) -> Result<[u64; 2]> {
+        let value = match self {
+            Self::Intern { interner, work, .. } | Self::Lookup(interner, work) => {
+                interner.events.decode(bytes, *work)?
+            }
+            Self::HandleIntern(handle) | Self::HandleLookup(handle) => {
+                handle.decode_event(bytes)?
+            }
+        };
+        // Event fields always intern, including text-lookup scans: two unknown
+        // regions must never compare equal through a shared miss sentinel.
+        Ok(value.key().words())
+    }
+
     fn word(&mut self, text: &str, owners: &mut Vec<super::intern::InternedText>) -> Result<u64> {
         match self {
             Self::Intern {
@@ -70,7 +84,7 @@ impl TextWords<'_> {
                 texts.pin(token, || interner.owned_text(token))?;
                 Ok(token)
             }
-            Self::Lookup(interner) => {
+            Self::Lookup(interner, _) => {
                 let word = interner.lookup_word(text);
                 if let Some(text) = interner.owned_text(word) {
                     owners.push(super::intern::InternedText { word, text });
@@ -148,7 +162,7 @@ pub(crate) const fn i64_word(value: i64) -> u64 {
 pub(crate) fn row_words(
     fields: &[FieldDescriptor],
     bytes: &[u8],
-    text: &mut TextWords<'_>,
+    text: &mut ValueWords<'_>,
     out: &mut Vec<u64>,
     owners: &mut Vec<super::intern::InternedText>,
 ) -> Result<()> {
@@ -178,6 +192,7 @@ pub(crate) fn row_words(
                     std::str::from_utf8(blob).map_err(|_| corrupt("non-UTF-8 stored text"))?;
                 out.push(text.word(text_str, owners)?);
             }
+            (10, ValueType::Event) => out.extend(text.event(reader.blob()?)?),
             (5, ValueType::FixedBytes { len }) => {
                 let blob = reader.blob()?;
                 if blob.len() != usize::from(*len) {
@@ -246,7 +261,7 @@ pub(crate) struct RowWords {
     strings: Box<[bool]>,
     words: Vec<u64>,
     texts: Vec<super::intern::InternedText>,
-    has_text: bool,
+    needs_resolver: bool,
 }
 
 impl RowWords {
@@ -271,17 +286,19 @@ impl RowWords {
             spans: super::column_spans(field_types),
             strings: field_types
                 .iter()
-                .map(|ty| matches!(ty, ValueType::String))
+                .map(|ty| matches!(ty, ValueType::String | ValueType::Event))
                 .collect(),
             words: Vec::new(),
             texts: Vec::new(),
-            has_text: field_types.iter().any(|ty| matches!(ty, ValueType::String)),
+            needs_resolver: field_types
+                .iter()
+                .any(|ty| matches!(ty, ValueType::String | ValueType::Event)),
         }
     }
 
     /// Full decoded-row shape, including fields the query does not project.
-    pub(crate) const fn has_text(&self) -> bool {
-        self.has_text
+    pub(crate) const fn needs_resolver(&self) -> bool {
+        self.needs_resolver
     }
 
     /// True when this field's column word is an intern/scratch text token.
@@ -300,7 +317,7 @@ impl RowWords {
         &mut self,
         fields: &[FieldDescriptor],
         bytes: &[u8],
-        text: &mut TextWords<'_>,
+        text: &mut ValueWords<'_>,
     ) -> Result<()> {
         self.words.clear();
         self.texts.clear();
@@ -400,7 +417,7 @@ mod string_field_tests {
     fn prepared_row_releases_words_but_keeps_its_schema() {
         let types = [ValueType::U64, ValueType::Uuid, ValueType::String];
         let mut row = RowWords::prepared(&types);
-        assert!(row.has_text());
+        assert!(row.needs_resolver());
         assert_eq!(row.words.capacity(), 4);
         let spans = row.spans.as_ptr();
         let strings = row.strings.as_ptr();
@@ -409,7 +426,7 @@ mod string_field_tests {
         assert_eq!(row.words.capacity(), 0);
         assert_eq!(row.spans.as_ptr(), spans);
         assert_eq!(row.strings.as_ptr(), strings);
-        assert!(row.has_text());
+        assert!(row.needs_resolver());
     }
 
     /// Probe/fallback `RowWords` must mark String columns so `holds` uses
@@ -418,7 +435,7 @@ mod string_field_tests {
     fn d02_row_words_string_field_marks_string_columns() {
         let row = RowWords::new(&[ValueType::U64, ValueType::String, ValueType::I64]);
         assert!(
-            row.has_text(),
+            row.needs_resolver(),
             "the full row shape owns text even when projected fields do not"
         );
         assert!(!Operands::string_field(&row, OperandAddr::from(FieldId(0))));
@@ -426,7 +443,9 @@ mod string_field_tests {
         assert!(!Operands::string_field(&row, OperandAddr::from(FieldId(2))));
         assert!(row.field_is_string(FieldId(1)));
         assert!(!row.field_is_string(FieldId(0)));
-        assert!(!RowWords::new(&[ValueType::U64, ValueType::Uuid, ValueType::F64]).has_text());
-        assert!(!RowWords::new(&[]).has_text());
+        assert!(
+            !RowWords::new(&[ValueType::U64, ValueType::Uuid, ValueType::F64]).needs_resolver()
+        );
+        assert!(!RowWords::new(&[]).needs_resolver());
     }
 }

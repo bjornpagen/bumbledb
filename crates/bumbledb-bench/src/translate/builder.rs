@@ -23,6 +23,11 @@ fn sql_u64(value: u64) -> Result<String, String> {
 
 fn sql_literal(value: &Value) -> Result<String, String> {
     Ok(match value {
+        Value::Event(v) => {
+            return sql_literal(&Value::FixedBytes(
+                v.to_bytes(&()).map_err(|error| error.to_string())?.into(),
+            ));
+        }
         Value::Bool(v) => u8::from(*v).to_string(),
         Value::U64(v) => sql_u64(*v)?,
         Value::I64(v) => v.to_string(),

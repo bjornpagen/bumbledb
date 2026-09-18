@@ -7,6 +7,9 @@
 //!
 //! Tokens are generation-scoped and never persisted. Consumers pin canonical
 //! shared text; token numbers are monotone and never reused after reclamation.
+//! Event bindings use two-word keys and a checked canonical registry in the
+//! same generation. Unlike text, registered Events remain retained until the
+//! generation drops, with an explicit registry entry capacity.
 
 use crate::work::{GenerationHandle, WorkContext, WorkError};
 use std::collections::{HashMap, VecDeque};
@@ -15,10 +18,11 @@ use std::sync::Arc;
 /// Reserved miss value, never minted as a text token.
 pub(crate) const SENTINEL_WORD: u64 = u64::MAX;
 
-/// Exact text→token and token→text indexes for one resolver namespace.
-/// Token numbers never repeat, even after an entry is reclaimed.
+/// Exact text indexes and a retained Event registry for one resolver namespace.
+/// Text tokens never repeat, even after an entry is reclaimed.
 #[derive(Debug, Default)]
-pub(crate) struct TextInterner {
+pub(crate) struct ValueResolver {
+    pub(crate) events: crate::event::Registry,
     map: HashMap<Arc<str>, u64>,
     texts: HashMap<u64, Arc<str>>,
     next_token: u64,
@@ -39,7 +43,7 @@ pub struct InternedText {
     pub(crate) text: Arc<str>,
 }
 
-impl TextInterner {
+impl ValueResolver {
     /// Intern exact bytes under the caller's resolver lock.
     pub(crate) fn intern(&mut self, text: &str, work: &WorkContext) -> Result<u64, InternError> {
         work.checkpoint()?;
@@ -198,6 +202,21 @@ impl<'a> InternerHandle<'a> {
         })
     }
 
+    pub(crate) fn intern_event(&self, value: &crate::Event) -> crate::error::Result<crate::Event> {
+        let generation = self.generation.ok_or(crate::event::Error::UnknownKey)?;
+        Ok(generation.lock_resolver().events.intern(value, self.work)?)
+    }
+
+    pub(crate) fn resolve_event(&self, key: [u64; 2]) -> crate::error::Result<crate::Event> {
+        let generation = self.generation.ok_or(crate::event::Error::UnknownKey)?;
+        Ok(generation.lock_resolver().events.resolve(key, self.work)?)
+    }
+
+    pub(crate) fn decode_event(&self, bytes: &[u8]) -> crate::error::Result<crate::Event> {
+        let generation = self.generation.ok_or(crate::event::Error::UnknownKey)?;
+        Ok(generation.lock_resolver().events.decode(bytes, self.work)?)
+    }
+
     pub fn latch(&self, bytes: &[u8]) -> crate::error::Result<InternedText> {
         let text = std::str::from_utf8(bytes)
             .expect("IR string literals are UTF-8 by construction (Value::String)");
@@ -252,7 +271,7 @@ mod tests {
     #[test]
     fn reclamation_preserves_live_owners_and_never_reuses_tokens() {
         let work = WorkContext::new();
-        let mut interner = TextInterner::default();
+        let mut interner = ValueResolver::default();
         let old = interner.intern("obsolete", &work).unwrap();
         let live = interner.intern("live", &work).unwrap();
         let owner = interner.owned_text(live).unwrap();
@@ -276,9 +295,9 @@ mod tests {
     #[test]
     fn token_exhaustion_never_mints_the_sentinel_or_wraps_after_reclamation() {
         let work = WorkContext::new();
-        let mut interner = TextInterner {
+        let mut interner = ValueResolver {
             next_token: SENTINEL_WORD - 1,
-            ..TextInterner::default()
+            ..ValueResolver::default()
         };
         let last = interner.intern("last", &work).unwrap();
         assert_eq!(last, SENTINEL_WORD - 1);
@@ -300,7 +319,7 @@ mod tests {
     #[test]
     fn exact_bytes_define_identity_including_empty_unicode_and_long_prefixes() {
         let work = WorkContext::new();
-        let mut interner = TextInterner::default();
+        let mut interner = ValueResolver::default();
         let texts = [
             String::new(),
             "alpha".into(),
@@ -323,7 +342,7 @@ mod tests {
     #[test]
     fn cancellation_is_checked_on_both_hits_and_misses_before_mutation() {
         let work = WorkContext::new();
-        let mut interner = TextInterner::default();
+        let mut interner = ValueResolver::default();
         let token = interner.intern("live", &work).unwrap();
         let before = interner.retained_bytes();
         work.cancel();

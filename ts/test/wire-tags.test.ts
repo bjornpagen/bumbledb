@@ -38,8 +38,8 @@ type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ?
 type Expect<T extends true> = T extends true ? true : never
 
 const ROSTERS = {
-	value: ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "intervalU64", "intervalI64", "intervalF64"],
-	valueType: ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "interval"],
+	value: ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "intervalU64", "intervalI64", "intervalF64", "event"],
+	valueType: ["bool", "u64", "i64", "f64", "uuid", "string", "fixedBytes", "interval", "event"],
 	intervalElement: ["u64", "i64", "f64"],
 	literal: ["handle", "value"],
 	literalSet: ["one", "many"],
@@ -97,7 +97,8 @@ const ROSTERS = {
 		"scalar",
 		"resultBytesOverflow",
 		"corruption",
-		"store"
+		"store",
+		"event"
 	],
 	admissionTag: ["accepted", "rejected"],
 	writeTag: ["accepted", "rejected", "abandoned", "moved"],

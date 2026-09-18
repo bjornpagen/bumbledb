@@ -263,15 +263,14 @@ impl<S> ReadFrame<'_, S> {
         &'lease self,
     ) -> Result<impl Iterator<Item = Result<F>> + 'lease> {
         if let Some(rows) = self.closed.get(F::RELATION) {
-            return Ok(ScanRows::Closed(
-                rows.iter()
-                    .map(|row| F::decode(RowReader::new(&row.canonical)?)),
-            ));
+            return Ok(ScanRows::Closed(rows.iter().map(|row| {
+                F::decode(RowReader::with_work(&row.canonical, self.work)?)
+            })));
         }
         let iterator = self.snapshot.rows(F::RELATION).map_err(Error::from_store)?;
         Ok(ScanRows::Store(iterator.map(move |entry| {
             let (_, bytes) = entry.map_err(Error::from_store)?;
-            F::decode(RowReader::new(bytes)?)
+            F::decode(RowReader::with_work(bytes, self.work)?)
         })))
     }
 
@@ -396,10 +395,10 @@ fn get_fact<'row, K: Key<'row>>(
     )? {
         None => Ok(None),
         Some(get_path::KeyedRowHit::Closed(row)) => {
-            K::Fact::decode(RowReader::new(&row.canonical)?).map(Some)
+            K::Fact::decode(RowReader::with_work(&row.canonical, work)?).map(Some)
         }
         Some(get_path::KeyedRowHit::Store(bytes)) => {
-            K::Fact::decode(RowReader::new(bytes)?).map(Some)
+            K::Fact::decode(RowReader::with_work(bytes, work)?).map(Some)
         }
     }
 }

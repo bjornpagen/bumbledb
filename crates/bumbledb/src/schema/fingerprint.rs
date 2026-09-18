@@ -171,6 +171,7 @@ fn put_side(out: &mut Vec<u8>, schema: &Schema, side: &Side) {
 
 fn put_value_type(out: &mut Vec<u8>, value_type: &ValueType) {
     match value_type {
+        ValueType::Event => out.push(ValueTypeTag::Event.tag()),
         ValueType::Bool => out.push(ValueTypeTag::Bool.tag()),
         ValueType::U64 => out.push(ValueTypeTag::U64.tag()),
         ValueType::I64 => out.push(ValueTypeTag::I64.tag()),

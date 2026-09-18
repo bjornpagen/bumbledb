@@ -419,6 +419,7 @@ pub(crate) fn decoded_interval(value_type: &ValueType, pair: (u64, u64)) -> Valu
 
 pub(crate) fn render_const(out: &mut String, value_type: &ValueType, value: &Const) {
     match value {
+        Const::PendingEvent(event) => literal(out, &Value::Event(event.clone())),
         Const::Word(word) => render_scalar(out, value_type, *word),
         Const::Text(text) => literal(out, &Value::String(text.text.as_ref().into())),
         Const::Byte(byte) => literal(out, &Value::Bool(*byte != 0)),

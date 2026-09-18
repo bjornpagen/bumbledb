@@ -79,8 +79,10 @@ pub fn schema_id(descriptor: &SchemaDescriptor) -> Result<SchemaFingerprint, bum
 /// Render the deterministic canonical text for a descriptor: fixed key
 /// order, two-space indentation, one trailing newline. `parse(render(d))`
 /// reproduces `d` exactly; repo snapshot files are byte-stable.
+/// # Errors
+/// Returns an Event codec resource refusal while rendering owned literals.
 #[must_use]
-pub fn render(descriptor: &SchemaDescriptor) -> String {
+pub fn render(descriptor: &SchemaDescriptor) -> Result<String, bumbledb::event::Error> {
     let mut out = String::new();
     out.push_str("{\n  \"relations\": [");
     for (index, relation) in descriptor.relations.iter().enumerate() {
@@ -88,7 +90,7 @@ pub fn render(descriptor: &SchemaDescriptor) -> String {
             out.push(',');
         }
         out.push('\n');
-        render_relation(&mut out, relation);
+        render_relation(&mut out, relation)?;
     }
     if descriptor.relations.is_empty() {
         out.push_str("],\n");
@@ -102,17 +104,20 @@ pub fn render(descriptor: &SchemaDescriptor) -> String {
         }
         out.push('\n');
         push_indent(&mut out, 2);
-        render_statement(&mut out, statement);
+        render_statement(&mut out, statement)?;
     }
     if descriptor.statements.is_empty() {
         out.push_str("]\n}\n");
     } else {
         out.push_str("\n  ]\n}\n");
     }
-    out
+    Ok(out)
 }
 
-fn render_relation(out: &mut String, relation: &RelationDescriptor) {
+fn render_relation(
+    out: &mut String,
+    relation: &RelationDescriptor,
+) -> Result<(), bumbledb::event::Error> {
     push_indent(out, 2);
     out.push_str("{\n");
     push_indent(out, 3);
@@ -157,7 +162,7 @@ fn render_relation(out: &mut String, relation: &RelationDescriptor) {
                 if value_index > 0 {
                     out.push(',');
                 }
-                render_value(out, value);
+                render_value(out, value)?;
             }
             out.push_str("]}");
         }
@@ -172,10 +177,12 @@ fn render_relation(out: &mut String, relation: &RelationDescriptor) {
     out.push('\n');
     push_indent(out, 2);
     out.push('}');
+    Ok(())
 }
 
 fn render_type(out: &mut String, value_type: &ValueType) {
     match value_type {
+        ValueType::Event => out.push_str("\"event\""),
         ValueType::Bool => out.push_str("\"bool\""),
         ValueType::U64 => out.push_str("\"u64\""),
         ValueType::I64 => out.push_str("\"i64\""),
@@ -209,7 +216,10 @@ fn render_type(out: &mut String, value_type: &ValueType) {
     }
 }
 
-fn render_statement(out: &mut String, statement: &StatementDescriptor) {
+fn render_statement(
+    out: &mut String,
+    statement: &StatementDescriptor,
+) -> Result<(), bumbledb::event::Error> {
     match statement {
         StatementDescriptor::Functionality {
             relation,
@@ -223,9 +233,9 @@ fn render_statement(out: &mut String, statement: &StatementDescriptor) {
         }
         StatementDescriptor::Containment { source, target } => {
             out.push_str("{\"containment\":{\"source\":");
-            render_side(out, source);
+            render_side(out, source)?;
             out.push_str(",\"target\":");
-            render_side(out, target);
+            render_side(out, target)?;
             out.push_str("}}");
         }
         StatementDescriptor::Capacity {
@@ -236,7 +246,7 @@ fn render_statement(out: &mut String, statement: &StatementDescriptor) {
             source,
         } => {
             out.push_str("{\"capacity\":{\"target\":");
-            render_side(out, target);
+            render_side(out, target)?;
             out.push_str(",\"weight\":");
             match weight {
                 Weight::Unit => out.push_str("\"unit\""),
@@ -273,10 +283,11 @@ fn render_statement(out: &mut String, statement: &StatementDescriptor) {
                 }
             }
             out.push_str(",\"source\":");
-            render_side(out, source);
+            render_side(out, source)?;
             out.push_str("}}");
         }
     }
+    Ok(())
 }
 
 fn render_projection(out: &mut String, projection: &[FieldId]) {
@@ -290,7 +301,7 @@ fn render_projection(out: &mut String, projection: &[FieldId]) {
     out.push(']');
 }
 
-fn render_side(out: &mut String, side: &Side) {
+fn render_side(out: &mut String, side: &Side) -> Result<(), bumbledb::event::Error> {
     out.push_str("{\"relation\":");
     out.push_str(&side.relation.0.to_string());
     out.push_str(",\"projection\":");
@@ -308,13 +319,14 @@ fn render_side(out: &mut String, side: &Side) {
                 if literal_index > 0 {
                     out.push(',');
                 }
-                render_value(out, literal);
+                render_value(out, literal)?;
             }
             out.push_str("]]");
         }
         out.push(']');
     }
     out.push('}');
+    Ok(())
 }
 
 fn parse_schema(json: &Json) -> Result<SchemaDescriptor, TheoryFile> {
@@ -384,6 +396,7 @@ fn parse_type(json: &Json) -> Result<ValueType, TheoryFile> {
             "f64" => Ok(ValueType::F64),
             "string" => Ok(ValueType::String),
             "uuid" => Ok(ValueType::Uuid),
+            "event" => Ok(ValueType::Event),
             _ => Err(TheoryFile::Shape("unknown scalar type")),
         };
     }
@@ -642,10 +655,10 @@ mod tests {
     fn render_is_a_deterministic_left_inverse_of_parse() {
         let raw = r#"{"relations":[{"name":"kind","fields":[{"name":"label","type":"string"}],"extension":[{"handle":"a","values":[{"string":"alpha"}]},{"handle":"b","values":[{"string":"beta"}]}]},{"name":"note","fields":[{"name":"id","type":"uuid"},{"name":"kind","type":"u64"},{"name":"score","type":"f64"},{"name":"span","type":{"interval":"u64"}}]}],"statements":[{"functionality":{"relation":1,"projection":[0]}},{"containment":{"source":{"relation":1,"projection":[1]},"target":{"relation":0,"projection":[0]}}},{"capacity":{"target":{"relation":0,"projection":[0]},"weight":"unit","lo":"0","hi":{"lit":"5"},"source":{"relation":1,"projection":[1],"selection":[[2,[{"u64":"1"},{"u64":"2"}]]]}}}]}"#;
         let descriptor = parse(raw).expect("kitchen descriptor");
-        let text = render(&descriptor);
+        let text = render(&descriptor).unwrap();
         let reparsed = parse(&text).expect("rendered text parses");
         assert_eq!(reparsed, descriptor);
-        assert_eq!(render(&reparsed), text, "byte-stable");
+        assert_eq!(render(&reparsed).unwrap(), text, "byte-stable");
         assert!(text.ends_with('\n'));
     }
 
@@ -655,7 +668,7 @@ mod tests {
         let descriptor = parse(raw).expect("note theory");
         let id = schema_id(&descriptor).expect("valid schema");
         // Determinism through render/parse: identity never depends on text.
-        let again = schema_id(&parse(&render(&descriptor)).unwrap()).unwrap();
+        let again = schema_id(&parse(&render(&descriptor).unwrap()).unwrap()).unwrap();
         assert_eq!(id, again);
         // A statement citing a missing relation refuses with the core error.
         let bad =

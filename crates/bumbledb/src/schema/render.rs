@@ -627,6 +627,7 @@ fn selection_literal<N: Names + ?Sized>(
 
 fn literal(f: &mut fmt::Formatter<'_>, value: &Value) -> fmt::Result {
     match value {
+        Value::Event(event) => write!(f, "event:{:?}", event.space().identity()),
         Value::Bool(v) => write!(f, "{v}"),
         Value::U64(v) => write!(f, "{v}"),
         Value::I64(v) => write!(f, "{v}"),

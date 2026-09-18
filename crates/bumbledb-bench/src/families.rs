@@ -31,6 +31,7 @@ pub fn scalar_draw(values: Vec<Value>) -> Draw {
 #[must_use]
 pub fn bind_value(value: &Value) -> BindValue<'_> {
     match value {
+        Value::Event(v) => BindValue::Event(v),
         Value::Bool(v) => BindValue::Bool(*v),
         Value::U64(v) => BindValue::U64(*v),
         Value::I64(v) => BindValue::I64(*v),

@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::image::ColumnWidth;
-use crate::image::canon::{TextWords, row_words};
-use crate::image::intern::TextInterner;
+use crate::image::canon::{ValueWords, row_words};
+use crate::image::intern::ValueResolver;
 use crate::image::testsupport::TestSource;
 use crate::ir::Value;
 use crate::schema::Schema;
@@ -92,8 +92,8 @@ fn a_wrong_width_stored_blob_refuses_typed() {
             .to_vec();
 
     let walk = |bytes: &[u8]| -> Result<Vec<u64>, Error> {
-        let interner = TextInterner::default();
-        let mut text = TextWords::Lookup(&interner);
+        let mut interner = ValueResolver::default();
+        let mut text = ValueWords::Lookup(&mut interner, &work);
         let mut out = Vec::new();
         row_words(
             schema.relation(D).fields(),

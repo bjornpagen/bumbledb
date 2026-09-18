@@ -1,6 +1,6 @@
 //! Canonical-row text decoding and borrowed resolver access.
 use crate::error::{Error, Result};
-use crate::image::canon::{RowWords, TextWords};
+use crate::image::canon::{RowWords, ValueWords};
 use crate::image::intern::InternerHandle;
 use crate::image::view::{Const, FilterPredicate, Operands};
 use crate::work::WorkContext;
@@ -17,9 +17,9 @@ pub(crate) fn decode_row(
 ) -> Result<()> {
     work.checkpoint().map_err(super::source::work_error)?;
     let mut text = if intern {
-        TextWords::HandleIntern(interner)
+        ValueWords::HandleIntern(interner)
     } else {
-        TextWords::HandleLookup(interner)
+        ValueWords::HandleLookup(interner)
     };
     row.decode(fields, bytes, &mut text)
 }

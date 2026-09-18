@@ -7,6 +7,7 @@ type ValueTypeSpec =
 	| { readonly kind: "f64" }
 	| { readonly kind: "uuid" }
 	| { readonly kind: "string" }
+	| { readonly kind: "event" }
 	| { readonly kind: "fixedBytes"; readonly len: number }
 	| {
 			readonly kind: "interval"
@@ -22,6 +23,8 @@ type ValueSpec =
 	| { readonly kind: "uuid"; readonly value: string }
 	| { readonly kind: "string"; readonly value: string }
 	| { readonly kind: "fixedBytes"; readonly value: Uint8Array }
+	/** Canonical BEVT bytes, validated and owned by the native Event decoder. */
+	| { readonly kind: "event"; readonly value: Uint8Array }
 	| { readonly kind: "intervalU64"; readonly start: bigint; readonly end: bigint }
 	| { readonly kind: "intervalI64"; readonly start: bigint; readonly end: bigint }
 	| { readonly kind: "intervalF64"; readonly start: number; readonly end: number }
@@ -197,6 +200,8 @@ function renderLiteral(literal: LiteralSpec): string {
 			}
 			return `${out}"`
 		}
+		case "event":
+			return `event:${Array.from(value.value, byte => byte.toString(16).padStart(2, "0")).join("")}`
 		case "intervalU64":
 		case "intervalI64":
 			return `${value.start}..${value.end}`

@@ -155,7 +155,7 @@ fn param_value(
     let (rel, field) = (anchor.relation, anchor.field);
     let ty = &target::schema().relation(rel).field(field).value_type;
     match ty {
-        ValueType::Uuid => {
+        ValueType::Event | ValueType::Uuid => {
             unreachable!("the querygen target declares no uuid column — teach the draws first")
         }
         ValueType::U64 => {

@@ -188,6 +188,7 @@ function valueDescriptor(context: string, input: unknown): ValueSpec {
 		)
 	}
 	const raw = recordValue(context, input, ["kind", "value"])
+	if (tag === "event") return Object.freeze({ kind: "event", value: bytesValue(context, raw.value) })
 	if (tag === "fixedBytes") {
 		const bytes = bytesValue(context, raw.value)
 		if (bytes.byteLength < 1 || bytes.byteLength > 64) return invalid(context, "bytes with width 1 through 64")

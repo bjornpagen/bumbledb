@@ -4,8 +4,8 @@
 //! (P02); these exercise the walker the build/probe/fallback paths share.
 use super::schema;
 use crate::error::Error;
-use crate::image::canon::{TextWords, row_words};
-use crate::image::intern::TextInterner;
+use crate::image::canon::{ValueWords, row_words};
+use crate::image::intern::ValueResolver;
 use crate::ir::Value;
 
 fn canonical_bytes(values: &[Value]) -> Vec<u8> {
@@ -18,9 +18,10 @@ fn canonical_bytes(values: &[Value]) -> Vec<u8> {
 }
 
 fn walk(bytes: &[u8]) -> Result<Vec<u64>, Error> {
+    let work = crate::WorkContext::new();
     let schema = schema();
-    let interner = TextInterner::default();
-    let mut text = TextWords::Lookup(&interner);
+    let mut interner = ValueResolver::default();
+    let mut text = ValueWords::Lookup(&mut interner, &work);
     let mut out = Vec::new();
     row_words(
         schema.relation(super::R).fields(),
@@ -111,8 +112,8 @@ fn noncanonical_floats_and_inverted_intervals_refuse() {
     .to_vec();
 
     let walk_f = |bytes: &[u8]| -> Result<Vec<u64>, Error> {
-        let interner = TextInterner::default();
-        let mut text = TextWords::Lookup(&interner);
+        let mut interner = ValueResolver::default();
+        let mut text = ValueWords::Lookup(&mut interner, &work);
         let mut out = Vec::new();
         row_words(
             float_schema.relation(super::R).fields(),
@@ -165,8 +166,8 @@ fn f64_interval_with_nan_endpoint_refuses_like_strict_decode() {
         crate::canonical::decode(float_schema.relation(super::R).fields(), &bytes, &work),
         Err(crate::canonical::RowError::InvalidInterval { field: 0 })
     ));
-    let interner = TextInterner::default();
-    let mut text = TextWords::Lookup(&interner);
+    let mut interner = ValueResolver::default();
+    let mut text = ValueWords::Lookup(&mut interner, &work);
     let mut out = Vec::new();
     assert!(
         row_words(

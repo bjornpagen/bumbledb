@@ -5,6 +5,12 @@ use crate::schema::ids;
 
 fn value_bytes(digest: &mut bumbledb::digest::Digest, value: &Value) {
     match value {
+        Value::Event(v) => {
+            let bytes = crate::compare::event_bytes(v);
+            digest.update(&[11]);
+            digest.update(&(bytes.len() as u64).to_le_bytes());
+            digest.update(&bytes);
+        }
         Value::Bool(v) => digest.update(&[0, u8::from(*v)]),
         Value::U64(v) => {
             digest.update(&[1]);

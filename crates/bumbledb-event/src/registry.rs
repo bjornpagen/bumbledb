@@ -6,10 +6,13 @@ use crate::{Capacity, Control, Error, Event, Result, Space};
 /// contents select alignment; exact registered keys select values. Unregistered
 /// arena indices, stale keys and foreign registry keys cannot construct Events.
 /// Dropping the registry does not invalidate previously returned owned values.
-#[derive(Debug)]
+/// Every distinct registered Event and its canonical bytes remain retained until
+/// the registry drops. The entry limit bounds their count, not their total bytes.
+#[derive(Debug, Clone)]
 pub struct Registry {
     spaces: HashMap<Vec<u8>, Space>,
     values: HashMap<[u64; 2], Event>,
+    canonical: HashMap<Vec<u8>, [u64; 2]>,
     capacity: usize,
 }
 
@@ -25,6 +28,7 @@ impl Registry {
         Self {
             spaces: HashMap::new(),
             values: HashMap::new(),
+            canonical: HashMap::new(),
             capacity,
         }
     }
@@ -39,6 +43,10 @@ impl Registry {
             return Ok(existing.clone());
         }
         let descriptor = value.space().full().to_bytes(control)?;
+        let canonical = value.to_bytes(control)?;
+        if let Some(key) = self.canonical.get(&canonical) {
+            return self.resolve(*key, control);
+        }
         let aligned = if let Some(space) = self.spaces.get(&descriptor) {
             value.align_to(space, control)?
         } else {
@@ -52,11 +60,13 @@ impl Registry {
         }
         self.values.try_reserve(1)?;
         self.spaces.try_reserve(1)?;
+        self.canonical.try_reserve(1)?;
         control.checkpoint()?;
         self.spaces
             .entry(descriptor)
             .or_insert_with(|| aligned.space());
         self.values.insert(aligned.key().words(), aligned.clone());
+        self.canonical.insert(canonical, aligned.key().words());
         Ok(aligned)
     }
 
@@ -64,6 +74,10 @@ impl Registry {
     /// # Errors
     /// Refuses malformed bytes, unsupported formats or unavailable resources.
     pub fn decode(&mut self, bytes: &[u8], control: &dyn Control) -> Result<Event> {
+        control.checkpoint()?;
+        if let Some(key) = self.canonical.get(bytes) {
+            return self.resolve(*key, control);
+        }
         let decoded = Event::from_bytes(bytes, control)?;
         self.intern(&decoded, control)
     }

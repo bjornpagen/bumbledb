@@ -329,6 +329,13 @@ pub(crate) fn schema_value_in(
             }
             Ok(Value::FixedBytes(bytes.to_vec().into_boxed_slice()))
         }
+        ValueType::Event => {
+            if got != JsType::Object {
+                return Err(mismatch("Uint8Array (canonical BEVT Event)"));
+            }
+            let bytes = unsafe { value.cast::<Uint8Array>()? };
+            event_in(&bytes, ctx)
+        }
         ValueType::Interval { element } => {
             if got != JsType::Object {
                 return Err(mismatch(interval_pair_name(*element)));
@@ -514,10 +521,22 @@ pub(crate) fn tagged_value(obj: &Object) -> napi::Result<Value> {
         tags::value::INTERVAL_U64 => interval_in(obj, IntervalElement::U64, "intervalU64 value"),
         tags::value::INTERVAL_I64 => interval_in(obj, IntervalElement::I64, "intervalI64 value"),
         tags::value::INTERVAL_F64 => interval_in(obj, IntervalElement::F64, "intervalF64 value"),
+        tags::value::EVENT => event_in(
+            &req::<Uint8Array>(obj, "value", "event value")?,
+            "event value",
+        ),
         other => Err(err(format!(
             "bumbledb marshal: unknown value kind `{other}`"
         ))),
     }
+}
+
+/// The native wire transports canonical Event bytes, never resident keys.
+/// Owned decoding delegates all semantic validation to the shared Event crate.
+fn event_in(bytes: &[u8], ctx: impl std::fmt::Display) -> napi::Result<Value> {
+    bumbledb::Event::from_bytes(bytes, &())
+        .map(Value::Event)
+        .map_err(|error| err(format!("bumbledb marshal: {ctx}: {error}")))
 }
 
 pub(crate) enum OwnedParam {
@@ -554,6 +573,7 @@ pub(crate) fn value_type_in(obj: &Object) -> napi::Result<ValueType> {
         tags::value_type::F64 => Ok(ValueType::F64),
         tags::value_type::STRING => Ok(ValueType::String),
         tags::value_type::UUID => Ok(ValueType::Uuid),
+        tags::value_type::EVENT => Ok(ValueType::Event),
         tags::value_type::FIXED_BYTES => {
             let len = ordinal(req::<f64>(obj, "len", "fixedBytes type")?, "bytes width")?;
             let len = u16::try_from(len)
@@ -1313,6 +1333,8 @@ pub enum ValueOut {
     /// application-owned `Uuid`.
     Uuid(String),
     Bytes(Vec<u8>),
+    /// Canonical BEVT bytes owned by the queued result, never a borrowed key.
+    Event(Vec<u8>),
     IntervalU64 {
         start: u64,
         end: u64,
@@ -1335,8 +1357,11 @@ impl ValueOut {
     /// inbound refusal — the store's decode lanes can surface at-rest
     /// damage, and a repair (`from_utf8_lossy`) would silently corrupt
     /// what the engine's own corruption taxonomy convicts.
-    pub(crate) fn from_value(value: Value) -> Self {
-        match value {
+    pub(crate) fn from_value(
+        value: Value,
+        control: &dyn bumbledb::event::Control,
+    ) -> Result<Self, bumbledb::event::Error> {
+        Ok(match value {
             Value::Bool(v) => Self::Bool(v),
             Value::U64(v) => Self::U64(v),
             Value::I64(v) => Self::I64(v),
@@ -1344,6 +1369,7 @@ impl ValueOut {
             Value::Uuid(v) => Self::Uuid(uuid_text(v)),
             Value::String(text) => Self::Text(text.into()),
             Value::FixedBytes(bytes) => Self::Bytes(bytes.into_vec()),
+            Value::Event(event) => Self::Event(event.to_bytes(control)?),
             Value::IntervalU64(interval) => Self::IntervalU64 {
                 start: interval.start(),
                 end: interval.end(),
@@ -1356,7 +1382,7 @@ impl ValueOut {
                 start: interval.start(),
                 end: interval.end(),
             },
-        }
+        })
     }
 }
 
@@ -1376,7 +1402,9 @@ impl ToNapiValue for ValueOut {
             Self::I64(v) => unsafe { i64n::to_napi_value(env, i64n(v)) },
             Self::F64(v) => unsafe { f64::to_napi_value(env, v.to_f64()) },
             Self::Text(v) | Self::Uuid(v) => unsafe { String::to_napi_value(env, v) },
-            Self::Bytes(v) => unsafe { Uint8Array::to_napi_value(env, Uint8Array::new(v)) },
+            Self::Bytes(v) | Self::Event(v) => unsafe {
+                Uint8Array::to_napi_value(env, Uint8Array::new(v))
+            },
             Self::IntervalF64 { start, end } => {
                 let env_handle = Env::from_raw(env);
                 let mut obj = Object::new(&env_handle)?;
@@ -1416,8 +1444,11 @@ pub(crate) fn output_vec<T>(len: usize) -> Result<Vec<T>, crate::runtime::Runtim
     Ok(values)
 }
 
-fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
-    match value {
+fn value_out_from_answer(
+    value: AnswerValue<'_>,
+    control: &dyn bumbledb::event::Control,
+) -> Result<ValueOut, bumbledb::event::Error> {
+    Ok(match value {
         AnswerValue::Bool(v) => ValueOut::Bool(v),
         AnswerValue::U64(v) => ValueOut::U64(v),
         AnswerValue::I64(v) => ValueOut::I64(v),
@@ -1425,6 +1456,7 @@ fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
         AnswerValue::String(v) => ValueOut::Text(v.to_owned()),
         AnswerValue::Uuid(v) => ValueOut::Uuid(uuid_text(v)),
         AnswerValue::FixedBytes(v) => ValueOut::Bytes(v.to_owned()),
+        AnswerValue::Event(v) => ValueOut::Event(v.to_bytes(control)?),
         AnswerValue::IntervalU64(v) => ValueOut::IntervalU64 {
             start: v.start(),
             end: v.end(),
@@ -1437,7 +1469,7 @@ fn value_out_from_answer(value: AnswerValue<'_>) -> ValueOut {
             start: v.start(),
             end: v.end(),
         },
-    }
+    })
 }
 
 fn borrowed_value(value: &Value) -> AnswerValue<'_> {
@@ -1449,6 +1481,7 @@ fn borrowed_value(value: &Value) -> AnswerValue<'_> {
         Value::Uuid(v) => AnswerValue::Uuid(*v),
         Value::String(v) => AnswerValue::String(v),
         Value::FixedBytes(v) => AnswerValue::FixedBytes(v),
+        Value::Event(v) => AnswerValue::Event(v),
         Value::IntervalU64(v) => AnswerValue::IntervalU64(*v),
         Value::IntervalI64(v) => AnswerValue::IntervalI64(*v),
         Value::IntervalF64(v) => AnswerValue::IntervalF64(*v),
@@ -1473,7 +1506,10 @@ pub(crate) fn row_out(
     let mut values = output_vec(row.len())?;
     for value in row {
         work.checkpoint()?;
-        values.push(value_out_from_answer(borrowed_value(value)));
+        values.push(
+            value_out_from_answer(borrowed_value(value), work)
+                .map_err(|error| crate::runtime::session::engine_error(&error.into()))?,
+        );
     }
     work.checkpoint()?;
     Ok(values)
@@ -1518,7 +1554,7 @@ pub(crate) fn push_result_row(
         .map_err(result_allocation_error)?;
     for value in row.values() {
         work.checkpoint().map_err(result_work_error)?;
-        values.push(value_out_from_answer(value));
+        values.push(value_out_from_answer(value, work)?);
     }
     work.checkpoint().map_err(result_work_error)?;
     output.rows.push(values);
@@ -1547,6 +1583,7 @@ fn value_type_out(env: sys::napi_env, ty: &ValueType) -> napi::Result<sys::napi_
         | ValueType::I64
         | ValueType::F64
         | ValueType::Uuid
+        | ValueType::Event
         | ValueType::String => {}
         ValueType::FixedBytes { len } => {
             obj.set("len", u32::from(*len))?;
@@ -1617,7 +1654,16 @@ fn relation_objects<'env>(
                 for (name, value) in row.values {
                     let mut value_obj = Object::new(env_handle)?;
                     value_obj.set("name", name.as_ref())?;
-                    value_obj.set("value", ValueOut::from_value(value))?;
+                    value_obj.set(
+                        "value",
+                        ValueOut::from_value(value, &()).map_err(|error| {
+                            throw_kind_message(
+                                *env_handle,
+                                tags::error_family::EVENT,
+                                error.to_string(),
+                            )
+                        })?,
+                    )?;
                     values.push(value_obj);
                 }
                 row_obj.set("values", values)?;
@@ -1647,8 +1693,11 @@ fn side_object<'env>(env_handle: &'env Env, side: &Side) -> napi::Result<Object<
             .literals()
             .iter()
             .cloned()
-            .map(ValueOut::from_value)
-            .collect();
+            .map(|value| ValueOut::from_value(value, &()))
+            .collect::<Result<_, _>>()
+            .map_err(|error| {
+                throw_kind_message(*env_handle, tags::error_family::EVENT, error.to_string())
+            })?;
         binding.set("values", values)?;
         selection.push(binding);
     }
@@ -1869,7 +1918,12 @@ impl ToNapiValue for ViolationWire {
             for (name, value) in fields {
                 let mut field_obj = Object::new(&env_handle)?;
                 field_obj.set("name", name)?;
-                field_obj.set("value", ValueOut::from_value(value))?;
+                field_obj.set(
+                    "value",
+                    ValueOut::from_value(value, &()).map_err(|error| {
+                        throw_kind_message(env_handle, tags::error_family::EVENT, error.to_string())
+                    })?,
+                )?;
                 field_objs.push(field_obj);
             }
             fact_obj.set("fields", field_objs)?;
@@ -1879,5 +1933,57 @@ impl ToNapiValue for ViolationWire {
         // SAFETY: `env` is the live environment napi handed this very call,
         // and `obj` was created against it.
         unsafe { Object::to_napi_value(env, obj) }
+    }
+}
+
+#[cfg(test)]
+mod event_tests {
+    use super::*;
+    use bumbledb::event::{BoolOp4, Space, SpaceId};
+
+    #[test]
+    fn event_wire_owns_canonical_bytes_and_refuses_invalid_input() {
+        let space = Space::new(SpaceId([97; 32]), 2, &()).unwrap();
+        let value = space.coordinate(0, &()).unwrap();
+        let ValueOut::Event(mut wire) =
+            ValueOut::from_value(Value::Event(value.clone()), &()).unwrap()
+        else {
+            panic!("Event wire")
+        };
+        let decoded = event_in(&wire, "test").unwrap();
+        wire.fill(0);
+        let Value::Event(decoded) = decoded else {
+            panic!("Event value")
+        };
+        let decoded = decoded.align_to(&space, &()).unwrap();
+        assert_eq!(decoded, value);
+        assert_eq!(
+            decoded
+                .apply(BoolOp4::OR, &value.complement(), &())
+                .unwrap(),
+            space.full()
+        );
+        assert!(event_in(&wire, "test").is_err());
+        let mut unknown = value.to_bytes(&()).unwrap();
+        unknown[4] = 255;
+        assert!(event_in(&unknown, "test").is_err());
+        for end in 0..unknown.len() {
+            assert!(event_in(&unknown[..end], "test").is_err());
+        }
+    }
+
+    #[test]
+    fn event_result_encoding_observes_worker_cancellation() {
+        let value = Space::new(SpaceId([98; 32]), 2, &()).unwrap().empty();
+        let work = bumbledb::WorkContext::new();
+        work.cancel();
+        assert!(matches!(
+            value_out_from_answer(AnswerValue::Event(&value), &work),
+            Err(bumbledb::event::Error::Cancelled)
+        ));
+        assert!(matches!(
+            ValueOut::from_value(Value::Event(value), &work),
+            Err(bumbledb::event::Error::Cancelled)
+        ));
     }
 }

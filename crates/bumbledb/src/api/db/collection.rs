@@ -35,6 +35,7 @@ enum Cell {
     I64(i64),
     F64(F64),
     Uuid(Uuid),
+    Event(usize),
     IntervalU64(Interval<u64>),
     IntervalI64(Interval<i64>),
     IntervalF64(Interval<F64>),
@@ -61,6 +62,7 @@ pub struct AcceptedCollection {
     strings: String,
 
     bytes: Vec<u8>,
+    events: Vec<crate::Event>,
 }
 
 impl AcceptedCollection {
@@ -124,6 +126,7 @@ impl AcceptedCollection {
         let start = usize::try_from(row).expect("row index fits usize") * arity;
         for cell in &self.cells[start..start + arity] {
             out.push(match *cell {
+                Cell::Event(index) => Value::Event(self.events[index].clone()),
                 Cell::Bool(value) => Value::Bool(value),
                 Cell::U64(value) => Value::U64(value),
                 Cell::I64(value) => Value::I64(value),
@@ -162,6 +165,7 @@ pub struct CollectionBuilder<'s> {
     cells: Vec<Cell>,
     strings: String,
     bytes: Vec<u8>,
+    events: Vec<crate::Event>,
 }
 
 impl<'s> CollectionBuilder<'s> {
@@ -178,6 +182,7 @@ impl<'s> CollectionBuilder<'s> {
             cells: Vec::new(),
             strings: String::new(),
             bytes: Vec::new(),
+            events: Vec::new(),
         }
     }
 
@@ -242,6 +247,14 @@ impl<'s> CollectionBuilder<'s> {
             return Err(shape_mismatch(self.relation, field, mismatch).into());
         }
         let cell = match value {
+            Value::Event(value) => {
+                let index = self.events.len();
+                self.events
+                    .try_reserve(1)
+                    .map_err(|_| crate::event::Error::Allocation)?;
+                self.events.push(value.clone());
+                Cell::Event(index)
+            }
             Value::Bool(value) => Cell::Bool(*value),
             Value::U64(value) => Cell::U64(*value),
             Value::I64(value) => Cell::I64(*value),
@@ -411,6 +424,7 @@ impl<'s> CollectionBuilder<'s> {
             cells: self.cells,
             strings: self.strings,
             bytes: self.bytes,
+            events: self.events,
         })
     }
 }

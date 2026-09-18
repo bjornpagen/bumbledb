@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::api::prepared::source::QuerySource;
 use crate::error::{CorruptionError, Error, Result};
-use crate::image::canon::{TextWords, row_words};
+use crate::image::canon::{ValueWords, row_words};
 use crate::schema::{Relation, Schema};
 use crate::work::GenerationHandle;
 use bumbledb_theory::schema::RelationId;
@@ -231,7 +231,7 @@ pub(super) fn build_from_scan(
 
     let mut frame = allocate(&field_types, row_count)?;
     let mut interner = generation.lock_resolver();
-    let mut text = TextWords::Intern {
+    let mut text = ValueWords::Intern {
         interner: &mut interner,
         work,
         texts: &mut frame.texts,

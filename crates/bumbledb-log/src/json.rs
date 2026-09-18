@@ -298,6 +298,12 @@ pub(crate) fn parse_value(json: &Json) -> JsonResult<Value> {
     }
     let (kind, body) = object.iter().next().ok_or("value arm")?;
     match kind.as_str() {
+        "event" => {
+            let bytes = unhex(body.as_str().ok_or("event hex")?)?;
+            bumbledb::Event::from_bytes(&bytes, &())
+                .map(Value::Event)
+                .map_err(|_| "invalid or unsupported canonical Event")
+        }
         "bool" => Ok(Value::Bool(body.as_bool().ok_or("bool")?)),
         "u64" => Ok(Value::U64(parse_u64(body)?)),
         "i64" => Ok(Value::I64(parse_i64(body)?)),
@@ -337,8 +343,14 @@ pub(crate) fn parse_value(json: &Json) -> JsonResult<Value> {
 }
 
 /// Render the one canonical value object (single line; the caller indents).
-pub(crate) fn render_value(out: &mut String, value: &Value) {
+pub(crate) fn render_value(out: &mut String, value: &Value) -> Result<(), bumbledb::event::Error> {
     match value {
+        Value::Event(v) => {
+            let bytes = v.to_bytes(&())?;
+            out.push_str("{\"event\":\"");
+            push_hex(out, &bytes);
+            out.push_str("\"}");
+        }
         Value::Bool(v) => {
             out.push_str(if *v {
                 "{\"bool\":true}"
@@ -401,6 +413,7 @@ pub(crate) fn render_value(out: &mut String, value: &Value) {
             out.push_str("\"]}");
         }
     }
+    Ok(())
 }
 
 fn parse_f64_bits(json: &Json) -> JsonResult<F64> {
@@ -518,9 +531,43 @@ mod tests {
 
     fn roundtrip(value: &Value) {
         let mut out = String::new();
-        render_value(&mut out, value);
+        render_value(&mut out, value).unwrap();
         let tree = read_tree(&out).expect("rendered value parses");
         assert_eq!(&parse_value(&tree).expect("value arm"), value, "{out}");
+    }
+
+    #[test]
+    fn event_payload_roundtrips_by_canonical_identity_and_refuses_bad_versions() {
+        let space = bumbledb::event::Space::new(bumbledb::event::SpaceId([7; 32]), 3, &()).unwrap();
+        let event = space.coordinate(1, &()).unwrap();
+        let mut text = String::new();
+        render_value(&mut text, &Value::Event(event.clone())).unwrap();
+        let Value::Event(decoded) = parse_value(&read_tree(&text).unwrap()).unwrap() else {
+            panic!("Event tag");
+        };
+        assert_eq!(event.to_bytes(&()).unwrap(), decoded.to_bytes(&()).unwrap());
+        let mut bytes = event.to_bytes(&()).unwrap();
+        bytes[4] = 255;
+        let mut bad = String::from("{\"event\":\"");
+        super::push_hex(&mut bad, &bytes);
+        bad.push_str("\"}");
+        assert!(parse_value(&read_tree(&bad).unwrap()).is_err());
+    }
+
+    #[test]
+    fn event_render_resource_refusal_propagates() {
+        let limits = bumbledb::event::Limits {
+            operation_steps: 0,
+            ..Default::default()
+        };
+        let space = bumbledb::event::Space::with_order(
+            bumbledb::event::SpaceId([7; 32]),
+            &[0],
+            limits,
+            &(),
+        )
+        .unwrap();
+        assert!(render_value(&mut String::new(), &Value::Event(space.full())).is_err());
     }
 
     #[test]

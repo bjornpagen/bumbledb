@@ -2,6 +2,83 @@ use super::*;
 use crate::error::FindIndex;
 use crate::ir::FoldOp;
 
+#[test]
+fn event_results_resolve_spilled_keys_and_reject_stale_keys() {
+    use crate::event::{Space, SpaceId};
+    use crate::exec::run::{Bindings, Sink};
+    use crate::ir::validate::SignatureColumn;
+    use crate::work::{GenerationHandle, GenerationState};
+
+    let work = crate::WorkContext::new();
+    let generation = GenerationHandle::new(GenerationState::new(
+        crate::image::CacheGeneration::initial(),
+    ));
+    let interner = crate::image::intern::InternerHandle::new(&generation, &work);
+    let space = Space::new(SpaceId([2; 32]), 3, &work).unwrap();
+    let original = [
+        space.empty(),
+        space.full(),
+        space.coordinate(1, &work).unwrap(),
+    ];
+    let mut sink = ProjectionSink::new(vec![0, 1]);
+    let mut binding = Bindings::new(2);
+    for value in &original {
+        let words = interner.intern_event(value).unwrap().key().words();
+        binding.set(0, words[0]);
+        binding.set(1, words[1]);
+        assert!(!sink.emit(&binding).is_terminal());
+    }
+    sink.force_spill().unwrap();
+    let columns = [SignatureColumn::Project {
+        ty: ValueType::Event,
+    }];
+    let mut out = Answers::new();
+    out.begin(1);
+    super::super::finalize::finalize(
+        &mut EitherSink::Projection(sink),
+        &mut Vec::new(),
+        &mut ResolveMemo::new(),
+        &interner,
+        &columns,
+        &mut out,
+        &work,
+    )
+    .unwrap();
+    drop(generation);
+    let mut counts: Vec<_> = (0..out.len())
+        .map(|row| {
+            let AnswerValue::Event(value) = out.get(row, 0) else {
+                panic!("Event")
+            };
+            value.count(&work).unwrap()
+        })
+        .collect();
+    counts.sort_unstable();
+    assert_eq!(counts, [0, 4, 8]);
+
+    let fresh = GenerationHandle::new(GenerationState::new(
+        crate::image::CacheGeneration::initial(),
+    ));
+    let interner = crate::image::intern::InternerHandle::new(&fresh, &work);
+    let mut sink = ProjectionSink::new(vec![0, 1]);
+    assert!(!sink.emit(&binding).is_terminal());
+    let mut refused = Answers::new();
+    refused.begin(1);
+    assert!(matches!(
+        super::super::finalize::finalize(
+            &mut EitherSink::Projection(sink),
+            &mut Vec::new(),
+            &mut ResolveMemo::new(),
+            &interner,
+            &columns,
+            &mut refused,
+            &work,
+        ),
+        Err(crate::Error::Event(crate::event::Error::UnknownKey))
+    ));
+    assert!(refused.is_empty());
+}
+
 fn finalize_mixed_test_rows(
     rows: &[[u64; 4]],
     out: &mut Answers,

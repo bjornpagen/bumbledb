@@ -34,7 +34,10 @@ pub enum Const {
 
     Words(Box<[u64]>),
 
-    Interval { start: u64, end: u64 },
+    Interval {
+        start: u64,
+        end: u64,
+    },
 
     Param(crate::ir::ParamId),
 
@@ -43,7 +46,11 @@ pub enum Const {
     // Keep text ownership out of every scalar constant's inline footprint.
     WordSet(Box<ResolvedWords>),
 
-    PendingIntern { bytes: Box<[u8]> },
+    PendingIntern {
+        bytes: Box<[u8]>,
+    },
+    /// Owned immutable template; align in the execution namespace before comparing words.
+    PendingEvent(crate::Event),
 }
 
 /// Column-form selection keys or set elements, with owners for any resident

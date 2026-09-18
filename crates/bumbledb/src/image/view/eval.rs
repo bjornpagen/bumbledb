@@ -727,6 +727,12 @@ pub(crate) fn resolve_filter_into(
 ) -> crate::error::Result<bool> {
     match template {
         FilterPredicate::Compare { field, op, value } => {
+            if let Const::PendingEvent(event) = value {
+                let value = interner.intern_event(event)?;
+                write_compare(dst, *field, *op, None);
+                write_words_value(dst, &value.key().words());
+                return Ok(true);
+            }
             if let Const::PendingIntern { bytes } = value {
                 // Resolved slots, unlike immutable templates, belong to
                 // the execution's generation and are cleared on rotation.
@@ -783,7 +789,9 @@ pub(crate) fn resolve_filter_into(
                     write_word_set_value(dst, words);
                     return Ok(true);
                 }
-                Const::PendingIntern { .. } => unreachable!("resolved or refused above"),
+                Const::PendingEvent(_) | Const::PendingIntern { .. } => {
+                    unreachable!("resolved or refused above")
+                }
             };
             write_compare(dst, *field, *op, Some(resolved));
         }

@@ -18,6 +18,9 @@ pub enum Value {
     /// retries. No reserved patterns, no issuance, no history authority.
     Uuid(crate::Uuid),
 
+    /// Owned region of an explicitly admissible named world space.
+    Event(crate::event::Event),
+
     String(Box<str>),
 
     FixedBytes(Box<[u8]>),

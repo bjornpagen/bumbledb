@@ -122,6 +122,8 @@ pub enum ValueRef {
     Uuid(bumbledb_theory::Uuid),
 
     String(InternId),
+    /// Two checked registry words; resolving an owned value requires its registry.
+    Event([u64; 2]),
 
     Bytes([u8; MAX_FIXED_BYTES]),
 

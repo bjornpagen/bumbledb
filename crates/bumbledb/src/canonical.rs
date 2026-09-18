@@ -19,16 +19,42 @@ pub(crate) mod field;
 pub enum RowError {
     Work(WorkError),
     Arity,
-    Type { field: usize },
+    Type {
+        field: usize,
+    },
     Truncated,
     TrailingBytes,
-    InvalidTag { field: usize },
-    InvalidBool { field: usize },
-    NonCanonicalFloat { field: usize },
-    InvalidInterval { field: usize },
-    InvalidUtf8 { field: usize },
+    InvalidTag {
+        field: usize,
+    },
+    InvalidBool {
+        field: usize,
+    },
+    NonCanonicalFloat {
+        field: usize,
+    },
+    InvalidInterval {
+        field: usize,
+    },
+    InvalidUtf8 {
+        field: usize,
+    },
+    Event {
+        field: usize,
+        source: crate::event::Error,
+    },
     LengthOverflow,
     Allocation,
+}
+
+impl RowError {
+    fn event(field: usize, source: crate::event::Error) -> Self {
+        match source {
+            crate::event::Error::Cancelled => Self::Work(WorkError::Cancelled),
+            crate::event::Error::Allocation => Self::Allocation,
+            source => Self::Event { field, source },
+        }
+    }
 }
 
 impl From<WorkError> for RowError {
@@ -55,6 +81,8 @@ impl CanonicalRow {
     /// Checks and owns caller values before they can enter a draft.
     /// # Errors
     /// Rejects wrong shape, cancellation, or an unallocatable capacity.
+    /// # Panics
+    /// Only if the internal sizing pass fails to retain one payload per Event.
     #[expect(
         clippy::too_many_lines,
         reason = "the per-type encode arms are one linear wire table"
@@ -69,6 +97,8 @@ impl CanonicalRow {
             return Err(RowError::Arity);
         }
         let mut size = 2usize;
+        // Encode each Event once. Scalar-only rows retain their allocation path.
+        let mut events = Vec::new();
         for (chunk, (descriptors, values)) in fields
             .chunks(FIELD_QUANTUM)
             .zip(values.chunks(FIELD_QUANTUM))
@@ -81,6 +111,18 @@ impl CanonicalRow {
                     Value::Bool(_) => 1,
                     Value::U64(_) | Value::I64(_) | Value::F64(_) => 8,
                     Value::Uuid(_) => 16,
+                    Value::Event(event) => {
+                        let encoded = event
+                            .to_bytes(work)
+                            .map_err(|source| RowError::event(field, source))?;
+                        let len = encoded
+                            .len()
+                            .checked_add(8)
+                            .ok_or(RowError::LengthOverflow)?;
+                        events.try_reserve(1).map_err(|_| RowError::Allocation)?;
+                        events.push(encoded);
+                        len
+                    }
                     Value::String(text) => {
                         text.len().checked_add(8).ok_or(RowError::LengthOverflow)?
                     }
@@ -124,11 +166,20 @@ impl CanonicalRow {
                 .map_err(|_| RowError::Arity)?
                 .to_be_bytes(),
         );
+        let mut events = events.into_iter();
         for values in values.chunks(FIELD_QUANTUM) {
             work.checkpoint()?;
             for value in values {
                 match value {
                     Value::Bool(v) => bytes.extend_from_slice(&[0, u8::from(*v)]),
+                    Value::Event(_) => {
+                        bytes.push(10);
+                        append_bytes(
+                            &mut bytes,
+                            &events.next().expect("one payload per Event"),
+                            work,
+                        )?;
+                    }
                     Value::U64(v) => {
                         bytes.push(1);
                         bytes.extend_from_slice(&v.to_be_bytes());
@@ -541,6 +592,7 @@ fn walk_payload<'a>(
     mut visit_scalar: impl FnMut(usize, ExactScalarRef<'_>) -> Result<(), RowError>,
 ) -> Result<(), RowError> {
     let count = fields.len();
+    let mut events: Option<Box<crate::event::Registry>> = None;
     for first in (0..count).step_by(FIELD_QUANTUM) {
         let chunk = FIELD_QUANTUM.min(count - first);
         work.checkpoint()?;
@@ -611,6 +663,17 @@ fn walk_payload<'a>(
                     descriptor,
                     field,
                 )?,
+                10 => {
+                    if descriptor.value_type != ValueType::Event {
+                        return Err(RowError::Type { field });
+                    }
+                    Value::Event(
+                        events
+                            .get_or_insert_with(Box::default)
+                            .decode(reader.blob()?, work)
+                            .map_err(|source| RowError::event(field, source))?,
+                    )
+                }
                 _ => return Err(RowError::InvalidTag { field }),
             };
             if !matches!(tag, 6 | 7 | 9) {

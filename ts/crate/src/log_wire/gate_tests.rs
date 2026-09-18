@@ -74,7 +74,9 @@ fn open_spec_for(
     seed: u8,
 ) -> OpenSpec {
     let identity = identity_of(&descriptor, seed);
-    let artifact = bumbledb_log::schema_file::render(&descriptor).into_bytes();
+    let artifact = bumbledb_log::schema_file::render(&descriptor)
+        .unwrap()
+        .into_bytes();
     OpenSpec {
         create,
         directory: directory.to_string_lossy().into_owned(),

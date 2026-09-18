@@ -40,7 +40,7 @@ fn type_index(ty: &ValueType) -> usize {
         ValueType::String => 3,
         ValueType::FixedBytes { .. } => 4,
         ValueType::Interval { .. } | ValueType::FixedInterval { .. } => 5,
-        ValueType::Uuid => {
+        ValueType::Event | ValueType::Uuid => {
             unreachable!("the querygen target declares no uuid column — widen the matrix with it")
         }
     }

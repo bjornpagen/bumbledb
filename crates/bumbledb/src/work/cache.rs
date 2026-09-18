@@ -1,16 +1,18 @@
-//! Shared text resolver generations. Live images and resolved query state
-//! pin canonical text owners independently of cache membership.
+//! Shared value resolver generations. Live images and resolved query state
+//! pin canonical text owners and the Event namespace independently of cache membership.
 use crate::image::CacheGeneration;
-use crate::image::intern::TextInterner;
+use crate::image::intern::ValueResolver;
 use std::sync::{Arc, Mutex, Weak};
 
 /// Shared generation owner: resolver storage and generation identity (C3).
-/// Every token-bearing image holds this owner. Individual text payloads
-/// are pinned separately, so keeping a generation does not retain its history.
+/// Every token-bearing image holds this owner. Individual text payloads are
+/// pinned separately and reclaimed when unreferenced. Events and their canonical
+/// descriptors remain strongly retained until this generation is released,
+/// subject to the registry entry limit; image eviction alone does not reclaim them.
 #[derive(Debug)]
 pub struct GenerationState {
     identity: CacheGeneration,
-    resolver: Mutex<TextInterner>,
+    resolver: Mutex<ValueResolver>,
 }
 
 /// Strong handle to a [`GenerationState`]. Borrowed resolver views do not
@@ -39,7 +41,7 @@ impl GenerationState {
     pub fn new(identity: CacheGeneration) -> Self {
         Self {
             identity,
-            resolver: Mutex::new(TextInterner::default()),
+            resolver: Mutex::new(ValueResolver::default()),
         }
     }
 
@@ -48,7 +50,7 @@ impl GenerationState {
         self.identity
     }
 
-    pub(crate) fn lock_resolver(&self) -> std::sync::MutexGuard<'_, TextInterner> {
+    pub(crate) fn lock_resolver(&self) -> std::sync::MutexGuard<'_, ValueResolver> {
         self.resolver.lock().expect("generation resolver")
     }
 }
@@ -97,7 +99,7 @@ impl GenerationHandle {
         Arc::strong_count(&self.0)
     }
 
-    pub(crate) fn lock_resolver(&self) -> std::sync::MutexGuard<'_, TextInterner> {
+    pub(crate) fn lock_resolver(&self) -> std::sync::MutexGuard<'_, ValueResolver> {
         self.0.lock_resolver()
     }
 

@@ -1,0 +1,84 @@
+{
+  "scope": "Native Event denotational contracts; not Rust, codec or allocator refinement",
+  "lean_version": "Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)",
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "checker_sha256": "ef2619662a9c5dcc01202c76558cc7765dc40862dd913a95cc405c2d09449a34",
+  "files": [
+    {
+      "source": "crates/bumbledb-event/semantics/FixedPoint.lean",
+      "sha256": "738d45039f2d69a57a4a67ea5f48b56a25719b22f3eece194238183fc78771af",
+      "exit_code": 0,
+      "reports": {
+        "FixedPoint.strict_rank": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FixedPoint.ascending": [],
+        "FixedPoint.below_prefixed": [],
+        "FixedPoint.stabilizes": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.least_fixed_point": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.dual_monotone": [
+          "propext"
+        ],
+        "FixedPoint.greatest_fixed_point": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.shared_environment_stabilizes": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "FixedPoint.environment_mixing_counterexample": [
+          "propext"
+        ],
+        "FixedPoint.negation_is_not_a_fixed_point_program": []
+      },
+      "passed": true
+    },
+    {
+      "source": "crates/bumbledb-event/semantics/Persistence.lean",
+      "sha256": "5fad53a44694f377d3bea50eada4851ba84e602bee952fdc12cf567ae5d6376e",
+      "exit_code": 0,
+      "reports": {
+        "Persistence.supported_identity": [
+          "Quot.sound"
+        ],
+        "Persistence.exact_identity": [
+          "Quot.sound"
+        ],
+        "Persistence.legal_decoder_erased": [
+          "Quot.sound"
+        ],
+        "Persistence.arbitrary_completions_agree": [
+          "Quot.sound"
+        ],
+        "Persistence.complement_is_relative": [],
+        "Persistence.empty_retains_source": [
+          "Quot.sound"
+        ],
+        "Persistence.empty_retains_support": [
+          "Quot.sound"
+        ],
+        "Persistence.inhabited_space_distinguishes_constants": [
+          "Quot.sound"
+        ],
+        "Persistence.equal_mass_distinct_events": [
+          "Quot.sound"
+        ],
+        "Persistence.registered_key_identity": []
+      },
+      "passed": true
+    }
+  ],
+  "passed": true
+}

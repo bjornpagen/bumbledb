@@ -130,7 +130,7 @@ fn scalar_payload_len(entry: usize, value: &Value) -> Result<usize, ResultError>
             .len()
             .checked_add(8)
             .ok_or(ResultError::LengthOverflow),
-        Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
+        Value::Event(_) | Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
             Err(ResultError::NonScalar { entry })
         }
     }
@@ -240,7 +240,10 @@ pub fn encode_result(
                 out.push(TAG_UUID);
                 out.extend_from_slice(v.as_bytes());
             }
-            Value::IntervalU64(_) | Value::IntervalI64(_) | Value::IntervalF64(_) => {
+            Value::Event(_)
+            | Value::IntervalU64(_)
+            | Value::IntervalI64(_)
+            | Value::IntervalF64(_) => {
                 unreachable!("refused while sizing")
             }
         }

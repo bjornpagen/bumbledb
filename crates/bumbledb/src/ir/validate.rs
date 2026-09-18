@@ -48,6 +48,7 @@ impl std::fmt::Display for Signature {
                 write!(f, "{op} ")?;
             }
             match column.ty() {
+                ValueType::Event => f.write_str("event")?,
                 ValueType::Bool => f.write_str("bool")?,
                 ValueType::U64 => f.write_str("u64")?,
                 ValueType::I64 => f.write_str("i64")?,

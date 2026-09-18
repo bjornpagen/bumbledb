@@ -1111,7 +1111,10 @@ pub(crate) fn exact_scalar_width(value_type: &ValueType) -> Option<usize> {
         ValueType::U64 | ValueType::I64 | ValueType::F64 => Some(8),
         ValueType::Uuid => Some(16),
         ValueType::FixedBytes { len } => Some(usize::from(*len)),
-        ValueType::FixedInterval { .. } | ValueType::String | ValueType::Interval { .. } => None,
+        ValueType::Event
+        | ValueType::FixedInterval { .. }
+        | ValueType::String
+        | ValueType::Interval { .. } => None,
     }
 }
 

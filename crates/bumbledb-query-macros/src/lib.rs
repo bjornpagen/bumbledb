@@ -2672,6 +2672,11 @@ const SCALAR_ARG_TRAIT: &str = "\
             ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Str(self.as_str())) } \
     } \
     #[allow(dead_code)] \
+    impl<'a> __BumbledbScalarArg<'a> for &'a ::bumbledb::Event { \
+        fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
+            ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Event(self)) } \
+    } \
+    #[allow(dead_code)] \
     impl<'a> __BumbledbScalarArg<'a> for ::bumbledb::Uuid { \
         fn __bumbledb_arg(self) -> ::bumbledb::ParamArg<'a> { \
             ::bumbledb::ParamArg::Scalar(::bumbledb::BindValue::Uuid(self)) } \

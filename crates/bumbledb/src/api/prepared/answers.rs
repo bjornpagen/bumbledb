@@ -15,6 +15,8 @@ impl Answers {
         self.cells.clear();
         self.text.clear();
         self.blob.clear();
+        self.events.clear();
+        self.event_indices.clear();
     }
 
     pub(crate) fn begin(&mut self, arity: usize) {
@@ -47,6 +49,7 @@ impl Answers {
     pub fn get(&self, answer: usize, column: usize) -> AnswerValue<'_> {
         assert!(column < self.arity && answer < self.len());
         match self.cells[answer * self.arity + column] {
+            Cell::Event(index) => AnswerValue::Event(&self.events[index]),
             Cell::Bool(v) => AnswerValue::Bool(v),
             Cell::U64(v) => AnswerValue::U64(v),
             Cell::I64(v) => AnswerValue::I64(v),
@@ -74,6 +77,7 @@ impl Answers {
     /// byte payloads land in this buffer's own heaps.
     pub(crate) fn push_value(&mut self, value: &AnswerValue<'_>) {
         let cell = match value {
+            AnswerValue::Event(value) => self.event_cell(value),
             AnswerValue::Bool(v) => Cell::Bool(*v),
             AnswerValue::U64(v) => Cell::U64(*v),
             AnswerValue::I64(v) => Cell::I64(*v),
@@ -115,6 +119,7 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
+            ValueType::Event => unreachable!("Event cells resolve through the registry"),
             ValueType::Uuid => {
                 unreachable!("uuid finds take the two-word path (uuid_cell)")
             }
@@ -126,6 +131,16 @@ impl Answers {
 
     /// An application-owned identity from its two big-endian column words
     /// (verbatim bytes: byte order IS the value's one total order).
+    pub(super) fn event_cell(&mut self, value: &crate::Event) -> Cell {
+        let key = value.key().words();
+        let index = *self.event_indices.entry(key).or_insert_with(|| {
+            let index = self.events.len();
+            self.events.push(value.clone());
+            index
+        });
+        Cell::Event(index)
+    }
+
     pub(super) fn uuid_cell(hi: u64, lo: u64) -> Cell {
         let mut bytes = [0u8; 16];
         bytes[..8].copy_from_slice(&hi.to_be_bytes());
@@ -198,6 +213,7 @@ impl Answers {
             ValueType::FixedBytes { .. } => {
                 unreachable!("bytes<N> finds take the multi-word path (push_fixed_bytes)")
             }
+            ValueType::Event => unreachable!("Event cells resolve through the registry"),
             ValueType::Uuid => {
                 unreachable!("uuid finds take the two-word path (uuid_cell)")
             }

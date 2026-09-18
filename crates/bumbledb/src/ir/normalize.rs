@@ -204,9 +204,10 @@ impl SlotWidth {
             // Intervals are two order words; `Uuid` is sixteen exact
             // identity bytes — two big-endian words, byte order = total
             // order (the bytes<16> layout, nominal name).
-            ValueType::Interval { .. } | ValueType::FixedInterval { .. } | ValueType::Uuid => {
-                Self::TWO
-            }
+            ValueType::Interval { .. }
+            | ValueType::FixedInterval { .. }
+            | ValueType::Uuid
+            | ValueType::Event => Self::TWO,
             ValueType::FixedBytes { len } => Self(
                 u8::try_from(crate::encoding::fixed_bytes_words(*len))
                     .expect("bytes width is at most 8 words"),

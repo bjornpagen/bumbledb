@@ -141,6 +141,9 @@ fn random_value(rng: &mut Rng, hint: Option<&ValueType>) -> Value {
 
 fn typed_value(rng: &mut Rng, value_type: &ValueType) -> Value {
     match value_type {
+        ValueType::Event => unreachable!(
+            "this generator draws only the legacy type roster; Event qualification has its own fixtures"
+        ),
         ValueType::Bool => Value::Bool(rng.chance(1, 2)),
         ValueType::U64 => {
             if rng.chance(1, 8) {

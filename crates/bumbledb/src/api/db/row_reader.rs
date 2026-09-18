@@ -27,12 +27,15 @@ mod tag {
     pub const INTERVAL_I64: u8 = 7;
     pub const UUID: u8 = 8;
     pub const INTERVAL_F64: u8 = 9;
+    pub const EVENT: u8 = 10;
 }
 
 /// Sequential field reader over one canonical row's bytes.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct RowReader<'a> {
     rest: &'a [u8],
+    work: Option<crate::WorkContext>,
+    events: Option<Box<crate::event::Registry>>,
     remaining: u16,
 }
 
@@ -49,7 +52,22 @@ impl<'a> RowReader<'a> {
             .split_first_chunk::<2>()
             .ok_or(malformed("canonical row arity header"))?;
         let remaining = u16::from_be_bytes(*header);
-        Ok(Self { rest, remaining })
+        Ok(Self {
+            rest,
+            remaining,
+            work: None,
+            events: None,
+        })
+    }
+
+    /// Read with a retained cancellation context, independent of row lifetime.
+    /// # Errors
+    /// Refuses cancellation or a missing arity header.
+    pub fn with_work(bytes: &'a [u8], work: &crate::WorkContext) -> Result<Self> {
+        crate::event::Control::checkpoint(work)?;
+        let mut reader = Self::new(bytes)?;
+        reader.work = Some(work.clone());
+        Ok(reader)
     }
 
     /// Fields not yet consumed.
@@ -119,6 +137,22 @@ impl<'a> RowReader<'a> {
     pub fn next_uuid(&mut self) -> Result<Uuid> {
         self.expect_tag(tag::UUID, "canonical uuid field")?;
         Ok(Uuid::from_bytes(self.word("canonical uuid payload")?))
+    }
+
+    /// Read an owned Event; its owner outlives this row's borrowed bytes.
+    /// # Errors
+    /// Refuses malformed or unsupported Event encodings and resource exhaustion.
+    pub fn next_event(&mut self) -> Result<crate::Event> {
+        self.expect_tag(tag::EVENT, "canonical event field")?;
+        let bytes = self.blob("canonical event payload")?;
+        let control: &dyn crate::event::Control = self
+            .work
+            .as_ref()
+            .map_or(&() as &dyn crate::event::Control, |work| work);
+        self.events
+            .get_or_insert_with(Box::default)
+            .decode(bytes, control)
+            .map_err(Into::into)
     }
 
     /// # Errors

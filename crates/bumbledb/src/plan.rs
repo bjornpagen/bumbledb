@@ -23,6 +23,7 @@ pub(crate) fn pinned_fields(
                 | Const::Byte(_)
                 | Const::Interval { .. }
                 | Const::Param(_)
+                | Const::PendingEvent(_)
                 | Const::PendingIntern { .. }
         ) =>
         {
