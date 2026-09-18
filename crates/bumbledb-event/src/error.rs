@@ -13,6 +13,9 @@ pub enum Capacity {
     SpaceTokens,
     ExplicitTable,
     RegistryEntries,
+    ProgramNodes,
+    ProgramSteps,
+    FixedPointIterations,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +41,9 @@ pub enum Error {
     NoFaces,
     PartialRelation,
     NonFunctionalRelation,
+    ProgramMismatch,
+    NonMonotoneProgram,
+    FixedPointInvariant,
 }
 
 impl fmt::Display for Error {
@@ -75,6 +81,11 @@ impl fmt::Display for Error {
             }
             Self::NonFunctionalRelation => {
                 f.write_str("relation has multiple outputs for one input")
+            }
+            Self::ProgramMismatch => f.write_str("expression belongs to a different Event program"),
+            Self::NonMonotoneProgram => f.write_str("Event program has unproved positive variance"),
+            Self::FixedPointInvariant => {
+                f.write_str("Event fixed-point execution violated its finite order contract")
             }
         }
     }

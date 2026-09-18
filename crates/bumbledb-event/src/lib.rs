@@ -12,9 +12,11 @@ mod boolean;
 mod codec;
 mod diagram;
 mod error;
+mod fixed_point;
 mod information;
 mod map;
 mod product;
+mod program;
 mod registry;
 mod relation;
 mod space;
@@ -22,9 +24,14 @@ mod space;
 pub use boolean::{BoolOp4, Signature};
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
+pub use fixed_point::{FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult};
 pub use information::InformationCases;
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
+pub use program::{
+    EventProgram, EventProgramBuilder, MapOp, ModalOp, ProgramInstruction, ProgramOp, ProgramValue,
+    Variance,
+};
 pub use registry::Registry;
 pub use relation::{RelationalProduct, WorldRelation};
 pub use space::{Event, EventKey, Space, SpaceId, Statistics};
@@ -43,3 +50,6 @@ mod diagram_tests;
 
 #[cfg(test)]
 mod information_tests;
+
+#[cfg(test)]
+mod program_tests;
