@@ -7,6 +7,7 @@
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("bumbledb-event currently requires a 64-bit target");
 
+mod action;
 mod arena;
 mod boolean;
 mod codec;
@@ -22,10 +23,13 @@ mod registry;
 mod relation;
 mod space;
 
+pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
 pub use boolean::{BoolOp4, Signature};
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
-pub use fixed_point::{FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult};
+pub use fixed_point::{
+    FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult, LayeredFixedPointResult,
+};
 pub use information::InformationCases;
 pub use map::{CoordinateMap, SurjectiveMap};
 pub use partition::{EventPartition, PartitionLimits};
@@ -58,3 +62,6 @@ mod program_tests;
 
 #[cfg(test)]
 mod partition_tests;
+
+#[cfg(test)]
+mod action_tests;

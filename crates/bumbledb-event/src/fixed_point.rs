@@ -2,8 +2,8 @@
 //! operational budget. No partial approximant is returned as a fixed point.
 use crate::product::require_same_map;
 use crate::{
-    BoolOp4, Capacity, Control, Error, Event, EventProgram, EventProgramBuilder, MapOp, ModalOp,
-    RelationalProduct, Result, Space, Variance, WorldRelation,
+    BoolOp4, Capacity, Control, Error, Event, EventPartition, EventProgram, EventProgramBuilder,
+    MapOp, ModalOp, PartitionLimits, RelationalProduct, Result, Space, Variance, WorldRelation,
 };
 
 /// A finite native code space with the exact count of original legal worlds.
@@ -60,6 +60,27 @@ pub struct FixedPointResult {
     event: Event,
     iterations: u64,
     program_steps: u64,
+}
+
+/// Exact first-entry layers of bottom iteration. Cell i first appears in
+/// application i+1. Cells are nonempty and disjoint, covering the final result;
+/// an immediately empty fixed point has no layers. These are structural ranks,
+/// not probabilities or a promise that an arbitrary action follows progress.
+#[derive(Debug, Clone)]
+pub struct LayeredFixedPointResult {
+    result: FixedPointResult,
+    layers: EventPartition,
+}
+
+impl LayeredFixedPointResult {
+    #[must_use]
+    pub fn result(&self) -> &FixedPointResult {
+        &self.result
+    }
+    #[must_use]
+    pub fn layers(&self) -> &EventPartition {
+        &self.layers
+    }
 }
 impl FixedPointResult {
     #[must_use]
@@ -126,7 +147,24 @@ impl FixedPointProgram {
         limits: FixedPointLimits,
         control: &dyn Control,
     ) -> Result<FixedPointResult> {
-        self.run(false, limits, control)
+        self.run(false, limits, None, control)
+            .map(|(result, _)| result)
+    }
+
+    /// Least fixed point with a retained partition of first-entry layers.
+    /// The extra cell budget bounds retained ranks; hitting it refuses the
+    /// entire result, even if an unranked run could finish within its own budget.
+    /// # Errors
+    /// Has `least`'s contract, plus explicit layer/allocation capacity.
+    pub fn least_with_layers(
+        &self,
+        limits: FixedPointLimits,
+        layer_limits: PartitionLimits,
+        control: &dyn Control,
+    ) -> Result<LayeredFixedPointResult> {
+        let (result, layers) = self.run(false, limits, Some(layer_limits), control)?;
+        let layers = EventPartition::on(result.event(), &layers, layer_limits, control)?;
+        Ok(LayeredFixedPointResult { result, layers })
     }
 
     /// Greatest fixed point, starting at full with the same finite bound.
@@ -137,15 +175,17 @@ impl FixedPointProgram {
         limits: FixedPointLimits,
         control: &dyn Control,
     ) -> Result<FixedPointResult> {
-        self.run(true, limits, control)
+        self.run(true, limits, None, control)
+            .map(|(result, _)| result)
     }
 
     fn run(
         &self,
         greatest: bool,
         limits: FixedPointLimits,
+        layer_limits: Option<PartitionLimits>,
         control: &dyn Control,
-    ) -> Result<FixedPointResult> {
+    ) -> Result<(FixedPointResult, Vec<Event>)> {
         control.checkpoint()?;
         let space = self.carrier.space();
         let mut value = if greatest {
@@ -154,6 +194,7 @@ impl FixedPointProgram {
             space.empty()
         };
         let mut steps = 0;
+        let mut layers = Vec::new();
         // Space has at most 2^62 legal codes, so the detection application fits.
         for iteration in 1..=self.carrier.worlds() + 1 {
             control.checkpoint()?;
@@ -165,11 +206,14 @@ impl FixedPointProgram {
                 .evaluate_counted(&value, &mut steps, limits.program_steps, control)?
                 .align_to(space, control)?;
             if next == value {
-                return Ok(FixedPointResult {
-                    event: next,
-                    iterations: iteration,
-                    program_steps: steps,
-                });
+                return Ok((
+                    FixedPointResult {
+                        event: next,
+                        iterations: iteration,
+                        program_steps: steps,
+                    },
+                    layers,
+                ));
             }
             let ordered = if greatest {
                 next.signature(&value, control)?.included()
@@ -178,6 +222,13 @@ impl FixedPointProgram {
             };
             if !ordered {
                 return Err(Error::FixedPointInvariant);
+            }
+            if let Some(layer_limits) = layer_limits {
+                if layers.len() >= layer_limits.cells {
+                    return Err(Error::Capacity(Capacity::PartitionCells));
+                }
+                layers.try_reserve(1)?;
+                layers.push(next.apply(BoolOp4::DIFFERENCE, &value, control)?);
             }
             value = next;
         }

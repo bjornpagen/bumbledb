@@ -49,6 +49,8 @@ pub enum Error {
     PartitionGap,
     PartitionArity,
     PartitionIndex,
+    UnsafePolicy,
+    IncompletePolicy,
 }
 
 impl fmt::Display for Error {
@@ -96,6 +98,8 @@ impl fmt::Display for Error {
             Self::PartitionGap => f.write_str("Event partition does not cover its required parent"),
             Self::PartitionArity => f.write_str("Event partition needs one value per cell"),
             Self::PartitionIndex => f.write_str("Event partition index is outside the roster"),
+            Self::UnsafePolicy => f.write_str("strategy policy includes an unpermitted action"),
+            Self::IncompletePolicy => f.write_str("strategy policy omits a required state"),
         }
     }
 }
