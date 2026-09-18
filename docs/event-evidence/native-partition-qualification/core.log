@@ -1,0 +1,91 @@
+   Compiling bumbledb-event v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-event)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.43s
+     Running unittests src/lib.rs (target/debug/build/bumbledb-event/3adaa52a191f9f30/out/bumbledb_event-3adaa52a191f9f30)
+
+running 70 tests
+test diagram_tests::borrowed_tables_have_sparse_semantic_coordinates_and_exact_padding ... ok
+test diagram_tests::inspection_and_reconstruction_refuse_resources_without_mutating_the_input ... ok
+test diagram_tests::original_support_gates_constants_and_rebuild_admission ... ok
+test diagram_tests::snapshots_are_independent_owned_values_and_views_allow_same_arena_construction ... ok
+test information_tests::environment_equality_cannot_silently_refine_an_observation ... ok
+test information_tests::incomparable_observations_do_not_commute_on_coupled_support ... ok
+test information_tests::information_validates_all_contexts_and_retains_owned_results ... ok
+test map_tests::checked_maps_refuse_resources_and_retain_owned_results ... ok
+test map_tests::map_context_validation_includes_constants_and_shared_arena_restrictions ... ok
+test map_tests::original_support_is_checked_before_target_completion ... ok
+test information_tests::information_uses_symbolic_maps_without_requiring_a_doubled_workspace ... ok
+test map_tests::opposite_direction_maps_share_the_alignment_lock_order ... ok
+test map_tests::pullback_is_boolean_but_image_has_only_its_adjoint_laws ... ok
+test diagram_tests::every_small_supported_event_has_exact_public_views_and_checked_reconstruction ... ok
+test map_tests::wide_maps_do_not_require_a_combined_workspace_or_world_enumeration ... ok
+test partition_tests::coarsening_is_ordinary_value_mapping_with_explicit_empty_output_buckets ... ok
+test partition_tests::partition_validation_retains_empty_owners_indices_and_resource_refusals ... ok
+test partition_tests::readouts_and_pullbacks_preserve_partition_laws_but_images_need_not ... ok
+test information_tests::readout_factorization_is_exactly_the_observation_fd ... ok
+test partition_tests::symbolic_counting_and_partitions_do_not_enumerate_worlds ... ok
+test program_tests::all_truth_functions_and_variances_match_exhaustive_event_evaluation ... ok
+test diagram_tests::arbitrary_symbolic_support_and_polarity_match_an_independent_bitset ... ok
+test program_tests::budget_exhaustion_never_returns_a_partial_fixed_point ... ok
+test partition_tests::refinement_preserves_shared_world_correlations_and_ordered_pairs ... ok
+test program_tests::finite_original_world_rank_controls_least_and_greatest_iteration ... ok
+test program_tests::fixed_point_helpers_refuse_changed_environment_roles_before_empty_shortcuts ... ok
+test program_tests::independent_owners_conditionals_maps_and_pruned_instruction_views_are_checked ... ok
+test diagram_tests::symbolic_inspection_preserves_sharing_and_permits_external_counting ... ok
+test program_tests::program_validation_includes_binders_contexts_and_unsafe_variance ... ok
+test program_tests::modal_instructions_keep_both_direction_and_all_participating_nodes ... ok
+test program_tests::shared_environments_remain_separate_through_star ... ok
+test program_tests::exhaustive_small_relations_match_reachability_inevitability_and_safety_oracles ... ok
+test map_tests::composition_and_resident_simultaneous_substitution_keep_readouts_distinct ... ok
+test relation_tests::associativity_reindexes_different_intermediate_product_presentations ... ok
+test relation_tests::function_graphs_and_readouts_preserve_support_and_refuse_partiality ... ok
+test relation_tests::every_two_state_relation_matches_matrix_modal_and_residual_oracles ... ok
+test program_tests::symbolic_programs_and_star_do_not_enumerate_their_finite_carriers ... ok
+test relation_tests::nonlinear_environment_readouts_and_copied_bit_squares_are_distinct ... ok
+test relation_tests::identity_tests_and_converse_compose_across_owned_presentations ... ok
+test relation_tests::products_admit_exact_asymmetric_fibres_and_preserve_one_environment ... ok
+test relation_tests::relation_descriptors_refuse_foreign_constants_capacity_and_cancellation ... ok
+test relation_tests::role_checks_are_membership_dependencies_not_raw_coordinate_masks ... ok
+test relation_tests::shared_middle_and_environment_cannot_be_projected_independently ... ok
+test relation_tests::zero_coordinate_endpoints_still_require_presence_and_validate_contexts ... ok
+test tests::all_interner_fingerprints_can_collide_without_changing_identity ... ok
+test relation_tests::symbolic_diagonal_and_composition_use_a_compact_sixty_bit_workspace ... ok
+test tests::cancellation_capacity_and_constructor_rejections_are_explicit ... ok
+test tests::canonical_codec_ignores_allocation_order_working_order_and_decoder_anchor ... ok
+test tests::cardinality_constructs_regions_including_duplicate_and_empty_inputs ... ok
+test tests::codec_rejects_truncation_corruption_noncanonical_graphs_and_versions ... ok
+test relation_tests::guarded_must_composition_keeps_dead_intermediate_states ... ok
+test tests::all_truth_functions_on_every_four_world_support ... ok
+test relation_tests::asymmetric_shared_environment_relational_products_match_explicit_matrices ... ok
+test tests::format_one_constant_golden_and_resource_refusals ... ok
+test tests::concurrent_interning_keeps_one_canonical_identity ... ok
+test tests::owners_are_checked_before_constants_and_results_keep_them_alive ... ok
+test tests::direct_ite_on_every_three_argument_four_world_function ... ok
+test tests::registry_aligns_fact_values_without_trusting_unregistered_keys ... ok
+test tests::symbolic_splits_and_essential_reduction_across_table_boundary ... ok
+test partition_tests::every_two_cell_admission_matches_pointwise_coverage_and_functionality ... ok
+test tests::opposite_direction_alignment_preserves_symbolic_values_without_deadlock ... ok
+test partition_tests::cardinality_rosters_match_direct_per_world_counts_and_keep_duplicate_positions ... ok
+test tests::dense_oracle_for_symbolic_completed_functions_in_adversarial_orders ... ok
+test information_tests::indistinguishability_is_the_same_algebra_as_relational_modalities ... ok
+test tests::projection_uses_legal_fibres_and_counts_do_not_count_aliases ... ok
+test map_tests::symbolic_nonlinear_maps_across_arena_orders_match_an_explicit_oracle ... ok
+test information_tests::evidence_classifies_whole_cells_and_never_invents_vacuous_certainty ... ok
+test program_tests::arbitrary_four_state_closures_match_warshall_and_keep_coupled_support ... ok
+test information_tests::every_four_code_readout_matches_an_explicit_information_oracle ... ok
+test map_tests::exhaustive_four_world_maps_on_every_source_support ... ok
+
+test result: ok. 70 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.59s
+
+   Doc-tests bumbledb_event
+
+running 6 tests
+test crates/bumbledb-event/src/diagram.rs - diagram::Diagram (line 39) ... ok
+test crates/bumbledb-event/src/map.rs - map::CoordinateMap (line 22) ... ok
+test crates/bumbledb-event/src/partition.rs - partition::EventPartition (line 39) ... ok
+test crates/bumbledb-event/src/information.rs - information::CoordinateMap::information (line 87) ... ok
+test crates/bumbledb-event/src/program.rs - program::EventProgram (line 500) ... ok
+test crates/bumbledb-event/src/relation.rs - relation::RelationalProduct (line 21) ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.31s; merged doctests compilation took 0.20s

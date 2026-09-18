@@ -1,0 +1,19 @@
+'Information.image_pullback_exact' does not depend on any axioms
+'Information.complement_image_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Information.observable_sandwich' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Information.possible_is_stable' does not depend on any axioms
+'Information.fixed_iff_membership_fd' does not depend on any axioms
+'Information.evidence_reach_is_union' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Information.evidence_guarantee_exact' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Information.three_cases_partition' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Information.impossible_evidence_has_no_cases' does not depend on any axioms
+'Information.bitwise_fd_iff_readout_fd' depends on axioms: [propext, Quot.sound]
+'Information.descended_bits_form_legal_factor' depends on axioms: [Quot.sound]
+'Information.onto_factor_unique' depends on axioms: [Quot.sound]
+'Information.kernel_is_equivalence' does not depend on any axioms
+'Information.kernel_may_is_possible' does not depend on any axioms
+'Information.kernel_all_is_guaranteed' depends on axioms: [propext, Classical.choice, Quot.sound]
+'Information.kernel_inclusion_iff_fd' does not depend on any axioms
+'Information.kernel_product_gate_iff_bitwise_fd' depends on axioms: [propext, Quot.sound]
+'Information.clipping_changes_an_insufficient_observation' does not depend on any axioms
+'Information.evidence_answers_whole_cells' does not depend on any axioms

@@ -15,6 +15,7 @@ mod error;
 mod fixed_point;
 mod information;
 mod map;
+mod partition;
 mod product;
 mod program;
 mod registry;
@@ -27,6 +28,7 @@ pub use error::{Capacity, Control, Error, Limits, Result};
 pub use fixed_point::{FiniteCarrier, FixedPointLimits, FixedPointProgram, FixedPointResult};
 pub use information::InformationCases;
 pub use map::{CoordinateMap, SurjectiveMap};
+pub use partition::{EventPartition, PartitionLimits};
 pub use product::{CompleteFibreSquare, FaceProduct, FibreProduct};
 pub use program::{
     EventProgram, EventProgramBuilder, MapOp, ModalOp, ProgramInstruction, ProgramOp, ProgramValue,
@@ -53,3 +55,6 @@ mod information_tests;
 
 #[cfg(test)]
 mod program_tests;
+
+#[cfg(test)]
+mod partition_tests;

@@ -16,6 +16,7 @@ pub enum Capacity {
     ProgramNodes,
     ProgramSteps,
     FixedPointIterations,
+    PartitionCells,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +45,10 @@ pub enum Error {
     ProgramMismatch,
     NonMonotoneProgram,
     FixedPointInvariant,
+    PartitionOverlap,
+    PartitionGap,
+    PartitionArity,
+    PartitionIndex,
 }
 
 impl fmt::Display for Error {
@@ -87,6 +92,10 @@ impl fmt::Display for Error {
             Self::FixedPointInvariant => {
                 f.write_str("Event fixed-point execution violated its finite order contract")
             }
+            Self::PartitionOverlap => f.write_str("distinct Event partition cells overlap"),
+            Self::PartitionGap => f.write_str("Event partition does not cover its required parent"),
+            Self::PartitionArity => f.write_str("Event partition needs one value per cell"),
+            Self::PartitionIndex => f.write_str("Event partition index is outside the roster"),
         }
     }
 }
