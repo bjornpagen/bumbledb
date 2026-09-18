@@ -29,8 +29,20 @@ impl FaceProduct {
     /// Refuses no faces, incompatible environments, more than 62 total bits,
     /// cancellation or unavailable resources.
     pub fn new(identity: SpaceId, faces: &[SurjectiveMap], control: &dyn Control) -> Result<Self> {
+        Self::with_limits(identity, faces, Limits::default(), control)
+    }
+
+    /// Construct interleaved products under explicit per-owner resource limits.
+    /// # Errors
+    /// Has `new`'s support and context checks, plus the supplied capacity bounds.
+    pub fn with_limits(
+        identity: SpaceId,
+        faces: &[SurjectiveMap],
+        limits: Limits,
+        control: &dyn Control,
+    ) -> Result<Self> {
         let order = interleaved(faces, control)?;
-        Self::with_order(identity, faces, &order, Limits::default(), control)
+        Self::with_order(identity, faces, &order, limits, control)
     }
 
     /// Set physical order and resource policy without changing tuple meaning.
@@ -164,6 +176,10 @@ pub struct CompleteFibreSquare {
 }
 
 impl FibreProduct {
+    pub(crate) fn is_reversed(&self) -> bool {
+        self.reversed
+    }
+
     /// Construct full legal fibres with an interleaved physical order. The
     /// caller names this product's coordinate context explicitly.
     /// # Errors

@@ -18,6 +18,8 @@ pub enum Capacity {
     FixedPointIterations,
     PartitionCells,
     Diagnostics,
+    DescriptorBytes,
+    DescriptorItems,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

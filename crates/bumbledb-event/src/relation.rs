@@ -2,8 +2,8 @@
 //! endpoint states; relations add behavioral restrictions inside those products.
 use crate::product::require_same_map;
 use crate::{
-    BoolOp4, Control, CoordinateMap, Error, Event, FaceProduct, FibreProduct, Result, Space,
-    SpaceId, SurjectiveMap,
+    BoolOp4, Control, CoordinateMap, Error, Event, FaceProduct, FibreProduct, Limits, Result,
+    Space, SpaceId, SurjectiveMap,
 };
 
 /// A relation on two legal endpoint faces of a checked full fibre product.
@@ -283,6 +283,20 @@ impl RelationalProduct {
         su: &FibreProduct,
         control: &dyn Control,
     ) -> Result<Self> {
+        Self::with_limits(workspace_identity, st, tu, su, Limits::default(), control)
+    }
+
+    /// Prepare the shared workspace under explicit per-owner resource limits.
+    /// # Errors
+    /// Has `new`'s role checks and refuses the supplied capacity bounds.
+    pub fn with_limits(
+        workspace_identity: SpaceId,
+        st: &FibreProduct,
+        tu: &FibreProduct,
+        su: &FibreProduct,
+        limits: Limits,
+        control: &dyn Control,
+    ) -> Result<Self> {
         require_same_map(
             st.right_environment().map(),
             tu.left_environment().map(),
@@ -298,13 +312,14 @@ impl RelationalProduct {
             su.right_environment().map(),
             control,
         )?;
-        let workspace = FaceProduct::new(
+        let workspace = FaceProduct::with_limits(
             workspace_identity,
             &[
                 st.left_environment().clone(),
                 st.right_environment().clone(),
                 tu.right_environment().clone(),
             ],
+            limits,
             control,
         )?;
         let [s, t, u] = workspace.projections() else {

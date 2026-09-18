@@ -11,6 +11,7 @@ mod action;
 mod arena;
 mod boolean;
 mod codec;
+mod descriptor;
 mod diagram;
 mod error;
 mod fixed_point;
@@ -25,6 +26,9 @@ mod space;
 
 pub use action::{ActionArena, ReachStrategy, SafetyStrategy};
 pub use boolean::{BoolOp4, Signature};
+pub use descriptor::{
+    AdmittedDescriptor, Descriptor, DescriptorLimits, FibreDescriptor, MapDescriptor,
+};
 pub use diagram::{Diagram, DiagramNode, DiagramView};
 pub use error::{Capacity, Control, Error, Limits, Result};
 pub use fixed_point::{
@@ -65,3 +69,6 @@ mod partition_tests;
 
 #[cfg(test)]
 mod action_tests;
+
+#[cfg(test)]
+mod descriptor_tests;

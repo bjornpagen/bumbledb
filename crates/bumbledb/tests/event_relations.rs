@@ -1,6 +1,9 @@
 use bumbledb::{
     AnswerValue, BindValue, Db, Event, Fact,
-    event::{CoordinateMap, FibreProduct, RelationalProduct, Space, SpaceId, WorldRelation},
+    event::{
+        AdmittedDescriptor, CoordinateMap, Descriptor, DescriptorLimits, FibreProduct,
+        RelationalProduct, Space, SpaceId, WorldRelation,
+    },
     ir::{Atom, AtomSource, FindTerm, Query, Rule, Term, VarId},
     schema::FieldId,
 };
@@ -52,7 +55,30 @@ fn computed_permissions_reopen_join_and_recover_their_relation_view() {
     })
     .unwrap()
     .unwrap();
-    drop((plan, permission, expected, db));
+    let descriptor_limits = DescriptorLimits::default();
+    let pair_bytes = Descriptor::capture(
+        &AdmittedDescriptor::Fibre(pair.clone()),
+        descriptor_limits,
+        &(),
+    )
+    .unwrap()
+    .to_bytes(descriptor_limits, &())
+    .unwrap();
+    drop((
+        plan,
+        permission,
+        expected,
+        db,
+        pair,
+        states,
+        base,
+        environment,
+    ));
+    let AdmittedDescriptor::Fibre(pair) =
+        Descriptor::import(&pair_bytes, descriptor_limits, &()).unwrap()
+    else {
+        panic!("restored product");
+    };
     let db = Db::open(directory.path(), RelationSchema, common::work()).unwrap();
     let query = Query::single(Rule {
         finds: vec![FindTerm::Var(VarId(0))],
@@ -83,31 +109,36 @@ fn computed_permissions_reopen_join_and_recover_their_relation_view() {
         let AnswerValue::Event(region) = answers.get(0, 0) else {
             panic!("owned Event")
         };
-        // Descriptor persistence is separate; reattach the explicitly retained
-        // pair descriptor through its checked constructor.
-        let permission = WorldRelation::new(&pair, region, &()).unwrap();
-        assert!(permission.domain(&()).unwrap().is_full());
-        assert_eq!(permission.range(&()).unwrap().count(&()).unwrap(), 1);
-        let output = states.coordinate(0, &()).unwrap().complement();
-        assert!(permission.must(&output, &()).unwrap().is_full());
-        assert_eq!(permission.readout(&()).unwrap().map_world(1).unwrap(), 0);
-        let observation = permission.readout(&()).unwrap();
-        let information = observation
-            .information(
-                &states.coordinate(0, &()).unwrap(),
-                &states.full(),
-                &common::work(),
-            )
-            .unwrap();
-        assert!(information.ambiguous().is_full());
-        assert!(information.guaranteed().is_empty());
-        // Inspection is also available to an external database consumer. The
-        // snapshot retains support after both database and row owners go away.
-        let diagram = region.diagram(&common::work()).unwrap();
-        let rebuilt = diagram.rebuild(pair.space(), &common::work()).unwrap();
-        assert_eq!(rebuilt, *permission.region());
-        for code in 0..4 {
-            assert_eq!(diagram.contains(code).unwrap(), code < 2);
-        }
+        // Reattach the independently imported BEDC descriptor. Every original
+        // map, product and database owner was dropped before reopening.
+        check_restored_permission(&pair, region);
+    }
+}
+
+fn check_restored_permission(pair: &FibreProduct, region: &Event) {
+    let states = pair.left().map().target();
+    let permission = WorldRelation::new(pair, region, &()).unwrap();
+    assert!(permission.domain(&()).unwrap().is_full());
+    assert_eq!(permission.range(&()).unwrap().count(&()).unwrap(), 1);
+    let output = states.coordinate(0, &()).unwrap().complement();
+    assert!(permission.must(&output, &()).unwrap().is_full());
+    assert_eq!(permission.readout(&()).unwrap().map_world(1).unwrap(), 0);
+    let observation = permission.readout(&()).unwrap();
+    let information = observation
+        .information(
+            &states.coordinate(0, &()).unwrap(),
+            &states.full(),
+            &common::work(),
+        )
+        .unwrap();
+    assert!(information.ambiguous().is_full());
+    assert!(information.guaranteed().is_empty());
+    // Inspection is also available to an external database consumer. The
+    // snapshot retains support after both database and row owners go away.
+    let diagram = region.diagram(&common::work()).unwrap();
+    let rebuilt = diagram.rebuild(pair.space(), &common::work()).unwrap();
+    assert_eq!(rebuilt, *permission.region());
+    for code in 0..4 {
+        assert_eq!(diagram.contains(code).unwrap(), code < 2);
     }
 }
