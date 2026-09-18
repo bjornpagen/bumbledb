@@ -1,0 +1,27 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"complement","candidate":"dense","restricted":false,"events":48,"build_s":[2.025e-5, 1.1916e-5, 9e-6, 9e-6, 9.666e-6, 1.1292e-5, 8.834e-6],"first_batch_s":[4.2e-8, 8.3e-8, 4.2e-8, 1.25e-7, 8.3e-8, 4.2e-8, 4.2e-8],"warm_per_not_s":[3.3231608072916665e-10, 3.3229573567708337e-10, 3.306070963541666e-10, 3.288981119791667e-10, 3.3229573567708337e-10, 3.297526041666667e-10, 3.297526041666667e-10],"input_bytes_est":28912,"final_bytes_est":28852,"verified":true}
+EVENT_LAB {"kind":"complement","candidate":"dense","restricted":true,"events":48,"build_s":[9.709e-6, 1.55e-5, 8.25e-6, 1.5e-5, 8.208e-6, 9.375e-6, 7.75e-6],"first_batch_s":[8.3e-8, 4.1e-8, 8.3e-8, 1e-6, 8.3e-8, 4.2e-8, 4.1e-8],"warm_per_not_s":[5.238850911458333e-10, 3.2297770182291664e-10, 3.212687174479166e-10, 3.221435546875e-10, 3.212890625e-10, 3.221435546875e-10, 3.2212320963541663e-10],"input_bytes_est":28912,"final_bytes_est":28852,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.00s
+
+
+        0.00 real         0.00 user         0.00 sys
+             3883008  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 451  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  13  involuntary context switches
+            39464535  instructions retired
+            17145813  cycles elapsed
+             2507112  peak memory footprint

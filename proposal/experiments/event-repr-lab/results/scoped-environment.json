@@ -1,0 +1,18 @@
+{
+  "observed_utc": "2026-09-18T05:08:10.816506+00:00",
+  "cpu_snapshot": [
+    "63375 102.4 /Applications/Nessie.app/Contents/MacOS/Nessie",
+    "21850 100.0 /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "76081  78.1 /usr/libexec/spotlightknowledged.updater",
+    "  618  47.6 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+    "21879  33.0 node",
+    "  884  13.2 /usr/sbin/cfprefsd",
+    "18163   7.8 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    " 2187   5.4 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+    " 2201   5.2 /Applications/ChatGPT.app/Contents/Resources/codex",
+    " 1164   4.8 /System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+    "  761   3.7 /System/Library/DriverExtensions/com.apple.DriverKit-AppleBCMWLAN.dext/com.apple.DriverKit-AppleBCMWLAN",
+    "43384   3.3 /Applications/Little Snitch.app/Contents/Components/Little Snitch Network Monitor.app/Contents/MacOS/Little Snitch Network Monitor"
+  ],
+  "interpretation": "One read-only snapshot during scoped native timings. Other desktop activity is not controlled; no processes or settings were changed. Preserve all samples, report ranges and use independent repeats. This is not an isolated machine-wide experiment."
+}

@@ -1,0 +1,10 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-gates-certified: passed, 10.87s
+001 legal-relations-packed512----face-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-domain-fibred-gates-gated: passed, 21.17s
+002 legal-relations-dense-dispatched----face-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-domain-fibred-gates-gated: passed, 2.74s
+003 legal-relations-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 55.87s
+004 legal-relations-packed512----bit-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-domain-fibred-gates-gated: passed, 34.86s
+005 legal-relations-dense-dispatched----bit-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-domain-fibred-gates-gated: passed, 2.79s
+006 legal-relations-prefix64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 60.88s
+007 legal-relations-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 67.16s
+008 legal-relations-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 49.81s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/factor-cutoff-repeat.json

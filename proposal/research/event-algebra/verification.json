@@ -1,0 +1,54 @@
+{
+  "verified_utc": "2026-09-17T19:06:59.617310+00:00",
+  "scope": "Proposal-only semantic scripts; all listed processes completed with exit code 0. Native engine and ARM probes were not rerun.",
+  "checks": [
+    {
+      "script": "proposal/algebra-checks.py",
+      "output": "proposal/research/event-algebra/checks.json",
+      "exit_code": 0,
+      "groups": 21
+    },
+    {
+      "script": "proposal/representation-checks.py",
+      "output": "proposal/research/representation/checks.json",
+      "exit_code": 0,
+      "groups": 8
+    },
+    {
+      "script": "proposal/event-checks.py",
+      "output": "proposal/review-evidence/event-checks.json",
+      "exit_code": 0,
+      "groups": 8
+    },
+    {
+      "script": "proposal/coup/event-checks.py",
+      "output": "proposal/coup/research/event-checks.json",
+      "exit_code": 0,
+      "groups": 8
+    },
+    {
+      "script": "proposal/coup/query-checks.py",
+      "output": "proposal/coup/research/query-checks.json",
+      "exit_code": 0,
+      "groups": 12
+    },
+    {
+      "script": "proposal/process-checks.py",
+      "output": "proposal/review-evidence/process-checks.json",
+      "exit_code": 0,
+      "groups": 11
+    },
+    {
+      "script": "proposal/spec-checks.py",
+      "output": "proposal/review-evidence/spec-checks.json",
+      "exit_code": 0,
+      "groups": 12
+    },
+    {
+      "script": "proposal/review-checks.py",
+      "output": "proposal/review-evidence/review-checks.json",
+      "exit_code": 0,
+      "groups": null
+    }
+  ]
+}

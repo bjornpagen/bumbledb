@@ -1,0 +1,48 @@
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:43:22: error: Type mismatch
+  ih
+has type
+  0 = sum ys fun x => 0
+but is expected to have type
+  0 = sum (y :: ys) fun x => 0
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:89:50: warning: This simp argument is unused:
+  hp
+
+Hint: Omit it from the simp argument list.
+  simp [hp̵,̵ ̵h̵g]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:89:54: warning: This simp argument is unused:
+  hg
+
+Hint: Omit it from the simp argument list.
+  simp [hp,̵ ̵h̵g̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:105:29: warning: This simp argument is unused:
+  hp
+
+Hint: Omit it from the simp argument list.
+  simp ̵[̵h̵p̵]̵
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:107:32: warning: This simp argument is unused:
+  hp
+
+Hint: Omit it from the simp argument list.
+  simp ̵[̵h̵p̵]̵
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'FiniteMeasure.sum_congr' depends on axioms: [propext]
+'FiniteMeasure.sum_add' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.sum_mul' depends on axioms: [propext]
+'FiniteMeasure.sum_swap' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.complement_mass' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.conditional_complement' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.intersection_bound' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.partial_partition_mass' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.partition_mass' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.repeated_evidence' depends on axioms: [Quot.sound]
+'FiniteMeasure.zero_evidence' depends on axioms: [propext]
+'FiniteMeasure.positive_evidence' depends on axioms: [propext]
+'FiniteMeasure.zero_mass_can_be_possible' depends on axioms: [propext]
+'FiniteMeasure.full_mass_need_not_be_full' depends on axioms: [propext]

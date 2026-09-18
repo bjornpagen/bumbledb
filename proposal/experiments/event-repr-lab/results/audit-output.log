@@ -1,0 +1,349 @@
+{
+  "production_source_hashes_match": true,
+  "source_snapshots_verified": [
+    "build-baseline.json",
+    "build-fastpaths.json",
+    "build-anchored.json",
+    "build-product.json",
+    "build-dispatched.json",
+    "build-packed.json",
+    "build-relations-v1.json",
+    "build-relations.json",
+    "build-block-v1.json",
+    "build-tail.json",
+    "build-observation.json",
+    "build-dependency.json",
+    "build-transfer.json",
+    "build-transfer-tables.json",
+    "build-transfer-words.json",
+    "build-owned.json",
+    "build-diagonal.json",
+    "build.json"
+  ],
+  "documents_checked": 60,
+  "missing_local_links": [],
+  "unbalanced_code_fences": [],
+  "run_statuses": {
+    "anchored-smoke.json": {
+      "passed": 17,
+      "resource_cap": 1
+    },
+    "block-modal-layout.json": {
+      "passed": 43
+    },
+    "block-native-verification.json": {
+      "passed": 1
+    },
+    "block-relations-layout.json": {
+      "passed": 43
+    },
+    "block64-initial-sweep.json": {
+      "passed": 19,
+      "resource_cap": 1
+    },
+    "coup-product.json": {
+      "passed": 9
+    },
+    "dense-control.json": {
+      "passed": 11
+    },
+    "dependency-native-verification.json": {
+      "passed": 1
+    },
+    "diagonal-owned-sweep.json": {
+      "passed": 43
+    },
+    "dispatched.json": {
+      "passed": 11
+    },
+    "modal-smoke.json": {
+      "passed": 2
+    },
+    "observation-law-initial.json": {
+      "passed": 2
+    },
+    "observation-laws.json": {
+      "passed": 15
+    },
+    "observation-native-verification.json": {
+      "passed": 1
+    },
+    "observation-relations-regression.json": {
+      "passed": 2
+    },
+    "owned-initial.json": {
+      "passed": 2
+    },
+    "owned-native-verification.json": {
+      "passed": 1
+    },
+    "owned-sweep.json": {
+      "passed": 15
+    },
+    "packed-modal-controls.json": {
+      "passed": 12
+    },
+    "packed-verification.json": {
+      "passed": 1
+    },
+    "packed256-sweep.json": {
+      "passed": 18,
+      "resource_cap": 1
+    },
+    "packed4096-initial-sweep.json": {
+      "passed": 19,
+      "resource_cap": 1
+    },
+    "packed512-initial-sweep.json": {
+      "passed": 19,
+      "resource_cap": 1
+    },
+    "packed64-sweep.json": {
+      "passed": 18,
+      "resource_cap": 1
+    },
+    "relations-dense-join.json": {
+      "passed": 8
+    },
+    "relations-packed-join.json": {
+      "passed": 8
+    },
+    "relations-repeat.json": {
+      "passed": 12
+    },
+    "relations-sweep.json": {
+      "passed": 12
+    },
+    "relations-v2-verification.json": {
+      "passed": 1
+    },
+    "repeat-coup.json": {
+      "passed": 9
+    },
+    "repeat-modal.json": {
+      "passed": 9
+    },
+    "repeat-product.json": {
+      "passed": 9
+    },
+    "repeat-runs.json": {
+      "passed": 9
+    },
+    "repeat-sparse.json": {
+      "passed": 9
+    },
+    "repeat-structured.json": {
+      "passed": 9
+    },
+    "smoke.json": {
+      "passed": 2
+    },
+    "sweep-1.json": {
+      "passed": 67,
+      "resource_cap": 3
+    },
+    "sweep-2.json": {
+      "passed": 81,
+      "resource_cap": 3
+    },
+    "sweep-3.json": {
+      "passed": 97,
+      "resource_cap": 4
+    },
+    "symbolic-relations-initial.json": {
+      "passed": 2
+    },
+    "symbolic-relations-sweep.json": {
+      "passed": 10
+    },
+    "tail-coup-repeat.json": {
+      "passed": 15
+    },
+    "tail-focused-repeat.json": {
+      "passed": 8
+    },
+    "tail-map-controls.json": {
+      "passed": 56
+    },
+    "tail-modal-repeat.json": {
+      "passed": 43
+    },
+    "tail-native-verification.json": {
+      "passed": 1
+    },
+    "tail-symbolic.json": {
+      "passed": 64,
+      "resource_cap": 9
+    },
+    "transfer-dense-control.json": {
+      "passed": 4
+    },
+    "transfer-direct-sweep.json": {
+      "passed": 15
+    },
+    "transfer-initial.json": {
+      "passed": 2
+    },
+    "transfer-native-verification.json": {
+      "passed": 1
+    },
+    "transfer-packed-control.json": {
+      "passed": 4
+    },
+    "transfer-relations-regression.json": {
+      "passed": 2
+    },
+    "transfer-sweep.json": {
+      "passed": 10,
+      "timeout": 5
+    },
+    "transfer-table-native-verification.json": {
+      "passed": 2
+    },
+    "transfer-word-dense-control.json": {
+      "passed": 6
+    },
+    "transfer-word-native-verification.json": {
+      "passed": 3
+    },
+    "transfer-word-packed-control.json": {
+      "passed": 6
+    },
+    "transfer-word-sweep.json": {
+      "passed": 15
+    },
+    "verification.json": {
+      "passed": 1
+    }
+  },
+  "shared_check_logs_present": {
+    "block-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "block-layout-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "dependency-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "diagonal-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "extraction-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "observation-high-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "observation-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "order-generalization-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "owned-operations-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "tail-local-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "tail-recursive-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-identity-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-table-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-wide-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-word-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    }
+  },
+  "representation_research_sources_verified": [
+    "1211.4475v1",
+    "1802.09598v2",
+    "1404.4089v1",
+    "1710.06500v1",
+    "1512.05813v1",
+    "2004.02502v1",
+    "2312.00793v1",
+    "1401.3448v1",
+    "1206.5266v1",
+    "2212.03684v1",
+    "2607.06386v1",
+    "2605.03902v4"
+  ],
+  "space_map_check_verified": {
+    "scope": "Independent finite mathematics, not native implementation evidence",
+    "files": {
+      "proposal/research/space-maps/checks.py": "29839e212eec19e92d63f892a1434b1fe1a7712f86e104db33ed6957a1dc552b",
+      "proposal/research/space-maps/checks.json": "4f6771d17d32c9d0edcf23e47f2905967ed2cc35548c91f4645c59eb0786c38d"
+    }
+  },
+  "assembly_symbols_verified": {
+    "relations": 4,
+    "tail": 8,
+    "dependency": 1,
+    "transfer-words": 2
+  },
+  "regression_fixes_verified": 1,
+  "backward_reach_check_verified": {
+    "passed": true,
+    "cases": 393304,
+    "scope": "All one/two-state relations and goals; all four-state relations with empty/full/singleton goals; larger chain cases. Finite semantic check, not a performance measurement.",
+    "checker_sha256": "20c91911577861f46665399476f662bdc8f6cffd1c5f75b9ddc66839f075b6bb",
+    "paper": "2212.03684v1",
+    "paper_sha256": "99108bc42737f92d3d7668669b772f87eb30f469432e8325f58ece0ca057c66c"
+  },
+  "essential_reference_verified": {
+    "passed": true,
+    "function_cases": 525888,
+    "shannon_reconstructions": 13120,
+    "boolean_cases": 59136,
+    "quantifier_cases": 46080,
+    "scope": "Finite independent reference, including all functions up to four coordinates, two physical orders and every table limit 1..width; sampled arbitrary Shannon reconstruction, all Boolean operators and all quantifier masks. One sixty-coordinate noncontiguous local-table case. Not Rust or performance evidence.",
+    "checker_sha256": "65523e8dba1321ac95d8e7cbe6d3545eb59eebf6d3059cc80dbb87810c7dde95"
+  },
+  "essential_rust_verified": {
+    "passed": true,
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--release"
+    ],
+    "cwd": "essential-prototype",
+    "scope": "Standalone raw Boolean canonical form; not a scoped Event carrier or a performance comparison.",
+    "profile": "standalone release; no native engine, no timing measurement",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)",
+    "source_hashes": {
+      "essential-prototype/Cargo.toml": "ea290898691ea83cbfe6d8ac46fa740783e1a539d7efe218653a3237f74fb467",
+      "essential-prototype/Cargo.lock": "c26a41d37479e294096d806883c7add983f75134139df9c27275c2a5db0efaa8",
+      "essential-prototype/src/lib.rs": "1939eab994c1eb1821278904bf6d372b833cb5a9568d5f983554d81b7cd3137a"
+    },
+    "log": "essential-rust-check.log"
+  }
+}

@@ -1,0 +1,4901 @@
+{
+  "meta": {
+    "count": 900,
+    "db_response_time_ms": 275,
+    "page": 1,
+    "per_page": 3,
+    "groups_count": null,
+    "x_query": {
+      "oql": "works where full text has (parameter synthesis parametric Markov chains real algebraic geometry)",
+      "oqo": {
+        "get_rows": "works",
+        "filter_rows": [
+          {
+            "column_id": "fulltext.search",
+            "value": "parameter synthesis parametric Markov chains real algebraic geometry",
+            "operator": "has"
+          }
+        ]
+      },
+      "url": "/works?filter=fulltext.search:parameter synthesis parametric Markov chains real algebraic geometry&per_page=3"
+    },
+    "cost_usd": 0.001
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W2842089854",
+      "doi": "https://doi.org/10.1007/s12532-018-0139-4",
+      "title": "CasADi: a software framework for nonlinear optimization and optimal control",
+      "display_name": "CasADi: a software framework for nonlinear optimization and optimal control",
+      "relevance_score": 281.70074,
+      "publication_year": 2018,
+      "publication_date": "2018-07-11",
+      "ids": {
+        "openalex": "https://openalex.org/W2842089854",
+        "doi": "https://doi.org/10.1007/s12532-018-0139-4",
+        "mag": "2842089854"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1007/s12532-018-0139-4",
+        "is_oa": false,
+        "landing_page_url": "https://doi.org/10.1007/s12532-018-0139-4",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S173077093",
+          "display_name": "Mathematical Programming Computation",
+          "issn_l": "1867-2949",
+          "issn": [
+            "1867-2949",
+            "1867-2957"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319900",
+          "host_organization_name": "Springer Science+Business Media",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319900",
+            "https://openalex.org/P4310319965"
+          ],
+          "host_organization_lineage_names": [
+            "Springer Science+Business Media",
+            "Springer Nature"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Mathematical Programming Computation",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "crossref",
+        "datacite"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://lirias.kuleuven.be/retrieve/b19a85ed-8044-40f1-bff0-b7164c0353f5",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5103812757",
+            "display_name": "Joel A.E. Andersson",
+            "orcid": null
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I135310074",
+              "display_name": "University of Wisconsin\u2013Madison",
+              "ror": "https://ror.org/01y2jtd41",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I135310074"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Joel A. E. Andersson",
+          "raw_affiliation_strings": [
+            "Department of Chemical and Biological Engineering, University of Wisconsin-Madison, Madison, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Chemical and Biological Engineering, University of Wisconsin-Madison, Madison, USA",
+              "institution_ids": [
+                "https://openalex.org/I135310074"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5057319283",
+            "display_name": "Joris Gillis",
+            "orcid": "https://orcid.org/0000-0002-6774-3613"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I4210116480",
+              "display_name": "Flanders Make (Belgium)",
+              "ror": "https://ror.org/02ndjfz59",
+              "country_code": "BE",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I4210116480"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I99464096",
+              "display_name": "KU Leuven",
+              "ror": "https://ror.org/05f950310",
+              "country_code": "BE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I99464096"
+              ]
+            }
+          ],
+          "countries": [
+            "BE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Joris Gillis",
+          "raw_affiliation_strings": [
+            "DMMS Lab, Flanders Make, Leuven, Belgium",
+            "MECO Research Team, Department Mechanical Engineering, KU Leuven, Leuven, Belgium"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "DMMS Lab, Flanders Make, Leuven, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I4210116480"
+              ]
+            },
+            {
+              "raw_affiliation_string": "MECO Research Team, Department Mechanical Engineering, KU Leuven, Leuven, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I99464096"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5112400799",
+            "display_name": "Greg Horn",
+            "orcid": null
+          },
+          "institutions": [],
+          "countries": [],
+          "is_corresponding": false,
+          "raw_author_name": "Greg Horn",
+          "raw_affiliation_strings": [
+            "Kitty Hawk, Mountain View, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Kitty Hawk, Mountain View, USA",
+              "institution_ids": []
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5033056557",
+            "display_name": "James B. Rawlings",
+            "orcid": "https://orcid.org/0000-0001-7869-7547"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I135310074",
+              "display_name": "University of Wisconsin\u2013Madison",
+              "ror": "https://ror.org/01y2jtd41",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I135310074"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "James B. Rawlings",
+          "raw_affiliation_strings": [
+            "Department of Chemical and Biological Engineering, University of Wisconsin-Madison, Madison, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Chemical and Biological Engineering, University of Wisconsin-Madison, Madison, USA",
+              "institution_ids": [
+                "https://openalex.org/I135310074"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5057375078",
+            "display_name": "Moritz Diehl",
+            "orcid": "https://orcid.org/0000-0001-6556-8252"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I161046081",
+              "display_name": "University of Freiburg",
+              "ror": "https://ror.org/0245cg223",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I161046081"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Moritz Diehl",
+          "raw_affiliation_strings": [
+            "Department of Microsystems Engineering IMTEK, University of Freiburg, Freiburg, Germany"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Microsystems Engineering IMTEK, University of Freiburg, Freiburg, Germany",
+              "institution_ids": [
+                "https://openalex.org/I161046081"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 3,
+      "institutions_distinct_count": 4,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5103812757"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I135310074"
+      ],
+      "apc_list": {
+        "value": 3390,
+        "currency": "USD",
+        "value_usd": 3390
+      },
+      "apc_paid": null,
+      "fwci": 129.4916,
+      "has_fulltext": true,
+      "cited_by_count": 3937,
+      "citation_normalized_percentile": {
+        "value": 1.0,
+        "is_in_top_1_percent": true,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 100
+      },
+      "biblio": {
+        "volume": "11",
+        "issue": "1",
+        "first_page": "1",
+        "last_page": "36"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T10791",
+        "display_name": "Advanced Control Systems Optimization",
+        "score": 0.9983000159263611,
+        "subfield": {
+          "id": "https://openalex.org/subfields/2207",
+          "display_name": "Control and Systems Engineering"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/22",
+          "display_name": "Engineering"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T10791",
+          "display_name": "Advanced Control Systems Optimization",
+          "score": 0.9983000159263611,
+          "subfield": {
+            "id": "https://openalex.org/subfields/2207",
+            "display_name": "Control and Systems Engineering"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/22",
+            "display_name": "Engineering"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11082",
+          "display_name": "Spacecraft Dynamics and Control",
+          "score": 0.9939000010490417,
+          "subfield": {
+            "id": "https://openalex.org/subfields/2202",
+            "display_name": "Aerospace Engineering"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/22",
+            "display_name": "Engineering"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11012",
+          "display_name": "Gas Dynamics and Kinetic Theory",
+          "score": 0.9872999787330627,
+          "subfield": {
+            "id": "https://openalex.org/subfields/2604",
+            "display_name": "Applied Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/26",
+            "display_name": "Mathematics"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.6843764781951904
+        },
+        {
+          "id": "https://openalex.org/keywords/matlab",
+          "display_name": "MATLAB",
+          "score": 0.5674736499786377
+        },
+        {
+          "id": "https://openalex.org/keywords/theory-of-computation",
+          "display_name": "Theory of computation",
+          "score": 0.5582489371299744
+        },
+        {
+          "id": "https://openalex.org/keywords/nonlinear-system",
+          "display_name": "Nonlinear system",
+          "score": 0.5296326279640198
+        },
+        {
+          "id": "https://openalex.org/keywords/python",
+          "display_name": "Python (programming language)",
+          "score": 0.5213112235069275
+        },
+        {
+          "id": "https://openalex.org/keywords/software",
+          "display_name": "Software",
+          "score": 0.5164587497711182
+        },
+        {
+          "id": "https://openalex.org/keywords/optimal-control",
+          "display_name": "Optimal control",
+          "score": 0.5087774395942688
+        },
+        {
+          "id": "https://openalex.org/keywords/aerospace",
+          "display_name": "Aerospace",
+          "score": 0.4758740961551666
+        },
+        {
+          "id": "https://openalex.org/keywords/nonlinear-programming",
+          "display_name": "Nonlinear programming",
+          "score": 0.4527885317802429
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematical-optimization",
+          "display_name": "Mathematical optimization",
+          "score": 0.4511158764362335
+        },
+        {
+          "id": "https://openalex.org/keywords/flexibility",
+          "display_name": "Flexibility (engineering)",
+          "score": 0.4148615896701813
+        },
+        {
+          "id": "https://openalex.org/keywords/programming-language",
+          "display_name": "Programming language",
+          "score": 0.37856388092041016
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.19568023085594177
+        },
+        {
+          "id": "https://openalex.org/keywords/engineering",
+          "display_name": "Engineering",
+          "score": 0.08280500769615173
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.6843764781951904
+        },
+        {
+          "id": "https://openalex.org/C2780365114",
+          "wikidata": "https://www.wikidata.org/wiki/Q169478",
+          "display_name": "MATLAB",
+          "level": 2,
+          "score": 0.5674736499786377
+        },
+        {
+          "id": "https://openalex.org/C24858836",
+          "wikidata": "https://www.wikidata.org/wiki/Q844718",
+          "display_name": "Theory of computation",
+          "level": 2,
+          "score": 0.5582489371299744
+        },
+        {
+          "id": "https://openalex.org/C158622935",
+          "wikidata": "https://www.wikidata.org/wiki/Q660848",
+          "display_name": "Nonlinear system",
+          "level": 2,
+          "score": 0.5296326279640198
+        },
+        {
+          "id": "https://openalex.org/C519991488",
+          "wikidata": "https://www.wikidata.org/wiki/Q28865",
+          "display_name": "Python (programming language)",
+          "level": 2,
+          "score": 0.5213112235069275
+        },
+        {
+          "id": "https://openalex.org/C2777904410",
+          "wikidata": "https://www.wikidata.org/wiki/Q7397",
+          "display_name": "Software",
+          "level": 2,
+          "score": 0.5164587497711182
+        },
+        {
+          "id": "https://openalex.org/C91575142",
+          "wikidata": "https://www.wikidata.org/wiki/Q1971426",
+          "display_name": "Optimal control",
+          "level": 2,
+          "score": 0.5087774395942688
+        },
+        {
+          "id": "https://openalex.org/C167740415",
+          "wikidata": "https://www.wikidata.org/wiki/Q2876213",
+          "display_name": "Aerospace",
+          "level": 2,
+          "score": 0.4758740961551666
+        },
+        {
+          "id": "https://openalex.org/C115527620",
+          "wikidata": "https://www.wikidata.org/wiki/Q769909",
+          "display_name": "Nonlinear programming",
+          "level": 3,
+          "score": 0.4527885317802429
+        },
+        {
+          "id": "https://openalex.org/C126255220",
+          "wikidata": "https://www.wikidata.org/wiki/Q141495",
+          "display_name": "Mathematical optimization",
+          "level": 1,
+          "score": 0.4511158764362335
+        },
+        {
+          "id": "https://openalex.org/C2780598303",
+          "wikidata": "https://www.wikidata.org/wiki/Q65921492",
+          "display_name": "Flexibility (engineering)",
+          "level": 2,
+          "score": 0.4148615896701813
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.37856388092041016
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.19568023085594177
+        },
+        {
+          "id": "https://openalex.org/C127413603",
+          "wikidata": "https://www.wikidata.org/wiki/Q11023",
+          "display_name": "Engineering",
+          "level": 0,
+          "score": 0.08280500769615173
+        },
+        {
+          "id": "https://openalex.org/C121332964",
+          "wikidata": "https://www.wikidata.org/wiki/Q413",
+          "display_name": "Physics",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C105795698",
+          "wikidata": "https://www.wikidata.org/wiki/Q12483",
+          "display_name": "Statistics",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C146978453",
+          "wikidata": "https://www.wikidata.org/wiki/Q3798668",
+          "display_name": "Aerospace engineering",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C62520636",
+          "wikidata": "https://www.wikidata.org/wiki/Q944",
+          "display_name": "Quantum mechanics",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 39,
+      "locations": [
+        {
+          "id": "doi:10.1007/s12532-018-0139-4",
+          "is_oa": false,
+          "landing_page_url": "https://doi.org/10.1007/s12532-018-0139-4",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S173077093",
+            "display_name": "Mathematical Programming Computation",
+            "issn_l": "1867-2949",
+            "issn": [
+              "1867-2949",
+              "1867-2957"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319900",
+            "host_organization_name": "Springer Science+Business Media",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319900",
+              "https://openalex.org/P4310319965"
+            ],
+            "host_organization_lineage_names": [
+              "Springer Science+Business Media",
+              "Springer Nature"
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Mathematical Programming Computation",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:lirias2repo.kuleuven.be:123456789/624550",
+          "is_oa": true,
+          "landing_page_url": "https://lirias.kuleuven.be/handle/123456789/624550",
+          "pdf_url": "https://lirias.kuleuven.be/retrieve/b19a85ed-8044-40f1-bff0-b7164c0353f5",
+          "source": {
+            "id": "https://openalex.org/S7407055369",
+            "display_name": "Lirias",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": null,
+            "host_organization_name": null,
+            "host_organization_lineage": [],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "other-oa",
+          "license_id": "https://openalex.org/licenses/other-oa",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "Mathematical Programming Computation, vol. 11 (1), Art.No. 1, (1-36)",
+          "raw_type": "info:eu-repo/semantics/article"
+        },
+        {
+          "id": "doi:10.5281/zenodo.19591163",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.19591163",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.19672523",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.19672523",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.19686901",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.19686901",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.19851866",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.19851866",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.19860269",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.19860269",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.19973294",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.19973294",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20031131",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20031131",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20098674",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20098674",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20101441",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20101441",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20148264",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20148264",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20260167",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20260167",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20261525",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20261525",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20343642",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20343642",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20359425",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20359425",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20363238",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20363238",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20367148",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20367148",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20515567",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20515567",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20521899",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20521899",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20548753",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20548753",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20562697",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20562697",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20574594",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20574594",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20574768",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20574768",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20585498",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20585498",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20600820",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20600820",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20633602",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20633602",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20673144",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20673144",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20683735",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20683735",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20716805",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20716805",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20721188",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20721188",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20762764",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20762764",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20763277",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20763277",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20774681",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20774681",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20782841",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20782841",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20787128",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20787128",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20787845",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20787845",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20788909",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20788909",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        },
+        {
+          "id": "doi:10.5281/zenodo.20793710",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.5281/zenodo.20793710",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400562",
+            "display_name": "Zenodo (CERN European Organization for Nuclear Research)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I67311998",
+            "host_organization_name": "European Organization for Nuclear Research",
+            "host_organization_lineage": [
+              "https://openalex.org/I67311998"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "Software"
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:lirias2repo.kuleuven.be:123456789/624550",
+        "is_oa": true,
+        "landing_page_url": "https://lirias.kuleuven.be/handle/123456789/624550",
+        "pdf_url": "https://lirias.kuleuven.be/retrieve/b19a85ed-8044-40f1-bff0-b7164c0353f5",
+        "source": {
+          "id": "https://openalex.org/S7407055369",
+          "display_name": "Lirias",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": null,
+          "host_organization_name": null,
+          "host_organization_lineage": [],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "other-oa",
+        "license_id": "https://openalex.org/licenses/other-oa",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": "Mathematical Programming Computation, vol. 11 (1), Art.No. 1, (1-36)",
+        "raw_type": "info:eu-repo/semantics/article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G1299685211",
+          "display_name": "Hierarchical and Distributed Model Predictive Control of Large-Scale Systems",
+          "funder_award_id": "223854",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        },
+        {
+          "id": "https://openalex.org/G20595011",
+          "display_name": "Training in Embedded Predictive Control and Optimization",
+          "funder_award_id": "607957",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        },
+        {
+          "id": "https://openalex.org/G2413396044",
+          "display_name": null,
+          "funder_award_id": "FOR2401",
+          "funder_id": "https://openalex.org/F4320320879",
+          "funder_display_name": "Deutsche Forschungsgemeinschaft"
+        },
+        {
+          "id": "https://openalex.org/G3486877242",
+          "display_name": "Embedded Optimization for Resource Constrained Platforms",
+          "funder_award_id": "248940",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        },
+        {
+          "id": "https://openalex.org/G3553148771",
+          "display_name": null,
+          "funder_award_id": "642682",
+          "funder_id": "https://openalex.org/F4320320879",
+          "funder_display_name": "Deutsche Forschungsgemeinschaft"
+        },
+        {
+          "id": "https://openalex.org/G7561699830",
+          "display_name": null,
+          "funder_award_id": "EF/05/006",
+          "funder_id": "https://openalex.org/F4320321730",
+          "funder_display_name": "Fonds Wetenschappelijk Onderzoek"
+        },
+        {
+          "id": "https://openalex.org/G8600012144",
+          "display_name": "Airborne Wind Energy System Modelling, Control and Optimisation",
+          "funder_award_id": "642682",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320309429",
+          "display_name": "Johnson Controls",
+          "ror": "https://ror.org/02ky6c719"
+        },
+        {
+          "id": "https://openalex.org/F4320319799",
+          "display_name": "Flanders Make",
+          "ror": "https://ror.org/02ndjfz59"
+        },
+        {
+          "id": "https://openalex.org/F4320320300",
+          "display_name": "European Commission",
+          "ror": "https://ror.org/00k4n6c32"
+        },
+        {
+          "id": "https://openalex.org/F4320320879",
+          "display_name": "Deutsche Forschungsgemeinschaft",
+          "ror": "https://ror.org/018mejw64"
+        },
+        {
+          "id": "https://openalex.org/F4320321730",
+          "display_name": "Fonds Wetenschappelijk Onderzoek",
+          "ror": "https://ror.org/03qtxy027"
+        },
+        {
+          "id": "https://openalex.org/F4320323803",
+          "display_name": "Bundesministerium f\u00fcr Wirtschaft und Energie",
+          "ror": "https://ror.org/02vgg2808"
+        },
+        {
+          "id": "https://openalex.org/F4320327336",
+          "display_name": "Vlaamse regering",
+          "ror": null
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W2842089854.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W2842089854.grobid-xml"
+      },
+      "referenced_works_count": 129,
+      "referenced_works": [
+        "https://openalex.org/W60615445",
+        "https://openalex.org/W83961856",
+        "https://openalex.org/W180478659",
+        "https://openalex.org/W283072806",
+        "https://openalex.org/W400678491",
+        "https://openalex.org/W627848372",
+        "https://openalex.org/W800504144",
+        "https://openalex.org/W890968731",
+        "https://openalex.org/W1176413013",
+        "https://openalex.org/W1480928214",
+        "https://openalex.org/W1507311432",
+        "https://openalex.org/W1520511539",
+        "https://openalex.org/W1534866264",
+        "https://openalex.org/W1535260751",
+        "https://openalex.org/W1541622450",
+        "https://openalex.org/W1553106265",
+        "https://openalex.org/W1562460111",
+        "https://openalex.org/W1562998591",
+        "https://openalex.org/W1691602655",
+        "https://openalex.org/W1787503673",
+        "https://openalex.org/W1854621988",
+        "https://openalex.org/W1908007089",
+        "https://openalex.org/W1963564197",
+        "https://openalex.org/W1963774976",
+        "https://openalex.org/W1965024459",
+        "https://openalex.org/W1969940685",
+        "https://openalex.org/W1970101292",
+        "https://openalex.org/W1971777399",
+        "https://openalex.org/W1975876631",
+        "https://openalex.org/W1976513798",
+        "https://openalex.org/W1986645894",
+        "https://openalex.org/W1994309501",
+        "https://openalex.org/W1996686468",
+        "https://openalex.org/W2004124729",
+        "https://openalex.org/W2007930753",
+        "https://openalex.org/W2011015649",
+        "https://openalex.org/W2017226134",
+        "https://openalex.org/W2021468336",
+        "https://openalex.org/W2026079951",
+        "https://openalex.org/W2028387561",
+        "https://openalex.org/W2028970725",
+        "https://openalex.org/W2031947654",
+        "https://openalex.org/W2035315464",
+        "https://openalex.org/W2040696437",
+        "https://openalex.org/W2045438983",
+        "https://openalex.org/W2051525163",
+        "https://openalex.org/W2061825371",
+        "https://openalex.org/W2062713621",
+        "https://openalex.org/W2069020916",
+        "https://openalex.org/W2070576018",
+        "https://openalex.org/W2072994709",
+        "https://openalex.org/W2076743862",
+        "https://openalex.org/W2079886367",
+        "https://openalex.org/W2080514141",
+        "https://openalex.org/W2084987074",
+        "https://openalex.org/W2092022782",
+        "https://openalex.org/W2108301529",
+        "https://openalex.org/W2110706603",
+        "https://openalex.org/W2111425284",
+        "https://openalex.org/W2123871098",
+        "https://openalex.org/W2137668429",
+        "https://openalex.org/W2151822553",
+        "https://openalex.org/W2153185479",
+        "https://openalex.org/W2153210792",
+        "https://openalex.org/W2166751342",
+        "https://openalex.org/W2168085646",
+        "https://openalex.org/W2180271301",
+        "https://openalex.org/W2208932597",
+        "https://openalex.org/W2210181634",
+        "https://openalex.org/W2220986280",
+        "https://openalex.org/W2221119784",
+        "https://openalex.org/W2250454008",
+        "https://openalex.org/W2274034612",
+        "https://openalex.org/W2278618761",
+        "https://openalex.org/W2280124930",
+        "https://openalex.org/W2294048703",
+        "https://openalex.org/W2296319761",
+        "https://openalex.org/W2317201759",
+        "https://openalex.org/W2331982411",
+        "https://openalex.org/W2335571449",
+        "https://openalex.org/W2346127461",
+        "https://openalex.org/W2347071582",
+        "https://openalex.org/W2408947137",
+        "https://openalex.org/W2411939505",
+        "https://openalex.org/W2464814257",
+        "https://openalex.org/W2476891399",
+        "https://openalex.org/W2478429860",
+        "https://openalex.org/W2481121431",
+        "https://openalex.org/W2496843290",
+        "https://openalex.org/W2497377127",
+        "https://openalex.org/W2507019365",
+        "https://openalex.org/W2508135857",
+        "https://openalex.org/W2508543253",
+        "https://openalex.org/W2510621697",
+        "https://openalex.org/W2511385502",
+        "https://openalex.org/W2515339978",
+        "https://openalex.org/W2518352466",
+        "https://openalex.org/W2518805910",
+        "https://openalex.org/W2522193249",
+        "https://openalex.org/W2522978412",
+        "https://openalex.org/W2528406802",
+        "https://openalex.org/W2531342400",
+        "https://openalex.org/W2535671158",
+        "https://openalex.org/W2549449378",
+        "https://openalex.org/W2550341318",
+        "https://openalex.org/W2556605609",
+        "https://openalex.org/W2563700852",
+        "https://openalex.org/W2564145630",
+        "https://openalex.org/W2567909802",
+        "https://openalex.org/W2568870728",
+        "https://openalex.org/W2569877296",
+        "https://openalex.org/W2572159433",
+        "https://openalex.org/W2573672784",
+        "https://openalex.org/W2573915346",
+        "https://openalex.org/W2575157339",
+        "https://openalex.org/W2586084787",
+        "https://openalex.org/W2786741601",
+        "https://openalex.org/W2798277317",
+        "https://openalex.org/W2810264504",
+        "https://openalex.org/W2887203300",
+        "https://openalex.org/W2963075376",
+        "https://openalex.org/W3022192383",
+        "https://openalex.org/W3122178588",
+        "https://openalex.org/W3195771137",
+        "https://openalex.org/W4229666556",
+        "https://openalex.org/W4235184194",
+        "https://openalex.org/W4250589301",
+        "https://openalex.org/W6604972893",
+        "https://openalex.org/W6633481509"
+      ],
+      "related_works": [
+        "https://openalex.org/W2341492732",
+        "https://openalex.org/W2950573157",
+        "https://openalex.org/W3187193180",
+        "https://openalex.org/W2001283893",
+        "https://openalex.org/W2032860538",
+        "https://openalex.org/W2069436786",
+        "https://openalex.org/W2053079725",
+        "https://openalex.org/W2001500949",
+        "https://openalex.org/W2065518442",
+        "https://openalex.org/W2088344732"
+      ],
+      "abstract_inverted_index": null,
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 402
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 731
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 736
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 645
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 566
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 399
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 279
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 153
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 24
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-09-16T18:09:00.828671",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W3163993681",
+      "doi": "https://doi.org/10.1038/s42254-021-00314-5",
+      "title": "Physics-informed machine learning",
+      "display_name": "Physics-informed machine learning",
+      "relevance_score": 203.67067,
+      "publication_year": 2021,
+      "publication_date": "2021-05-24",
+      "ids": {
+        "openalex": "https://openalex.org/W3163993681",
+        "doi": "https://doi.org/10.1038/s42254-021-00314-5",
+        "mag": "3163993681"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1038/s42254-021-00314-5",
+        "is_oa": false,
+        "landing_page_url": "https://doi.org/10.1038/s42254-021-00314-5",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4210234670",
+          "display_name": "Nature Reviews Physics",
+          "issn_l": "2522-5820",
+          "issn": [
+            "2522-5820"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310319908",
+          "host_organization_name": "Nature Portfolio",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310319908",
+            "https://openalex.org/P4310319965"
+          ],
+          "host_organization_lineage_names": [
+            "Nature Portfolio",
+            "Springer Nature"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Nature Reviews Physics",
+        "raw_type": "journal-article"
+      },
+      "type": "review",
+      "indexed_in": [
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://www.osti.gov/servlets/purl/2282016",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5009658255",
+            "display_name": "George Em Karniadakis",
+            "orcid": "https://orcid.org/0000-0002-9713-7120"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I27804330",
+              "display_name": "Brown University",
+              "ror": "https://ror.org/05gq02987",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I27804330"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "George Em Karniadakis",
+          "raw_affiliation_strings": [
+            "Division of Applied Mathematics, Brown University Providence, RI, USA"
+          ],
+          "raw_orcid": "https://orcid.org/0000-0002-9713-7120",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Division of Applied Mathematics, Brown University Providence, RI, USA",
+              "institution_ids": [
+                "https://openalex.org/I27804330"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5036566464",
+            "display_name": "Ioannis G. Kevrekidis",
+            "orcid": "https://orcid.org/0000-0003-2220-3522"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I145311948",
+              "display_name": "Johns Hopkins University",
+              "ror": "https://ror.org/00za53h95",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I145311948"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Ioannis G. Kevrekidis",
+          "raw_affiliation_strings": [
+            "Department of Applied Mathematics and Statistics, Johns Hopkins University, Baltimore, MD, USA",
+            "Department of Chemical and Biomolecular Engineering, Johns Hopkins University, Baltimore, MD, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Applied Mathematics and Statistics, Johns Hopkins University, Baltimore, MD, USA",
+              "institution_ids": [
+                "https://openalex.org/I145311948"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Department of Chemical and Biomolecular Engineering, Johns Hopkins University, Baltimore, MD, USA",
+              "institution_ids": [
+                "https://openalex.org/I145311948"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5100366029",
+            "display_name": "Lu Lu",
+            "orcid": "https://orcid.org/0000-0002-5476-5768"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I63966007",
+              "display_name": "Massachusetts Institute of Technology",
+              "ror": "https://ror.org/042nb2s44",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I63966007"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Lu Lu",
+          "raw_affiliation_strings": [
+            "Department of Mathematics, Massachusetts Institute of Technology, Cambridge, MA, USA"
+          ],
+          "raw_orcid": "https://orcid.org/0000-0002-5476-5768",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Mathematics, Massachusetts Institute of Technology, Cambridge, MA, USA",
+              "institution_ids": [
+                "https://openalex.org/I63966007"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5002562845",
+            "display_name": "Paris Perdikaris",
+            "orcid": "https://orcid.org/0000-0002-2816-3229"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I79576946",
+              "display_name": "University of Pennsylvania",
+              "ror": "https://ror.org/00b30xv10",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I79576946"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Paris Perdikaris",
+          "raw_affiliation_strings": [
+            "Department of Mechanical Engineering and Applied Mechanics, University of Pennsylvania, Philadelphia, PA, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Department of Mechanical Engineering and Applied Mechanics, University of Pennsylvania, Philadelphia, PA, USA",
+              "institution_ids": [
+                "https://openalex.org/I79576946"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5101476623",
+            "display_name": "Sifan Wang",
+            "orcid": "https://orcid.org/0000-0002-7721-6884"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I4210131439",
+              "display_name": "Applied Mathematics (United States)",
+              "ror": "https://ror.org/03seew607",
+              "country_code": "US",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I4210131439"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I79576946",
+              "display_name": "University of Pennsylvania",
+              "ror": "https://ror.org/00b30xv10",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I79576946"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Sifan Wang",
+          "raw_affiliation_strings": [
+            "Graduate Group in Applied Mathematics and Computational Science, University of Pennsylvania, Philadelphia, PA, USA"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Graduate Group in Applied Mathematics and Computational Science, University of Pennsylvania, Philadelphia, PA, USA",
+              "institution_ids": [
+                "https://openalex.org/I4210131439",
+                "https://openalex.org/I79576946"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5100760787",
+            "display_name": "Liu Yang",
+            "orcid": "https://orcid.org/0000-0002-7476-9168"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I27804330",
+              "display_name": "Brown University",
+              "ror": "https://ror.org/05gq02987",
+              "country_code": "US",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I27804330"
+              ]
+            }
+          ],
+          "countries": [
+            "US"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Liu Yang",
+          "raw_affiliation_strings": [
+            "Division of Applied Mathematics, Brown University Providence, RI, USA"
+          ],
+          "raw_orcid": "https://orcid.org/0000-0002-7476-9168",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Division of Applied Mathematics, Brown University Providence, RI, USA",
+              "institution_ids": [
+                "https://openalex.org/I27804330"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 5,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 25.5732,
+      "has_fulltext": true,
+      "cited_by_count": 7949,
+      "citation_normalized_percentile": {
+        "value": 1.0,
+        "is_in_top_1_percent": true,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 100
+      },
+      "biblio": {
+        "volume": "3",
+        "issue": "6",
+        "first_page": "422",
+        "last_page": "440"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11206",
+        "display_name": "Model Reduction and Neural Networks",
+        "score": 0.9998999834060669,
+        "subfield": {
+          "id": "https://openalex.org/subfields/3109",
+          "display_name": "Statistical and Nonlinear Physics"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/31",
+          "display_name": "Physics and Astronomy"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11206",
+          "display_name": "Model Reduction and Neural Networks",
+          "score": 0.9998999834060669,
+          "subfield": {
+            "id": "https://openalex.org/subfields/3109",
+            "display_name": "Statistical and Nonlinear Physics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/31",
+            "display_name": "Physics and Astronomy"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10466",
+          "display_name": "Meteorological Phenomena and Simulations",
+          "score": 0.9668999910354614,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1902",
+            "display_name": "Atmospheric Science"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/19",
+            "display_name": "Earth and Planetary Sciences"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T12814",
+          "display_name": "Gaussian Processes and Bayesian Inference",
+          "score": 0.9657999873161316,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.6228301525115967
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.5645182132720947
+        },
+        {
+          "id": "https://openalex.org/keywords/machine-learning",
+          "display_name": "Machine learning",
+          "score": 0.5487046837806702
+        },
+        {
+          "id": "https://openalex.org/keywords/multiphysics",
+          "display_name": "Multiphysics",
+          "score": 0.5187233090400696
+        },
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.5133877992630005
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-neural-network",
+          "display_name": "Artificial neural network",
+          "score": 0.4754219353199005
+        },
+        {
+          "id": "https://openalex.org/keywords/physical-law",
+          "display_name": "Physical law",
+          "score": 0.46561291813850403
+        },
+        {
+          "id": "https://openalex.org/keywords/field",
+          "display_name": "Field (mathematics)",
+          "score": 0.45437002182006836
+        },
+        {
+          "id": "https://openalex.org/keywords/discretization",
+          "display_name": "Discretization",
+          "score": 0.44379061460494995
+        },
+        {
+          "id": "https://openalex.org/keywords/kernel-method",
+          "display_name": "Kernel method",
+          "score": 0.4289971590042114
+        },
+        {
+          "id": "https://openalex.org/keywords/deep-learning",
+          "display_name": "Deep learning",
+          "score": 0.42896395921707153
+        },
+        {
+          "id": "https://openalex.org/keywords/theoretical-computer-science",
+          "display_name": "Theoretical computer science",
+          "score": 0.3981833755970001
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.14147785305976868
+        },
+        {
+          "id": "https://openalex.org/keywords/support-vector-machine",
+          "display_name": "Support vector machine",
+          "score": 0.13809284567832947
+        },
+        {
+          "id": "https://openalex.org/keywords/finite-element-method",
+          "display_name": "Finite element method",
+          "score": 0.11746224761009216
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.6228301525115967
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.5645182132720947
+        },
+        {
+          "id": "https://openalex.org/C119857082",
+          "wikidata": "https://www.wikidata.org/wiki/Q2539",
+          "display_name": "Machine learning",
+          "level": 1,
+          "score": 0.5487046837806702
+        },
+        {
+          "id": "https://openalex.org/C46435376",
+          "wikidata": "https://www.wikidata.org/wiki/Q1829750",
+          "display_name": "Multiphysics",
+          "level": 3,
+          "score": 0.5187233090400696
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.5133877992630005
+        },
+        {
+          "id": "https://openalex.org/C50644808",
+          "wikidata": "https://www.wikidata.org/wiki/Q192776",
+          "display_name": "Artificial neural network",
+          "level": 2,
+          "score": 0.4754219353199005
+        },
+        {
+          "id": "https://openalex.org/C194583477",
+          "wikidata": "https://www.wikidata.org/wiki/Q408891",
+          "display_name": "Physical law",
+          "level": 2,
+          "score": 0.46561291813850403
+        },
+        {
+          "id": "https://openalex.org/C9652623",
+          "wikidata": "https://www.wikidata.org/wiki/Q190109",
+          "display_name": "Field (mathematics)",
+          "level": 2,
+          "score": 0.45437002182006836
+        },
+        {
+          "id": "https://openalex.org/C73000952",
+          "wikidata": "https://www.wikidata.org/wiki/Q17007827",
+          "display_name": "Discretization",
+          "level": 2,
+          "score": 0.44379061460494995
+        },
+        {
+          "id": "https://openalex.org/C122280245",
+          "wikidata": "https://www.wikidata.org/wiki/Q620622",
+          "display_name": "Kernel method",
+          "level": 3,
+          "score": 0.4289971590042114
+        },
+        {
+          "id": "https://openalex.org/C108583219",
+          "wikidata": "https://www.wikidata.org/wiki/Q197536",
+          "display_name": "Deep learning",
+          "level": 2,
+          "score": 0.42896395921707153
+        },
+        {
+          "id": "https://openalex.org/C80444323",
+          "wikidata": "https://www.wikidata.org/wiki/Q2878974",
+          "display_name": "Theoretical computer science",
+          "level": 1,
+          "score": 0.3981833755970001
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.14147785305976868
+        },
+        {
+          "id": "https://openalex.org/C12267149",
+          "wikidata": "https://www.wikidata.org/wiki/Q282453",
+          "display_name": "Support vector machine",
+          "level": 2,
+          "score": 0.13809284567832947
+        },
+        {
+          "id": "https://openalex.org/C135628077",
+          "wikidata": "https://www.wikidata.org/wiki/Q220184",
+          "display_name": "Finite element method",
+          "level": 2,
+          "score": 0.11746224761009216
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C138885662",
+          "wikidata": "https://www.wikidata.org/wiki/Q5891",
+          "display_name": "Philosophy",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C121332964",
+          "wikidata": "https://www.wikidata.org/wiki/Q413",
+          "display_name": "Physics",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C111472728",
+          "wikidata": "https://www.wikidata.org/wiki/Q9471",
+          "display_name": "Epistemology",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C97355855",
+          "wikidata": "https://www.wikidata.org/wiki/Q11473",
+          "display_name": "Thermodynamics",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 2,
+      "locations": [
+        {
+          "id": "doi:10.1038/s42254-021-00314-5",
+          "is_oa": false,
+          "landing_page_url": "https://doi.org/10.1038/s42254-021-00314-5",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4210234670",
+            "display_name": "Nature Reviews Physics",
+            "issn_l": "2522-5820",
+            "issn": [
+              "2522-5820"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310319908",
+            "host_organization_name": "Nature Portfolio",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310319908",
+              "https://openalex.org/P4310319965"
+            ],
+            "host_organization_lineage_names": [
+              "Nature Portfolio",
+              "Springer Nature"
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Nature Reviews Physics",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:osti.gov:2282016",
+          "is_oa": true,
+          "landing_page_url": "https://www.osti.gov/biblio/2282016",
+          "pdf_url": "https://www.osti.gov/servlets/purl/2282016",
+          "source": {
+            "id": "https://openalex.org/S4306402487",
+            "display_name": "OSTI OAI (U.S. Department of Energy Office of Scientific and Technical Information)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I139351228",
+            "host_organization_name": "Office of Scientific and Technical Information",
+            "host_organization_lineage": [
+              "https://openalex.org/I139351228"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": null
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:osti.gov:2282016",
+        "is_oa": true,
+        "landing_page_url": "https://www.osti.gov/biblio/2282016",
+        "pdf_url": "https://www.osti.gov/servlets/purl/2282016",
+        "source": {
+          "id": "https://openalex.org/S4306402487",
+          "display_name": "OSTI OAI (U.S. Department of Energy Office of Scientific and Technical Information)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I139351228",
+          "host_organization_name": "Office of Scientific and Technical Information",
+          "host_organization_lineage": [
+            "https://openalex.org/I139351228"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": null
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G1523888516",
+          "display_name": null,
+          "funder_award_id": "FA9550-",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G2072716033",
+          "display_name": null,
+          "funder_award_id": "FA9550\u201020\u20101\u20100358",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G36446433",
+          "display_name": null,
+          "funder_award_id": "FA9550-20-1",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G5657759450",
+          "display_name": null,
+          "funder_award_id": "FA9550-20\u20131-0358",
+          "funder_id": "https://openalex.org/F4320333591",
+          "funder_display_name": "Multidisciplinary University Research Initiative"
+        },
+        {
+          "id": "https://openalex.org/G5729145195",
+          "display_name": null,
+          "funder_award_id": "FA9550-20",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G6071233593",
+          "display_name": null,
+          "funder_award_id": "FA9550-20-1-0060",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G7926910962",
+          "display_name": "PROBABILISTIC DATA FUSION AND PHYSICS-INFORMED MACHINE LEARNING: A NEW PARADIGM FOR MODELING UNDER UNCERTAINTY, AND ITS APPLICATION TO ACCELERATING THE DISCOVERY OF NEW MATERIALS",
+          "funder_award_id": "DESC0019116",
+          "funder_id": "https://openalex.org/F4320306084",
+          "funder_display_name": "U.S. Department of Energy"
+        },
+        {
+          "id": "https://openalex.org/G8224071431",
+          "display_name": null,
+          "funder_award_id": "1-0358",
+          "funder_id": "https://openalex.org/F4320338279",
+          "funder_display_name": "Air Force Office of Scientific Research"
+        },
+        {
+          "id": "https://openalex.org/G8632598684",
+          "display_name": null,
+          "funder_award_id": "FA9550-20-1-0358",
+          "funder_id": "https://openalex.org/F4320309398",
+          "funder_display_name": "California Institute of Technology"
+        },
+        {
+          "id": "https://openalex.org/G8663802267",
+          "display_name": null,
+          "funder_award_id": "HR00111890034",
+          "funder_id": "https://openalex.org/F4320332180",
+          "funder_display_name": "Defense Advanced Research Projects Agency"
+        },
+        {
+          "id": "https://openalex.org/G8737588663",
+          "display_name": "PHILMS: COLLABORATORY ON MATHEMATICS AND PHYSICS INFORMED LEARNING MACHINES FOR MULTISCALE AND MULTIPHYSICS PROBLEMS",
+          "funder_award_id": "DESC0019453",
+          "funder_id": "https://openalex.org/F4320306084",
+          "funder_display_name": "U.S. Department of Energy"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320306084",
+          "display_name": "U.S. Department of Energy",
+          "ror": "https://ror.org/01bj3aw27"
+        },
+        {
+          "id": "https://openalex.org/F4320309398",
+          "display_name": "California Institute of Technology",
+          "ror": "https://ror.org/05dxps055"
+        },
+        {
+          "id": "https://openalex.org/F4320332180",
+          "display_name": "Defense Advanced Research Projects Agency",
+          "ror": "https://ror.org/02caytj08"
+        },
+        {
+          "id": "https://openalex.org/F4320332500",
+          "display_name": "University of California, Santa Barbara",
+          "ror": "https://ror.org/02t274463"
+        },
+        {
+          "id": "https://openalex.org/F4320332815",
+          "display_name": "Advanced Research Projects Agency",
+          "ror": "https://ror.org/02caytj08"
+        },
+        {
+          "id": "https://openalex.org/F4320333591",
+          "display_name": "Multidisciplinary University Research Initiative",
+          "ror": null
+        },
+        {
+          "id": "https://openalex.org/F4320338279",
+          "display_name": "Air Force Office of Scientific Research",
+          "ror": "https://ror.org/011e9bt93"
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W3163993681.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W3163993681.grobid-xml"
+      },
+      "referenced_works_count": 228,
+      "referenced_works": [
+        "https://openalex.org/W196871588",
+        "https://openalex.org/W1538131130",
+        "https://openalex.org/W1543241987",
+        "https://openalex.org/W1731081199",
+        "https://openalex.org/W1856502440",
+        "https://openalex.org/W1899249567",
+        "https://openalex.org/W1972005403",
+        "https://openalex.org/W1972576201",
+        "https://openalex.org/W1976068300",
+        "https://openalex.org/W1979769287",
+        "https://openalex.org/W2000359198",
+        "https://openalex.org/W2002355073",
+        "https://openalex.org/W2017880874",
+        "https://openalex.org/W2018159038",
+        "https://openalex.org/W2019465613",
+        "https://openalex.org/W2020561998",
+        "https://openalex.org/W2025444507",
+        "https://openalex.org/W2060229389",
+        "https://openalex.org/W2072072671",
+        "https://openalex.org/W2099471712",
+        "https://openalex.org/W2101371964",
+        "https://openalex.org/W2125645174",
+        "https://openalex.org/W2134164499",
+        "https://openalex.org/W2142894919",
+        "https://openalex.org/W2143225719",
+        "https://openalex.org/W2149498546",
+        "https://openalex.org/W2158985775",
+        "https://openalex.org/W2194775991",
+        "https://openalex.org/W2212370034",
+        "https://openalex.org/W2234882433",
+        "https://openalex.org/W2239232218",
+        "https://openalex.org/W2261689926",
+        "https://openalex.org/W2277172374",
+        "https://openalex.org/W2323851192",
+        "https://openalex.org/W2402144811",
+        "https://openalex.org/W2474090883",
+        "https://openalex.org/W2486824498",
+        "https://openalex.org/W2507348356",
+        "https://openalex.org/W2534240011",
+        "https://openalex.org/W2550848904",
+        "https://openalex.org/W2551156993",
+        "https://openalex.org/W2558748708",
+        "https://openalex.org/W2573864470",
+        "https://openalex.org/W2600297185",
+        "https://openalex.org/W2605147767",
+        "https://openalex.org/W2619381903",
+        "https://openalex.org/W2742127985",
+        "https://openalex.org/W2749028154",
+        "https://openalex.org/W2777417212",
+        "https://openalex.org/W2783378529",
+        "https://openalex.org/W2786232134",
+        "https://openalex.org/W2787931125",
+        "https://openalex.org/W2803629276",
+        "https://openalex.org/W2809090039",
+        "https://openalex.org/W2810026216",
+        "https://openalex.org/W2811199191",
+        "https://openalex.org/W2856628251",
+        "https://openalex.org/W2884775584",
+        "https://openalex.org/W2886802770",
+        "https://openalex.org/W2887569307",
+        "https://openalex.org/W2890889625",
+        "https://openalex.org/W2890968382",
+        "https://openalex.org/W2893749619",
+        "https://openalex.org/W2893813411",
+        "https://openalex.org/W2896549049",
+        "https://openalex.org/W2897097528",
+        "https://openalex.org/W2899283552",
+        "https://openalex.org/W2899971035",
+        "https://openalex.org/W2900369848",
+        "https://openalex.org/W2901203181",
+        "https://openalex.org/W2907047316",
+        "https://openalex.org/W2908541468",
+        "https://openalex.org/W2909320927",
+        "https://openalex.org/W2912389156",
+        "https://openalex.org/W2912465314",
+        "https://openalex.org/W2912649832",
+        "https://openalex.org/W2913323966",
+        "https://openalex.org/W2914483840",
+        "https://openalex.org/W2914520121",
+        "https://openalex.org/W2919958648",
+        "https://openalex.org/W2936357167",
+        "https://openalex.org/W2945102878",
+        "https://openalex.org/W2946794331",
+        "https://openalex.org/W2946866513",
+        "https://openalex.org/W2947072793",
+        "https://openalex.org/W2951392159",
+        "https://openalex.org/W2952046647",
+        "https://openalex.org/W2959995783",
+        "https://openalex.org/W2962793481",
+        "https://openalex.org/W2963021886",
+        "https://openalex.org/W2963063862",
+        "https://openalex.org/W2963095610",
+        "https://openalex.org/W2963190151",
+        "https://openalex.org/W2963518130",
+        "https://openalex.org/W2963634130",
+        "https://openalex.org/W2963716063",
+        "https://openalex.org/W2963755523",
+        "https://openalex.org/W2963901342",
+        "https://openalex.org/W2964059111",
+        "https://openalex.org/W2964088238",
+        "https://openalex.org/W2964121744",
+        "https://openalex.org/W2964135722",
+        "https://openalex.org/W2964212578",
+        "https://openalex.org/W2964268978",
+        "https://openalex.org/W2966284335",
+        "https://openalex.org/W2969381807",
+        "https://openalex.org/W2970100546",
+        "https://openalex.org/W2970971581",
+        "https://openalex.org/W2971095480",
+        "https://openalex.org/W2971343405",
+        "https://openalex.org/W2972153210",
+        "https://openalex.org/W2973886134",
+        "https://openalex.org/W2975003945",
+        "https://openalex.org/W2977109506",
+        "https://openalex.org/W2978281981",
+        "https://openalex.org/W2979712029",
+        "https://openalex.org/W2979786244",
+        "https://openalex.org/W2980147119",
+        "https://openalex.org/W2980592884",
+        "https://openalex.org/W2980973551",
+        "https://openalex.org/W2983902802",
+        "https://openalex.org/W2991298115",
+        "https://openalex.org/W2991550674",
+        "https://openalex.org/W2994626356",
+        "https://openalex.org/W2994747787",
+        "https://openalex.org/W2997814214",
+        "https://openalex.org/W2999026783",
+        "https://openalex.org/W2999467285",
+        "https://openalex.org/W3003747211",
+        "https://openalex.org/W3003922491",
+        "https://openalex.org/W3004450693",
+        "https://openalex.org/W3005610174",
+        "https://openalex.org/W3007470329",
+        "https://openalex.org/W3007740214",
+        "https://openalex.org/W3008453832",
+        "https://openalex.org/W3009784374",
+        "https://openalex.org/W3010849941",
+        "https://openalex.org/W3011147100",
+        "https://openalex.org/W3011806874",
+        "https://openalex.org/W3012417314",
+        "https://openalex.org/W3012621877",
+        "https://openalex.org/W3014009018",
+        "https://openalex.org/W3014468003",
+        "https://openalex.org/W3015176898",
+        "https://openalex.org/W3015606043",
+        "https://openalex.org/W3015865829",
+        "https://openalex.org/W3016703299",
+        "https://openalex.org/W3022657828",
+        "https://openalex.org/W3023982288",
+        "https://openalex.org/W3025645353",
+        "https://openalex.org/W3026222427",
+        "https://openalex.org/W3028316595",
+        "https://openalex.org/W3028529071",
+        "https://openalex.org/W3035493266",
+        "https://openalex.org/W3036843665",
+        "https://openalex.org/W3037090957",
+        "https://openalex.org/W3039304986",
+        "https://openalex.org/W3040277050",
+        "https://openalex.org/W3041984619",
+        "https://openalex.org/W3043174105",
+        "https://openalex.org/W3043516796",
+        "https://openalex.org/W3045146186",
+        "https://openalex.org/W3046173836",
+        "https://openalex.org/W3047001618",
+        "https://openalex.org/W3048241795",
+        "https://openalex.org/W3049075514",
+        "https://openalex.org/W3080393992",
+        "https://openalex.org/W3081814969",
+        "https://openalex.org/W3082908155",
+        "https://openalex.org/W3082977546",
+        "https://openalex.org/W3084017095",
+        "https://openalex.org/W3088681382",
+        "https://openalex.org/W3088691598",
+        "https://openalex.org/W3088877001",
+        "https://openalex.org/W3093018961",
+        "https://openalex.org/W3093190107",
+        "https://openalex.org/W3093786597",
+        "https://openalex.org/W3093990252",
+        "https://openalex.org/W3096173239",
+        "https://openalex.org/W3096732413",
+        "https://openalex.org/W3098172061",
+        "https://openalex.org/W3098195931",
+        "https://openalex.org/W3098370560",
+        "https://openalex.org/W3098546160",
+        "https://openalex.org/W3098951945",
+        "https://openalex.org/W3099849883",
+        "https://openalex.org/W3100156752",
+        "https://openalex.org/W3101260193",
+        "https://openalex.org/W3101396145",
+        "https://openalex.org/W3102139197",
+        "https://openalex.org/W3102569296",
+        "https://openalex.org/W3102697518",
+        "https://openalex.org/W3102845444",
+        "https://openalex.org/W3102921872",
+        "https://openalex.org/W3103242287",
+        "https://openalex.org/W3104150464",
+        "https://openalex.org/W3104873019",
+        "https://openalex.org/W3105982350",
+        "https://openalex.org/W3106050203",
+        "https://openalex.org/W3107691001",
+        "https://openalex.org/W3107973042",
+        "https://openalex.org/W3112233611",
+        "https://openalex.org/W3112264320",
+        "https://openalex.org/W3116268267",
+        "https://openalex.org/W3118310857",
+        "https://openalex.org/W3125167458",
+        "https://openalex.org/W3128400532",
+        "https://openalex.org/W3129530645",
+        "https://openalex.org/W3129610195",
+        "https://openalex.org/W3132277775",
+        "https://openalex.org/W3133338006",
+        "https://openalex.org/W3133608513",
+        "https://openalex.org/W3137240924",
+        "https://openalex.org/W3137474564",
+        "https://openalex.org/W3138463430",
+        "https://openalex.org/W3145000844",
+        "https://openalex.org/W3148629269",
+        "https://openalex.org/W3168386838",
+        "https://openalex.org/W3181271387",
+        "https://openalex.org/W3201460085",
+        "https://openalex.org/W3207890637",
+        "https://openalex.org/W4230953281",
+        "https://openalex.org/W4234008654",
+        "https://openalex.org/W6694756022",
+        "https://openalex.org/W6713134421",
+        "https://openalex.org/W6755308174",
+        "https://openalex.org/W6763197053",
+        "https://openalex.org/W6787451610"
+      ],
+      "related_works": [
+        "https://openalex.org/W2084426624",
+        "https://openalex.org/W3026055904",
+        "https://openalex.org/W2792869497",
+        "https://openalex.org/W4312133600",
+        "https://openalex.org/W2567205727",
+        "https://openalex.org/W2361803029",
+        "https://openalex.org/W2548694948",
+        "https://openalex.org/W2010566957",
+        "https://openalex.org/W2304501688",
+        "https://openalex.org/W4312747563"
+      ],
+      "abstract_inverted_index": null,
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 2742
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 2013
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 1457
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 1055
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 571
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 108
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 2
+        }
+      ],
+      "updated_date": "2026-09-16T18:09:00.828671",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2921681895",
+      "doi": "https://doi.org/10.18154/rwth-2020-02348",
+      "title": "Parameter synthesis in Markov models",
+      "display_name": "Parameter synthesis in Markov models",
+      "relevance_score": 187.23561,
+      "publication_year": 2020,
+      "publication_date": "2020-01-01",
+      "ids": {
+        "openalex": "https://openalex.org/W2921681895",
+        "doi": "https://doi.org/10.18154/rwth-2020-02348",
+        "mag": "2921681895"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "pmh:oai:publications.rwth-aachen.de:783179",
+        "is_oa": true,
+        "landing_page_url": "https://publications.rwth-aachen.de/record/783179",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4306401362",
+          "display_name": "RWTH Publications (RWTH Aachen)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I887968799",
+          "host_organization_name": "RWTH Aachen University",
+          "host_organization_lineage": [
+            "https://openalex.org/I887968799"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "other-oa",
+        "license_id": "https://openalex.org/licenses/other-oa",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Aachen 1 Online-Ressource (xv, 371 Seiten) : Illustrationen (2020). doi:10.18154/RWTH-2020-02348 = Dissertation, RWTH Aachen University, 2020",
+        "raw_type": "info:eu-repo/semantics/doctoralThesis"
+      },
+      "type": "dissertation",
+      "indexed_in": [
+        "datacite"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://publications.rwth-aachen.de/record/783179",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5018941708",
+            "display_name": "Sebastian Junges",
+            "orcid": "https://orcid.org/0000-0003-0978-8466"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I887968799",
+              "display_name": "RWTH Aachen University",
+              "ror": "https://ror.org/04xfq0f34",
+              "country_code": "DE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I887968799"
+              ]
+            }
+          ],
+          "countries": [
+            "DE"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Junges, Sebastian",
+          "raw_affiliation_strings": [
+            "RWTH Aachen"
+          ],
+          "raw_orcid": "https://orcid.org/0000-0003-0978-8466",
+          "affiliations": [
+            {
+              "raw_affiliation_string": "RWTH Aachen",
+              "institution_ids": [
+                "https://openalex.org/I887968799"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5018941708"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I887968799"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": true,
+      "cited_by_count": 27,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T10142",
+        "display_name": "Formal Methods in Verification",
+        "score": 0.9997000098228455,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1703",
+          "display_name": "Computational Theory and Mathematics"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T10142",
+          "display_name": "Formal Methods in Verification",
+          "score": 0.9997000098228455,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T12423",
+          "display_name": "Software Reliability and Analysis Research",
+          "score": 0.9997000098228455,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1712",
+            "display_name": "Software"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10780",
+          "display_name": "Reliability and Maintenance Optimization",
+          "score": 0.9975000023841858,
+          "subfield": {
+            "id": "https://openalex.org/subfields/2213",
+            "display_name": "Safety, Risk, Reliability and Quality"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/22",
+            "display_name": "Engineering"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/markov-chain",
+          "display_name": "Markov chain",
+          "score": 0.8174753189086914
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-model",
+          "display_name": "Markov model",
+          "score": 0.6190089583396912
+        },
+        {
+          "id": "https://openalex.org/keywords/parametric-statistics",
+          "display_name": "Parametric statistics",
+          "score": 0.6147547364234924
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.5825580358505249
+        },
+        {
+          "id": "https://openalex.org/keywords/reliability",
+          "display_name": "Reliability (semiconductor)",
+          "score": 0.5283525586128235
+        },
+        {
+          "id": "https://openalex.org/keywords/markov-process",
+          "display_name": "Markov process",
+          "score": 0.48558133840560913
+        },
+        {
+          "id": "https://openalex.org/keywords/metric",
+          "display_name": "Metric (unit)",
+          "score": 0.4855184555053711
+        },
+        {
+          "id": "https://openalex.org/keywords/range",
+          "display_name": "Range (aeronautics)",
+          "score": 0.46345967054367065
+        },
+        {
+          "id": "https://openalex.org/keywords/component",
+          "display_name": "Component (thermodynamics)",
+          "score": 0.43045246601104736
+        },
+        {
+          "id": "https://openalex.org/keywords/variable-order-markov-model",
+          "display_name": "Variable-order Markov model",
+          "score": 0.4249255359172821
+        },
+        {
+          "id": "https://openalex.org/keywords/algorithm",
+          "display_name": "Algorithm",
+          "score": 0.4179195463657379
+        },
+        {
+          "id": "https://openalex.org/keywords/obstacle",
+          "display_name": "Obstacle",
+          "score": 0.4169851243495941
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematical-optimization",
+          "display_name": "Mathematical optimization",
+          "score": 0.4121176600456238
+        },
+        {
+          "id": "https://openalex.org/keywords/reliability-engineering",
+          "display_name": "Reliability engineering",
+          "score": 0.3799583315849304
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.35527998208999634
+        },
+        {
+          "id": "https://openalex.org/keywords/applied-mathematics",
+          "display_name": "Applied mathematics",
+          "score": 0.34076279401779175
+        },
+        {
+          "id": "https://openalex.org/keywords/engineering",
+          "display_name": "Engineering",
+          "score": 0.15115585923194885
+        },
+        {
+          "id": "https://openalex.org/keywords/statistics",
+          "display_name": "Statistics",
+          "score": 0.14663639664649963
+        },
+        {
+          "id": "https://openalex.org/keywords/machine-learning",
+          "display_name": "Machine learning",
+          "score": 0.1336299180984497
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C98763669",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov chain",
+          "level": 2,
+          "score": 0.8174753189086914
+        },
+        {
+          "id": "https://openalex.org/C163836022",
+          "wikidata": "https://www.wikidata.org/wiki/Q6771326",
+          "display_name": "Markov model",
+          "level": 3,
+          "score": 0.6190089583396912
+        },
+        {
+          "id": "https://openalex.org/C117251300",
+          "wikidata": "https://www.wikidata.org/wiki/Q1849855",
+          "display_name": "Parametric statistics",
+          "level": 2,
+          "score": 0.6147547364234924
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.5825580358505249
+        },
+        {
+          "id": "https://openalex.org/C43214815",
+          "wikidata": "https://www.wikidata.org/wiki/Q7310987",
+          "display_name": "Reliability (semiconductor)",
+          "level": 3,
+          "score": 0.5283525586128235
+        },
+        {
+          "id": "https://openalex.org/C159886148",
+          "wikidata": "https://www.wikidata.org/wiki/Q176645",
+          "display_name": "Markov process",
+          "level": 2,
+          "score": 0.48558133840560913
+        },
+        {
+          "id": "https://openalex.org/C176217482",
+          "wikidata": "https://www.wikidata.org/wiki/Q860554",
+          "display_name": "Metric (unit)",
+          "level": 2,
+          "score": 0.4855184555053711
+        },
+        {
+          "id": "https://openalex.org/C204323151",
+          "wikidata": "https://www.wikidata.org/wiki/Q905424",
+          "display_name": "Range (aeronautics)",
+          "level": 2,
+          "score": 0.46345967054367065
+        },
+        {
+          "id": "https://openalex.org/C168167062",
+          "wikidata": "https://www.wikidata.org/wiki/Q1117970",
+          "display_name": "Component (thermodynamics)",
+          "level": 2,
+          "score": 0.43045246601104736
+        },
+        {
+          "id": "https://openalex.org/C54907487",
+          "wikidata": "https://www.wikidata.org/wiki/Q7915688",
+          "display_name": "Variable-order Markov model",
+          "level": 4,
+          "score": 0.4249255359172821
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.4179195463657379
+        },
+        {
+          "id": "https://openalex.org/C2776650193",
+          "wikidata": "https://www.wikidata.org/wiki/Q264661",
+          "display_name": "Obstacle",
+          "level": 2,
+          "score": 0.4169851243495941
+        },
+        {
+          "id": "https://openalex.org/C126255220",
+          "wikidata": "https://www.wikidata.org/wiki/Q141495",
+          "display_name": "Mathematical optimization",
+          "level": 1,
+          "score": 0.4121176600456238
+        },
+        {
+          "id": "https://openalex.org/C200601418",
+          "wikidata": "https://www.wikidata.org/wiki/Q2193887",
+          "display_name": "Reliability engineering",
+          "level": 1,
+          "score": 0.3799583315849304
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.35527998208999634
+        },
+        {
+          "id": "https://openalex.org/C28826006",
+          "wikidata": "https://www.wikidata.org/wiki/Q33521",
+          "display_name": "Applied mathematics",
+          "level": 1,
+          "score": 0.34076279401779175
+        },
+        {
+          "id": "https://openalex.org/C127413603",
+          "wikidata": "https://www.wikidata.org/wiki/Q11023",
+          "display_name": "Engineering",
+          "level": 0,
+          "score": 0.15115585923194885
+        },
+        {
+          "id": "https://openalex.org/C105795698",
+          "wikidata": "https://www.wikidata.org/wiki/Q12483",
+          "display_name": "Statistics",
+          "level": 1,
+          "score": 0.14663639664649963
+        },
+        {
+          "id": "https://openalex.org/C119857082",
+          "wikidata": "https://www.wikidata.org/wiki/Q2539",
+          "display_name": "Machine learning",
+          "level": 1,
+          "score": 0.1336299180984497
+        },
+        {
+          "id": "https://openalex.org/C17744445",
+          "wikidata": "https://www.wikidata.org/wiki/Q36442",
+          "display_name": "Political science",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C97355855",
+          "wikidata": "https://www.wikidata.org/wiki/Q11473",
+          "display_name": "Thermodynamics",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C21547014",
+          "wikidata": "https://www.wikidata.org/wiki/Q1423657",
+          "display_name": "Operations management",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C121332964",
+          "wikidata": "https://www.wikidata.org/wiki/Q413",
+          "display_name": "Physics",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C146978453",
+          "wikidata": "https://www.wikidata.org/wiki/Q3798668",
+          "display_name": "Aerospace engineering",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199539241",
+          "wikidata": "https://www.wikidata.org/wiki/Q7748",
+          "display_name": "Law",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C62520636",
+          "wikidata": "https://www.wikidata.org/wiki/Q944",
+          "display_name": "Quantum mechanics",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C163258240",
+          "wikidata": "https://www.wikidata.org/wiki/Q25342",
+          "display_name": "Power (physics)",
+          "level": 2,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 4,
+      "locations": [
+        {
+          "id": "pmh:oai:publications.rwth-aachen.de:783179",
+          "is_oa": true,
+          "landing_page_url": "https://publications.rwth-aachen.de/record/783179",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306401362",
+            "display_name": "RWTH Publications (RWTH Aachen)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I887968799",
+            "host_organization_name": "RWTH Aachen University",
+            "host_organization_lineage": [
+              "https://openalex.org/I887968799"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "other-oa",
+          "license_id": "https://openalex.org/licenses/other-oa",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Aachen 1 Online-Ressource (xv, 371 Seiten) : Illustrationen (2020). doi:10.18154/RWTH-2020-02348 = Dissertation, RWTH Aachen University, 2020",
+          "raw_type": "info:eu-repo/semantics/doctoralThesis"
+        },
+        {
+          "id": "pmh:oai:hss-opus.ub.ruhr-uni-bochum.de:11143",
+          "is_oa": true,
+          "landing_page_url": "https://hss-opus.ub.ruhr-uni-bochum.de/opus4/frontdoor/index/index/docId/11143",
+          "pdf_url": "https://hss-opus.ub.ruhr-uni-bochum.de/opus4/files/11143/JansenNils17022024.pdf",
+          "source": {
+            "id": "https://openalex.org/S4306400167",
+            "display_name": "Dokumentenrepositorium der RUB (Ruhr University Bochum)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I904495901",
+            "host_organization_name": "Ruhr University Bochum",
+            "host_organization_lineage": [
+              "https://openalex.org/I904495901"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "article"
+        },
+        {
+          "id": "mag:2921681895",
+          "is_oa": true,
+          "landing_page_url": "https://arxiv.org/pdf/1903.07993.pdf",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "arXiv (Cornell University)",
+          "raw_type": null
+        },
+        {
+          "id": "doi:10.18154/rwth-2020-02348",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.18154/rwth-2020-02348",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306401033",
+            "display_name": "RWTH Publications (RWTH Aachen)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I887968799",
+            "host_organization_name": "RWTH Aachen University",
+            "host_organization_lineage": [
+              "https://openalex.org/I887968799"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": "thesis"
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:publications.rwth-aachen.de:783179",
+        "is_oa": true,
+        "landing_page_url": "https://publications.rwth-aachen.de/record/783179",
+        "pdf_url": null,
+        "source": {
+          "id": "https://openalex.org/S4306401362",
+          "display_name": "RWTH Publications (RWTH Aachen)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I887968799",
+          "host_organization_name": "RWTH Aachen University",
+          "host_organization_lineage": [
+            "https://openalex.org/I887968799"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "other-oa",
+        "license_id": "https://openalex.org/licenses/other-oa",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Aachen 1 Online-Ressource (xv, 371 Seiten) : Illustrationen (2020). doi:10.18154/RWTH-2020-02348 = Dissertation, RWTH Aachen University, 2020",
+        "raw_type": "info:eu-repo/semantics/doctoralThesis"
+      },
+      "sustainable_development_goals": [
+        {
+          "score": 0.6899999976158142,
+          "display_name": "Peace, Justice and strong institutions",
+          "id": "https://metadata.un.org/sdg/16"
+        }
+      ],
+      "awards": [
+        {
+          "id": "https://openalex.org/G1241064458",
+          "display_name": null,
+          "funder_award_id": "101077178",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        },
+        {
+          "id": "https://openalex.org/G2302795432",
+          "display_name": null,
+          "funder_award_id": "RTG 2236",
+          "funder_id": "https://openalex.org/F4320320879",
+          "funder_display_name": "Deutsche Forschungsgemeinschaft"
+        },
+        {
+          "id": "https://openalex.org/G3373991914",
+          "display_name": "Models in Space Systems: Integration, Operation, and Networking",
+          "funder_award_id": "101008233",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        },
+        {
+          "id": "https://openalex.org/G434337789",
+          "display_name": null,
+          "funder_award_id": "HORIZON2020",
+          "funder_id": "https://openalex.org/F4320320300",
+          "funder_display_name": "European Commission"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320320300",
+          "display_name": "European Commission",
+          "ror": "https://ror.org/00k4n6c32"
+        },
+        {
+          "id": "https://openalex.org/F4320320879",
+          "display_name": "Deutsche Forschungsgemeinschaft",
+          "ror": "https://ror.org/018mejw64"
+        }
+      ],
+      "has_content": {
+        "pdf": false,
+        "grobid_xml": false
+      },
+      "content_urls": null,
+      "referenced_works_count": 110,
+      "referenced_works": [
+        "https://openalex.org/W113043827",
+        "https://openalex.org/W144481999",
+        "https://openalex.org/W170763441",
+        "https://openalex.org/W225106791",
+        "https://openalex.org/W754964377",
+        "https://openalex.org/W798280485",
+        "https://openalex.org/W1479679270",
+        "https://openalex.org/W1480909796",
+        "https://openalex.org/W1498432697",
+        "https://openalex.org/W1511255594",
+        "https://openalex.org/W1559540003",
+        "https://openalex.org/W1574427057",
+        "https://openalex.org/W1574505635",
+        "https://openalex.org/W1583191255",
+        "https://openalex.org/W1595559231",
+        "https://openalex.org/W1596739056",
+        "https://openalex.org/W1600556058",
+        "https://openalex.org/W1806449990",
+        "https://openalex.org/W1810606903",
+        "https://openalex.org/W1862398452",
+        "https://openalex.org/W1880436303",
+        "https://openalex.org/W1892040981",
+        "https://openalex.org/W1898469110",
+        "https://openalex.org/W1968191405",
+        "https://openalex.org/W1971139410",
+        "https://openalex.org/W1986755980",
+        "https://openalex.org/W1988217924",
+        "https://openalex.org/W1992996044",
+        "https://openalex.org/W1993567708",
+        "https://openalex.org/W2000865099",
+        "https://openalex.org/W2002089154",
+        "https://openalex.org/W2005998857",
+        "https://openalex.org/W2013814408",
+        "https://openalex.org/W2025687460",
+        "https://openalex.org/W2030895696",
+        "https://openalex.org/W2041226400",
+        "https://openalex.org/W2053702803",
+        "https://openalex.org/W2061217545",
+        "https://openalex.org/W2075813176",
+        "https://openalex.org/W2076337359",
+        "https://openalex.org/W2078612414",
+        "https://openalex.org/W2087486424",
+        "https://openalex.org/W2091968063",
+        "https://openalex.org/W2092008396",
+        "https://openalex.org/W2095304972",
+        "https://openalex.org/W2096210507",
+        "https://openalex.org/W2098597080",
+        "https://openalex.org/W2099184861",
+        "https://openalex.org/W2101097136",
+        "https://openalex.org/W2103255931",
+        "https://openalex.org/W2105114377",
+        "https://openalex.org/W2107086007",
+        "https://openalex.org/W2110411539",
+        "https://openalex.org/W2113101444",
+        "https://openalex.org/W2113750341",
+        "https://openalex.org/W2114879646",
+        "https://openalex.org/W2118132438",
+        "https://openalex.org/W2118184521",
+        "https://openalex.org/W2119567691",
+        "https://openalex.org/W2121337044",
+        "https://openalex.org/W2122410182",
+        "https://openalex.org/W2125500714",
+        "https://openalex.org/W2135209232",
+        "https://openalex.org/W2145495721",
+        "https://openalex.org/W2154884120",
+        "https://openalex.org/W2155153696",
+        "https://openalex.org/W2156546571",
+        "https://openalex.org/W2157413433",
+        "https://openalex.org/W2158395308",
+        "https://openalex.org/W2170611159",
+        "https://openalex.org/W2274071363",
+        "https://openalex.org/W2277676404",
+        "https://openalex.org/W2284340808",
+        "https://openalex.org/W2291637985",
+        "https://openalex.org/W2343521561",
+        "https://openalex.org/W2401635679",
+        "https://openalex.org/W2461207771",
+        "https://openalex.org/W2467435924",
+        "https://openalex.org/W2507973694",
+        "https://openalex.org/W2527393991",
+        "https://openalex.org/W2534303543",
+        "https://openalex.org/W2560174505",
+        "https://openalex.org/W2575731723",
+        "https://openalex.org/W2576924292",
+        "https://openalex.org/W2587263590",
+        "https://openalex.org/W2593267253",
+        "https://openalex.org/W2594789366",
+        "https://openalex.org/W2598014203",
+        "https://openalex.org/W2613892803",
+        "https://openalex.org/W2620928019",
+        "https://openalex.org/W2716905450",
+        "https://openalex.org/W2735108719",
+        "https://openalex.org/W2743635440",
+        "https://openalex.org/W2758051744",
+        "https://openalex.org/W2766020963",
+        "https://openalex.org/W2792547510",
+        "https://openalex.org/W2796919988",
+        "https://openalex.org/W2803827522",
+        "https://openalex.org/W2803993242",
+        "https://openalex.org/W2804728961",
+        "https://openalex.org/W2806784953",
+        "https://openalex.org/W2809011908",
+        "https://openalex.org/W2809485720",
+        "https://openalex.org/W2884432391",
+        "https://openalex.org/W2909939412",
+        "https://openalex.org/W2914149546",
+        "https://openalex.org/W2963307044",
+        "https://openalex.org/W2963451394",
+        "https://openalex.org/W2995644129",
+        "https://openalex.org/W3182208082"
+      ],
+      "related_works": [
+        "https://openalex.org/W2075813176",
+        "https://openalex.org/W1498432697",
+        "https://openalex.org/W2593267253",
+        "https://openalex.org/W1600556058",
+        "https://openalex.org/W2284340808",
+        "https://openalex.org/W1862398452",
+        "https://openalex.org/W754964377",
+        "https://openalex.org/W2963307044",
+        "https://openalex.org/W2000865099",
+        "https://openalex.org/W2809011908",
+        "https://openalex.org/W2119567691",
+        "https://openalex.org/W1574505635",
+        "https://openalex.org/W2587263590",
+        "https://openalex.org/W2334782222",
+        "https://openalex.org/W2122410182",
+        "https://openalex.org/W2114879646",
+        "https://openalex.org/W2098597080",
+        "https://openalex.org/W1988217924",
+        "https://openalex.org/W1965878388",
+        "https://openalex.org/W225682002"
+      ],
+      "abstract_inverted_index": {
+        "Markov": [
+          0,
+          63,
+          81,
+          87,
+          100,
+          105
+        ],
+        "models": [
+          1,
+          11
+        ],
+        "comprise": [
+          2
+        ],
+        "states": [
+          3
+        ],
+        "with": [
+          4,
+          288
+        ],
+        "probabilistic": [
+          5,
+          310
+        ],
+        "transitions.": [
+          6
+        ],
+        "The": [
+          7
+        ],
+        "analysis": [
+          8,
+          30,
+          264,
+          302,
+          334,
+          371
+        ],
+        "of": [
+          9,
+          49,
+          94,
+          220,
+          234,
+          242,
+          250,
+          265,
+          286,
+          303,
+          309,
+          372,
+          387,
+          391
+        ],
+        "these": [
+          10,
+          38,
+          150,
+          198,
+          257
+        ],
+        "is": [
+          12,
+          134,
+          144,
+          185,
+          238
+        ],
+        "ubiquitous": [
+          13
+        ],
+        "and": [
+          14,
+          25,
+          85,
+          104,
+          119,
+          179,
+          204,
+          206,
+          210,
+          254,
+          307,
+          319,
+          326,
+          339,
+          357,
+          389
+        ],
+        "studied": [
+          15
+        ],
+        "in,": [
+          16
+        ],
+        "among": [
+          17
+        ],
+        "others,": [
+          18,
+          294
+        ],
+        "reliability": [
+          19
+        ],
+        "engineering,": [
+          20
+        ],
+        "artificial": [
+          21,
+          276
+        ],
+        "intelligence,": [
+          22
+        ],
+        "systems": [
+          23
+        ],
+        "biology,": [
+          24
+        ],
+        "formal": [
+          26
+        ],
+        "methods.": [
+          27
+        ],
+        "Naturally,": [
+          28
+        ],
+        "their": [
+          29
+        ],
+        "crucially": [
+          31
+        ],
+        "depends": [
+          32
+        ],
+        "on": [
+          33,
+          43,
+          200
+        ],
+        "the": [
+          34,
+          55,
+          58,
+          67,
+          95,
+          128,
+          165,
+          176,
+          194,
+          214,
+          221,
+          235,
+          263,
+          300,
+          313,
+          360,
+          369,
+          375,
+          378,
+          382,
+          394
+        ],
+        "transition": [
+          35
+        ],
+        "probabilities.": [
+          36
+        ],
+        "Often,": [
+          37
+        ],
+        "probabilities": [
+          39,
+          68
+        ],
+        "are": [
+          40,
+          69,
+          259
+        ],
+        "approximations": [
+          41
+        ],
+        "based": [
+          42
+        ],
+        "data": [
+          44
+        ],
+        "or": [
+          45,
+          138
+        ],
+        "reflect": [
+          46
+        ],
+        "configurable": [
+          47
+        ],
+        "parts": [
+          48
+        ],
+        "a": [
+          50,
+          186,
+          201,
+          217,
+          251,
+          272,
+          284
+        ],
+        "modelled": [
+          51
+        ],
+        "system.": [
+          52
+        ],
+        "To": [
+          53
+        ],
+        "represent": [
+          54
+        ],
+        "uncertainty": [
+          56
+        ],
+        "about": [
+          57
+        ],
+        "probabilities,": [
+          59
+        ],
+        "we": [
+          60,
+          78,
+          279,
+          317,
+          396
+        ],
+        "study": [
+          61,
+          197
+        ],
+        "parametric": [
+          62,
+          80,
+          86
+        ],
+        "models,": [
+          64
+        ],
+        "in": [
+          65,
+          240,
+          268,
+          275,
+          344,
+          368,
+          401
+        ],
+        "which": [
+          66
+        ],
+        "symbolic": [
+          70
+        ],
+        "expressions": [
+          71
+        ],
+        "rather": [
+          72
+        ],
+        "than": [
+          73,
+          136,
+          146
+        ],
+        "concrete": [
+          74
+        ],
+        "values.": [
+          75
+        ],
+        "More": [
+          76
+        ],
+        "precisely,": [
+          77
+        ],
+        "consider": [
+          79
+        ],
+        "decision": [
+          82,
+          101
+        ],
+        "processes": [
+          83,
+          102
+        ],
+        "(pMDPs)": [
+          84
+        ],
+        "chains": [
+          88,
+          106
+        ],
+        "(pMCs)": [
+          89
+        ],
+        "as": [
+          90,
+          123,
+          183,
+          245,
+          247,
+          347,
+          349,
+          354
+        ],
+        "special": [
+          91
+        ],
+        "case.": [
+          92
+        ],
+        "Substitution": [
+          93
+        ],
+        "parameters": [
+          96,
+          388
+        ],
+        "yields": [
+          97,
+          154,
+          224
+        ],
+        "classical,": [
+          98
+        ],
+        "parameter-free": [
+          99
+        ],
+        "(MDPs)": [
+          103
+        ],
+        "(MCs).A": [
+          107
+        ],
+        "pMDP": [
+          108
+        ],
+        "thus": [
+          109
+        ],
+        "induces": [
+          110
+        ],
+        "uncountably": [
+          111
+        ],
+        "many": [
+          112,
+          290
+        ],
+        "MDPs.": [
+          113,
+          373
+        ],
+        "Each": [
+          114
+        ],
+        "MDP": [
+          115,
+          163
+        ],
+        "may": [
+          116
+        ],
+        "satisfy": [
+          117,
+          175
+        ],
+        "reachability": [
+          118
+        ],
+        "reward": [
+          120
+        ],
+        "properties,": [
+          121
+        ],
+        "such": [
+          122,
+          182,
+          227,
+          353
+        ],
+        "\"the": [
+          124,
+          139
+        ],
+        "maximal": [
+          125,
+          140
+        ],
+        "probability": [
+          126
+        ],
+        "that": [
+          127,
+          230,
+          256
+        ],
+        "system": [
+          129
+        ],
+        "reaches": [
+          130
+        ],
+        "an": [
+          131,
+          161
+        ],
+        "`offline'": [
+          132
+        ],
+        "state": [
+          133
+        ],
+        "less": [
+          135,
+          145
+        ],
+        "0.01%\",": [
+          137
+        ],
+        "expected": [
+          141
+        ],
+        "energy": [
+          142
+        ],
+        "consumption": [
+          143
+        ],
+        "20": [
+          147
+        ],
+        "kWh.": [
+          148
+        ],
+        "\"Lifting": [
+          149
+        ],
+        "properties": [
+          151
+        ],
+        "to": [
+          152,
+          262,
+          329,
+          359
+        ],
+        "pMDPs": [
+          153
+        ],
+        "fundamental": [
+          155,
+          297
+        ],
+        "problems": [
+          156,
+          181,
+          199,
+          258,
+          298
+        ],
+        "asking:": [
+          157
+        ],
+        "-": [
+          158,
+          170
+        ],
+        "\"Is": [
+          159
+        ],
+        "there": [
+          160
+        ],
+        "induced": [
+          162,
+          173,
+          191,
+          291
+        ],
+        "satisfying": [
+          164,
+          193
+        ],
+        "property?\"": [
+          166,
+          177,
+          195
+        ],
+        "(feasibility),": [
+          167
+        ],
+        "its": [
+          168
+        ],
+        "dual": [
+          169
+        ],
+        "\"Do": [
+          171
+        ],
+        "all": [
+          172,
+          190
+        ],
+        "MDPs": [
+          174
+        ],
+        "(validity),": [
+          178
+        ],
+        "advanced": [
+          180
+        ],
+        "\"What": [
+          184
+        ],
+        "concise": [
+          187
+        ],
+        "representation": [
+          188
+        ],
+        "for": [
+          189
+        ],
+        "MCs": [
+          192,
+          282
+        ],
+        "We": [
+          196
+        ],
+        "conceptual": [
+          202,
+          215
+        ],
+        "level,": [
+          203
+        ],
+        "design": [
+          205
+        ],
+        "implement": [
+          207
+        ],
+        "both": [
+          208
+        ],
+        "improved": [
+          209,
+          321
+        ],
+        "novel": [
+          211
+        ],
+        "algorithms.": [
+          212
+        ],
+        "On": [
+          213,
+          312,
+          374
+        ],
+        "side,": [
+          216,
+          315,
+          377
+        ],
+        "thorough": [
+          218
+        ],
+        "discussion": [
+          219
+        ],
+        "feasibility": [
+          222,
+          236
+        ],
+        "problem": [
+          223,
+          237
+        ],
+        "new": [
+          225,
+          338,
+          379
+        ],
+        "results,": [
+          226
+        ],
+        "as:": [
+          228
+        ],
+        "(1)": [
+          229,
+          316
+        ],
+        "answering": [
+          231
+        ],
+        "various": [
+          232
+        ],
+        "variants": [
+          233
+        ],
+        "\u2014": [
+          239,
+          244
+        ],
+        "terms": [
+          241
+        ],
+        "complexity": [
+          243
+        ],
+        "hard": [
+          246
+        ],
+        "finding": [
+          248
+        ],
+        "roots": [
+          249
+        ],
+        "multivariate": [
+          252
+        ],
+        "polynomial,": [
+          253
+        ],
+        "(2)": [
+          255,
+          336
+        ],
+        "tightly": [
+          260
+        ],
+        "connected": [
+          261
+        ],
+        "memoryless": [
+          266
+        ],
+        "strategies": [
+          267
+        ],
+        "partially": [
+          269
+        ],
+        "observable": [
+          270
+        ],
+        "MDPs,": [
+          271
+        ],
+        "famous": [
+          273
+        ],
+        "model": [
+          274
+        ],
+        "intelligence.": [
+          277
+        ],
+        "Additionally,": [
+          278
+        ],
+        "introduce": [
+          280
+        ],
+        "family": [
+          281
+        ],
+        "(fMCs),": [
+          283
+        ],
+        "subclass": [
+          285
+        ],
+        "pMCs": [
+          287
+        ],
+        "finitely": [
+          289
+        ],
+        "MCs.": [
+          292
+        ],
+        "Among": [
+          293
+        ],
+        "fMCs": [
+          295
+        ],
+        "define": [
+          296
+        ],
+        "underlying": [
+          299
+        ],
+        "quantitative": [
+          301
+        ],
+        "software": [
+          304
+        ],
+        "product": [
+          305
+        ],
+        "lines": [
+          306
+        ],
+        "sketching": [
+          308
+        ],
+        "programs.": [
+          311
+        ],
+        "algorithmic": [
+          314
+        ],
+        "present": [
+          318,
+          397
+        ],
+        "analyse": [
+          320
+        ],
+        "but": [
+          322
+        ],
+        "previously": [
+          323
+        ],
+        "known": [
+          324
+        ],
+        "approaches,": [
+          325,
+          341
+        ],
+        "combine": [
+          327
+        ],
+        "them": [
+          328
+        ],
+        "meet": [
+          330
+        ],
+        "practical": [
+          331
+        ],
+        "needs.": [
+          332
+        ],
+        "Their": [
+          333
+        ],
+        "inspired": [
+          335
+        ],
+        "three": [
+          337
+        ],
+        "orthogonal": [
+          340
+        ],
+        "utilising": [
+          342
+        ],
+        "advances": [
+          343,
+          367
+        ],
+        "convex": [
+          345
+        ],
+        "optimisation,": [
+          346
+        ],
+        "well": [
+          348
+        ],
+        "adapting": [
+          350
+        ],
+        "prominent": [
+          351
+        ],
+        "ideas": [
+          352
+        ],
+        "inductive": [
+          355
+        ],
+        "synthesis": [
+          356
+        ],
+        "abstraction-refinement": [
+          358
+        ],
+        "particular": [
+          361
+        ],
+        "setting.": [
+          362
+        ],
+        "All": [
+          363,
+          393
+        ],
+        "methods": [
+          364,
+          380
+        ],
+        "efficiently": [
+          365
+        ],
+        "exploit": [
+          366
+        ],
+        "off-the-shelf": [
+          370
+        ],
+        "empirical": [
+          376
+        ],
+        "improve": [
+          381
+        ],
+        "state-of-the-art": [
+          383
+        ],
+        "considerably,": [
+          384
+        ],
+        "handling": [
+          385
+        ],
+        "hundreds": [
+          386
+        ],
+        "millions": [
+          390
+        ],
+        "states.": [
+          392
+        ],
+        "approaches": [
+          395
+        ],
+        "have": [
+          398
+        ],
+        "been": [
+          399
+        ],
+        "implemented": [
+          400
+        ],
+        "open-source": [
+          402
+        ],
+        "tools.": [
+          403
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2024,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 8
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 7
+        }
+      ],
+      "updated_date": "2026-08-22T07:34:49.880490",
+      "created_date": "2025-10-10T00:00:00"
+    }
+  ],
+  "group_by": []
+}

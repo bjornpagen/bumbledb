@@ -1,0 +1,10 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 15.37s
+001 readouts-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-needed-project-witness: passed, 11.39s
+002 readouts-prefix64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-needed-project-witness: passed, 8.31s
+003 readouts-prefix64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-full-project-witness: passed, 8.30s
+004 readouts-retraction64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-needed-project-witness: passed, 8.51s
+005 readouts-retraction64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-full-project-witness: passed, 8.52s
+006 readouts-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-full-project-witness: passed, 12.19s
+007 readouts-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-full-project-witness: passed, 11.49s
+008 readouts-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-needed-project-witness: passed, 12.37s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/local-cutoff-screen.json

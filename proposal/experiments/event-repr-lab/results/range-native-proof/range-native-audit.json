@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "binary_sha256": "58b53e8ec12f592e81004d2e10bfbb55d77cddfba238a19a68f953542d08d739",
+  "phase_rows": {
+    "correctness": 41,
+    "admission": 69,
+    "join": 56
+  },
+  "native_join_configurations": 56,
+  "matched_comparisons": 48,
+  "query_factorization_reports": 6,
+  "checker_sha256": "9cbca96f9d401d56fff41cc5ea1b7780872a32db9d161ffb460911dc7f28e8de",
+  "boundary": "Scoped/anchored native controls. Separate raw replay uses completed inputs. Factorized query execution is proved but not implemented."
+}

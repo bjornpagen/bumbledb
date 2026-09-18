@@ -1,0 +1,53 @@
+{
+  "passed": true,
+  "inputs": [
+    "readout-first-smoke.json"
+  ],
+  "binary_sha256": "9e02aec91a23ad8f7b5902ff8e959b9fbda29e2f3291560063d5a6c6cd309214",
+  "cases": 4,
+  "matched_cases": 0,
+  "pairs": [],
+  "processes": [
+    {
+      "file": "readout-first-smoke.json",
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab"
+      },
+      "status": "passed",
+      "log": "readout-first-smoke-logs/job-000-verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "readout-first-smoke.json",
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "prefix512",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "suffix-1",
+        "EVENT_LAB_READOUT_FACES": "x"
+      },
+      "status": "passed",
+      "log": "readout-first-smoke-logs/job-001-readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-suffix-1-faces-x.log"
+    }
+  ],
+  "checker_sha256": "79bcb0626e1f64b883175899628e9da252d90cd0a3ebf1c09a016ed7e4b4b78f",
+  "selection": "Latest supplied successful process per exact case, invalidated by a later failed/capped case. Retain all raw samples. Never compare different hidden masks as the same query."
+}

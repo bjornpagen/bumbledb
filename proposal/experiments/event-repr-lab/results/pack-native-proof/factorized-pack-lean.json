@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "command": [
+    "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+    "join-factorization/FactorizedPack.lean"
+  ],
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "theorems": {
+    "independent_product": [],
+    "factorization_iff_rectangular": [],
+    "clover": [],
+    "group_presence": [],
+    "coupled_counterexample": [],
+    "present_empty": []
+  },
+  "source": "join-factorization/FactorizedPack.lean",
+  "source_sha256": "bd8b9301a082073362a07ae4e11e7148bc365edf348b5af0dfa8ff0144078cec",
+  "log": "factorized-pack-lean.log",
+  "boundary": "Six separate query-factorization reports; not yet part of the 195-report central suite. No native factorized execution implemented."
+}

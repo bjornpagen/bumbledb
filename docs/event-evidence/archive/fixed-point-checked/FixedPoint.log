@@ -1,0 +1,8 @@
+'FixedPoint.strict_rank' depends on axioms: [propext, Quot.sound]
+'FixedPoint.ascending' does not depend on any axioms
+'FixedPoint.below_prefixed' does not depend on any axioms
+'FixedPoint.stabilizes' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.least_fixed_point' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.dual_monotone' depends on axioms: [propext]
+'FixedPoint.greatest_fixed_point' depends on axioms: [propext, Classical.choice, Quot.sound]
+'FixedPoint.shared_environment_stabilizes' depends on axioms: [propext, Classical.choice, Quot.sound]

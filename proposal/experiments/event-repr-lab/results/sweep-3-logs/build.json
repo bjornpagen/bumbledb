@@ -1,0 +1,20 @@
+{
+  "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/4eb96717b825fda0/out/bumbledb-4eb96717b825fda0",
+  "binary_sha256": "c16091711603e43530be7131f3cd8e155ca8fa858ba7095de4161e205f8bbbf3",
+  "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "machine": "arm64",
+  "cpu": "Apple M2 Max",
+  "memory_bytes": 103079215104,
+  "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+  "lab_sources": {
+    "src/carrier.rs": "6c63733aad1bbef6c9056875088a8b53fda3fcdd6bde1569e8729dae99d0a71b",
+    "src/diagram.rs": "b4157292244c7a04acffb59cbe654717c738a70b7791ac92cefde15110370a7d",
+    "src/finite.rs": "d24d8cd368596de7f651fc2aa556b976225d4925613011e5d89f7256e5ed8f11",
+    "src/lib.rs": "a5f2ec74e9842cb31392c8389eeeee86ad387fd67781751b89f79232459277a5",
+    "src/modal.rs": "5fa961a555ea525046c14717de075b4b3bcb97145076159ddc941742d598897e",
+    "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c"
+  },
+  "cargo_lock_sha256": "e6a31bb03b41f4ef4e151edee14284bcdfa447c8b730b240518ae01ea9330913",
+  "built_utc": "2026-09-17T19:49:11.545973+00:00"
+}

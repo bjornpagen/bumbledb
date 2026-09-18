@@ -1,0 +1,2731 @@
+{
+  "seed": 20260917,
+  "trials": 7,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/4eb96717b825fda0/out/bumbledb-4eb96717b825fda0",
+    "binary_sha256": "d09d8ae49f4e8b85c0872e8da16d7dd3144b34fa85b390847c7d1d3f718b7a89",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "5f367fabbda846cf0be2637736419fae94fb7f76d2439ae9d40125486866ef46",
+      "src/carrier.rs": "796731feb6e8758207aad632e84fa1a93cee62377085a0a2de7b7dcd027b2faf",
+      "src/diagram.rs": "5d39d1fc2b5395f1b1666dca9c7b754ffcd7d4d4577130f8c4fc01483887be30",
+      "src/finite.rs": "fbfda2a96cf8f6105d592fb8a66c04052db2aacfc6fe470a041ee5e48eb802f3",
+      "src/lib.rs": "39dee18deb8445ee0d1b4123c66b33ede5b40af53e1037c46b028c7a996345e0",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/packed.rs": "99fe307ae5561485a91c38d267133c1ed8a3f16e29bb2025d0cc10c4355ccce1",
+      "src/relational_core.rs": "c757b649a062f3b3eada667f166dc6afe40d4cc7c7c7ffce5adce438a638bbae",
+      "src/relations.rs": "c7f1d128dea0aba99a600f021a4f3b230b53215f23e0c5c101c5a0bb4b4ccebc",
+      "src/semantic_checks.rs": "e1f2b3064a615094fa027b845cb7a0eb76294037c13938d51169114b795cf5f7"
+    },
+    "cargo_lock_sha256": "e6a31bb03b41f4ef4e151edee14284bcdfa447c8b730b240518ae01ea9330913",
+    "built_utc": "2026-09-17T21:29:48.226544+00:00",
+    "build_started_utc": "2026-09-17T21:25:08.401465+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.6025888919830322,
+      "max_rss_bytes": 31113216,
+      "log": "tail-symbolic-logs/job-000-verify-local.log",
+      "rows": [
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.00705409049987793,
+      "max_rss_bytes": 3473408,
+      "log": "tail-symbolic-logs/job-001-symbolic-mdd4-pair--12-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 2.1708e-05,
+          "count_s": 2.25e-06,
+          "nodes": 103,
+          "bytes_est": 14112,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006197214126586914,
+      "max_rss_bytes": 3522560,
+      "log": "tail-symbolic-logs/job-002-symbolic-mdd4-pair--16-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 3.2625e-05,
+          "count_s": 2.834e-06,
+          "nodes": 169,
+          "bytes_est": 27648,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.005986213684082031,
+      "max_rss_bytes": 3817472,
+      "log": "tail-symbolic-logs/job-003-symbolic-packed256--8-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 9.7709e-05,
+          "count_s": 1.4709e-05,
+          "nodes": 1034,
+          "bytes_est": 163936,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006356954574584961,
+      "max_rss_bytes": 3620864,
+      "log": "tail-symbolic-logs/job-004-symbolic-bdd-root--8-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 0.0001065,
+          "count_s": 1.8584e-05,
+          "nodes": 1514,
+          "bytes_est": 133328,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.06161308288574219,
+      "max_rss_bytes": 75907072,
+      "log": "tail-symbolic-logs/job-005-symbolic-packed4096--16-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.04415275,
+          "count_s": 0.007521209,
+          "nodes": 385034,
+          "bytes_est": 50036912,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.025624752044677734,
+      "max_rss_bytes": 3555328,
+      "log": "tail-symbolic-logs/job-006-symbolic-packed512--12-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 4.9333e-05,
+          "count_s": 2.208e-06,
+          "nodes": 217,
+          "bytes_est": 21060,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.010784149169921875,
+      "max_rss_bytes": 3489792,
+      "log": "tail-symbolic-logs/job-007-symbolic-block64--16-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 3.5125e-05,
+          "count_s": 1.25e-06,
+          "nodes": 104,
+          "bytes_est": 12380,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007804155349731445,
+      "max_rss_bytes": 3522560,
+      "log": "tail-symbolic-logs/job-008-symbolic-bdd-pair--8-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 2.8709e-05,
+          "count_s": 3e-06,
+          "nodes": 109,
+          "bytes_est": 10048,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008572101593017578,
+      "max_rss_bytes": 3702784,
+      "log": "tail-symbolic-logs/job-009-symbolic-bdd-pair--20-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 7.5167e-05,
+          "count_s": 4e-06,
+          "nodes": 631,
+          "bytes_est": 70592,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0075452327728271484,
+      "max_rss_bytes": 3555328,
+      "log": "tail-symbolic-logs/job-010-symbolic-packed64--12-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 4.1584e-05,
+          "count_s": 2e-06,
+          "nodes": 228,
+          "bytes_est": 17224,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006793975830078125,
+      "max_rss_bytes": 3686400,
+      "log": "tail-symbolic-logs/job-011-symbolic-packed4096--16-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 0.000108958,
+          "count_s": 2.666e-06,
+          "nodes": 369,
+          "bytes_est": 64624,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007000923156738281,
+      "max_rss_bytes": 3522560,
+      "log": "tail-symbolic-logs/job-012-symbolic-packed256--12-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 3.3083e-05,
+          "count_s": 1.791e-06,
+          "nodes": 220,
+          "bytes_est": 18624,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007414102554321289,
+      "max_rss_bytes": 3735552,
+      "log": "tail-symbolic-logs/job-013-symbolic-packed64--8-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 0.000106292,
+          "count_s": 2.4625e-05,
+          "nodes": 1410,
+          "bytes_est": 140632,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.022235870361328125,
+      "max_rss_bytes": 20250624,
+      "log": "tail-symbolic-logs/job-014-symbolic-block64--16-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.014117375,
+          "count_s": 0.000712625,
+          "nodes": 76012,
+          "bytes_est": 15998604,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.046797752380371094,
+      "max_rss_bytes": 55214080,
+      "log": "tail-symbolic-logs/job-015-symbolic-packed64--16-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.031502542,
+          "count_s": 0.00635025,
+          "nodes": 393074,
+          "bytes_est": 34086296,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008551359176635742,
+      "max_rss_bytes": 3801088,
+      "log": "tail-symbolic-logs/job-016-symbolic-mdd4-pair--8-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 0.000135333,
+          "count_s": 1.7792e-05,
+          "nodes": 912,
+          "bytes_est": 141952,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007854938507080078,
+      "max_rss_bytes": 3833856,
+      "log": "tail-symbolic-logs/job-017-symbolic-packed512--8-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 8.3209e-05,
+          "count_s": 8.917e-06,
+          "nodes": 778,
+          "bytes_est": 112740,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.00749969482421875,
+      "max_rss_bytes": 3653632,
+      "log": "tail-symbolic-logs/job-018-symbolic-packed4096--12-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 9.5583e-05,
+          "count_s": 2.042e-06,
+          "nodes": 195,
+          "bytes_est": 47952,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006909370422363281,
+      "max_rss_bytes": 3571712,
+      "log": "tail-symbolic-logs/job-019-symbolic-packed256--16-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 4.7167e-05,
+          "count_s": 2.209e-06,
+          "nodes": 394,
+          "bytes_est": 35296,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008786201477050781,
+      "max_rss_bytes": 7929856,
+      "log": "tail-symbolic-logs/job-020-symbolic-mdd4-pair--12-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001300583,
+          "count_s": 0.000176208,
+          "nodes": 14568,
+          "bytes_est": 2590624,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007224082946777344,
+      "max_rss_bytes": 3604480,
+      "log": "tail-symbolic-logs/job-021-symbolic-packed512--20-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 7.0791e-05,
+          "count_s": 2.917e-06,
+          "nodes": 613,
+          "bytes_est": 71044,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006892681121826172,
+      "max_rss_bytes": 3555328,
+      "log": "tail-symbolic-logs/job-022-symbolic-bdd-root--16-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 4.125e-05,
+          "count_s": 2.042e-06,
+          "nodes": 409,
+          "bytes_est": 33616,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006930828094482422,
+      "max_rss_bytes": 3473408,
+      "log": "tail-symbolic-logs/job-023-symbolic-block64--12-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 2.5416e-05,
+          "count_s": 1.042e-06,
+          "nodes": 63,
+          "bytes_est": 6500,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007292985916137695,
+      "max_rss_bytes": 3637248,
+      "log": "tail-symbolic-logs/job-024-symbolic-bdd-pair--8-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 0.000112959,
+          "count_s": 2.0083e-05,
+          "nodes": 1514,
+          "bytes_est": 134848,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0071489810943603516,
+      "max_rss_bytes": 3604480,
+      "log": "tail-symbolic-logs/job-025-symbolic-packed4096--8-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 9.425e-05,
+          "count_s": 1.5e-06,
+          "nodes": 69,
+          "bytes_est": 35440,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.6003429889678955,
+      "max_rss_bytes": 440451072,
+      "log": "tail-symbolic-logs/job-026-symbolic-packed256--20-grouped-local.log",
+      "rows": [],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.11513757705688477,
+      "max_rss_bytes": 94945280,
+      "log": "tail-symbolic-logs/job-027-symbolic-block64--20-grouped.log",
+      "rows": [],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.034535884857177734,
+      "max_rss_bytes": 65421312,
+      "log": "tail-symbolic-logs/job-028-symbolic-mdd4-pair--16-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.02334125,
+          "count_s": 0.003070583,
+          "nodes": 233024,
+          "bytes_est": 41422080,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.009329795837402344,
+      "max_rss_bytes": 6881280,
+      "log": "tail-symbolic-logs/job-029-symbolic-bdd-pair--12-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001458709,
+          "count_s": 0.000287292,
+          "nodes": 24546,
+          "bytes_est": 2131968,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.6126408576965332,
+      "max_rss_bytes": 461062144,
+      "log": "tail-symbolic-logs/job-030-symbolic-mdd4-pair--20-grouped.log",
+      "rows": [],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.04832601547241211,
+      "max_rss_bytes": 56557568,
+      "log": "tail-symbolic-logs/job-031-symbolic-bdd-root--16-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.032531916,
+          "count_s": 0.004633709,
+          "nodes": 393178,
+          "bytes_est": 34079056,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.024236202239990234,
+      "max_rss_bytes": 8044544,
+      "log": "tail-symbolic-logs/job-032-symbolic-packed256--12-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.003777708,
+          "count_s": 0.00038475,
+          "nodes": 24066,
+          "bytes_est": 2205824,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.015259027481079102,
+      "max_rss_bytes": 3588096,
+      "log": "tail-symbolic-logs/job-033-symbolic-packed64--16-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 9.6791e-05,
+          "count_s": 4.584e-06,
+          "nodes": 402,
+          "bytes_est": 33896,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.01270294189453125,
+      "max_rss_bytes": 3538944,
+      "log": "tail-symbolic-logs/job-034-symbolic-mdd4-pair--20-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 3.7167e-05,
+          "count_s": 3.125e-06,
+          "nodes": 251,
+          "bytes_est": 38944,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.04357099533081055,
+      "max_rss_bytes": 58589184,
+      "log": "tail-symbolic-logs/job-035-symbolic-packed512--16-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.0302895,
+          "count_s": 0.005815542,
+          "nodes": 392190,
+          "bytes_est": 34353316,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.645402193069458,
+      "max_rss_bytes": 440172544,
+      "log": "tail-symbolic-logs/job-036-symbolic-packed512--20-grouped-local.log",
+      "rows": [],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.00823664665222168,
+      "max_rss_bytes": 3686400,
+      "log": "tail-symbolic-logs/job-037-symbolic-bdd-anchored--20-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 7.9875e-05,
+          "count_s": 3e-06,
+          "nodes": 631,
+          "bytes_est": 66976,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.6793968677520752,
+      "max_rss_bytes": 447561728,
+      "log": "tail-symbolic-logs/job-038-symbolic-packed4096--20-grouped-local.log",
+      "rows": [],
+      "loadavg_start": [
+        13.6748046875,
+        16.4189453125,
+        14.9345703125
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.009135961532592773,
+      "max_rss_bytes": 7585792,
+      "log": "tail-symbolic-logs/job-039-symbolic-packed512--12-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001432667,
+          "count_s": 0.000281084,
+          "nodes": 23558,
+          "bytes_est": 2404484,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007425069808959961,
+      "max_rss_bytes": 3588096,
+      "log": "tail-symbolic-logs/job-040-symbolic-bdd-anchored--16-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 4.2334e-05,
+          "count_s": 2.583e-06,
+          "nodes": 409,
+          "bytes_est": 33632,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.5811319351196289,
+      "max_rss_bytes": 441303040,
+      "log": "tail-symbolic-logs/job-041-symbolic-bdd-anchored--20-grouped.log",
+      "rows": [],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0075609683990478516,
+      "max_rss_bytes": 3571712,
+      "log": "tail-symbolic-logs/job-042-symbolic-bdd-root--12-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 4.0875e-05,
+          "count_s": 1.667e-06,
+          "nodes": 235,
+          "bytes_est": 24080,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006743669509887695,
+      "max_rss_bytes": 3588096,
+      "log": "tail-symbolic-logs/job-043-symbolic-bdd-anchored--12-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 3.4834e-05,
+          "count_s": 1.875e-06,
+          "nodes": 235,
+          "bytes_est": 24096,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006873130798339844,
+      "max_rss_bytes": 3604480,
+      "log": "tail-symbolic-logs/job-044-symbolic-packed64--20-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 6.3583e-05,
+          "count_s": 3e-06,
+          "nodes": 624,
+          "bytes_est": 67208,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007203102111816406,
+      "max_rss_bytes": 3588096,
+      "log": "tail-symbolic-logs/job-045-symbolic-bdd-pair--16-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 4.6292e-05,
+          "count_s": 3.458e-06,
+          "nodes": 409,
+          "bytes_est": 36736,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.009193181991577148,
+      "max_rss_bytes": 6258688,
+      "log": "tail-symbolic-logs/job-046-symbolic-bdd-anchored--12-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001352708,
+          "count_s": 0.000289792,
+          "nodes": 24546,
+          "bytes_est": 2130208,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0071086883544921875,
+      "max_rss_bytes": 3522560,
+      "log": "tail-symbolic-logs/job-047-symbolic-block64--20-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 3.8917e-05,
+          "count_s": 1.25e-06,
+          "nodes": 137,
+          "bytes_est": 15144,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.04642319679260254,
+      "max_rss_bytes": 55787520,
+      "log": "tail-symbolic-logs/job-048-symbolic-packed256--16-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.032124541,
+          "count_s": 0.006411958,
+          "nodes": 392698,
+          "bytes_est": 34154656,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007766008377075195,
+      "max_rss_bytes": 3538944,
+      "log": "tail-symbolic-logs/job-049-symbolic-packed512--8-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 3.725e-05,
+          "count_s": 1.542e-06,
+          "nodes": 91,
+          "bytes_est": 12708,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008622169494628906,
+      "max_rss_bytes": 5242880,
+      "log": "tail-symbolic-logs/job-050-symbolic-block64--12-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001440667,
+          "count_s": 0.000107042,
+          "nodes": 8744,
+          "bytes_est": 1482260,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008343935012817383,
+      "max_rss_bytes": 3522560,
+      "log": "tail-symbolic-logs/job-051-symbolic-bdd-anchored--8-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 2.2875e-05,
+          "count_s": 1.541e-06,
+          "nodes": 109,
+          "bytes_est": 8544,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.563011884689331,
+      "max_rss_bytes": 442187776,
+      "log": "tail-symbolic-logs/job-052-symbolic-bdd-root--20-grouped.log",
+      "rows": [],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0072939395904541016,
+      "max_rss_bytes": 3719168,
+      "log": "tail-symbolic-logs/job-053-symbolic-packed4096--20-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 0.00011975,
+          "count_s": 3e-06,
+          "nodes": 591,
+          "bytes_est": 97936,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008067846298217773,
+      "max_rss_bytes": 3473408,
+      "log": "tail-symbolic-logs/job-054-symbolic-block64--8-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 2.1791e-05,
+          "count_s": 1.042e-06,
+          "nodes": 39,
+          "bytes_est": 3568,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0066678524017333984,
+      "max_rss_bytes": 3506176,
+      "log": "tail-symbolic-logs/job-055-symbolic-packed64--8-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 2.5125e-05,
+          "count_s": 1.666e-06,
+          "nodes": 102,
+          "bytes_est": 8872,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0443577766418457,
+      "max_rss_bytes": 56541184,
+      "log": "tail-symbolic-logs/job-056-symbolic-bdd-pair--16-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.032363708,
+          "count_s": 0.005072208,
+          "nodes": 393178,
+          "bytes_est": 34082176,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007090330123901367,
+      "max_rss_bytes": 3653632,
+      "log": "tail-symbolic-logs/job-057-symbolic-bdd-anchored--8-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 0.0001075,
+          "count_s": 1.7917e-05,
+          "nodes": 1514,
+          "bytes_est": 133344,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006590843200683594,
+      "max_rss_bytes": 3457024,
+      "log": "tail-symbolic-logs/job-058-symbolic-mdd4-pair--8-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "mdd4-pair",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 1.5958e-05,
+          "count_s": 1.833e-06,
+          "nodes": 53,
+          "bytes_est": 7744,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.04648017883300781,
+      "max_rss_bytes": 53936128,
+      "log": "tail-symbolic-logs/job-059-symbolic-bdd-anchored--16-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-anchored",
+          "pairs": 16,
+          "interleaved": false,
+          "worlds": 4294967296,
+          "build_s": 0.033557833,
+          "count_s": 0.005159208,
+          "nodes": 393178,
+          "bytes_est": 34079072,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.5749170780181885,
+      "max_rss_bytes": 440352768,
+      "log": "tail-symbolic-logs/job-060-symbolic-bdd-pair--20-grouped.log",
+      "rows": [],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.00817108154296875,
+      "max_rss_bytes": 3571712,
+      "log": "tail-symbolic-logs/job-061-symbolic-bdd-pair--12-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-pair",
+          "pairs": 12,
+          "interleaved": true,
+          "worlds": 16777216,
+          "build_s": 3.7625e-05,
+          "count_s": 3.25e-06,
+          "nodes": 235,
+          "bytes_est": 25856,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_PAIRS": 16,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006574153900146484,
+      "max_rss_bytes": 3571712,
+      "log": "tail-symbolic-logs/job-062-symbolic-packed512--16-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed512",
+          "pairs": 16,
+          "interleaved": true,
+          "worlds": 4294967296,
+          "build_s": 4.7625e-05,
+          "count_s": 1.958e-06,
+          "nodes": 391,
+          "bytes_est": 37732,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006184816360473633,
+      "max_rss_bytes": 3473408,
+      "log": "tail-symbolic-logs/job-063-symbolic-bdd-root--8-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 1.9416e-05,
+          "count_s": 1.417e-06,
+          "nodes": 109,
+          "bytes_est": 8528,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.009098052978515625,
+      "max_rss_bytes": 7831552,
+      "log": "tail-symbolic-logs/job-064-symbolic-packed64--12-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed64",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001461958,
+          "count_s": 0.0003165,
+          "nodes": 24442,
+          "bytes_est": 2137464,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.008392095565795898,
+      "max_rss_bytes": 6209536,
+      "log": "tail-symbolic-logs/job-065-symbolic-bdd-root--12-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.001349958,
+          "count_s": 0.000292583,
+          "nodes": 24546,
+          "bytes_est": 2130192,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007030963897705078,
+      "max_rss_bytes": 3604480,
+      "log": "tail-symbolic-logs/job-066-symbolic-bdd-root--20-interleaved.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "bdd-root",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 6.025e-05,
+          "count_s": 2.709e-06,
+          "nodes": 631,
+          "bytes_est": 66960,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 12,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.012041091918945312,
+      "max_rss_bytes": 26886144,
+      "log": "tail-symbolic-logs/job-067-symbolic-packed4096--12-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 12,
+          "interleaved": false,
+          "worlds": 16777216,
+          "build_s": 0.004433375,
+          "count_s": 0.000405667,
+          "nodes": 16402,
+          "bytes_est": 17367184,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007144927978515625,
+      "max_rss_bytes": 3588096,
+      "log": "tail-symbolic-logs/job-068-symbolic-block64--8-grouped.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "block64",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 7.5125e-05,
+          "count_s": 4.708e-06,
+          "nodes": 248,
+          "bytes_est": 42208,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 0.6412396430969238,
+      "max_rss_bytes": 440123392,
+      "log": "tail-symbolic-logs/job-069-symbolic-packed64--20-grouped-local.log",
+      "rows": [],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.007884025573730469,
+      "max_rss_bytes": 3489792,
+      "log": "tail-symbolic-logs/job-070-symbolic-packed256--8-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 8,
+          "interleaved": true,
+          "worlds": 65536,
+          "build_s": 2.7708e-05,
+          "count_s": 1.667e-06,
+          "nodes": 94,
+          "bytes_est": 10272,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_PAIRS": 20,
+        "EVENT_LAB_ORDER": "interleaved",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.006608247756958008,
+      "max_rss_bytes": 3620864,
+      "log": "tail-symbolic-logs/job-071-symbolic-packed256--20-interleaved-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed256",
+          "pairs": 20,
+          "interleaved": true,
+          "worlds": 1099511627776,
+          "build_s": 6.4209e-05,
+          "count_s": 3.792e-06,
+          "nodes": 616,
+          "bytes_est": 68608,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_PAIRS": 8,
+        "EVENT_LAB_ORDER": "grouped",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0068340301513671875,
+      "max_rss_bytes": 3899392,
+      "log": "tail-symbolic-logs/job-072-symbolic-packed4096--8-grouped-local.log",
+      "rows": [
+        {
+          "kind": "symbolic",
+          "candidate": "packed4096",
+          "pairs": 8,
+          "interleaved": false,
+          "worlds": 65536,
+          "build_s": 0.000128,
+          "count_s": 2.375e-06,
+          "nodes": 202,
+          "bytes_est": 135792,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ],
+      "loadavg_end": [
+        12.89990234375,
+        16.21240234375,
+        14.8701171875
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "files": {
+    "proposal/research/space-maps/abbadini-guffanti-beck-chevalley.txt": "0f4a32fb81da67871674cabbcf37c83a05b184f7ea35188a6d4c4079e3059aea",
+    "proposal/research/representation-search/vandenbroeck-darwiche-2014-canonicity.txt": "62f08d53b1e70667e2526a54c4e2b7c89ab7d1e02e2ca4baef248d2a1f5b460c"
+  },
+  "claims": [
+    "Remark 2.11 / Example 2.12 distinguish Boolean inverse image from exact quantifier transport. The new construction proves complete suffix-fibre coverage explicitly.",
+    "Canonical resident identity alone says nothing about inexpensive Apply or substitution; compare full query cost and construction empirically."
+  ],
+  "derivation": "Prefix repair and the symbolic residual construction are laboratory derivations, not algorithms attributed to either paper. Seven Lean reports verify the recursive construction separately from Rust."
+}

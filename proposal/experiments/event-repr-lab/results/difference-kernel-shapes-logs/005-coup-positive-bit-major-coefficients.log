@@ -1,0 +1,7 @@
+DIFFERENCE_PHASE {"phase":"inputs_verified","records":22632,"bytes":1126608}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":0,"records":22632,"bytes":1126608}
+
+
+thread 'main' (10505459) panicked at src/lib.rs:80:13:
+RESOURCE_CAP: coefficient nodes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

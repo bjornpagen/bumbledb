@@ -1,0 +1,25 @@
+/Users/bjorn/Documents/bumbledb/crates/bumbledb-event/semantics/FixedPoint.lean:83:3: error: unknown tactic
+/Users/bjorn/Documents/bumbledb/crates/bumbledb-event/semantics/FixedPoint.lean:82:63: error: unsolved goals
+W : Type
+worlds : List W
+complete : ∀ (w : W), w ∈ worlds
+F : Region W → Region W
+mono : monotone F
+⊢ iterate F worlds.length = iterate F (worlds.length + 1)
+/Users/bjorn/Documents/bumbledb/crates/bumbledb-event/semantics/FixedPoint.lean:121:9: error: unexpected token 'at'; expected '(', ':=', '|' or term
+/Users/bjorn/Documents/bumbledb/crates/bumbledb-event/semantics/FixedPoint.lean:121:9: error: Missing cases:
+/Users/bjorn/Documents/bumbledb/crates/bumbledb-event/semantics/FixedPoint.lean:118:61: error: unsolved goals
+case mpr
+W : Type
+a b : Region W
+h : ∀ (w : W), b w = true → a w = true
+w : W
+⊢ (!a w) = true → (!b w) = true
+'FixedPoint.strict_rank' depends on axioms: [propext, Quot.sound]
+'FixedPoint.ascending' does not depend on any axioms
+'FixedPoint.below_prefixed' does not depend on any axioms
+'FixedPoint.stabilizes' depends on axioms: [sorryAx]
+'FixedPoint.least_fixed_point' depends on axioms: [sorryAx]
+'FixedPoint.dual_monotone' depends on axioms: [sorryAx]
+'FixedPoint.greatest_fixed_point' depends on axioms: [sorryAx, Quot.sound]
+'FixedPoint.shared_environment_stabilizes' depends on axioms: [sorryAx, Quot.sound]

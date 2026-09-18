@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"factorized_pack_free_join","candidate":"range-shannon","scenario":"coup_4290","schedule":"factorized","memo":false,"fanout":4,"worlds":4290,"admissible_worlds":4290,"groups":64,"present_groups":64,"represented_bindings":4096,"native_emissions":832,"branch_emissions":768,"summary_rows":192,"summary_colt_bytes":34096,"staged_id_capacity_bytes":6144,"input_nodes":4146,"final_nodes":14826,"input_bytes_est":221184,"final_bytes_est":1355392,"retained_input_colt_bytes":48,"build_s":0.028033875,"native_setup_s":0.000183625,"fresh_s":[0.00232225, 0.002385, 0.002254167, 0.002407584, 0.0022065, 0.002134625, 0.002226708],"warm_s":[0.00068042578125, 0.000691084625, 0.000683765625, 0.00070696615625, 0.00069443490625, 0.000670328125, 0.0006610065],"warm_loops":32,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"factorized_pack_free_join","candidate":"range-shannon","scenario":"coup_4290","schedule":"factorized","memo":true,"fanout":4,"worlds":4290,"admissible_worlds":4290,"groups":64,"present_groups":64,"represented_bindings":4096,"native_emissions":832,"branch_emissions":768,"summary_rows":192,"summary_colt_bytes":34096,"staged_id_capacity_bytes":6144,"input_nodes":4146,"final_nodes":14826,"input_bytes_est":221184,"final_bytes_est":1373312,"retained_input_colt_bytes":48,"build_s":0.028033875,"native_setup_s":0.000131458,"fresh_s":[0.002233166, 0.002199708, 0.002157958, 0.002159334, 0.002150625, 0.0021185, 0.002122792],"warm_s":[0.00067834634375, 0.00066211459375, 0.00065693096875, 0.00066166796875, 0.0006710638125, 0.00063409375, 0.0006774166875],"warm_loops":32,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"factorized_pack_free_join","candidate":"range-shannon","scenario":"coup_4290","schedule":"complete","memo":false,"fanout":4,"worlds":4290,"admissible_worlds":4290,"groups":64,"present_groups":64,"represented_bindings":4096,"native_emissions":4096,"branch_emissions":0,"summary_rows":0,"summary_colt_bytes":0,"staged_id_capacity_bytes":0,"input_nodes":4146,"final_nodes":103502,"input_bytes_est":221184,"final_bytes_est":12330496,"retained_input_colt_bytes":41104,"build_s":0.028033875,"native_setup_s":0.000114375,"fresh_s":[0.0272355, 0.027324166, 0.026397417, 0.028921958, 0.029311416, 0.031326416, 0.025977],"warm_s":[0.00111917578125, 0.00109953125, 0.00105490884375, 0.00102015103125, 0.00103981771875, 0.00103870053125, 0.00105212240625],"warm_loops":32,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"factorized_pack_free_join","candidate":"range-shannon","scenario":"coup_4290","schedule":"complete","memo":true,"fanout":4,"worlds":4290,"admissible_worlds":4290,"groups":64,"present_groups":64,"represented_bindings":4096,"native_emissions":4096,"branch_emissions":0,"summary_rows":0,"summary_colt_bytes":0,"staged_id_capacity_bytes":0,"input_nodes":4146,"final_nodes":103502,"input_bytes_est":221184,"final_bytes_est":12617216,"retained_input_colt_bytes":41104,"build_s":0.028033875,"native_setup_s":0.000128333,"fresh_s":[0.02632025, 0.02710875, 0.026362625, 0.025339458, 0.025219875, 0.02752875, 0.028052834],"warm_s":[0.000903365875, 0.000906158875, 0.0009072109375, 0.0009097435, 0.00090673828125, 0.00092527475, 0.0009127265625],"warm_loops":32,"checksum":5691950,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1379 filtered out; finished in 1.49s
+
+
+        1.49 real         1.47 user         0.00 sys
+            52625408  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3427  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 337  involuntary context switches
+         15805432442  instructions retired
+          4929601988  cycles elapsed
+            49824176  peak memory footprint

@@ -1,0 +1,1139 @@
+{
+  "production_source_hashes_match": true,
+  "source_snapshots_verified": [
+    "build-baseline.json",
+    "build-fastpaths.json",
+    "build-anchored.json",
+    "build-product.json",
+    "build-dispatched.json",
+    "build-packed.json",
+    "build-relations-v1.json",
+    "build-relations.json",
+    "build-block-v1.json",
+    "build-tail.json",
+    "build-observation.json",
+    "build-dependency.json",
+    "build-transfer.json",
+    "build-transfer-tables.json",
+    "build-transfer-words.json",
+    "build-owned.json",
+    "build-diagonal.json",
+    "build-essential.json",
+    "build-essential-derived.json",
+    "build-classify-v1.json",
+    "build-classify.json",
+    "build-slab.json",
+    "build.json"
+  ],
+  "documents_checked": 70,
+  "missing_local_links": [],
+  "unbalanced_code_fences": [],
+  "run_statuses": {
+    "anchored-smoke.json": {
+      "passed": 17,
+      "resource_cap": 1
+    },
+    "block-modal-layout.json": {
+      "passed": 43
+    },
+    "block-native-verification.json": {
+      "passed": 1
+    },
+    "block-relations-layout.json": {
+      "passed": 43
+    },
+    "block64-initial-sweep.json": {
+      "passed": 19,
+      "resource_cap": 1
+    },
+    "classify-essential-repeat.json": {
+      "passed": 3
+    },
+    "classify-focused-repeat.json": {
+      "passed": 9
+    },
+    "classify-initial-sweep.json": {
+      "passed": 23
+    },
+    "classify-smoke-fixed.json": {
+      "passed": 7
+    },
+    "classify-smoke.json": {
+      "passed": 1,
+      "failed": 1
+    },
+    "coup-product.json": {
+      "passed": 9
+    },
+    "dense-control.json": {
+      "passed": 11
+    },
+    "dependency-native-verification.json": {
+      "passed": 1
+    },
+    "diagonal-owned-sweep.json": {
+      "passed": 43
+    },
+    "dispatched.json": {
+      "passed": 11
+    },
+    "essential-derived-repeat.json": {
+      "passed": 15
+    },
+    "essential-derived-sweep.json": {
+      "passed": 33
+    },
+    "essential-initial-sweep.json": {
+      "passed": 33
+    },
+    "modal-smoke.json": {
+      "passed": 2
+    },
+    "observation-law-initial.json": {
+      "passed": 2
+    },
+    "observation-laws.json": {
+      "passed": 15
+    },
+    "observation-native-verification.json": {
+      "passed": 1
+    },
+    "observation-relations-regression.json": {
+      "passed": 2
+    },
+    "owned-initial.json": {
+      "passed": 2
+    },
+    "owned-native-verification.json": {
+      "passed": 1
+    },
+    "owned-sweep.json": {
+      "passed": 15
+    },
+    "packed-modal-controls.json": {
+      "passed": 12
+    },
+    "packed-verification.json": {
+      "passed": 1
+    },
+    "packed256-sweep.json": {
+      "passed": 18,
+      "resource_cap": 1
+    },
+    "packed4096-initial-sweep.json": {
+      "passed": 19,
+      "resource_cap": 1
+    },
+    "packed512-initial-sweep.json": {
+      "passed": 19,
+      "resource_cap": 1
+    },
+    "packed64-sweep.json": {
+      "passed": 18,
+      "resource_cap": 1
+    },
+    "relations-dense-join.json": {
+      "passed": 8
+    },
+    "relations-packed-join.json": {
+      "passed": 8
+    },
+    "relations-repeat.json": {
+      "passed": 12
+    },
+    "relations-sweep.json": {
+      "passed": 12
+    },
+    "relations-v2-verification.json": {
+      "passed": 1
+    },
+    "repeat-coup.json": {
+      "passed": 9
+    },
+    "repeat-modal.json": {
+      "passed": 9
+    },
+    "repeat-product.json": {
+      "passed": 9
+    },
+    "repeat-runs.json": {
+      "passed": 9
+    },
+    "repeat-sparse.json": {
+      "passed": 9
+    },
+    "repeat-structured.json": {
+      "passed": 9
+    },
+    "slab-classifier-repeat.json": {
+      "passed": 4
+    },
+    "slab-focused-repeat.json": {
+      "passed": 25
+    },
+    "slab-initial-sweep.json": {
+      "passed": 64
+    },
+    "slab-native-smoke.json": {
+      "passed": 12
+    },
+    "smoke.json": {
+      "passed": 2
+    },
+    "sweep-1.json": {
+      "passed": 67,
+      "resource_cap": 3
+    },
+    "sweep-2.json": {
+      "passed": 81,
+      "resource_cap": 3
+    },
+    "sweep-3.json": {
+      "passed": 97,
+      "resource_cap": 4
+    },
+    "symbolic-relations-initial.json": {
+      "passed": 2
+    },
+    "symbolic-relations-sweep.json": {
+      "passed": 10
+    },
+    "tail-coup-repeat.json": {
+      "passed": 15
+    },
+    "tail-focused-repeat.json": {
+      "passed": 8
+    },
+    "tail-map-controls.json": {
+      "passed": 56
+    },
+    "tail-modal-repeat.json": {
+      "passed": 43
+    },
+    "tail-native-verification.json": {
+      "passed": 1
+    },
+    "tail-symbolic.json": {
+      "passed": 64,
+      "resource_cap": 9
+    },
+    "transfer-dense-control.json": {
+      "passed": 4
+    },
+    "transfer-direct-sweep.json": {
+      "passed": 15
+    },
+    "transfer-initial.json": {
+      "passed": 2
+    },
+    "transfer-native-verification.json": {
+      "passed": 1
+    },
+    "transfer-packed-control.json": {
+      "passed": 4
+    },
+    "transfer-relations-regression.json": {
+      "passed": 2
+    },
+    "transfer-sweep.json": {
+      "passed": 10,
+      "timeout": 5
+    },
+    "transfer-table-native-verification.json": {
+      "passed": 2
+    },
+    "transfer-word-dense-control.json": {
+      "passed": 6
+    },
+    "transfer-word-native-verification.json": {
+      "passed": 3
+    },
+    "transfer-word-packed-control.json": {
+      "passed": 6
+    },
+    "transfer-word-sweep.json": {
+      "passed": 15
+    },
+    "verification.json": {
+      "passed": 1
+    }
+  },
+  "shared_check_logs_present": {
+    "block-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "block-layout-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "classify-complete-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "classify-owned-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "classify-scoped-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "dependency-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "diagonal-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "essential-derived-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "essential-scalar-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "essential-scoped-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "essential-word-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "extraction-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "observation-high-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "observation-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "order-generalization-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "owned-operations-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "slab-complete-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "slab-enum-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "slab-sanity-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "tail-local-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "tail-recursive-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-identity-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-initial-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-table-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-wide-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    },
+    "transfer-word-check.json": {
+      "passed": true,
+      "profile": "debug; not a performance measurement"
+    }
+  },
+  "representation_research_sources_verified": [
+    "1211.4475v1",
+    "1802.09598v2",
+    "1404.4089v1",
+    "1710.06500v1",
+    "1512.05813v1",
+    "2004.02502v1",
+    "2312.00793v1",
+    "1401.3448v1",
+    "1206.5266v1",
+    "2212.03684v1",
+    "2607.06386v1",
+    "2605.03902v4"
+  ],
+  "space_map_check_verified": {
+    "scope": "Independent finite mathematics, not native implementation evidence",
+    "files": {
+      "proposal/research/space-maps/checks.py": "29839e212eec19e92d63f892a1434b1fe1a7712f86e104db33ed6957a1dc552b",
+      "proposal/research/space-maps/checks.json": "4f6771d17d32c9d0edcf23e47f2905967ed2cc35548c91f4645c59eb0786c38d"
+    }
+  },
+  "assembly_symbols_verified": {
+    "relations": 4,
+    "tail": 8,
+    "dependency": 1,
+    "transfer-words": 2,
+    "essential": 8,
+    "essential-derived": 8,
+    "classify": 5,
+    "slab": 8,
+    "slab-storage": 4
+  },
+  "regression_fixes_verified": 2,
+  "backward_reach_check_verified": {
+    "passed": true,
+    "cases": 393304,
+    "scope": "All one/two-state relations and goals; all four-state relations with empty/full/singleton goals; larger chain cases. Finite semantic check, not a performance measurement.",
+    "checker_sha256": "20c91911577861f46665399476f662bdc8f6cffd1c5f75b9ddc66839f075b6bb",
+    "paper": "2212.03684v1",
+    "paper_sha256": "99108bc42737f92d3d7668669b772f87eb30f469432e8325f58ece0ca057c66c"
+  },
+  "backward_reach_schedules_verified": {
+    "passed": true,
+    "cases": [
+      {
+        "family": "counter",
+        "counter_bits": 1,
+        "states": 2,
+        "ordinary_preimages": 2,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 2,
+          "preimages": 4
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 1,
+        "states": 4,
+        "ordinary_preimages": 2,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 2,
+          "preimages": 4
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 2,
+        "states": 4,
+        "ordinary_preimages": 4,
+        "recursive": {
+          "nonterminal_calls": 2,
+          "cache_hits": 1,
+          "block_loops": 5,
+          "preimages": 10
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 2,
+        "states": 8,
+        "ordinary_preimages": 4,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 3,
+          "preimages": 6
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 3,
+        "states": 8,
+        "ordinary_preimages": 8,
+        "recursive": {
+          "nonterminal_calls": 3,
+          "cache_hits": 2,
+          "block_loops": 8,
+          "preimages": 16
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 3,
+        "states": 16,
+        "ordinary_preimages": 8,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 5,
+          "preimages": 10
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 4,
+        "states": 16,
+        "ordinary_preimages": 16,
+        "recursive": {
+          "nonterminal_calls": 4,
+          "cache_hits": 3,
+          "block_loops": 11,
+          "preimages": 22
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 4,
+        "states": 32,
+        "ordinary_preimages": 16,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 9,
+          "preimages": 18
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 5,
+        "states": 32,
+        "ordinary_preimages": 32,
+        "recursive": {
+          "nonterminal_calls": 5,
+          "cache_hits": 4,
+          "block_loops": 14,
+          "preimages": 28
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 5,
+        "states": 64,
+        "ordinary_preimages": 32,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 17,
+          "preimages": 34
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 6,
+        "states": 64,
+        "ordinary_preimages": 64,
+        "recursive": {
+          "nonterminal_calls": 6,
+          "cache_hits": 5,
+          "block_loops": 17,
+          "preimages": 34
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 6,
+        "states": 128,
+        "ordinary_preimages": 64,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 33,
+          "preimages": 66
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 7,
+        "states": 128,
+        "ordinary_preimages": 128,
+        "recursive": {
+          "nonterminal_calls": 7,
+          "cache_hits": 6,
+          "block_loops": 20,
+          "preimages": 40
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 7,
+        "states": 256,
+        "ordinary_preimages": 128,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 65,
+          "preimages": 130
+        }
+      },
+      {
+        "family": "counter",
+        "counter_bits": 8,
+        "states": 256,
+        "ordinary_preimages": 256,
+        "recursive": {
+          "nonterminal_calls": 8,
+          "cache_hits": 7,
+          "block_loops": 23,
+          "preimages": 46
+        }
+      },
+      {
+        "family": "alternating-leading-bit",
+        "counter_bits": 8,
+        "states": 512,
+        "ordinary_preimages": 256,
+        "recursive": {
+          "nonterminal_calls": 1,
+          "cache_hits": 0,
+          "block_loops": 129,
+          "preimages": 258
+        }
+      }
+    ],
+    "scope": "Explicit finite relations, same full reachable-state answer. Counts of semantic schedule operations, not graph visits or native timing.",
+    "checker_sha256": "b09bd28d3ab291b45b1656a9020b84d65488614ce1880ecde4693f109a5f5118",
+    "paper": "2212.03684v1",
+    "paper_sha256": "99108bc42737f92d3d7668669b772f87eb30f469432e8325f58ece0ca057c66c"
+  },
+  "essential_reference_verified": {
+    "passed": true,
+    "function_cases": 525888,
+    "shannon_reconstructions": 13120,
+    "boolean_cases": 59136,
+    "quantifier_cases": 46080,
+    "scope": "Finite independent reference, including all functions up to four coordinates, two physical orders and every table limit 1..width; sampled arbitrary Shannon reconstruction, all Boolean operators and all quantifier masks. One sixty-coordinate noncontiguous local-table case. Not Rust or performance evidence.",
+    "checker_sha256": "65523e8dba1321ac95d8e7cbe6d3545eb59eebf6d3059cc80dbb87810c7dde95"
+  },
+  "essential_rust_verified": {
+    "passed": true,
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--release"
+    ],
+    "cwd": "essential-prototype",
+    "scope": "Standalone raw Boolean canonical form; not a scoped Event carrier or a performance comparison.",
+    "profile": "standalone release; no native engine, no timing measurement",
+    "essential_kernel": "derived",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)",
+    "source_hashes": {
+      "essential-prototype/Cargo.toml": "ea290898691ea83cbfe6d8ac46fa740783e1a539d7efe218653a3237f74fb467",
+      "essential-prototype/Cargo.lock": "c26a41d37479e294096d806883c7add983f75134139df9c27275c2a5db0efaa8",
+      "essential-prototype/src/lib.rs": "5c98e6ed133151dee7c2e5f4d58c0c8e845b88fdb9c71beb6913026c95b59dac",
+      "src/essential_raw.rs": "aa746aeaff953fb9846c2a45aa0946c7c199de419ab6bc73c53df3548b5ea01a",
+      "src/essential_words.rs": "3457ad2bc1ac55958e0fbb658128fcd7ffea633e2cdefa7e321de314646cc25a"
+    },
+    "log": "essential-rust-check.log"
+  },
+  "classification_verified": {
+    "passed": true,
+    "command": [
+      "cargo",
+      "test",
+      "--release",
+      "--offline",
+      "--",
+      "--test-threads=1"
+    ],
+    "profile": "standalone release; correctness only, no native timing",
+    "source_hashes": {
+      "classify-prototype/Cargo.toml": "f85fb5f04c1e74e53c29aa108330e1b4908347c30320c67cd1cd5e09e03bb433",
+      "classify-prototype/src/lib.rs": "952aa3fa850b840d75f837618224e2afbc771d186f92e57e783e277c0ed5d83f",
+      "src/essential_raw.rs": "aa746aeaff953fb9846c2a45aa0946c7c199de419ab6bc73c53df3548b5ea01a",
+      "src/essential_words.rs": "3457ad2bc1ac55958e0fbb658128fcd7ffea633e2cdefa7e321de314646cc25a",
+      "src/occupancy.rs": "527f898849c28053e54550a07e18db9f34bd8e280ee937d7447c208076fb3e1b"
+    },
+    "essential_kernel": "derived",
+    "log": "classify-check.log",
+    "scope": "Read-only raw finite-binary classifier; 15,360 supported predicate triples plus complement/swap checks and scattered sixty-coordinate cases. Not a scoped/public API or native filter.",
+    "cargo_lock_sha256": "2edaeaf727d58102485c54a57a19f0fbe155a86ed6e6430b307fa44beb971433"
+  },
+  "signature_calculus_verified": {
+    "passed": true,
+    "subject": "Qualitative composition over Event values; not state relational product",
+    "table": [
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        2,
+        4,
+        8,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        2,
+        0,
+        0,
+        0,
+        4,
+        0,
+        0,
+        0,
+        8,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        2,
+        8,
+        8,
+        0,
+        8,
+        4,
+        8,
+        0,
+        8,
+        8,
+        8
+      ],
+      [
+        0,
+        16,
+        256,
+        4096,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        32,
+        1024,
+        60096,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        512,
+        8192,
+        0,
+        64,
+        1024,
+        16384,
+        0,
+        128,
+        2048,
+        32768
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        2048,
+        43648,
+        0,
+        128,
+        1024,
+        51392,
+        0,
+        128,
+        2048,
+        34944
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        16,
+        0,
+        0,
+        0,
+        256,
+        0,
+        0,
+        0,
+        4096,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        64,
+        128,
+        0,
+        512,
+        1024,
+        2048,
+        0,
+        8192,
+        16384,
+        32768
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        32,
+        0,
+        0,
+        0,
+        1024,
+        0,
+        0,
+        0,
+        60096,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        128,
+        128,
+        0,
+        2048,
+        1024,
+        2048,
+        0,
+        43648,
+        51392,
+        34944
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        16,
+        4096,
+        4096,
+        0,
+        4096,
+        256,
+        4096,
+        0,
+        4096,
+        4096,
+        4096
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        16384,
+        57536,
+        0,
+        8192,
+        1024,
+        59904,
+        0,
+        8192,
+        16384,
+        57344
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        8192,
+        8192,
+        0,
+        16384,
+        1024,
+        16384,
+        0,
+        57536,
+        59904,
+        57344
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        32,
+        32768,
+        41088,
+        0,
+        32768,
+        1024,
+        51200,
+        0,
+        41088,
+        51200,
+        60096
+      ]
+    ],
+    "binary_operation_signature_cases": 240,
+    "triple_occupancies": 255,
+    "realizable_signature_triples": 165,
+    "largest_minimum_witness_worlds": 5,
+    "associativity_atom_triples": 3375,
+    "identity_signatures": [
+      1,
+      8,
+      9
+    ],
+    "finite_endpoint_cases": 1364,
+    "saturated_capacity_cases": 255,
+    "capacity_assignment_enumerations": 50624,
+    "finite_boundary_counterexample": {
+      "support": [
+        0,
+        1,
+        2
+      ],
+      "signature": 9,
+      "requested_ab": 13,
+      "requested_bc": 11,
+      "impossible_a_c": [
+        0
+      ],
+      "possible_a_c": [
+        0,
+        1
+      ]
+    },
+    "closure_counterexample": {
+      "worlds": 3,
+      "unknown_events": 4,
+      "off_diagonal_signature": 7,
+      "diagonal_signature": 9,
+      "algebraically_closed": true,
+      "every_triangle_realizable": true,
+      "globally_realizable": false
+    },
+    "theorem_scope": "Full finite powerset algebra, one existential intermediate Event; four cell cardinalities capped at two suffice. This refinement is not claimed closed under repeated composition.",
+    "checker_sha256": "99ac5a24a2d9acaae61cbbc85bb9911b3c17b8b81faee2ad657bff3bc8f7b953",
+    "reading": {
+      "arxiv": "1305.7345v2",
+      "sections": "Definitions 2\u20133, Fact 4, section 2.2 and section 3.2",
+      "files": {
+        "proposal/papers/dylla-mossakowski-schneider-wolter-2013-algebraic-qualitative-calculi.pdf": "60c207043e1802abf76603d69274332ab9b7c16c2196cbcf041caa9a337fe66b",
+        "proposal/review-evidence/dylla-mossakowski-schneider-wolter-2013-algebraic-qualitative-calculi.txt": "84dc1469e9b552eee5cde3476d817855f7e7f506ac882cab0b83d703dcdedd96"
+      }
+    }
+  },
+  "lean_proofs_verified": {
+    "passed": true,
+    "toolchain": "leanprover/lean4:v4.32.0",
+    "lean_version": "Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)",
+    "lean_binary": "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+    "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+    "source_hashes": {
+      "lean/EventSignatures.lean": "3d4544bd6616fdcfc1d2ac63f70c1a02dab99b6dc1b682a4b9e54c26d9e98542",
+      "lean/EssentialCoordinates.lean": "477aadc4fa3c5499fc967602575816cd1d93e647a52d1a495122894a665bd001",
+      "lean/Anchored.lean": "c1465ad33466821b164c4e66098673a947c6ea0627c348a41efb79d6cda2c8d8",
+      "lean/lean-toolchain": "2773c517aa90b66ea8a2c52bddddf84393157797f8341be0df45294fff7fd32e"
+    },
+    "log": "lean-check.log",
+    "files": [
+      {
+        "file": "EventSignatures.lean",
+        "command": [
+          "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+          "EventSignatures.lean"
+        ],
+        "exit_code": 0,
+        "checked_axioms": {
+          "EventSignatures.possible_apply_iff": [],
+          "EventSignatures.full_apply_iff": [],
+          "EventSignatures.signature_nonempty": [],
+          "EventSignatures.swap": [],
+          "EventSignatures.complement_left": [
+            "propext"
+          ],
+          "EventSignatures.complement_right": [
+            "propext"
+          ],
+          "EventSignatures.signature_iff_all_binary_tests": [
+            "propext",
+            "Quot.sound"
+          ],
+          "EventSignatures.composition_distinguishes_same_signature": [
+            "propext",
+            "Quot.sound"
+          ],
+          "EventSignatures.no_signature_factorization": [
+            "propext",
+            "Quot.sound"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "file": "EssentialCoordinates.lean",
+        "command": [
+          "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+          "EssentialCoordinates.lean"
+        ],
+        "exit_code": 0,
+        "checked_axioms": {
+          "EssentialCoordinates.essential_sufficient": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "EssentialCoordinates.essential_minimum": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "EssentialCoordinates.support_iff_contains_essential": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "EssentialCoordinates.complement_essential": [
+            "propext"
+          ],
+          "EssentialCoordinates.canonical_projection": [
+            "propext",
+            "Classical.choice",
+            "Quot.sound"
+          ],
+          "EssentialCoordinates.cofactor_characterization": [
+            "propext",
+            "Quot.sound"
+          ],
+          "EssentialCoordinates.quantified_coordinate_inessential": [
+            "propext",
+            "Quot.sound"
+          ]
+        },
+        "passed": true
+      },
+      {
+        "file": "Anchored.lean",
+        "command": [
+          "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+          "Anchored.lean"
+        ],
+        "exit_code": 0,
+        "checked_axioms": {
+          "Anchored.root_excludes_anchor": [
+            "propext"
+          ],
+          "Anchored.root_excludes_outside": [
+            "propext"
+          ],
+          "Anchored.decode_root": [
+            "propext"
+          ],
+          "Anchored.complement_same_root": [
+            "propext"
+          ],
+          "Anchored.complement_flips_polarity": [
+            "propext"
+          ],
+          "Anchored.exact_identity": [
+            "propext"
+          ],
+          "Anchored.adjusted_zero": [
+            "propext"
+          ],
+          "Anchored.binary_apply_root": [
+            "propext"
+          ]
+        },
+        "passed": true
+      }
+    ],
+    "verifier_sha256": "ba32414d8fce73eb308f4cf03a85b92d23cdba26b988d7b02b56e3f8daf19f35",
+    "boundary": "Kernel-checked denotational theorems. Rust correspondence, arena canonicality and machine code are not formally verified."
+  },
+  "slab_layouts_verified": {
+    "cases": 506,
+    "matched_cases": 146,
+    "binary_sha256": "9cb8d4d9f08bd92c012f324ed1824782551eeed1eaf9894b4496597890e9f696"
+  }
+}

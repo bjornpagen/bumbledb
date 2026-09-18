@@ -1,0 +1,27 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"elimination","candidate":"mdd4-pair","bits":12,"worlds":4096,"fresh_s":[1.2583e-5, 9.75e-6, 6.333e-6, 7.083e-6, 5.917e-6, 7.917e-6, 6.625e-6],"nodes":64,"bytes_est":9000,"verified":true}
+EVENT_LAB {"kind":"elimination","candidate":"mdd4-pair","bits":18,"worlds":262144,"fresh_s":[5.4542e-5, 4.4333e-5, 3.6583e-5, 3.5417e-5, 5.325e-5, 3.775e-5, 3.1833e-5],"nodes":305,"bytes_est":38232,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.02s
+
+
+        0.01 real         0.01 user         0.00 sys
+             4161536  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 468  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  13  involuntary context switches
+           255342632  instructions retired
+            59873670  cycles elapsed
+             2736488  peak memory footprint

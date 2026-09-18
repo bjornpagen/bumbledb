@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "structural_processes": 48,
+  "unchanged_step_controls": 24,
+  "matched_kernel_pairs": 24,
+  "exhaustive_checks": {
+    "passed": true,
+    "binary": 25165824,
+    "projection": 49152,
+    "maps": 178176,
+    "completed_projection": 49152,
+    "orders": 6,
+    "modes": 2,
+    "kernels": 2
+  },
+  "multi_axis_checks": [
+    {
+      "passed": true,
+      "four_axis_masks": 128,
+      "visible_worlds": 16384,
+      "hidden_assignments_per_world": 16
+    }
+  ],
+  "lean_reports": 11,
+  "axiom_free_reports": 7,
+  "checker_sha256": "90e03691ede2c0498ca1a1dc426aff36a7dc09a5ce8a826c27b067d5d2931ea4",
+  "boundary": "Standalone structure and semantics, not native Free Join or latency evidence."
+}

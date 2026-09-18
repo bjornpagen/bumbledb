@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"free_join","candidate":"runs","scenario":"coup_4290","shape":"triangle","memo":false,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":1256,"input_bytes_est":87376,"final_bytes_est":3568088,"colt_bytes":163104,"build_s":[0.000207583, 0.00018325, 0.000175417, 0.000178833, 0.000176083, 0.000172334, 0.000177334],"native_setup_s":0.000225208,"native_first_join_s":0.000108125,"join_only_s":[5.3666e-5, 4.625e-5, 4.5917e-5, 4.6167e-5, 4.6042e-5, 4.6042e-5, 4.6e-5],"fresh_s":[0.014101041, 0.013582792, 0.013274167, 0.013468125, 0.013074625, 0.014038791, 0.013975],"warm_s":[0.013580292, 0.01370975, 0.0131052915, 0.0132981455, 0.013425896, 0.0134246875, 0.013273333],"warm_loops":2,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"runs","scenario":"coup_4290","shape":"triangle","memo":true,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":1256,"input_bytes_est":87376,"final_bytes_est":3639768,"colt_bytes":163104,"build_s":[0.000207583, 0.00018325, 0.000175417, 0.000178833, 0.000176083, 0.000172334, 0.000177334],"native_setup_s":0.000225208,"native_first_join_s":0.000108125,"join_only_s":[5.3666e-5, 4.625e-5, 4.5917e-5, 4.6167e-5, 4.6042e-5, 4.6042e-5, 4.6e-5],"fresh_s":[0.00615075, 0.005619, 0.00624275, 0.005991458, 0.006216833, 0.005992, 0.005935584],"warm_s":[8.338801953125e-5, 8.38201484375e-5, 8.404426953125e-5, 8.542708203125e-5, 8.602294921875e-5, 8.518326953125e-5, 8.54436875e-5],"warm_loops":256,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"runs","scenario":"coup_4290","shape":"clover","memo":false,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":2483,"input_bytes_est":87376,"final_bytes_est":6790304,"colt_bytes":41104,"build_s":[0.000180083, 0.000175333, 0.000172, 0.00017275, 0.000207292, 0.000202458, 0.00019675],"native_setup_s":0.000165584,"native_first_join_s":0.000104,"join_only_s":[7.5458e-5, 7.1292e-5, 7.125e-5, 7.1083e-5, 7.125e-5, 7.475e-5, 7.1208e-5],"fresh_s":[0.052652375, 0.05319175, 0.0527015, 0.052254542, 0.051988458, 0.054359708, 0.053271584],"warm_s":[0.052641625, 0.052247875, 0.052003334, 0.052515125, 0.052063958, 0.052678167, 0.052300542],"warm_loops":1,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"runs","scenario":"coup_4290","shape":"clover","memo":true,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":2483,"input_bytes_est":87376,"final_bytes_est":7077024,"colt_bytes":41104,"build_s":[0.000180083, 0.000175333, 0.000172, 0.00017275, 0.000207292, 0.000202458, 0.00019675],"native_setup_s":0.000165584,"native_first_join_s":0.000104,"join_only_s":[7.5458e-5, 7.1292e-5, 7.125e-5, 7.1083e-5, 7.125e-5, 7.475e-5, 7.1208e-5],"fresh_s":[0.0160775, 0.016428958, 0.016487625, 0.016054542, 0.015649167, 0.016483542, 0.016170417],"warm_s":[0.0001593564453125, 0.0001621526640625, 0.00016751171875, 0.000162263671875, 0.000163509109375, 0.000164153, 0.000160263671875],"warm_loops":128,"checksum":5691950,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 1.73s
+
+
+        1.73 real         1.70 user         0.02 sys
+            21102592  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1504  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 709  involuntary context switches
+         20308025479  instructions retired
+          5779000993  cycles elapsed
+            18645352  peak memory footprint

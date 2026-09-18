@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"scoped_product_free_join","candidate":"dense-dispatched","product_mode":"materialized","support":"copied-face","admissible_worlds":208,"bits":12,"worlds":4096,"rows":128,"groups":16,"memo":false,"build_s":[1.1542e-5],"join_only_s":[2.6166e-5],"fresh_s":[0.000241542],"warm_s":[0.000226375],"input_bytes_est":15580,"final_bytes_est":22248,"input_nodes":25,"final_nodes":36,"input_storage":null,"final_storage":null,"checksum":704,"verified":true}
+EVENT_LAB {"kind":"scoped_product_free_join","candidate":"dense-dispatched","product_mode":"materialized","support":"copied-face","admissible_worlds":208,"bits":12,"worlds":4096,"rows":128,"groups":16,"memo":true,"build_s":[1.1542e-5],"join_only_s":[2.6166e-5],"fresh_s":[5.5208e-5],"warm_s":[6.708e-6],"input_bytes_est":15580,"final_bytes_est":23424,"input_nodes":25,"final_nodes":36,"input_storage":null,"final_storage":null,"checksum":704,"verified":true}
+EVENT_LAB {"kind":"scoped_product_free_join","candidate":"dense-dispatched","product_mode":"materialized","support":"copied-face","admissible_worlds":3904,"bits":18,"worlds":262144,"rows":128,"groups":16,"memo":false,"build_s":[0.000171375],"join_only_s":[1.6167e-5],"fresh_s":[0.013411042],"warm_s":[0.013151667],"input_bytes_est":886684,"final_bytes_est":1248168,"input_nodes":25,"final_nodes":36,"input_storage":null,"final_storage":null,"checksum":3264,"verified":true}
+EVENT_LAB {"kind":"scoped_product_free_join","candidate":"dense-dispatched","product_mode":"materialized","support":"copied-face","admissible_worlds":3904,"bits":18,"worlds":262144,"rows":128,"groups":16,"memo":true,"build_s":[0.000171375],"join_only_s":[1.6167e-5],"fresh_s":[0.002584042],"warm_s":[1.3792e-5],"input_bytes_est":886684,"final_bytes_est":1249344,"input_nodes":25,"final_nodes":36,"input_storage":null,"final_storage":null,"checksum":3264,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1378 filtered out; finished in 0.12s
+
+
+        0.12 real         0.12 user         0.00 sys
+            13451264  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1035  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  26  involuntary context switches
+          1838002151  instructions retired
+           437856731  cycles elapsed
+            10764648  peak memory footprint

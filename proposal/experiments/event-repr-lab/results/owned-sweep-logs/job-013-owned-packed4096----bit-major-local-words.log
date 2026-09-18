@@ -1,0 +1,31 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"owned_free_join","candidate":"packed4096","target_candidate":"packed4096","bits":12,"target_layout":"bit-major","target_setup_s":[2.125e-6, 2.666e-6, 2.5e-6, 1.584e-6, 1.375e-6],"restore_inputs_s":[2.9292e-5, 2.55e-5, 2.2125e-5, 1.9709e-5, 1.95e-5],"program_setup_s":[0.000238459, 0.000232375, 0.00023075, 0.000268958, 0.000228416],"query_s":[0.00171325, 0.001731667, 0.001665375, 0.001719667, 0.001666792],"owned_compute_s":[0.001955875, 0.0019655, 0.001897625, 0.001989667, 0.001896125],"novel_publication_classes":[10, 10, 10, 10, 10],"input_roots":24,"output_roots":80,"input_packet_bytes":13749,"output_packet_bytes":5543,"final_arena_bytes_est":127472,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed4096","target_candidate":"packed4096","bits":12,"target_layout":"face-major","target_setup_s":[7.92e-7, 1.209e-6, 1.708e-6, 1.292e-6, 2.959e-6],"restore_inputs_s":[3.4083e-5, 3.0625e-5, 3.1166e-5, 3.1041e-5, 2.9208e-5],"program_setup_s":[0.000222333, 0.000209375, 0.000209, 0.000209417, 0.000209166],"query_s":[0.0017005, 0.001742583, 0.001726791, 0.001751333, 0.001705917],"owned_compute_s":[0.00192425, 0.001952958, 0.001936875, 0.001961875, 0.001915958],"novel_publication_classes":[10, 10, 10, 10, 10],"input_roots":24,"output_roots":80,"input_packet_bytes":13749,"output_packet_bytes":5543,"final_arena_bytes_est":127472,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed4096","target_candidate":"packed512","bits":12,"target_layout":"bit-major","target_setup_s":[8.75e-7, 1.583e-6, 1.291e-6, 1.291e-6, 1.542e-6],"restore_inputs_s":[2.5958e-5, 2.35e-5, 2.2458e-5, 2.1417e-5, 2.2417e-5],"program_setup_s":[4.3584e-5, 4.5375e-5, 4.1e-5, 4.1917e-5, 4.1084e-5],"query_s":[0.000257041, 0.000261584, 0.000235291, 0.000232791, 0.000231708],"owned_compute_s":[0.000303042, 0.000308334, 0.000277583, 0.000276042, 0.000274],"novel_publication_classes":[10, 10, 10, 10, 10],"input_roots":24,"output_roots":80,"input_packet_bytes":13749,"output_packet_bytes":1645,"final_arena_bytes_est":78436,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed4096","target_candidate":"packed4096","bits":18,"target_layout":"bit-major","target_setup_s":[2e-6, 6.125e-6, 1.0542e-5, 6.709e-6, 5.792e-6],"restore_inputs_s":[0.000114084, 0.000121375, 0.000127708, 0.00013, 0.000127583],"program_setup_s":[0.001782292, 0.001810375, 0.001760834, 0.001765667, 0.001802334],"query_s":[0.002925375, 0.002939, 0.002885042, 0.002986875, 0.003006125],"owned_compute_s":[0.004710041, 0.004755791, 0.004648667, 0.004754958, 0.004810833],"novel_publication_classes":[18, 18, 18, 18, 18],"input_roots":24,"output_roots":80,"input_packet_bytes":62311,"output_packet_bytes":20419,"final_arena_bytes_est":911536,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed4096","target_candidate":"packed4096","bits":18,"target_layout":"face-major","target_setup_s":[1.125e-6, 6.542e-6, 5.75e-6, 5.875e-6, 5.542e-6],"restore_inputs_s":[0.00347, 0.003449666, 0.003372, 0.003231709, 0.003277125],"program_setup_s":[0.000358333, 0.00034475, 0.000330167, 0.00033575, 0.000332917],"query_s":[0.011454042, 0.010896833, 0.01122325, 0.011094625, 0.010813959],"owned_compute_s":[0.01181525, 0.011244041, 0.011556667, 0.011433625, 0.011149333],"novel_publication_classes":[18, 18, 18, 18, 18],"input_roots":24,"output_roots":80,"input_packet_bytes":62311,"output_packet_bytes":10673,"final_arena_bytes_est":8618160,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed4096","target_candidate":"packed512","bits":18,"target_layout":"bit-major","target_setup_s":[2.167e-6, 5.208e-6, 5.458e-6, 6.25e-6, 5.334e-6],"restore_inputs_s":[0.002899584, 0.0030245, 0.003011625, 0.003054, 0.003011875],"program_setup_s":[0.001260625, 0.001242167, 0.001289708, 0.001226542, 0.001322917],"query_s":[0.000703708, 0.000673625, 0.000691042, 0.000682667, 0.000694708],"owned_compute_s":[0.001966875, 0.00192475, 0.001983583, 0.001912417, 0.002020375],"novel_publication_classes":[18, 18, 18, 18, 18],"input_roots":24,"output_roots":80,"input_packet_bytes":62311,"output_packet_bytes":5221,"final_arena_bytes_est":626852,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 11.72s
+
+
+       11.72 real        11.63 user         0.08 sys
+            29261824  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1999  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                1822  involuntary context switches
+        228108823205  instructions retired
+         39340149856  cycles elapsed
+            26378624  peak memory footprint

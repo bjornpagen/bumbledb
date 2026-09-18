@@ -1,0 +1,41 @@
+
+running 1 test
+test event_repr_lab::semantics ... EVENT_LAB {"kind":"verification","candidate":"dense","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense-dispatched","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"sparse","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"roaring","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"runs","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-root","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"mdd4-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-anchored","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed256","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed4096","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"block64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"high_coordinate_verification","bits":40,"candidates":9,"passed":true}
+EVENT_LAB {"kind":"coordinate_boundary_verification","candidates":14,"extra_orders_per_candidate":2,"face_layouts_per_candidate":3,"passed":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.60s
+
+
+        0.60 real         0.59 user         0.01 sys
+            25821184  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1789  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 333  involuntary context switches
+          6419586281  instructions retired
+          2011921974  cycles elapsed
+            22626712  peak memory footprint

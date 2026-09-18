@@ -1,0 +1,42 @@
+shared512-normalize 175 lines; 0 NEON Boolean instructions
+prefix512-preserving-product 286 lines; 0 NEON Boolean instructions
+minimum512-preserving-product 287 lines; 0 NEON Boolean instructions
+shared512-count-words 542 lines; 32 NEON Boolean instructions
+10127b59c:     	cnt.8b	v0, v0
+10127b5a0:     	addv.8b	b0, v0
+10127b67c:     	cnt.8b	v0, v0
+10127b680:     	addv.8b	b0, v0
+10127b7b0:     	cnt.8b	v0, v0
+10127b7b4:     	addv.8b	b0, v0
+10127b8ac:     	cnt.8b	v0, v0
+10127b8b0:     	addv.8b	b0, v0
+10127b974:     	cnt.16b	v2, v2
+10127b980:     	udot.4s	v5, v4, v2
+10127b98c:     	cnt.16b	v2, v2
+10127b994:     	udot.4s	v3, v4, v2
+10127b9a4:     	cnt.16b	v2, v2
+10127b9ac:     	udot.4s	v7, v4, v2
+10127b9c0:     	cnt.16b	v0, v0
+10127b9c4:     	udot.4s	v2, v4, v0
+10127ba04:     	cnt.8b	v0, v0
+10127ba08:     	addv.8b	b0, v0
+10127ba44:     	cnt.16b	v1, v1
+10127ba50:     	udot.4s	v7, v6, v1
+10127ba64:     	cnt.16b	v1, v1
+10127ba6c:     	udot.4s	v2, v6, v1
+10127ba88:     	cnt.16b	v1, v1
+10127ba90:     	udot.4s	v16, v6, v1
+10127baac:     	cnt.16b	v0, v0
+10127bab0:     	udot.4s	v1, v6, v0
+10127bb04:     	cnt.8b	v0, v0
+10127bb08:     	addv.8b	b0, v0
+10127bb34:     	cnt.16b	v2, v2
+10127bb40:     	udot.4s	v5, v4, v2
+10127bb4c:     	cnt.16b	v2, v2
+10127bb54:     	udot.4s	v3, v4, v2
+10127bb64:     	cnt.16b	v2, v2
+10127bb6c:     	udot.4s	v7, v4, v2
+10127bb80:     	cnt.16b	v0, v0
+10127bb84:     	udot.4s	v2, v4, v0
+10127bbc4:     	cnt.8b	v0, v0
+10127bbc8:     	addv.8b	b0, v0

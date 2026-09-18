@@ -1,0 +1,26 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic","candidate":"bdd-pair","pairs":8,"interleaved":false,"worlds":65536,"build_s":0.000112959,"count_s":0.000020083,"nodes":1514,"bytes_est":134848,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.00s
+
+
+        0.00 real         0.00 user         0.00 sys
+             3637248  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 438  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  15  involuntary context switches
+            25394356  instructions retired
+             9520441  cycles elapsed
+             2261376  peak memory footprint

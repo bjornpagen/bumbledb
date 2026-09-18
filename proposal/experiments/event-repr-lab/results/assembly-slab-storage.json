@@ -1,0 +1,159 @@
+{
+  "binary_sha256": "9cb8d4d9f08bd92c012f324ed1824782551eeed1eaf9894b4496597890e9f696",
+  "lab_sources": {
+    "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+    "src/carrier.rs": "7dabfc5bd33e481179062ba9bff799d75542ee682dcb7dab1c3929959ee1a3c3",
+    "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+    "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+    "src/diagonal_checks.rs": "a45ce14c303b65fc9aacdccb7c16fc4ce9f19874cd62aa1b674faec9da85d169",
+    "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+    "src/essential.rs": "c6fc6a132dd9e0a625a82efe47a308f3198e254ff304fb7fb10a4a83ca91a7aa",
+    "src/essential_raw.rs": "3e48b039d36d7e0e7f03899e2442d3b9434c7a86a3e1b6fd234774445c635013",
+    "src/essential_store.rs": "929dcbed68bae9fdd084b1e6ae28bc4d3917d4943dde6befe605183005a29637",
+    "src/essential_words.rs": "3457ad2bc1ac55958e0fbb658128fcd7ffea633e2cdefa7e321de314646cc25a",
+    "src/finite.rs": "1ad66e84ba8488713f2fc8bd514a0d2e1ae8f6b2c4a2499dfa6f6aec21c976ca",
+    "src/law_bench.rs": "0a6c298e0de7fd572dca65631ace793b7cc8273e6594ab2d5485df1dab401054",
+    "src/lib.rs": "14790205ee92957d33528e278016d9272a7b93cfcd280cb173c6653675a7f3f1",
+    "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+    "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+    "src/observation.rs": "280d1e20e660cb00840c40f09a6998c00fdf435258a11a064d0a9cc68f9a8312",
+    "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+    "src/occupancy.rs": "527f898849c28053e54550a07e18db9f34bd8e280ee937d7447c208076fb3e1b",
+    "src/owned_bench.rs": "115589d84c5d2f6bee823308c088b8431c722423890a5a6136a4313ece0579c6",
+    "src/packed.rs": "5dddb0002c4b0f60eef6a59ae462d950d2a2e3ec60ddc858b91d31e66a75482a",
+    "src/relational_core.rs": "60615ef8844b270cd8cb3ac9e15802d8c7821b2b53595fd8ff3d5cb372e387ae",
+    "src/relations.rs": "0edd99420cb63986ace66e258c0002a5d3c4e603845bf666bbf81e4eb8b03921",
+    "src/semantic_checks.rs": "eab94bdbc7a1712403f1002b99bf029c93623568cbdb7e68bbb45b34d54cb9b1",
+    "src/signature.rs": "e23b491ac9af760fbbee1cd9b39177607f8ff4a5caa700ca06111eabb6f329e0",
+    "src/signature_bench.rs": "6f2041d179aa406210e7240abcea863277c0eda60a660a762b90f390bd006791",
+    "src/symbolic_relations.rs": "addb60311974e6c2a88e6859fc84d2df2d3cb92ad179b351e8f87a71a0cfc61a",
+    "src/transfer.rs": "d2fe8ebdf739d1d3e8b49c231c4c0f5df0eaf7985f5201513281d91e6f7bdfe2",
+    "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+    "src/transfer_checks.rs": "54b0eba1a4bfa4a24ded2102772a0d50ba85cf9a472fcde02d649e4cacb06f3f"
+  },
+  "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+  "symbols": [
+    {
+      "label": "essential-store-node",
+      "symbol": "__RNvMs_NtNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_raw7storageNtB4_5Store4node",
+      "command": [
+        "xcrun",
+        "llvm-objdump",
+        "--disassemble-symbols=__RNvMs_NtNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_raw7storageNtB4_5Store4node",
+        "--no-show-raw-insn",
+        "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7"
+      ],
+      "assembly": "essential-store-node-slab-storage-arm64.s",
+      "sha256": "b63f11a38b4f227396ae931771175ce5f9618bb7e1ec1ce554b9a4c49f013c91",
+      "vector_boolean_instructions": [],
+      "count_instructions": [
+        "100c7f1f0:     \tcnt.8b\tv0, v0",
+        "100c7f1f4:     \taddv.8b\tb0, v0"
+      ],
+      "vector_memory_instructions": [],
+      "scalar_boolean_instructions": [
+        "100c7f174:     \tand\tx8, x8, #0xfffffff",
+        "100c7f19c:     \teor\tx11, x8, #0x8000000000000000",
+        "100c7f1e8:     \tand\tx8, x8, #0x7fffffffffffffff",
+        "100c7f1fc:     \tand\tx11, x9, #0x3f"
+      ]
+    },
+    {
+      "label": "essential-store-find",
+      "symbol": "__RNvMs_NtNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_raw7storageNtB4_5Store4find",
+      "command": [
+        "xcrun",
+        "llvm-objdump",
+        "--disassemble-symbols=__RNvMs_NtNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_raw7storageNtB4_5Store4find",
+        "--no-show-raw-insn",
+        "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7"
+      ],
+      "assembly": "essential-store-find-slab-storage-arm64.s",
+      "sha256": "d6e384bbd57fa2b10979ab876805cfc319d7254a1f8ff9dd4ba4f7b87b768b88",
+      "vector_boolean_instructions": [],
+      "count_instructions": [],
+      "vector_memory_instructions": [],
+      "scalar_boolean_instructions": [
+        "100c7ed04:     \tand\tx11, x11, x9",
+        "100c7ed28:     \tand\tx13, x13, x9",
+        "100c7ed5c:     \tand\tx11, x11, x9",
+        "100c7ed9c:     \teor\tx9, x8, #0x8000000000000000",
+        "100c7edc0:     \tand\tx21, x0, x24",
+        "100c7ede4:     \tand\tx8, x8, x24",
+        "100c7ee00:     \teor\tx9, x8, #0x8000000000000000",
+        "100c7eea8:     \tand\tx21, x0, x24"
+      ]
+    },
+    {
+      "label": "essential-store-insert",
+      "symbol": "__RNvMs_NtNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_raw7storageNtB4_5Store6insert",
+      "command": [
+        "xcrun",
+        "llvm-objdump",
+        "--disassemble-symbols=__RNvMs_NtNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_raw7storageNtB4_5Store6insert",
+        "--no-show-raw-insn",
+        "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7"
+      ],
+      "assembly": "essential-store-insert-slab-storage-arm64.s",
+      "sha256": "da1968ad2d59f5dd49af08029d22970a9754ccde1b37eefd31b162e1f1848caf",
+      "vector_boolean_instructions": [],
+      "count_instructions": [
+        "100c7f3c0:     \tcnt.8b\tv0, v0",
+        "100c7f3c4:     \taddv.8b\tb0, v0"
+      ],
+      "vector_memory_instructions": [
+        "100c7f86c:     \tldr\tq0, [x19, #0x30]",
+        "100c7f87c:     \tstr\tq0, [x19, #0x30]"
+      ],
+      "scalar_boolean_instructions": [
+        "100c7f2d0:     \teor\tx8, x25, #0x8000000000000000",
+        "100c7f34c:     \torr\tx8, x9, x8, lsl #56",
+        "100c7f350:     \torr\tx23, x8, x10, lsl #28",
+        "100c7f374:     \teor\tx8, x25, #0x8000000000000000",
+        "100c7f3dc:     \tand\tx9, x8, #0x3f",
+        "100c7f444:     \torr\tx23, x23, #0x8000000000000000",
+        "100c7f4d4:     \torr\tx21, x9, x26, lsl #32",
+        "100c7f4fc:     \torr\tx21, x9, x8, lsl #32",
+        "100c7f524:     \torr\tx21, x9, x8, lsl #32",
+        "100c7f5bc:     \teor\tx11, x12, x11",
+        "100c7f5c8:     \teor\tx10, x12, x10",
+        "100c7f610:     \teor\tx10, x10, x11",
+        "100c7f614:     \teor\tx11, x17, x15",
+        "100c7f620:     \teor\tx10, x10, x17",
+        "100c7f63c:     \teor\tx11, x12, x16",
+        "100c7f640:     \teor\tx10, x13, x10",
+        "100c7f64c:     \teor\tx10, x10, x12",
+        "100c7f650:     \teor\tx10, x22, x10",
+        "100c7f694:     \tand\tx17, x8, x12",
+        "100c7f6bc:     \tand\tx8, x8, x12",
+        "100c7f6dc:     \teor\tx9, x8, #0x8000000000000000",
+        "100c7f7c4:     \tand\tx8, x8, x12",
+        "100c7f7ec:     \tand\tx17, x8, x12",
+        "100c7f854:     \tand\tx8, x8, #0x1",
+        "100c7f85c:     \tand\tx9, x9, x12"
+      ]
+    },
+    {
+      "label": "essential-raw-evaluate",
+      "symbol": "__RNvMNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_rawINtB2_5ArenaKm1_E8evaluateB6_",
+      "command": [
+        "xcrun",
+        "llvm-objdump",
+        "--disassemble-symbols=__RNvMNtNtCs23EhFSy3h49_8bumbledb14event_repr_lab13essential_rawINtB2_5ArenaKm1_E8evaluateB6_",
+        "--no-show-raw-insn",
+        "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7"
+      ],
+      "assembly": "essential-raw-evaluate-slab-storage-arm64.s",
+      "sha256": "a2ccdf46aecd28369655549b56961e2f2a862d438f520ce5c466a87d5a38b6a9",
+      "vector_boolean_instructions": [],
+      "count_instructions": [],
+      "vector_memory_instructions": [],
+      "scalar_boolean_instructions": [
+        "100b8c0c4:     \tand\tx11, x11, #0x1",
+        "100b8c0cc:     \torr\tx8, x11, x8",
+        "100b8c134:     \teor\tw8, w0, w19",
+        "100b8c138:     \tand\tw0, w8, #0x1"
+      ]
+    }
+  ]
+}

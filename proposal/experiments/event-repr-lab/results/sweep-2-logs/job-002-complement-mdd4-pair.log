@@ -1,0 +1,27 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"complement","candidate":"mdd4-pair","restricted":false,"events":48,"build_s":[0.001379292, 0.001379042, 0.001384458, 0.001282583, 0.0012755, 0.001245208, 0.001259208],"first_batch_s":[8.3e-8, 1.25e-7, 8.4e-8, 4.2e-8, 1.25e-7, 8.3e-8, 4.2e-8],"warm_per_not_s":[3.4077962239583336e-10, 3.416341145833334e-10, 3.3740234374999996e-10, 3.3740234374999996e-10, 3.3740234374999996e-10, 3.382364908854167e-10, 3.3992513020833335e-10],"input_bytes_est":1214272,"final_bytes_est":1148264,"verified":true}
+EVENT_LAB {"kind":"complement","candidate":"mdd4-pair","restricted":true,"events":48,"build_s":[0.00488725, 0.004702042, 0.004405458, 0.004179417, 0.004148041, 0.004240208, 0.00413025],"first_batch_s":[8.3e-8, 1.25e-7, 8.3e-8, 2.167e-6, 1.67e-7, 1.66e-7, 2.09e-7],"warm_per_not_s":[3.4503173828125005e-10, 3.4417724609375003e-10, 3.4332275390625e-10, 3.4840901692708334e-10, 3.424886067708333e-10, 3.4415690104166666e-10, 3.4332275390625e-10],"input_bytes_est":5179200,"final_bytes_est":5167528,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.10s
+
+
+        0.10 real         0.10 user         0.00 sys
+            21905408  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1550  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  44  involuntary context switches
+           812692796  instructions retired
+           353612673  cycles elapsed
+            20463976  peak memory footprint

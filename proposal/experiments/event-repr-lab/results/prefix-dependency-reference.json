@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "cases": {
+    "domains": 273,
+    "decoder_worlds": 2106,
+    "events": 6648,
+    "dependency_equivalences": 26496
+  },
+  "checker_sha256": "f2c565422659f354b9f2cc7c8fd3a3184d12078cd9cea7bc7b08e50b9ad149b1",
+  "boundary": "Finite exact reference, not a performance measurement. Lean proves the dependency equivalence for arbitrary finite cube width. XOR-nearest is additionally checked here; it is not a separate Lean theorem."
+}

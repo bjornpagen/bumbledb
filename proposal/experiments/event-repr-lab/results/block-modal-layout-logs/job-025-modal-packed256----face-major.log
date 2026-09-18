@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"modal_free_join","candidate":"packed256","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":false,"build_s":[6.3791e-5, 4.4333e-5, 3.8166e-5, 2.9583e-5, 3.1459e-5, 3.1625e-5, 3.1041e-5],"join_only_s":[2.65e-5, 1.3792e-5, 1.3459e-5, 1.3334e-5, 1.3459e-5, 1.3417e-5, 1.3417e-5],"fresh_s":[0.001058625, 0.000977666, 0.000994625, 0.000527375, 0.000468, 0.000456625, 0.000875042],"warm_s":[0.0006120703125, 0.0005765358125, 0.00046846484375, 0.0004964296875, 0.0004858671875, 0.000468337234375, 0.000677071625],"input_bytes_est":16096,"final_bytes_est":80528,"final_nodes":784,"checksum":17920,"verified":true}
+EVENT_LAB {"kind":"modal_free_join","candidate":"packed256","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":true,"build_s":[6.3791e-5, 4.4333e-5, 3.8166e-5, 2.9583e-5, 3.1459e-5, 3.1625e-5, 3.1041e-5],"join_only_s":[2.65e-5, 1.3792e-5, 1.3459e-5, 1.3334e-5, 1.3459e-5, 1.3417e-5, 1.3417e-5],"fresh_s":[0.000177667, 0.000161458, 0.000142334, 0.000137125, 0.000182, 0.000149334, 0.000139125],"warm_s":[1.516512060546875e-5, 2.2447509765625e-5, 1.740995263671875e-5, 1.771561669921875e-5, 3.384419775390625e-5, 1.64405107421875e-5, 1.8754923828125e-5],"input_bytes_est":16096,"final_bytes_est":90384,"final_nodes":784,"checksum":17920,"verified":true}
+EVENT_LAB {"kind":"modal_free_join","candidate":"packed256","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":false,"build_s":[0.000625208, 0.002983875, 0.000710625, 0.002362833, 0.000595875, 0.000572333, 0.000640666],"join_only_s":[1.0042e-5, 5.5e-6, 5.375e-6, 5.417e-6, 5.458e-6, 5.416e-6, 5.417e-6],"fresh_s":[0.003208417, 0.004148458, 0.004493, 0.003221708, 0.002749125, 0.004028791, 0.00313425],"warm_s":[0.00331572925, 0.002745989625, 0.004530760375, 0.004992885375, 0.0031404635, 0.00347309375, 0.0037306875],"input_bytes_est":64160,"final_bytes_est":369512,"final_nodes":3681,"checksum":19873792,"verified":true}
+EVENT_LAB {"kind":"modal_free_join","candidate":"packed256","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":true,"build_s":[0.000625208, 0.002983875, 0.000710625, 0.002362833, 0.000595875, 0.000572333, 0.000640666],"join_only_s":[1.0042e-5, 5.5e-6, 5.375e-6, 5.417e-6, 5.458e-6, 5.416e-6, 5.417e-6],"fresh_s":[0.001496084, 0.000784875, 0.000768625, 0.001834042, 0.001789333, 0.000766792, 0.000768875],"warm_s":[1.15472412109375e-5, 1.613797998046875e-5, 1.52421669921875e-5, 1.06084794921875e-5, 1.37071533203125e-5, 1.121771240234375e-5, 1.158103466796875e-5],"input_bytes_est":64160,"final_bytes_est":379368,"final_nodes":3681,"checksum":19873792,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 2.14s
+
+
+        2.14 real         1.76 user         0.02 sys
+            10092544  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 830  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                3629  involuntary context switches
+         25005800368  instructions retired
+          5139566079  cycles elapsed
+             7504280  peak memory footprint

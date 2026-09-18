@@ -1,0 +1,139 @@
+{
+  "sparse_records": [
+    {
+      "passed": true,
+      "combinations": 115200,
+      "projections": 61440,
+      "cofactors": 3840
+    }
+  ],
+  "passed": true,
+  "multi_records": [
+    {
+      "passed": true,
+      "four_axis_masks": 128,
+      "visible_worlds": 16384,
+      "hidden_assignments_per_world": 16
+    }
+  ],
+  "long_shapes": [
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Plain",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Ranges",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Plain",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Ranges",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Plain",
+      "kernel": "Groups",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Ranges",
+      "kernel": "Groups",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Plain",
+      "kernel": "Groups",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Ranges",
+      "kernel": "Groups",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    }
+  ],
+  "source_hashes": {
+    "range-prototype/Cargo.toml": "bea8f0422c4a51c2e7a2efb2933ecc84cf41a295e18bd846e523696ffbb74902",
+    "range-prototype/Cargo.lock": "8ee0354989ab67b6b1aa2589d66753362a70d8dc6ffed9902f40a00b34c1bd51",
+    "range-prototype/src/lib.rs": "b344f859b65ffdbfc790817992d5f37dcada82b924235e58686b0417350d9db8",
+    "range-prototype/src/main.rs": "6542ce48697a90164ae98c91942d158853803c781d28b0603110b5ae12458c24",
+    "range-prototype/src/tests.rs": "f38fccb7691aeb4046108a72fd8ef7b540c922eb3afc08dcd4333ca841c73cb3"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--release",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "records": [
+    {
+      "passed": true,
+      "binary": 25165824,
+      "projection": 49152,
+      "maps": 178176,
+      "completed_projection": 49152,
+      "orders": 6,
+      "modes": 2,
+      "kernels": 2
+    }
+  ],
+  "chain_records": [
+    {
+      "passed": true,
+      "world_checks": 19200,
+      "max_dimensions": 61
+    }
+  ],
+  "log": "range-initial-check.log",
+  "checker_sha256": "3a3f8a412b9171cc8bf48eb0f5343cb97fc72fb90d074a4f7e36cbfbb86cdfdc",
+  "boundary": "Raw canonical managers, copied-live-graph compaction, full-cube uniform counting. No Event ownership/common packet/designated law or native Free Join claim."
+}

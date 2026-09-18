@@ -1,0 +1,14 @@
+'InformationReadout.sandwich' does not depend on any axioms
+'InformationReadout.complement_duality' depends on axioms: [propext, Classical.choice, Quot.sound]
+'InformationReadout.possible_stable' does not depend on any axioms
+'InformationReadout.guaranteed_stable' does not depend on any axioms
+'InformationReadout.possible_fixed_iff_dependency' does not depend on any axioms
+'InformationReadout.guaranteed_fixed_iff_dependency' does not depend on any axioms
+'InformationReadout.best_observable_bounds' does not depend on any axioms
+'InformationReadout.possible_group_union' does not depend on any axioms
+'InformationReadout.guaranteed_group_intersection' does not depend on any axioms
+'InformationReadout.possible_meet_iff_dependency' does not depend on any axioms
+'InformationReadout.guaranteed_join_iff_dependency' depends on axioms: [propext, Classical.choice, Quot.sound]
+'InformationReadout.observation_order_iff_fd' does not depend on any axioms
+'InformationReadout.coarser_absorbs_finer' does not depend on any axioms
+'InformationReadout.grouping_counterexamples' depends on axioms: [propext]

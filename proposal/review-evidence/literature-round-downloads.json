@@ -1,0 +1,182 @@
+[
+  {
+    "id": "2405.09391",
+    "url": "https://arxiv.org/pdf/2405.09391",
+    "pdf": "proposal/papers/liell-cock-staton-2025-compositional-imprecise-probability.pdf",
+    "text": "proposal/review-evidence/liell-cock-staton-2025-compositional-imprecise-probability.txt",
+    "bytes": 474162,
+    "sha256": "28864d20b6a0ed3feeadcf03d48f1930fe3d7bc95d7feef4d3525b679459cbf4",
+    "first_lines": [
+      "                                         Compositional imprecise probability",
+      "                                         A solution from graded monads and Markov categories",
+      "",
+      "",
+      "",
+      "",
+      "arXiv:2405.09391v2 [cs.PL] 29 Oct 2024",
+      "                                         JACK LIELL-COCK and SAM STATON"
+    ]
+  },
+  {
+    "id": "2501.18404",
+    "url": "https://arxiv.org/pdf/2501.18404",
+    "pdf": "proposal/papers/sarkis-zanasi-2025-graded-string-diagrams-imprecise-probability.pdf",
+    "text": "proposal/review-evidence/sarkis-zanasi-2025-graded-string-diagrams-imprecise-probability.txt",
+    "bytes": 1150942,
+    "sha256": "fd7a3344f4ba05abfce5ebd0370627ac173aa49ade7ea7375c45ce0b2a515771",
+    "first_lines": [
+      "                                          GRADED STRING DIAGRAMS FOR IMPRECISE PROBABILITY AND",
+      "                                                          CAUSAL INTERVENTION",
+      "",
+      "                                                                                RALPH SARKIS    AND FABIO ZANASI",
+      "",
+      "                                                University College London, United Kingdom",
+      "",
+      ""
+    ]
+  },
+  {
+    "id": "2408.14701",
+    "url": "https://arxiv.org/pdf/2408.14701",
+    "pdf": "proposal/papers/piedeleu-et-al-2025-complete-axiomatisation-discrete-probabilistic-programming.pdf",
+    "text": "proposal/review-evidence/piedeleu-et-al-2025-complete-axiomatisation-discrete-probabilistic-programming.txt",
+    "bytes": 644541,
+    "sha256": "baaa6280b83b058de41582de3ebef3f7ed3dc8a3fd0f6bff8a85a07b53daffc9",
+    "first_lines": [
+      "                                         A Complete Axiomatisation of Equivalence for Discrete",
+      "                                         Probabilistic Programming",
+      "",
+      "",
+      "",
+      "",
+      "arXiv:2408.14701v1 [cs.LO] 27 Aug 2024",
+      "                                         ROBIN PIEDELEU\u2217, University College London, United Kingdom"
+    ]
+  },
+  {
+    "id": "2602.20049",
+    "url": "https://arxiv.org/pdf/2602.20049",
+    "pdf": "proposal/papers/nodice-2026-nondeterminism-conditioning.pdf",
+    "text": "proposal/review-evidence/nodice-2026-nondeterminism-conditioning.txt",
+    "bytes": 945637,
+    "sha256": "436b5cd1eef50358d7ed92d46a93d1407bbd425b46ee39dac0f7b56e937e9330",
+    "first_lines": [
+      "                                         noDice: Inference for Discrete Probabilistic Programs with",
+      "                                         Nondeterminism and Conditioning",
+      "                                         TOBIAS G\u00dcRTLER, Saarland University, Germany and Saarland Informatics Campus, Germany",
+      "                                         BENJAMIN LUCIEN KAMINSKI, Saarland University, Germany and University College London, United",
+      "                                         Kingdom",
+      "                                         Probabilistic programming languages (PPLs) are an expressive and intuitive means of representing complex",
+      "                                         probability distributions. In that realm, languages like Dice target an important class of probabilistic programs:",
+      ""
+    ]
+  },
+  {
+    "id": "1305.7345",
+    "url": "https://arxiv.org/pdf/1305.7345",
+    "pdf": "proposal/papers/dylla-mossakowski-schneider-wolter-2013-algebraic-qualitative-calculi.pdf",
+    "text": "proposal/review-evidence/dylla-mossakowski-schneider-wolter-2013-algebraic-qualitative-calculi.txt",
+    "bytes": 801431,
+    "sha256": "60c207043e1802abf76603d69274332ab9b7c16c2196cbcf041caa9a337fe66b",
+    "first_lines": [
+      "                                                      Algebraic Properties of Qualitative",
+      "                                                          Spatio-Temporal Calculi?",
+      "",
+      "                                            Frank Dylla1 , Till Mossakowski1,2 , Thomas Schneider3 , and Diedrich Wolter1",
+      "                                        1",
+      "                                             Collaborative Research Center on Spatial Cognition (SFB/TR 8), Univ. of Bremen",
+      "                                                           {dylla,till,dwolter}@informatik.uni-bremen.de",
+      "                                                          2"
+    ]
+  },
+  {
+    "id": "2507.19424",
+    "url": "https://arxiv.org/pdf/2507.19424",
+    "pdf": "proposal/papers/order-partial-markov-categories-2025.pdf",
+    "text": "proposal/review-evidence/order-partial-markov-categories-2025.txt",
+    "bytes": 604893,
+    "sha256": "0bb84ff49f3b35a0c7aa772d69f431d02e2979b7174d8418c2943a36e2af4c8e",
+    "first_lines": [
+      " Electronic Notes in                                                                                                     Volume 5",
+      " Theoretical Informatics                                                                                            Proceedings of",
+      " And Computer Science                                                                                                  MFPS 2025",
+      "",
+      "",
+      "",
+      "",
+      "                            Order in Partial Markov Categories"
+    ]
+  },
+  {
+    "id": "1802.09598",
+    "url": "https://arxiv.org/pdf/1802.09598",
+    "pdf": "proposal/papers/staton-et-al-2018-beta-bernoulli-algebraic-effects.pdf",
+    "text": "proposal/review-evidence/staton-et-al-2018-beta-bernoulli-algebraic-effects.txt",
+    "sha256": "1d8e06eeabc7070592cca47e494ae6706f74fc1414d55f02972ea9f13c62df81",
+    "lines": 880,
+    "first_lines": [
+      "                                         The Beta-Bernoulli process and algebraic effects",
+      "                                         Sam Staton 1 , Dario Stein 1 , Hongseok Yang 2 , Nathanael L.",
+      "                                         Ackerman 3 , Cameron E. Freer 4 , and Daniel M. Roy 5",
+      "                                         1       Univ. Oxford,   2 KAIST, 3 Harvard Univ., 4 Borelian,     5 Univ. Toronto",
+      "",
+      "",
+      "                                                   Abstract",
+      "                                         In this paper we use the framework of algebraic effects from programming language theory to"
+    ]
+  },
+  {
+    "id": "0909.1148",
+    "url": "https://arxiv.org/pdf/0909.1148",
+    "pdf": "proposal/papers/decooman-quaeghebeur-miranda-2009-exchangeable-lower-previsions.pdf",
+    "text": "proposal/review-evidence/decooman-quaeghebeur-miranda-2009-exchangeable-lower-previsions.txt",
+    "sha256": "e54b1f326ba8c839375cb312691129dbccac595c32742344b437763dcbc9d32f",
+    "lines": 735,
+    "first_lines": [
+      "                                         Bernoulli 15(3), 2009, 721\u2013735",
+      "                                         DOI: 10.3150/09-BEJ182",
+      "",
+      "",
+      "",
+      "                                         Exchangeable lower previsions",
+      "",
+      ""
+    ]
+  },
+  {
+    "id": "1803.02180",
+    "url": "https://arxiv.org/pdf/1803.02180",
+    "pdf": "proposal/papers/durand-et-al-2018-probabilistic-team-semantics.pdf",
+    "text": "proposal/review-evidence/durand-et-al-2018-probabilistic-team-semantics.txt",
+    "sha256": "fdeb327c9653369544eaa2a2753d2b2b80a32f9434de04bcde0304f499c8ec06",
+    "lines": 963,
+    "first_lines": [
+      "                                                                    Probabilistic team semantics",
+      "",
+      "                                            Arnaud Durand1 , Miika Hannula2 , Juha Kontinen3 , Arne Meier4 , and Jonni Virtema5",
+      "                                            1",
+      "                                                Institut de Mathe\u0301matiques de Jussieu - Paris Rive Gauche, CNRS UMR 7586 - Universite\u0301 Paris Diderot,",
+      "                                                                                 durand@math.univ-paris-diderot.fr",
+      "                                                        2",
+      "                                                          Department of Computer Science, University of Auckland, m.hannula@auckland.ac.nz"
+    ]
+  },
+  {
+    "id": "2001.02889",
+    "url": "https://arxiv.org/pdf/2001.02889",
+    "pdf": "proposal/papers/ibeling-icard-2020-probabilistic-causal-hierarchy.pdf",
+    "text": "proposal/review-evidence/ibeling-icard-2020-probabilistic-causal-hierarchy.txt",
+    "sha256": "e42c8ce167e0422408c9a55e3a16b7559c139b282e5b5b8a40449705e21f9a22",
+    "lines": 870,
+    "first_lines": [
+      "                                                        Probabilistic Reasoning across the Causal Hierarchy\u2217",
+      "",
+      "                                                                                 Duligur Ibeling,1 Thomas Icard2",
+      "                                                                         1",
+      "                                                                             Department of Computer Science, Stanford University",
+      "                                                                               2",
+      "                                                                                 Department of Philosophy, Stanford University",
+      "                                                                                  duligur@stanford.edu, icard@stanford.edu"
+    ]
+  }
+]

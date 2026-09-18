@@ -1,0 +1,15 @@
+{
+  "scope": "Sampling diagnostic only; profiled benchmark timings must not be used for comparisons. No concurrent benchmark sweep.",
+  "build": "build-essential.json",
+  "binary_sha256": "ec270eaf170610486aee287d8e36222e0b4c1fedd89d123a4d556a10ea21da18",
+  "candidate": "essential64",
+  "kernel": "words",
+  "lane": "join",
+  "scenario": "coup_4290",
+  "process_exit": 0,
+  "sample_exit": 0,
+  "sample_stdout": "",
+  "sample_stderr": "Sampling process 99994 for 3 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 99994 written to file /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/essential-baseline-profile.txt\n",
+  "profile": "essential-baseline-profile.txt",
+  "sha256": "7b4c194fdf33285b6759656643c73caeb13d0552ae317044ada72f277d2c644d"
+}

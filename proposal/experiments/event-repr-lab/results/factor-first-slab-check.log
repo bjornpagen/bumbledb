@@ -1,0 +1,35 @@
+
+   Compiling event-repr-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/checker)
+warning: unused import: `view_product::Statistics as ViewProductStatistics`
+ --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/essential_raw.rs:9:9
+  |
+9 | pub use view_product::Statistics as ViewProductStatistics;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0624]: method `cardinality` is private
+   --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/retraction.rs:556:41
+    |
+556 |                 population: d.domain(e).cardinality(),
+    |                                         ^^^^^^^^^^^ private method
+    |
+   ::: /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/legal.rs:15:5
+    |
+ 15 |     fn cardinality(&self) -> u64 {
+    |     ---------------------------- private method defined here
+
+error[E0624]: method `cardinality` is private
+   --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/factor_checks.rs:128:41
+    |
+128 |                     let n = d.domain(e).cardinality();
+    |                                         ^^^^^^^^^^^ private method
+    |
+   ::: /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/legal.rs:15:5
+    |
+ 15 |     fn cardinality(&self) -> u64 {
+    |     ---------------------------- private method defined here
+
+For more information about this error, try `rustc --explain E0624`.
+warning: `event-repr-checker` (lib test) generated 1 warning
+error: could not compile `event-repr-checker` (lib test) due to 2 previous errors; 1 warning emitted

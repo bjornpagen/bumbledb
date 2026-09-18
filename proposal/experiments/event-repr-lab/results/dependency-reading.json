@@ -1,0 +1,14 @@
+{
+  "files": {
+    "crates/bumbledb-theory/src/schema.rs": "dcb10981cdd8e3ddd3b2c64a119f83fb346fc5b5094a1fd5ee6c3bc957228653",
+    "crates/bumbledb/src/schema.rs": "d86b91ad15e8455f7f2870226348728eb893c2f61dda0b000b50e6ddb45f01f5",
+    "crates/bumbledb/src/schema/validate.rs": "b5474ed2309111fdfa4b75f9d9a1c15fb5aa80c16ecbeef171ab733ee49465ce",
+    "crates/bumbledb/src/schema/judge.rs": "6ad701aa5f8cb18467e8b39118e33c45ad109f799fb76b31cd298fecd451ecf3",
+    "crates/bumbledb/src/schema/judge/tests.rs": "e7bbc6f51cd3732224c45ae6e2a6526800c010ec4491f0487f12df5c98f5d33a",
+    "crates/bumbledb/src/plan/planner/tests.rs": "2f43fdbf705f75529807aca03386ae970f4bb12978e40551ce8410c6e861f7d9",
+    "crates/bumbledb/src/plan/fj/tests/distinct_proof.rs": "00e7406c434b4b9d239cd838a4aac7e6a6eb334e631b4be548f37b09cf81dc9b",
+    "crates/bumbledb/tests/schema_macro.rs": "1a1840d78a985416e5e4296b6c8f1ae9ec1080859439b7c241bdc51dc2f921a0"
+  },
+  "review": "DEPENDENCIES.md",
+  "scope": "Selected definitions, enforcement paths and tests named in the review; not a claim to have read every line."
+}

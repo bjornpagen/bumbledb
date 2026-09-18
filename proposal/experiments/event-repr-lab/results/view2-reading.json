@@ -1,0 +1,12 @@
+{
+  "files": {
+    "proposal/research/block-decomposition/decision-diagram-reachability.txt": "04066ae52b7d0024253c8610e8f69fda87fbefedd41fb603c8108ebac42f651a",
+    "proposal/research/block-decomposition/mateescu-dechter-weighted-aomdd.txt": "a446af346df95dc33792bf7f97ba228bf9ff838e683de54fdd6b3f2a22f92c5b"
+  },
+  "sources": [
+    "arXiv:2212.03684v1",
+    "arXiv:1206.5266v1"
+  ],
+  "reading": "Reachability Sections 2.5\u20132.6, image equation (3), interleaved source/target order and intermediate-size warning; weighted AOMDD definition of induced width and chain versus tree decompositions. Revisited for the output-map/working-order experiment. Also revisited the introduction's reduced-BDD equal-child elimination and identical-node merging rules for the deferred-pin counterexample.",
+  "consequence": "Projection plus output relabeling defines image. Incorporating relabeling into a canonical-order traversal can change the working elimination order. Neither smaller operand storage nor fewer explicit operators guarantees smaller partial outputs. Measure the order choice separately from local readout. Treewidth/pathwidth definitions motivate structural controls but do not predict this exact kernel runtime. Canonical cofactoring may remove dependencies and merge residual functions that distinct deferred-pin descriptors still distinguish. The effect on the measured workload remains to be isolated."
+}

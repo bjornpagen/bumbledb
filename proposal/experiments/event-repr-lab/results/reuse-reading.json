@@ -1,0 +1,14 @@
+{
+  "files": {
+    "proposal/research/representation-search/nakamura-denzumi-nishino-2020-variable-shift.txt": "4121c1920361107bfa268073d6a884ee66f264b9f8b814aa5a9bb5719cba75b3",
+    "proposal/research/block-decomposition/mateescu-dechter-weighted-aomdd.txt": "a446af346df95dc33792bf7f97ba228bf9ff838e683de54fdd6b3f2a22f92c5b",
+    "proposal/research/event-algebra/darwiche-marquis-2002-knowledge-compilation-map.txt": "5b4595c30e45b646828c165d519a5c7f61ea0b872a4b728dfd6bb841646408df"
+  },
+  "sources": [
+    "arXiv:2004.02502v1",
+    "arXiv:1206.5266v1",
+    "arXiv:1106.1819"
+  ],
+  "reading": "Re-read variable-shift sharing Theorem 6, identical-vtree rule, Section 7 Apply cache argument and mandatory-compression caveat; reduced-BDD identical-node/equal-child rules in the AOMDD introduction. Also revisited Knowledge Compilation Map Definitions 2.9, 5.4\u20135.6: fixed order, logical restriction versus forgetting, and the conditioned decomposition identity.",
+  "consequence": "Keep maps, owner, support and target context in or fixed for each memo lifetime. Test bounded aligned-plane reuse separately from canonical source cofactors. Normalized residuals recover exact essential coordinates and semantic sharing; neither its performance benefit nor a general polynomial guarantee follows without evidence. Source normalization is the paper's logical restriction, not probabilistic conditioning. Product-domain closure and support-relative dependency counterexamples are separately derived here; the paper does not prove our Rust invariants."
+}

@@ -1,0 +1,6 @@
+'QuerySeparator.patch_left' depends on axioms: [propext]
+'QuerySeparator.patch_right' depends on axioms: [propext]
+'QuerySeparator.patch_keys' depends on axioms: [propext]
+'QuerySeparator.branch_existence' depends on axioms: [propext]
+'QuerySeparator.residual_pair' does not depend on any axioms
+'QuerySeparator.environment_counterexample' does not depend on any axioms

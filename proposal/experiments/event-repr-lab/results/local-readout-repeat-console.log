@@ -1,0 +1,14 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 18.15s
+001 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-project-witness: passed, 36.09s
+002 readouts-packed512----bit-major-local-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-full-project-joint: passed, 13.51s
+003 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-needed-project-witness: passed, 32.01s
+004 readouts-packed512----face-major-local-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-full-project-joint: passed, 9.69s
+005 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-project-witness: passed, 23.45s
+006 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-local-needed-project-witness: passed, 23.38s
+007 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-full-project-witness: passed, 23.46s
+008 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-full-project-witness: passed, 32.49s
+009 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-needed-project-witness: passed, 31.86s
+010 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-complete-needed-project-witness: passed, 24.19s
+011 readouts-dense-dispatched----bit-major-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-full-project-joint: passed, 3.20s
+012 readouts-dense-dispatched----face-major-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-full-project-joint: passed, 1.55s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/local-readout-repeat.json

@@ -1,0 +1,34 @@
+
+running 2 tests
+test tests::all_small_functions ... UNARY_CHECK {"passed":true,"binary":25165824,"projection":49152,"maps":178176,"completed_projection":49152,"orders":6,"modes":2,"kernels":2}
+ok
+test tests::long_chains_and_collection ... UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":false,"mode":"Plain","kernel":"Steps","constructed_records":123,"compacted_records":62,"compacted_bytes":4108}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":false,"mode":"Chains","kernel":"Steps","constructed_records":123,"compacted_records":10,"compacted_bytes":1282}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":true,"mode":"Plain","kernel":"Steps","constructed_records":123,"compacted_records":62,"compacted_bytes":4108}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":true,"mode":"Chains","kernel":"Steps","constructed_records":123,"compacted_records":10,"compacted_bytes":1282}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":false,"mode":"Plain","kernel":"Blocks","constructed_records":123,"compacted_records":62,"compacted_bytes":4108}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":false,"mode":"Chains","kernel":"Blocks","constructed_records":123,"compacted_records":10,"compacted_bytes":1282}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":true,"mode":"Plain","kernel":"Blocks","constructed_records":123,"compacted_records":62,"compacted_bytes":4108}
+UNARY_LONG_SHAPE {"passed":true,"dimensions":61,"reverse":true,"mode":"Chains","kernel":"Blocks","constructed_records":123,"compacted_records":10,"compacted_bytes":1282}
+UNARY_CHAIN_CHECK {"passed":true,"world_checks":19200,"max_dimensions":61}
+UNARY_MULTI_CHECK {"passed":true,"four_axis_masks":128,"visible_worlds":16384,"hidden_assignments_per_world":16}
+ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling event-unary-prototype v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/unary-prototype)
+    Finished `release` profile [optimized] target(s) in 0.60s
+     Running unittests src/lib.rs (target/release/build/event-unary-prototype/5c5b1a6ddde21a18/out/event_unary_prototype-5c5b1a6ddde21a18)
+     Running unittests src/main.rs (target/release/build/event-unary-prototype/82180fba7f4cb9ea/out/event_unary_prototype-82180fba7f4cb9ea)
+   Doc-tests event_unary_prototype

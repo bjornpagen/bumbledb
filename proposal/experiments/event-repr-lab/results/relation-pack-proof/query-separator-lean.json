@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "source": "join-factorization/QuerySeparator.lean",
+  "source_sha256": "ba6c22856ac8478b5f71c8c5bce0a3ba85aaf927a997f53d829b70006c231588",
+  "command": [
+    "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+    "join-factorization/QuerySeparator.lean"
+  ],
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "log": "query-separator-lean.log",
+  "boundary": "Denotational assignment gluing under a variable separator, universal residual aggregate and environment witness. Does not prove Rust IR extraction or arena refinement.",
+  "theorems": {
+    "patch_left": [],
+    "patch_right": [],
+    "patch_keys": [],
+    "branch_existence": [],
+    "residual_pair": [],
+    "environment_counterexample": []
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "passed": true,
+  "checks": {
+    "initial": {
+      "passed": true,
+      "orders": 6,
+      "basis_schedules": 4,
+      "functions_per_manager": 256,
+      "binary_cases": 25165824,
+      "projection_cases": 49152,
+      "map_cases": 178176,
+      "completed_projection_cases": 49152
+    },
+    "kernel": {
+      "passed": true,
+      "orders": 6,
+      "basis_schedules": 4,
+      "kernels": 2,
+      "functions_per_manager": 256,
+      "binary_cases": 50331648,
+      "projection_cases": 98304,
+      "map_cases": 356352,
+      "completed_projection_cases": 98304
+    },
+    "counting": {
+      "passed": true,
+      "orders": 6,
+      "basis_schedules": 4,
+      "kernels": 2,
+      "functions_per_manager": 256,
+      "binary_cases": 50331648,
+      "projection_cases": 98304,
+      "map_cases": 356352,
+      "completed_projection_cases": 98304
+    }
+  },
+  "screens": {
+    "initial": {
+      "processes": 16,
+      "completed": 10,
+      "node_caps": 6,
+      "semantic_failures": 0
+    },
+    "kernel": {
+      "processes": 32,
+      "completed": 26,
+      "node_caps": 6,
+      "semantic_failures": 0
+    },
+    "bilinear": {
+      "processes": 16,
+      "completed": 16,
+      "node_caps": 0,
+      "semantic_failures": 0
+    },
+    "counting": {
+      "processes": 21,
+      "completed": 17,
+      "node_caps": 4,
+      "semantic_failures": 0
+    }
+  },
+  "primary_sources": [
+    "2003.09340v4",
+    "1504.07999v2",
+    "1805.05224v3"
+  ],
+  "checker_sha256": "1cfc44687c4d07967c350b79a33501c0ec54635fc0714b27f54175b6bd2c1b54",
+  "boundary": "Frozen standalone structural evidence and denotational Lean reports; no native Free Join or latency ranking. Initial failed statuses are reclassified from retained node-cap logs without altering raw records."
+}

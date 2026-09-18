@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":false,"build_s":[0.000735833, 0.000675875, 0.000668166, 0.000665709, 0.000693042, 0.000677084, 0.000807875, 0.000676542, 0.000688917, 0.000689584, 0.000667292],"join_only_s":[0.000100542, 5.417e-6, 5.125e-6, 5.042e-6, 5e-6, 5.042e-6, 5.042e-6, 4.959e-6, 5.083e-6, 4.959e-6, 4.959e-6],"fresh_s":[0.00921625, 0.009255416, 0.008908666, 0.00908575, 0.009429875, 0.009123708, 0.009180792, 0.009032667, 0.009208792, 0.009173416, 0.009229125],"warm_s":[0.009201292, 0.009209375, 0.009044375, 0.009049042, 0.008906, 0.009031834, 0.009149208, 0.009157292, 0.009161667, 0.009330708, 0.009298042],"input_bytes_est":206376,"final_bytes_est":1134840,"final_nodes":140,"closure_iterations":46,"checksum":7171072,"verified":true}
+EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":true,"build_s":[0.000735833, 0.000675875, 0.000668166, 0.000665709, 0.000693042, 0.000677084, 0.000807875, 0.000676542, 0.000688917, 0.000689584, 0.000667292],"join_only_s":[0.000100542, 5.417e-6, 5.125e-6, 5.042e-6, 5e-6, 5.042e-6, 5.042e-6, 4.959e-6, 5.083e-6, 4.959e-6, 4.959e-6],"fresh_s":[0.003092042, 0.002942459, 0.00312625, 0.003075791, 0.003026083, 0.002973875, 0.003041167, 0.003448625, 0.002904625, 0.003026834, 0.002995459],"warm_s":[1.1125e-5, 9.208e-6, 9.167e-6, 9.083e-6, 9.083e-6, 9.042e-6, 9.084e-6, 9.125e-6, 9.125e-6, 9.166e-6, 9.125e-6],"input_bytes_est":206376,"final_bytes_est":1147832,"final_nodes":140,"closure_iterations":46,"checksum":7171072,"verified":true}
+EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":false,"build_s":[0.012178458, 0.011530917, 0.011626167, 0.011924291, 0.011678375, 0.011562333, 0.011460291, 0.011663917, 0.011568208, 0.012769833, 0.011816875],"join_only_s":[1.7083e-5, 5.334e-6, 5e-6, 4.959e-6, 4.917e-6, 5e-6, 4.875e-6, 4.958e-6, 4.875e-6, 4.958e-6, 5.042e-6],"fresh_s":[0.142311333, 0.142229917, 0.141844416, 0.14077875, 0.142886, 0.14148875, 0.14093475, 0.1411845, 0.141013583, 0.142548791, 0.141315584],"warm_s":[0.146464, 0.146789209, 0.147110708, 0.147130958, 0.148018, 0.146833, 0.147670834, 0.150263584, 0.145082583, 0.148312125, 0.147119667],"input_bytes_est":4734920,"final_bytes_est":31041856,"final_nodes":175,"closure_iterations":52,"checksum":215255808,"verified":true}
+EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":true,"build_s":[0.012178458, 0.011530917, 0.011626167, 0.011924291, 0.011678375, 0.011562333, 0.011460291, 0.011663917, 0.011568208, 0.012769833, 0.011816875],"join_only_s":[1.7083e-5, 5.334e-6, 5e-6, 4.959e-6, 4.917e-6, 5e-6, 4.875e-6, 4.958e-6, 4.875e-6, 4.958e-6, 5.042e-6],"fresh_s":[0.048968959, 0.0492945, 0.049502417, 0.049223333, 0.04974025, 0.049411125, 0.04999125, 0.049540083, 0.049245708, 0.049404667, 0.049358667],"warm_s":[1.7083e-5, 9.625e-6, 9.417e-6, 9.416e-6, 9.334e-6, 9.333e-6, 9.333e-6, 9.375e-6, 9.333e-6, 9.375e-6, 9.333e-6],"input_bytes_est":4734920,"final_bytes_est":31054848,"final_nodes":175,"closure_iterations":52,"checksum":215255808,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 4.31s
+
+
+        4.31 real         4.22 user         0.06 sys
+            24788992  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1726  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                1776  involuntary context switches
+         72380199190  instructions retired
+         14439114139  cycles elapsed
+            22249880  peak memory footprint

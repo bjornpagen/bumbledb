@@ -1,0 +1,13 @@
+000 laws-range-group----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 2.28s
+001 owned-range-group----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 8.51s
+002 laws-range-shannon----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 2.30s
+003 symbolic-relations-range-shannon----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 0.01s
+004 laws-range-step----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 2.28s
+005 symbolic-relations-range-step----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 0.01s
+006 transport-range-group----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 9.30s
+007 transport-range-step----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 9.26s
+008 owned-range-shannon----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 8.59s
+009 symbolic-relations-range-group----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 0.01s
+010 transport-range-shannon----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 9.33s
+011 owned-range-step----bit-major-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 8.53s
+Native range phase passed: admission

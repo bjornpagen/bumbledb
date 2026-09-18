@@ -1,0 +1,396 @@
+{
+  "passed": false,
+  "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/difference-prototype/target/release/event-difference-prototype",
+  "binary_sha256": "6df72e7aea8df99c556207b6042e53d48e8d030ee4a401717471c7cd448bdb07",
+  "source_hashes": {
+    "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+    "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+    "difference-prototype/src/lib.rs": "8f2483e688c873191d573f14faa05bcc9bc7366e1de3b9dd21af97ca8a79fb3b",
+    "difference-prototype/src/main.rs": "58a72e3ce31b67937636d4ce012f95718becd0770b923a7958019c9cc77a6f5b",
+    "difference-prototype/src/tests.rs": "f6e9f0b746c294a8dafab7bad930e110be334db83946d905ef345cb3af235128"
+  },
+  "checker_sha256": "b2d9e2cf91dc926baad696b0c39325b2ce40518da4448758fc2e2ee0236e170a",
+  "runs": [
+    {
+      "job": [
+        "composition",
+        "positive",
+        "bit-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "positive",
+          "layout": "bit-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 27,
+          "input_reachable": 26,
+          "input_bytes": 1272,
+          "final_records": 178,
+          "output_reachable": 30,
+          "live_union": 55,
+          "final_bytes": 18940,
+          "query_apply_misses": 432,
+          "query_cofactor_misses": 46,
+          "query_projection_misses": 47,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/000-composition-positive-bit-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "positive",
+        "face-major"
+      ],
+      "status": "failed",
+      "rows": [],
+      "log": "difference-shapes-logs/001-coup-positive-face-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "negative",
+        "face-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "negative",
+          "layout": "face-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 62,
+          "input_reachable": 61,
+          "input_bytes": 3532,
+          "final_records": 648,
+          "output_reachable": 64,
+          "live_union": 120,
+          "final_bytes": 69572,
+          "query_apply_misses": 1031,
+          "query_cofactor_misses": 30,
+          "query_projection_misses": 87,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/002-composition-negative-face-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "positive",
+        "bit-major"
+      ],
+      "status": "failed",
+      "rows": [],
+      "log": "difference-shapes-logs/003-coup-positive-bit-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "mixed",
+        "face-major"
+      ],
+      "status": "failed",
+      "rows": [],
+      "log": "difference-shapes-logs/004-coup-mixed-face-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "shannon",
+        "bit-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 30,
+          "input_reachable": 29,
+          "input_bytes": 1860,
+          "final_records": 164,
+          "output_reachable": 32,
+          "live_union": 60,
+          "final_bytes": 19388,
+          "query_apply_misses": 122,
+          "query_cofactor_misses": 122,
+          "query_projection_misses": 63,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/005-composition-shannon-bit-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "mixed",
+        "bit-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "mixed",
+          "layout": "bit-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 32,
+          "input_reachable": 31,
+          "input_bytes": 1860,
+          "final_records": 189,
+          "output_reachable": 35,
+          "live_union": 65,
+          "final_bytes": 19892,
+          "query_apply_misses": 394,
+          "query_cofactor_misses": 70,
+          "query_projection_misses": 55,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/006-composition-mixed-bit-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "shannon",
+        "face-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "shannon",
+          "layout": "face-major",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 7988,
+          "input_reachable": 7987,
+          "input_bytes": 432336,
+          "final_records": 121066,
+          "output_reachable": 10218,
+          "live_union": 15079,
+          "final_bytes": 14713040,
+          "query_apply_misses": 429412,
+          "query_cofactor_misses": 0,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "log": "difference-shapes-logs/007-coup-shannon-face-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "negative",
+        "bit-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "negative",
+          "layout": "bit-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 30,
+          "input_reachable": 29,
+          "input_bytes": 1860,
+          "final_records": 183,
+          "output_reachable": 30,
+          "live_union": 58,
+          "final_bytes": 26556,
+          "query_apply_misses": 489,
+          "query_cofactor_misses": 46,
+          "query_projection_misses": 47,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/008-composition-negative-bit-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "mixed",
+        "face-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "mixed",
+          "layout": "face-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 65,
+          "input_reachable": 64,
+          "input_bytes": 4556,
+          "final_records": 491,
+          "output_reachable": 70,
+          "live_union": 125,
+          "final_bytes": 47100,
+          "query_apply_misses": 708,
+          "query_cofactor_misses": 66,
+          "query_projection_misses": 88,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/009-composition-mixed-face-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "negative",
+        "face-major"
+      ],
+      "status": "failed",
+      "rows": [],
+      "log": "difference-shapes-logs/010-coup-negative-face-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "shannon",
+        "face-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "shannon",
+          "layout": "face-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 90,
+          "input_reachable": 89,
+          "input_bytes": 4556,
+          "final_records": 395,
+          "output_reachable": 60,
+          "live_union": 119,
+          "final_bytes": 31980,
+          "query_apply_misses": 324,
+          "query_cofactor_misses": 196,
+          "query_projection_misses": 98,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/011-composition-shannon-face-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "mixed",
+        "bit-major"
+      ],
+      "status": "failed",
+      "rows": [],
+      "log": "difference-shapes-logs/012-coup-mixed-bit-major.log"
+    },
+    {
+      "job": [
+        "composition",
+        "positive",
+        "face-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "positive",
+          "layout": "face-major",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 73,
+          "input_reachable": 72,
+          "input_bytes": 4556,
+          "final_records": 646,
+          "output_reachable": 65,
+          "live_union": 131,
+          "final_bytes": 69572,
+          "query_apply_misses": 1080,
+          "query_cofactor_misses": 30,
+          "query_projection_misses": 87,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "log": "difference-shapes-logs/013-composition-positive-face-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "negative",
+        "bit-major"
+      ],
+      "status": "failed",
+      "rows": [],
+      "log": "difference-shapes-logs/014-coup-negative-bit-major.log"
+    },
+    {
+      "job": [
+        "coup",
+        "shannon",
+        "bit-major"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 5033,
+          "input_reachable": 5032,
+          "input_bytes": 281808,
+          "final_records": 93302,
+          "output_reachable": 8859,
+          "live_union": 11430,
+          "final_bytes": 12304592,
+          "query_apply_misses": 309518,
+          "query_cofactor_misses": 0,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "log": "difference-shapes-logs/015-coup-shannon-bit-major.log"
+    }
+  ],
+  "boundary": "Operation/graph census in a standalone raw manager. Coup explicitly replays the clover binding formula; no native Free Join, normalized wire transport, law contraction or timings are claimed. Bytes estimate retained capacities and exclude allocator/temporary/oracle memory."
+}

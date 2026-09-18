@@ -1,0 +1,73 @@
+
+running 1 test
+test event_repr_lab::semantics ... EVENT_LAB {"kind":"transfer_finite","target":"dense","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"dense-dispatched","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"sparse","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"roaring","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"runs","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-root","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-pair","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"mdd4-pair","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-anchored","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed64","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed256","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed512","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed4096","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"block64","source_packets":56,"passed":true}
+EVENT_LAB {"kind":"transfer_support_maps","cases":3825,"passed":true}
+EVENT_LAB {"kind":"transfer_symbolic","bits":40,"source_target_pairs":81,"packet_bytes":[1343, 1343, 1037, 1343, 1265, 1255, 1365, 1667, 2043],"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense-dispatched","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense-dispatched","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"sparse","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"sparse","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"roaring","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"roaring","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"runs","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"runs","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-root","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-root","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-pair","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"mdd4-pair","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"mdd4-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-anchored","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-anchored","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed256","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed256","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed4096","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed4096","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"block64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"block64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"high_coordinate_verification","bits":40,"candidates":9,"passed":true}
+EVENT_LAB {"kind":"coordinate_boundary_verification","candidates":14,"extra_orders_per_candidate":2,"face_layouts_per_candidate":3,"passed":true}
+EVENT_LAB {"kind":"observation_verification","candidates":14,"parameter_groups":[1,2,3],"high_coordinate_candidates":9,"passed":true}
+EVENT_LAB {"kind":"dependency_native_bridge","cases":5062,"sound_native_citations":20644,"passed":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 1.44s
+
+
+        1.77 real         1.40 user         0.03 sys
+            36618240  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                2449  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   9  voluntary context switches
+                 837  involuntary context switches
+         16618055373  instructions retired
+          4788822017  cycles elapsed
+            32063896  peak memory footprint

@@ -1,0 +1,4 @@
+RANGE_PHASE {"phase":"inputs_constructed","records":51,"bytes":2488}
+RANGE_PHASE {"phase":"inputs_verified","records":51,"bytes":2440}
+RANGE_SHAPE {"passed":true,"shape":"shared-exit","mode":"plain","layout":"bit-major","input_policy":"compact","kernel":"steps","dimensions":20,"inputs":2,"outputs":4,"input_records":51,"input_reachable":50,"input_bytes":2440,"final_records":127,"output_reachable":83,"live_union":126,"final_bytes":9596,"query_apply_misses":108,"query_cofactor_misses":0,"query_projection_misses":16,"query_grouped_splits":0,"query_grouped_axes":0,"checked_world_answers":4194304,"checksum":4259822,"compacted_records":127,"compacted_bytes":6992}
+

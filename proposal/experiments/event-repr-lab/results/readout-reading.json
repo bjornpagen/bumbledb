@@ -1,0 +1,10 @@
+{
+  "files": {
+    "proposal/research/space-maps/abbadini-guffanti-beck-chevalley.txt": "0f4a32fb81da67871674cabbcf37c83a05b184f7ea35188a6d4c4079e3059aea"
+  },
+  "reading": "Definition 2.10, Remark 2.11 and Example 2.12, including the displayed image/preimage adjunction and base-change identity.",
+  "claims": [
+    "Information readouts are inverse image after direct image, with the dual universal operation. No base-change premise is needed to define them.",
+    "The exact FD filter rule and observation-order iff are laboratory powerset derivations, now checked in Lean; no Rust performance result is attributed to the paper."
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "passed": false,
+  "source_hashes": {
+    "essential-prototype/Cargo.toml": "ea290898691ea83cbfe6d8ac46fa740783e1a539d7efe218653a3237f74fb467",
+    "essential-prototype/src/lib.rs": "5c98e6ed133151dee7c2e5f4d58c0c8e845b88fdb9c71beb6913026c95b59dac",
+    "src/essential_raw.rs": "a3f7a3626ebbe6bf5aa64b80347b383a983f2680ac40f9e9c889c63b041862a3",
+    "src/essential_store.rs": "e916c0389378ad0bc004ad4fc05945a333cc8ce8c4c5e2ae32c85556b11a750d",
+    "src/essential_words.rs": "b6c4af1aecfe01dd519a87ee1b22fb7624f4be0ef8a2752a0f807a28bc097cc1",
+    "src/view_product.rs": "ae2c6c82eec1ed5935230e388d69f6cf1bbaf4f3d56b3c38935c469e3fed8430"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--release",
+    "--offline",
+    "--",
+    "--test-threads=1"
+  ],
+  "log": "reuse-sanity-check.log",
+  "essential_layout": "enum",
+  "essential_kernel": "derived",
+  "view_kernel": "words",
+  "view_reuse": "bounded",
+  "cargo_lock_sha256": "c26a41d37479e294096d806883c7add983f75134139df9c27275c2a5db0efaa8",
+  "checker_sha256": "e8252d4c180ef1ab8d2a6db1ef1455cff0268d047618ab150ac6c027a9e476a5",
+  "scope": "Raw canonical mapped product: exhaustive two-axis maps/functions/eliminations, pending branch pins, 62-coordinate maps, multiword tables, complements, invalid maps and exact materialized identity. No native timings."
+}

@@ -1,0 +1,25 @@
+{
+  "passed": true,
+  "worlds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "cases": {
+    "partitions": 24,
+    "events": 291,
+    "binary_laws": 4197,
+    "filter_iff": 291,
+    "observable_bounds": 1709,
+    "observation_order_iff": 256,
+    "nested_readouts": 1071
+  },
+  "counterexamples": {
+    "separate_possible_loses_joint_witness": true,
+    "separate_guaranteed_loses_joint_coverage": true
+  },
+  "boundary": "All partitions of zero through four admitted worlds. Independent set oracle; no coordinate encodings, raw aliases or probabilities.",
+  "checker_sha256": "185ba569f5cf532e8bd8da91ebc2506c0ce721f61cbef4fd41e2c9a5dada1bde"
+}

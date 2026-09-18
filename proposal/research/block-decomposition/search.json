@@ -1,0 +1,69 @@
+[
+  {
+    "query": "all:\"multi-valued decision diagrams\"",
+    "url": "https://export.arxiv.org/api/query?search_query=all%3A%22multi-valued+decision+diagrams%22&max_results=8&sortBy=relevance",
+    "results": [
+      {
+        "id": "http://arxiv.org/abs/1401.3448v1",
+        "title": "AND/OR Multi-Valued Decision Diagrams (AOMDDs) for Graphical Models",
+        "summary": "Inspired by the recently introduced framework of AND/OR search spaces for graphical models, we propose to augment Multi-Valued Decision Diagrams (MDD) with AND nodes, in order to capture function decomposition structure and to extend these compiled data structures to general weighted graphical models (e.g., probabilistic models). We present the AND/OR Multi-Valued Decision Diagram (AOMDD) which compiles a graphical model into a canonical form that supports polynomial (e.g., solution counting, belief updating) or constant time (e.g. equivalence of graphical models) queries. We provide two algorithms for compiling the AOMDD of a graphical model. The first is search-based, and works by applying reduction rules to the trace of the memory intensive AND/OR search algorithm. The second is inference-based and uses a Bucket Elimination schedule to combine the AOMDDs of the input functions via the the APPLY operator. For both algorithms, the compilation time and the size of the AOMDD are, in the worst case, exponential in the treewidth of the graphical model, rather than pathwidth as is known for ordered binary decision diagrams (OBDDs). We introduce the concept of semantic treewidth, which helps explain why the size of a decision diagram is often much smaller than the worst case bound. We provide an experimental evaluation that demonstrates the potential of AOMDDs."
+      },
+      {
+        "id": "http://arxiv.org/abs/1206.5266v1",
+        "title": "AND/OR Multi-Valued Decision Diagrams (AOMDDs) for Weighted Graphical Models",
+        "summary": "Compiling graphical models has recently been under intense investigation, especially for probabilistic modeling and processing. We present here a novel data structure for compiling weighted graphical models (in particular, probabilistic models), called AND/OR Multi-Valued Decision Diagram (AOMDD). This is a generalization of our previous work on constraint networks, to weighted models. The AOMDD is based on the frameworks of AND/OR search spaces for graphical models, and Ordered Binary Decision Diagrams (OBDD). The AOMDD is a canonical representation of a graphical model, and its size and compilation time are bounded exponentially by the treewidth of the graph, rather than pathwidth as is known for OBDDs. We discuss a Variable Elimination schedule for compilation, and present the general APPLY algorithm that combines two weighted AOMDDs, and also present a search based method for compilation method. The preliminary experimental evaluation is quite encouraging, showing the potential of the AOMDD data structure."
+      },
+      {
+        "id": "http://arxiv.org/abs/2306.06801v1",
+        "title": "CARNA: Characterizing Advanced heart failure Risk and hemodyNAmic phenotypes using learned multi-valued decision diagrams",
+        "summary": "Early identification of high risk heart failure (HF) patients is key to timely allocation of life-saving therapies. Hemodynamic assessments can facilitate risk stratification and enhance understanding of HF trajectories. However, risk assessment for HF is a complex, multi-faceted decision-making process that can be challenging. Previous risk models for HF do not integrate invasive hemodynamics or support missing data, and use statistical methods prone to bias or machine learning methods that are not interpretable. To address these limitations, this paper presents CARNA, a hemodynamic risk stratification and phenotyping framework for advanced HF that takes advantage of the explainability and expressivity of machine learned Multi-Valued Decision Diagrams (MVDDs). This interpretable framework learns risk scores that predict the probability of patient outcomes, and outputs descriptive patient phenotypes (sets of features and thresholds) that characterize each predicted risk score. CARNA incorporates invasive hemodynamics and can make predictions on missing data. The CARNA models were trained and validated using a total of five advanced HF patient cohorts collected from previous trials, and compared with six established HF risk scores and three traditional ML risk models. CARNA provides robust risk stratification, outperforming all previous benchmarks. Although focused on advanced HF, the CARNA framework is general purpose and can be used to learn risk stratifications for other diseases and medical applications."
+      },
+      {
+        "id": "http://arxiv.org/abs/1505.02552v1",
+        "title": "Relations between MDDs and Tuples and Dynamic Modifications of MDDs based constraints",
+        "summary": "We study the relations between Multi-valued Decision Diagrams (MDD) and tuples (i.e. elements of the Cartesian Product of variables). First, we improve the existing methods for transforming a set of tuples, Global Cut Seeds, sequences of tuples into MDDs. Then, we present some in-place algorithms for adding and deleting tuples from an MDD. Next, we consider an MDD constraint which is modified during the search by deleting some tuples. We give an algorithm which adapts MDD-4R to these dynamic and persistent modifications. Some experiments show that MDD constraints are competitive with Table constraints."
+      },
+      {
+        "id": "http://arxiv.org/abs/cs/0611141v1",
+        "title": "A Generic Global Constraint based on MDDs",
+        "summary": "The paper suggests the use of Multi-Valued Decision Diagrams (MDDs) as the supporting data structure for a generic global constraint. We give an algorithm for maintaining generalized arc consistency (GAC) on this constraint that amortizes the cost of the GAC computation over a root-to-terminal path in the search tree. The technique used is an extension of the GAC algorithm for the regular language constraint on finite length input. Our approach adds support for skipped variables, maintains the reduced property of the MDD dynamically and provides domain entailment detection. Finally we also show how to adapt the approach to constraint types that are closely related to MDDs, such as AOMDDs and Case DAGs."
+      },
+      {
+        "id": "http://arxiv.org/abs/2005.02073v1",
+        "title": "Encoding Linear Constraints into SAT",
+        "summary": "Linear integer constraints are one of the most important constraints in combinatorial problems since they are commonly found in many practical applications. Typically, encodings to Boolean satisfiability (SAT) format of conjunctive normal form perform poorly in problems with these constraints in comparison with SAT modulo theories (SMT), lazy clause generation (LCG) or mixed integer programming (MIP) solvers. In this paper we explore and categorize SAT encodings for linear integer constraints. We define new SAT encodings based on multi-valued decision diagrams, and sorting networks. We compare different SAT encodings of linear constraints and demonstrate where one may be preferable to another. We also compare SAT encodings against other solving methods and show they can be better than linear integer (MIP) solvers and sometimes better than LCG or SMT solvers on appropriate problems. Combining the new encoding with lazy decomposition, which during runtime only encodes constraints that are important to the solving process that occurs, gives the best option for many highly combinatorial problems involving linear constraints."
+      },
+      {
+        "id": "http://arxiv.org/abs/2212.03684v1",
+        "title": "A Decision Diagram Operation for Reachability",
+        "summary": "Saturation is considered the state-of-the-art method for computing fixpoints with decision diagrams. We present a relatively simple decision diagram operation called REACH that also computes fixpoints. In contrast to saturation, it does not require a partitioning of the transition relation. We give sequential algorithms implementing the new operation for both binary and multi-valued decision diagrams, and moreover provide parallel counterparts. We implement these algorithms and experimentally compare their performance against saturation on 692 model checking benchmarks in different languages. The results show that the REACH operation often outperforms saturation, especially on transition relations with low locality. In a comparison between parallelized versions of REACH and saturation we find that REACH obtains comparable speedups up to 16 cores, although falls behind saturation at 64 cores. Finally, in a comparison with the state-of-the-art model checking tool ITS-tools we find that REACH outperforms ITS-tools on 29% of models, suggesting that REACH can be useful as a complementary method in an ensemble tool."
+      },
+      {
+        "id": "http://arxiv.org/abs/1407.7928v1",
+        "title": "Generating and Solving Symbolic Parity Games",
+        "summary": "We present a new tool for verification of modal mu-calculus formulae for process specifications, based on symbolic parity games. It enhances an existing method, that first encodes the problem to a Parameterised Boolean Equation System (PBES) and then instantiates the PBES to a parity game. We improved the translation from specification to PBES to preserve the structure of the specification in the PBES, we extended LTSmin to instantiate PBESs to symbolic parity games, and implemented the recursive parity game solving algorithm by Zielonka for symbolic parity games. We use Multi-valued Decision Diagrams (MDDs) to represent sets and relations, thus enabling the tools to deal with very large systems. The transition relation is partitioned based on the structure of the specification, which allows for efficient manipulation of the MDDs. We performed two case studies on modular specifications, that demonstrate that the new method has better time and memory performance than existing PBES based tools and can be faster (but slightly less memory efficient) than the symbolic model checker NuSMV."
+      }
+    ]
+  },
+  {
+    "query": "all:\"bounded vtree\"",
+    "url": "https://export.arxiv.org/api/query?search_query=all%3A%22bounded+vtree%22&max_results=8&sortBy=relevance",
+    "results": []
+  },
+  {
+    "query": "all:\"decision diagrams\" AND all:\"partition\" AND all:\"algebra\"",
+    "url": "https://export.arxiv.org/api/query?search_query=all%3A%22decision+diagrams%22+AND+all%3A%22partition%22+AND+all%3A%22algebra%22&max_results=8&sortBy=relevance",
+    "results": [
+      {
+        "id": "http://arxiv.org/abs/1302.1039v4",
+        "title": "How to partition or count an abstract simplicial complex, given its facets",
+        "summary": "Given are the facets of an abstract (finite) simplicial complex SC. We show how to partition SC into few pieces, each one compactly encoded by the use of wildcards. Such a representation is useful for the optimization of a target function SC -> Z, as well as in combinatorial commutative algebra and Frequent Set Mining. Merely calculating the face-numbers of SC can be done faster than partitioning SC. Our method compares favorably to inclusion-exclusion and binary decision diagram"
+      },
+      {
+        "id": "http://arxiv.org/abs/1202.3762v1",
+        "title": "Symbolic Dynamic Programming for Discrete and Continuous State MDPs",
+        "summary": "Many real-world decision-theoretic planning problems can be naturally modeled with discrete and continuous state Markov decision processes (DC-MDPs). While previous work has addressed automated decision-theoretic planning for DCMDPs, optimal solutions have only been defined so far for limited settings, e.g., DC-MDPs having hyper-rectangular piecewise linear value functions. In this work, we extend symbolic dynamic programming (SDP) techniques to provide optimal solutions for a vastly expanded class of DCMDPs. To address the inherent combinatorial aspects of SDP, we introduce the XADD - a continuous variable extension of the algebraic decision diagram (ADD) - that maintains compact representations of the exact value function. Empirically, we demonstrate an implementation of SDP with XADDs on various DC-MDPs, showing the first optimal automated solutions to DCMDPs with linear and nonlinear piecewise partitioned value functions and showing the advantages of constraint-based pruning for XADDs."
+      }
+    ]
+  }
+]

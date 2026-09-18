@@ -1,0 +1,5916 @@
+{
+  "experiment": "Materialized operands versus mapped views; same canonical relation outputs",
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "7e17c705f3310183de4a3d87443990e34ba4523dc8da59d76daabd47a53ae068",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "6377bace250e04037dcc1cdb0b4544b6008e732191288dc1af9ca5b99a596df5",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagonal_checks.rs": "a45ce14c303b65fc9aacdccb7c16fc4ce9f19874cd62aa1b674faec9da85d169",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/essential.rs": "b79e176c270309f17fea2b6576f602d015ecb1fbf5f3e87615b20c485ffc38d1",
+      "src/essential_raw.rs": "d41ec88bbcf8093bb4d4a01987b8dc06b03842e7c56dc924999e2e669067ccd9",
+      "src/essential_store.rs": "e916c0389378ad0bc004ad4fc05945a333cc8ce8c4c5e2ae32c85556b11a750d",
+      "src/essential_words.rs": "b6c4af1aecfe01dd519a87ee1b22fb7624f4be0ef8a2752a0f807a28bc097cc1",
+      "src/finite.rs": "1ad66e84ba8488713f2fc8bd514a0d2e1ae8f6b2c4a2499dfa6f6aec21c976ca",
+      "src/law_bench.rs": "a41feb1d92de313ef108ebfe4f185820084c03ce088490ca8507c8d998bf2751",
+      "src/lib.rs": "568807eacc70fa17ff2c488a60f7fb0fdd707272cfc9522fb7af68581b50e7a5",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "280d1e20e660cb00840c40f09a6998c00fdf435258a11a064d0a9cc68f9a8312",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/occupancy.rs": "11f634ab0c519426b4f7dc29469d422e8b95bb4f9918003f7749eca48ee569d3",
+      "src/occupancy_scratch.rs": "703a931d77305b7b19d057cf6c699b0ee644bbdec3f59bd975bb6a0b5b635116",
+      "src/occupancy_words.rs": "f467cb77299c876320beac58b867ca29def0261e3f7647f11f6f39e099f1d113",
+      "src/owned_bench.rs": "f914d04d6031a547cea8e3307a9bf89079a0e6b8465439dce423e3c470f91423",
+      "src/packed.rs": "5dddb0002c4b0f60eef6a59ae462d950d2a2e3ec60ddc858b91d31e66a75482a",
+      "src/relational_core.rs": "72a38960ebb4a65549f2745b4b019fedc4a896d0b986b19e12c84a387e55e5ef",
+      "src/relations.rs": "5cc0917e482452a984d5da704d4835c50b60428f803340e4bf0065628eb642dd",
+      "src/semantic_checks.rs": "2751a096bd180a1e476968c39719ac35dbc85ea07eebd18ad5f764cbf58dc37c",
+      "src/signature.rs": "e23b491ac9af760fbbee1cd9b39177607f8ff4a5caa700ca06111eabb6f329e0",
+      "src/signature_bench.rs": "e41be54c10c1da7beedc0705dddc848099473c4b267d009c2f36aba6f9dc879a",
+      "src/symbolic_relations.rs": "245af210921b06a15a2560e1fe993730ad5073f85b448be1e4ab845c7cd07c74",
+      "src/transfer.rs": "d2fe8ebdf739d1d3e8b49c231c4c0f5df0eaf7985f5201513281d91e6f7bdfe2",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "26c062f72194a59379a1bcf3481cf3098058f608689fb663425916be128e0aed",
+      "src/view_bench.rs": "a045c8aed63b7ef23d5ecd2233891b5b242d3e115d46ee616435105b19b898c1",
+      "src/view_product.rs": "ed29e4566ce62608679285c6f05ca220464ad5a467d71c1cfdcff2458249318f"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-18T03:28:54.365044+00:00",
+    "build_started_utc": "2026-09-18T03:21:38.201987+00:00"
+  },
+  "trials": 1,
+  "timeout_s": 180,
+  "seed": 20261201,
+  "runs": [
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "elapsed_s": 2.095348834991455,
+      "max_rss_bytes": 43761664,
+      "log": "view-native-smoke-logs/job-000-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-root",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "mdd4-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-anchored",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "block64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "essential64",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "essential64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "essential512",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "essential512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "essential64",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "essential64",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "essential512",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "essential512",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 121,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043,
+            1265,
+            1365
+          ],
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "dense",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "dense-dispatched",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense-dispatched",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "sparse",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "sparse",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "roaring",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "roaring",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "runs",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "runs",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-root",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-root",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-pair",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "mdd4-pair",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "mdd4-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-anchored",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-anchored",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed64",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed64",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed256",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed256",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed512",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed512",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed4096",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed4096",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "block64",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "block64",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "mapped_product_verification",
+          "candidate": "essential64",
+          "cases": 1080,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "essential64",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "essential64",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "essential64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "essential64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "mapped_product_verification",
+          "candidate": "essential512",
+          "cases": 1080,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "essential512",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "essential512",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "essential512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "verification",
+          "candidate": "essential512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 11,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 16,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 16,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 11,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ],
+      "loadavg_end": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "elapsed_s": 1.718797206878662,
+      "max_rss_bytes": 44875776,
+      "log": "view-native-smoke-logs/job-001-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-views.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-root",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "mdd4-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-anchored",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "block64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "essential64",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "essential64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "essential512",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "essential512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "essential64",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "essential64",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "essential512",
+          "source_packets": 64,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "essential512",
+          "cases": 192,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 121,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043,
+            1265,
+            1365
+          ],
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "dense",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "dense-dispatched",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense-dispatched",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "sparse",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "sparse",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "roaring",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "roaring",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "runs",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "runs",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-root",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-root",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-pair",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "mdd4-pair",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "mdd4-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-anchored",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-anchored",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed64",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed64",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed256",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed256",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed512",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed512",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed4096",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed4096",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "block64",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "block64",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "mapped_product_verification",
+          "candidate": "essential64",
+          "cases": 1080,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "essential64",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "essential64",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "essential64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "essential64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "mapped_product_verification",
+          "candidate": "essential512",
+          "cases": 1080,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "essential512",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "essential512",
+          "support_cases": 1530,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "essential512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "verification",
+          "candidate": "essential512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 11,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 16,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 16,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 11,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true,
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ],
+      "loadavg_end": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.2482442855834961,
+      "max_rss_bytes": 11075584,
+      "log": "view-native-smoke-logs/job-002-products-packed512----bit-major-local-words-identity-native-product-materialized.log",
+      "rows": [
+        {
+          "kind": "product_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000540167
+          ],
+          "join_only_s": [
+            9.3875e-05
+          ],
+          "fresh_s": [
+            0.001572167
+          ],
+          "warm_s": [
+            0.00139925
+          ],
+          "input_bytes_est": 12852,
+          "final_bytes_est": 63556,
+          "input_nodes": 108,
+          "final_nodes": 548,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000540167
+          ],
+          "join_only_s": [
+            9.3875e-05
+          ],
+          "fresh_s": [
+            0.000226417
+          ],
+          "warm_s": [
+            1.0417e-05
+          ],
+          "input_bytes_est": 12852,
+          "final_bytes_est": 70948,
+          "input_nodes": 108,
+          "final_nodes": 548,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.029352
+          ],
+          "join_only_s": [
+            1.6459e-05
+          ],
+          "fresh_s": [
+            0.003250667
+          ],
+          "warm_s": [
+            0.002811458
+          ],
+          "input_bytes_est": 65300,
+          "final_bytes_est": 676820,
+          "input_nodes": 642,
+          "final_nodes": 5073,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.029352
+          ],
+          "join_only_s": [
+            1.6459e-05
+          ],
+          "fresh_s": [
+            0.000694959
+          ],
+          "warm_s": [
+            5.6625e-05
+          ],
+          "input_bytes_est": 65300,
+          "final_bytes_est": 684212,
+          "input_nodes": 642,
+          "final_nodes": 5073,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ],
+      "loadavg_end": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.36384105682373047,
+      "max_rss_bytes": 10780672,
+      "log": "view-native-smoke-logs/job-003-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log",
+      "rows": [
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            8.9708e-05
+          ],
+          "join_only_s": [
+            5.8042e-05
+          ],
+          "fresh_s": [
+            0.00200025
+          ],
+          "warm_s": [
+            0.001943375
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 32512,
+          "input_nodes": 40,
+          "final_nodes": 216,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 10240,
+            "table_bytes": 8288,
+            "interner_bytes": 9184,
+            "metadata_bytes": 2656,
+            "cache_bytes": 1904,
+            "records": 216,
+            "tables": 215,
+            "logical_words": 518,
+            "total_bytes_est": 32272
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            8.9708e-05
+          ],
+          "join_only_s": [
+            5.8042e-05
+          ],
+          "fresh_s": [
+            0.000478791
+          ],
+          "warm_s": [
+            9.958e-06
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 38588,
+          "input_nodes": 40,
+          "final_nodes": 216,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 10240,
+            "table_bytes": 8288,
+            "interner_bytes": 9184,
+            "metadata_bytes": 2656,
+            "cache_bytes": 1904,
+            "records": 216,
+            "tables": 215,
+            "logical_words": 518,
+            "total_bytes_est": 32272
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001303583
+          ],
+          "join_only_s": [
+            1.6708e-05
+          ],
+          "fresh_s": [
+            0.062569667
+          ],
+          "warm_s": [
+            0.061097166
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 311208,
+          "input_nodes": 186,
+          "final_nodes": 1792,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 95232,
+            "table_bytes": 83920,
+            "interner_bytes": 73472,
+            "metadata_bytes": 23952,
+            "cache_bytes": 34272,
+            "records": 1792,
+            "tables": 1267,
+            "logical_words": 5245,
+            "total_bytes_est": 310848
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001303583
+          ],
+          "join_only_s": [
+            1.6708e-05
+          ],
+          "fresh_s": [
+            0.012273666
+          ],
+          "warm_s": [
+            1.3e-05
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 317284,
+          "input_nodes": 186,
+          "final_nodes": 1792,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 95232,
+            "table_bytes": 83920,
+            "interner_bytes": 73472,
+            "metadata_bytes": 23952,
+            "cache_bytes": 34272,
+            "records": 1792,
+            "tables": 1267,
+            "logical_words": 5245,
+            "total_bytes_est": 310848
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ],
+      "loadavg_end": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.4835200309753418,
+      "max_rss_bytes": 10387456,
+      "log": "view-native-smoke-logs/job-004-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            8.9333e-05
+          ],
+          "join_only_s": [
+            6.0459e-05
+          ],
+          "fresh_s": [
+            0.000579583
+          ],
+          "warm_s": [
+            0.0002285
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 66864,
+          "input_nodes": 40,
+          "final_nodes": 345,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 20480,
+            "table_bytes": 14944,
+            "interner_bytes": 18368,
+            "metadata_bytes": 5216,
+            "cache_bytes": 7616,
+            "records": 345,
+            "tables": 344,
+            "logical_words": 934,
+            "total_bytes_est": 66624
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            8.9333e-05
+          ],
+          "join_only_s": [
+            6.0459e-05
+          ],
+          "fresh_s": [
+            0.000326375
+          ],
+          "warm_s": [
+            1.0667e-05
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 79856,
+          "input_nodes": 40,
+          "final_nodes": 345,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 20480,
+            "table_bytes": 14944,
+            "interner_bytes": 18368,
+            "metadata_bytes": 5216,
+            "cache_bytes": 7616,
+            "records": 345,
+            "tables": 344,
+            "logical_words": 934,
+            "total_bytes_est": 66624
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001319417
+          ],
+          "join_only_s": [
+            1.4e-05
+          ],
+          "fresh_s": [
+            0.003257625
+          ],
+          "warm_s": [
+            0.001646167
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 450472,
+          "input_nodes": 186,
+          "final_nodes": 2668,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 95232,
+            "table_bytes": 123056,
+            "interner_bytes": 146944,
+            "metadata_bytes": 23952,
+            "cache_bytes": 60928,
+            "records": 2668,
+            "tables": 1995,
+            "logical_words": 7691,
+            "total_bytes_est": 450112
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001319417
+          ],
+          "join_only_s": [
+            1.4e-05
+          ],
+          "fresh_s": [
+            0.002373667
+          ],
+          "warm_s": [
+            2.6125e-05
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 463464,
+          "input_nodes": 186,
+          "final_nodes": 2668,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 95232,
+            "table_bytes": 123056,
+            "interner_bytes": 146944,
+            "metadata_bytes": 23952,
+            "cache_bytes": 60928,
+            "records": 2668,
+            "tables": 1995,
+            "logical_words": 7691,
+            "total_bytes_est": 450112
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.89990234375,
+        5.4638671875,
+        7.701171875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.5136220455169678,
+      "max_rss_bytes": 10076160,
+      "log": "view-native-smoke-logs/job-005-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            9.075e-05
+          ],
+          "join_only_s": [
+            2.7833e-05
+          ],
+          "fresh_s": [
+            0.00072025
+          ],
+          "warm_s": [
+            0.000644625
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 22720,
+          "input_nodes": 40,
+          "final_nodes": 130,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 5120,
+            "table_bytes": 4896,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1376,
+            "cache_bytes": 1904,
+            "records": 130,
+            "tables": 129,
+            "logical_words": 306,
+            "total_bytes_est": 22480
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            9.075e-05
+          ],
+          "join_only_s": [
+            2.7833e-05
+          ],
+          "fresh_s": [
+            0.000388708
+          ],
+          "warm_s": [
+            8.667e-06
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 34492,
+          "input_nodes": 40,
+          "final_nodes": 130,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 5120,
+            "table_bytes": 4896,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1376,
+            "cache_bytes": 1904,
+            "records": 130,
+            "tables": 129,
+            "logical_words": 306,
+            "total_bytes_est": 22480
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001283334
+          ],
+          "join_only_s": [
+            1.5e-05
+          ],
+          "fresh_s": [
+            0.015365583
+          ],
+          "warm_s": [
+            0.014453917
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 195464,
+          "input_nodes": 186,
+          "final_nodes": 1011,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 47616,
+            "table_bytes": 44832,
+            "interner_bytes": 73472,
+            "metadata_bytes": 12048,
+            "cache_bytes": 17136,
+            "records": 1011,
+            "tables": 711,
+            "logical_words": 2802,
+            "total_bytes_est": 195104
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential512",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001283334
+          ],
+          "join_only_s": [
+            1.5e-05
+          ],
+          "fresh_s": [
+            0.007919625
+          ],
+          "warm_s": [
+            1.9041e-05
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 207236,
+          "input_nodes": 186,
+          "final_nodes": 1011,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 47616,
+            "table_bytes": 44832,
+            "interner_bytes": 73472,
+            "metadata_bytes": 12048,
+            "cache_bytes": 17136,
+            "records": 1011,
+            "tables": 711,
+            "logical_words": 2802,
+            "total_bytes_est": 195104
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.24107599258422852,
+      "max_rss_bytes": 11091968,
+      "log": "view-native-smoke-logs/job-006-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log",
+      "rows": [
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            9.2834e-05
+          ],
+          "join_only_s": [
+            2.8667e-05
+          ],
+          "fresh_s": [
+            0.000787125
+          ],
+          "warm_s": [
+            0.000609
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 64880,
+          "input_nodes": 40,
+          "final_nodes": 329,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 20480,
+            "table_bytes": 14864,
+            "interner_bytes": 18368,
+            "metadata_bytes": 5216,
+            "cache_bytes": 5712,
+            "records": 329,
+            "tables": 328,
+            "logical_words": 929,
+            "total_bytes_est": 64640
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            9.2834e-05
+          ],
+          "join_only_s": [
+            2.8667e-05
+          ],
+          "fresh_s": [
+            0.000268291
+          ],
+          "warm_s": [
+            8.625e-06
+          ],
+          "input_bytes_est": 5631,
+          "final_bytes_est": 72272,
+          "input_nodes": 40,
+          "final_nodes": 329,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 1280,
+            "table_bytes": 1280,
+            "interner_bytes": 2296,
+            "metadata_bytes": 416,
+            "cache_bytes": 119,
+            "records": 40,
+            "tables": 39,
+            "logical_words": 80,
+            "total_bytes_est": 5391
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 20480,
+            "table_bytes": 14864,
+            "interner_bytes": 18368,
+            "metadata_bytes": 5216,
+            "cache_bytes": 5712,
+            "records": 329,
+            "tables": 328,
+            "logical_words": 929,
+            "total_bytes_est": 64640
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001252083
+          ],
+          "join_only_s": [
+            1.5417e-05
+          ],
+          "fresh_s": [
+            0.007254375
+          ],
+          "warm_s": [
+            0.005774
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 583944,
+          "input_nodes": 186,
+          "final_nodes": 3112,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 190464,
+            "table_bytes": 152720,
+            "interner_bytes": 146944,
+            "metadata_bytes": 47760,
+            "cache_bytes": 45696,
+            "records": 3112,
+            "tables": 2112,
+            "logical_words": 9545,
+            "total_bytes_est": 583584
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001252083
+          ],
+          "join_only_s": [
+            1.5417e-05
+          ],
+          "fresh_s": [
+            0.002642375
+          ],
+          "warm_s": [
+            1.5042e-05
+          ],
+          "input_bytes_est": 28091,
+          "final_bytes_est": 591336,
+          "input_nodes": 186,
+          "final_nodes": 3112,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 5952,
+            "table_bytes": 10368,
+            "interner_bytes": 9184,
+            "metadata_bytes": 1632,
+            "cache_bytes": 595,
+            "records": 186,
+            "tables": 106,
+            "logical_words": 648,
+            "total_bytes_est": 27731
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 190464,
+            "table_bytes": 152720,
+            "interner_bytes": 146944,
+            "metadata_bytes": 47760,
+            "cache_bytes": 45696,
+            "records": 3112,
+            "tables": 2112,
+            "logical_words": 9545,
+            "total_bytes_est": 583584
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.5655128955841064,
+      "max_rss_bytes": 11354112,
+      "log": "view-native-smoke-logs/job-007-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000122333
+          ],
+          "join_only_s": [
+            5.2167e-05
+          ],
+          "fresh_s": [
+            0.001099417
+          ],
+          "warm_s": [
+            0.00063875
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 167936,
+          "input_nodes": 89,
+          "final_nodes": 1159,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 45568,
+            "table_bytes": 14320,
+            "interner_bytes": 73472,
+            "metadata_bytes": 11488,
+            "cache_bytes": 22848,
+            "records": 1159,
+            "tables": 895,
+            "logical_words": 895,
+            "total_bytes_est": 167696
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000122333
+          ],
+          "join_only_s": [
+            5.2167e-05
+          ],
+          "fresh_s": [
+            0.000725167
+          ],
+          "warm_s": [
+            9.917e-06
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 180928,
+          "input_nodes": 89,
+          "final_nodes": 1159,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 45568,
+            "table_bytes": 14320,
+            "interner_bytes": 73472,
+            "metadata_bytes": 11488,
+            "cache_bytes": 22848,
+            "records": 1159,
+            "tables": 895,
+            "logical_words": 895,
+            "total_bytes_est": 167696
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001563333
+          ],
+          "join_only_s": [
+            1.5625e-05
+          ],
+          "fresh_s": [
+            0.004732
+          ],
+          "warm_s": [
+            0.002844166
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 879464,
+          "input_nodes": 552,
+          "final_nodes": 5699,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 282624,
+            "table_bytes": 49008,
+            "interner_bytes": 293888,
+            "metadata_bytes": 70800,
+            "cache_bytes": 182784,
+            "records": 5699,
+            "tables": 3063,
+            "logical_words": 3063,
+            "total_bytes_est": 879104
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001563333
+          ],
+          "join_only_s": [
+            1.5625e-05
+          ],
+          "fresh_s": [
+            0.00331425
+          ],
+          "warm_s": [
+            2.9916e-05
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 892456,
+          "input_nodes": 552,
+          "final_nodes": 5699,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 282624,
+            "table_bytes": 49008,
+            "interner_bytes": 293888,
+            "metadata_bytes": 70800,
+            "cache_bytes": 182784,
+            "records": 5699,
+            "tables": 3063,
+            "logical_words": 3063,
+            "total_bytes_est": 879104
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.28267383575439453,
+      "max_rss_bytes": 11632640,
+      "log": "view-native-smoke-logs/job-008-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log",
+      "rows": [
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000124541
+          ],
+          "join_only_s": [
+            5.1417e-05
+          ],
+          "fresh_s": [
+            0.001659916
+          ],
+          "warm_s": [
+            0.001261292
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 125168,
+          "input_nodes": 89,
+          "final_nodes": 829,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 45568,
+            "table_bytes": 8288,
+            "interner_bytes": 36736,
+            "metadata_bytes": 11488,
+            "cache_bytes": 22848,
+            "records": 829,
+            "tables": 518,
+            "logical_words": 518,
+            "total_bytes_est": 124928
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000124541
+          ],
+          "join_only_s": [
+            5.1417e-05
+          ],
+          "fresh_s": [
+            0.000568417
+          ],
+          "warm_s": [
+            8.708e-06
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 132560,
+          "input_nodes": 89,
+          "final_nodes": 829,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 45568,
+            "table_bytes": 8288,
+            "interner_bytes": 36736,
+            "metadata_bytes": 11488,
+            "cache_bytes": 22848,
+            "records": 829,
+            "tables": 518,
+            "logical_words": 518,
+            "total_bytes_est": 124928
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001495875
+          ],
+          "join_only_s": [
+            2.2458e-05
+          ],
+          "fresh_s": [
+            0.010546584
+          ],
+          "warm_s": [
+            0.008317875
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 826744,
+          "input_nodes": 552,
+          "final_nodes": 5582,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 282624,
+            "table_bytes": 26752,
+            "interner_bytes": 293888,
+            "metadata_bytes": 70800,
+            "cache_bytes": 152320,
+            "records": 5582,
+            "tables": 1672,
+            "logical_words": 1672,
+            "total_bytes_est": 826384
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001495875
+          ],
+          "join_only_s": [
+            2.2458e-05
+          ],
+          "fresh_s": [
+            0.003324416
+          ],
+          "warm_s": [
+            2.0375e-05
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 834136,
+          "input_nodes": 552,
+          "final_nodes": 5582,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 282624,
+            "table_bytes": 26752,
+            "interner_bytes": 293888,
+            "metadata_bytes": 70800,
+            "cache_bytes": 152320,
+            "records": 5582,
+            "tables": 1672,
+            "logical_words": 1672,
+            "total_bytes_est": 826384
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.6735470294952393,
+      "max_rss_bytes": 10256384,
+      "log": "view-native-smoke-logs/job-009-relations-packed512----bit-major-local-words-identity-native-product-materialized.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.00054825
+          ],
+          "join_only_s": [
+            6.3708e-05
+          ],
+          "fresh_s": [
+            0.000915167
+          ],
+          "warm_s": [
+            0.000805125
+          ],
+          "input_bytes_est": 12852,
+          "final_bytes_est": 74308,
+          "input_nodes": 108,
+          "final_nodes": 482,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.00054825
+          ],
+          "join_only_s": [
+            6.3708e-05
+          ],
+          "fresh_s": [
+            0.000269458
+          ],
+          "warm_s": [
+            1.8041e-05
+          ],
+          "input_bytes_est": 12852,
+          "final_bytes_est": 87300,
+          "input_nodes": 108,
+          "final_nodes": 482,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.029673959
+          ],
+          "join_only_s": [
+            2.1167e-05
+          ],
+          "fresh_s": [
+            0.001509666
+          ],
+          "warm_s": [
+            0.001286583
+          ],
+          "input_bytes_est": 65300,
+          "final_bytes_est": 499412,
+          "input_nodes": 642,
+          "final_nodes": 3815,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed512",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.029673959
+          ],
+          "join_only_s": [
+            2.1167e-05
+          ],
+          "fresh_s": [
+            0.000702917
+          ],
+          "warm_s": [
+            5.9125e-05
+          ],
+          "input_bytes_est": 65300,
+          "final_bytes_est": 512404,
+          "input_nodes": 642,
+          "final_nodes": 3815,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.0630338191986084,
+      "max_rss_bytes": 17104896,
+      "log": "view-native-smoke-logs/job-010-relations-dense-dispatched----bit-major-words-identity-native-product-materialized.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            3.65e-05
+          ],
+          "join_only_s": [
+            5.9833e-05
+          ],
+          "fresh_s": [
+            0.000221417
+          ],
+          "warm_s": [
+            0.000146417
+          ],
+          "input_bytes_est": 16000,
+          "final_bytes_est": 82536,
+          "input_nodes": 26,
+          "final_nodes": 140,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            3.65e-05
+          ],
+          "join_only_s": [
+            5.9833e-05
+          ],
+          "fresh_s": [
+            6.4166e-05
+          ],
+          "warm_s": [
+            1.0209e-05
+          ],
+          "input_bytes_est": 16000,
+          "final_bytes_est": 95528,
+          "input_nodes": 26,
+          "final_nodes": 140,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001268083
+          ],
+          "join_only_s": [
+            2.1833e-05
+          ],
+          "fresh_s": [
+            0.007300791
+          ],
+          "warm_s": [
+            0.00714475
+          ],
+          "input_bytes_est": 919288,
+          "final_bytes_est": 5810728,
+          "input_nodes": 26,
+          "final_nodes": 175,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001268083
+          ],
+          "join_only_s": [
+            2.1833e-05
+          ],
+          "fresh_s": [
+            0.002497333
+          ],
+          "warm_s": [
+            5.6583e-05
+          ],
+          "input_bytes_est": 919288,
+          "final_bytes_est": 5823720,
+          "input_nodes": 26,
+          "final_nodes": 175,
+          "input_storage": null,
+          "final_storage": null,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.08553695678710938,
+      "max_rss_bytes": 16105472,
+      "log": "view-native-smoke-logs/job-011-products-dense-dispatched----bit-major-words-identity-native-product-materialized.log",
+      "rows": [
+        {
+          "kind": "product_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            3.9542e-05
+          ],
+          "join_only_s": [
+            6.6333e-05
+          ],
+          "fresh_s": [
+            0.000244917
+          ],
+          "warm_s": [
+            0.000175708
+          ],
+          "input_bytes_est": 16000,
+          "final_bytes_est": 76640,
+          "input_nodes": 26,
+          "final_nodes": 129,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            3.9542e-05
+          ],
+          "join_only_s": [
+            6.6333e-05
+          ],
+          "fresh_s": [
+            5.075e-05
+          ],
+          "warm_s": [
+            9e-06
+          ],
+          "input_bytes_est": 16000,
+          "final_bytes_est": 84032,
+          "input_nodes": 26,
+          "final_nodes": 129,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001194667
+          ],
+          "join_only_s": [
+            2.0666e-05
+          ],
+          "fresh_s": [
+            0.00917975
+          ],
+          "warm_s": [
+            0.008849833
+          ],
+          "input_bytes_est": 919288,
+          "final_bytes_est": 4335088,
+          "input_nodes": 26,
+          "final_nodes": 130,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "dense-dispatched",
+          "product_mode": "materialized",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001194667
+          ],
+          "join_only_s": [
+            2.0666e-05
+          ],
+          "fresh_s": [
+            0.001333916
+          ],
+          "warm_s": [
+            1.7208e-05
+          ],
+          "input_bytes_est": 919288,
+          "final_bytes_est": 4342480,
+          "input_nodes": 26,
+          "final_nodes": 130,
+          "input_storage": null,
+          "final_storage": null,
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.3413879871368408,
+      "max_rss_bytes": 11239424,
+      "log": "view-native-smoke-logs/job-012-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log",
+      "rows": [
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000121625
+          ],
+          "join_only_s": [
+            3.0209e-05
+          ],
+          "fresh_s": [
+            0.00363675
+          ],
+          "warm_s": [
+            0.003494667
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 79552,
+          "input_nodes": 89,
+          "final_nodes": 486,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 22784,
+            "table_bytes": 4480,
+            "interner_bytes": 36736,
+            "metadata_bytes": 5792,
+            "cache_bytes": 9520,
+            "records": 486,
+            "tables": 280,
+            "logical_words": 280,
+            "total_bytes_est": 79312
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000121625
+          ],
+          "join_only_s": [
+            3.0209e-05
+          ],
+          "fresh_s": [
+            0.000790292
+          ],
+          "warm_s": [
+            7.458e-06
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 85628,
+          "input_nodes": 89,
+          "final_nodes": 486,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 22784,
+            "table_bytes": 4480,
+            "interner_bytes": 36736,
+            "metadata_bytes": 5792,
+            "cache_bytes": 9520,
+            "records": 486,
+            "tables": 280,
+            "logical_words": 280,
+            "total_bytes_est": 79312
+          },
+          "checksum": 464640,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.0015835
+          ],
+          "join_only_s": [
+            1.625e-05
+          ],
+          "fresh_s": [
+            0.034492125
+          ],
+          "warm_s": [
+            0.033491709
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 408360,
+          "input_nodes": 552,
+          "final_nodes": 3102,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 141312,
+            "table_bytes": 15728,
+            "interner_bytes": 146944,
+            "metadata_bytes": 35472,
+            "cache_bytes": 68544,
+            "records": 3102,
+            "tables": 983,
+            "logical_words": 983,
+            "total_bytes_est": 408000
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "product_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.0015835
+          ],
+          "join_only_s": [
+            1.625e-05
+          ],
+          "fresh_s": [
+            0.007473458
+          ],
+          "warm_s": [
+            1.4125e-05
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 414436,
+          "input_nodes": 552,
+          "final_nodes": 3102,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 141312,
+            "table_bytes": 15728,
+            "interner_bytes": 146944,
+            "metadata_bytes": 35472,
+            "cache_bytes": 68544,
+            "records": 3102,
+            "tables": 983,
+            "logical_words": 983,
+            "total_bytes_est": 408000
+          },
+          "checksum": 14852224,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "elapsed_s": 0.5788261890411377,
+      "max_rss_bytes": 10977280,
+      "log": "view-native-smoke-logs/job-013-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000116041
+          ],
+          "join_only_s": [
+            2.675e-05
+          ],
+          "fresh_s": [
+            0.00094775
+          ],
+          "warm_s": [
+            0.000866583
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 79468,
+          "input_nodes": 89,
+          "final_nodes": 495,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 22784,
+            "table_bytes": 5824,
+            "interner_bytes": 36736,
+            "metadata_bytes": 5792,
+            "cache_bytes": 8092,
+            "records": 495,
+            "tables": 364,
+            "logical_words": 364,
+            "total_bytes_est": 79228
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000116041
+          ],
+          "join_only_s": [
+            2.675e-05
+          ],
+          "fresh_s": [
+            0.000543959
+          ],
+          "warm_s": [
+            9.042e-06
+          ],
+          "input_bytes_est": 9629,
+          "final_bytes_est": 91240,
+          "input_nodes": 89,
+          "final_nodes": 495,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 2848,
+            "table_bytes": 784,
+            "interner_bytes": 4592,
+            "metadata_bytes": 808,
+            "cache_bytes": 357,
+            "records": 89,
+            "tables": 49,
+            "logical_words": 49,
+            "total_bytes_est": 9389
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 22784,
+            "table_bytes": 5824,
+            "interner_bytes": 36736,
+            "metadata_bytes": 5792,
+            "cache_bytes": 8092,
+            "records": 495,
+            "tables": 364,
+            "logical_words": 364,
+            "total_bytes_est": 79228
+          },
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001496791
+          ],
+          "join_only_s": [
+            1.875e-05
+          ],
+          "fresh_s": [
+            0.006857208
+          ],
+          "warm_s": [
+            0.006159209
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 415112,
+          "input_nodes": 552,
+          "final_nodes": 2640,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 141312,
+            "table_bytes": 22480,
+            "interner_bytes": 146944,
+            "metadata_bytes": 35472,
+            "cache_bytes": 68544,
+            "records": 2640,
+            "tables": 1405,
+            "logical_words": 1405,
+            "total_bytes_est": 414752
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "essential64",
+          "product_mode": "views",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001496791
+          ],
+          "join_only_s": [
+            1.875e-05
+          ],
+          "fresh_s": [
+            0.0042075
+          ],
+          "warm_s": [
+            2.6125e-05
+          ],
+          "input_bytes_est": 62738,
+          "final_bytes_est": 426884,
+          "input_nodes": 552,
+          "final_nodes": 2640,
+          "input_storage": {
+            "layout": "enum",
+            "record_bytes": 17664,
+            "table_bytes": 2704,
+            "interner_bytes": 36736,
+            "metadata_bytes": 4560,
+            "cache_bytes": 714,
+            "records": 552,
+            "tables": 169,
+            "logical_words": 169,
+            "total_bytes_est": 62378
+          },
+          "final_storage": {
+            "layout": "enum",
+            "record_bytes": 141312,
+            "table_bytes": 22480,
+            "interner_bytes": 146944,
+            "metadata_bytes": 35472,
+            "cache_bytes": 68544,
+            "records": 2640,
+            "tables": 1405,
+            "logical_words": 1405,
+            "total_bytes_est": 414752
+          },
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "essential_layout": "enum",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ],
+      "loadavg_end": [
+        4.82763671875,
+        5.439453125,
+        7.67919921875
+      ]
+    }
+  ]
+}

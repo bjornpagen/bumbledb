@@ -1,0 +1,29 @@
+{
+  "status": "research_closed_at_user_request",
+  "recorded_utc": "2026-09-18T15:02:57.751261+00:00",
+  "goal_state": "No active goal returned by get_goal at closeout.",
+  "documents_sha256": {
+    "proposal/RESEARCH-HANDOFF.md": "8e21a7c75902b3ee2281dc6e5144dee43ec33e45ceb68f91b97537aaee38e310",
+    "proposal/README.md": "df302546655deae4af741cb0d09d29ec84718a0064d5c21c4d5650facec8c16e",
+    "proposal/design-review.md": "a5d3fb3f67ddfb11569c9996013a80c6ca425bd07062119f561ce21f353b6006",
+    "proposal/implementation-plan.md": "1d0bb17d2a49b151220a47d53e258bfe36b300d1c168233176cf96f4aa1519d7",
+    "proposal/experiments/event-repr-lab/README.md": "3db03507a670abbeea727371312d956f37ce4f7052b3e67b511bad33d71df949",
+    "proposal/experiments/event-repr-lab/REPORT.md": "66475a0d338d5d4b9e18023247a18a8b4544ee3237fac3ed0e46d4e0d62fe5d7",
+    "proposal/experiments/event-repr-lab/QUESTIONS.md": "55dec820abbeaecd822682d95c00562baa0c0abe019fbab02f5749b6a57cc1e1",
+    "proposal/experiments/event-repr-lab/RELATIONAL-PACK.md": "bd5eb9bcb4e6040c5fa95cd66db443a7d97a0994a8340eb3f46b8c376d0a0552",
+    "proposal/experiments/event-repr-lab/PARTICIPATION-STATUS.md": "46a081c561605b17c6c8fad26c3913a78763bb89175544ee6493770074f71936"
+  },
+  "last_validated_native_round": "relation-pack-final-audit.json",
+  "optional_draft": "participation-shelved.json",
+  "optional_draft_sha256": "525dc7896fcb93d2bb0544215f075b753068bf45c8dd18855f36ae8c91fd585d",
+  "prior_audit": "research-pre-closeout-audit.json",
+  "prior_audit_sha256": "4b0b2b81f0d7876374329b8e9cd04faee7f5a634fd35560daf5ea1fc6d9cb061",
+  "closeout_audit": "research-closeout-audit.json",
+  "audit_script_sha256": "4a9b84b2476698f6f3f458b88ba245c6885c9ee19160def093d15bcdae8e81be",
+  "new_experiments_completed": false,
+  "production_integration_completed": false,
+  "boundary": "Documentation and artifact cleanup only. Research closure is a user scope decision; universal carrier dominance and production implementation are not claimed.",
+  "artifact_audit_passed": true,
+  "closeout_audit_sha256": "96724802ad417b3adf3f22fc7dbb2308aa9e3319b4819ed392239bb743ab91d6",
+  "closeout_audit_log_sha256": "40ddf1de700de12dc7146c195308bdafbe3930050790a4fc2af4c06ec306c5c7"
+}

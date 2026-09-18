@@ -1,0 +1,15 @@
+{
+  "scope": "Sampling diagnostic only; profiled benchmark timings excluded from comparisons. No concurrent timing sweep.",
+  "build": "build-essential-derived.json",
+  "binary_sha256": "0fba59b52b6df5b50146d726d65d7965ab839b192a94161852abe6d292f06cbb",
+  "candidate": "essential64",
+  "kernel": "derived",
+  "lane": "join",
+  "scenario": "coup_4290",
+  "process_exit": 0,
+  "sample_exit": 0,
+  "sample_stdout": "",
+  "sample_stderr": "Sampling process 7141 for 3 seconds with 1 millisecond of run time between samples\nSampling completed, processing symbols...\nSample analysis of process 7141 written to file /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/essential-derived-profile.txt\n",
+  "profile": "essential-derived-profile.txt",
+  "sha256": "e7796ad7eb59d5993cda66a478c6027dbfc9bb142504cdc33455bb8a59e0f7bd"
+}

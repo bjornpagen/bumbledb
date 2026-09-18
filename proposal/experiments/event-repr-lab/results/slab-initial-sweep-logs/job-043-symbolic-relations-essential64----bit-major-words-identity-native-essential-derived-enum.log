@@ -1,0 +1,28 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential64","bits":18,"states":64,"identity_mode":"native","input_s":[4.3458e-5, 3.5042e-5, 3.2333e-5, 3.1167e-5, 3.0625e-5],"program_setup_s":[1.7125e-5, 1.175e-5, 1.0958e-5, 9.583e-6, 9.167e-6],"query_s":[0.00035075, 0.000276583, 0.000265375, 0.000262042, 0.00026175],"owned_compute_s":[0.000371042, 0.000289125, 0.000277, 0.000272209, 0.0002715],"iterations":[7, 7, 7, 7, 7],"output_counts":[133120, 133120, 262144, 262144, 4096],"output_packet_bytes":611,"final_arena_bytes_est":99344,"new_classes":3,"input_storage":{"layout":"enum","record_bytes":2048,"table_bytes":576,"interner_bytes":2296,"metadata_bytes":656,"cache_bytes":2380,"records":57,"tables":36,"logical_words":36,"total_bytes_est":7956},"final_storage":{"layout":"enum","record_bytes":32768,"table_bytes":2464,"interner_bytes":36736,"metadata_bytes":8336,"cache_bytes":19040,"records":570,"tables":154,"logical_words":154,"total_bytes_est":99344},"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential64","bits":36,"states":4096,"identity_mode":"native","input_s":[6.4458e-5, 6.8458e-5, 6.8959e-5, 6.5958e-5, 6.4e-5],"program_setup_s":[2.375e-5, 2.2375e-5, 2.55e-5, 2.1333e-5, 2.1e-5],"query_s":[0.001187209, 0.001155834, 0.001133333, 0.001120625, 0.001123167],"owned_compute_s":[0.001211833, 0.001179, 0.001159459, 0.001142542, 0.00114475],"iterations":[13, 13, 13, 13, 13],"output_counts":[34368126976, 34368126976, 68719476736, 68719476736, 16777216],"output_packet_bytes":1415,"final_arena_bytes_est":378672,"new_classes":3,"input_storage":{"layout":"enum","record_bytes":8192,"table_bytes":768,"interner_bytes":9184,"metadata_bytes":2336,"cache_bytes":4760,"records":135,"tables":48,"logical_words":48,"total_bytes_est":25240},"final_storage":{"layout":"enum","record_bytes":131072,"table_bytes":2864,"interner_bytes":146944,"metadata_bytes":33056,"cache_bytes":64736,"records":2325,"tables":179,"logical_words":179,"total_bytes_est":378672},"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential64","bits":60,"states":1048576,"identity_mode":"native","input_s":[0.000113042, 0.000113958, 0.000114708, 0.000114208, 0.000123291],"program_setup_s":[3.5625e-5, 3.5625e-5, 3.5458e-5, 3.5416e-5, 4.6541e-5],"query_s":[0.003664334, 0.003620667, 0.003601458, 0.003647625, 0.003635958],"owned_compute_s":[0.003700708, 0.003656958, 0.003637625, 0.003683875, 0.003683167],"iterations":[21, 21, 21, 21, 21],"output_counts":[576461302059237376, 576461302059237376, 1152921504606846976, 1152921504606846976, 1099511627776],"output_packet_bytes":2487,"final_arena_bytes_est":754896,"new_classes":3,"input_storage":{"layout":"enum","record_bytes":8192,"table_bytes":1024,"interner_bytes":18368,"metadata_bytes":2528,"cache_bytes":9520,"records":239,"tables":64,"logical_words":64,"total_bytes_est":39632},"final_storage":{"layout":"enum","record_bytes":262144,"table_bytes":3376,"interner_bytes":293888,"metadata_bytes":66016,"cache_bytes":129472,"records":6289,"tables":211,"logical_words":211,"total_bytes_est":754896},"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1366 filtered out; finished in 0.03s
+
+
+        0.03 real         0.02 user         0.00 sys
+             7340032  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 663  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  10  involuntary context switches
+           460681418  instructions retired
+           102890466  cycles elapsed
+             4751744  peak memory footprint

@@ -1,0 +1,906 @@
+{
+  "checked": true,
+  "inputs": [
+    "view-native-smoke.json"
+  ],
+  "binary_sha256": "7e17c705f3310183de4a3d87443990e34ba4523dc8da59d76daabd47a53ae068",
+  "cases": 48,
+  "matched_cases": 16,
+  "processes": [
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-000-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-001-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-002-products-packed512----bit-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-003-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-004-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-005-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-006-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-007-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-008-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-009-relations-packed512----bit-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-010-relations-dense-dispatched----bit-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-011-products-dense-dispatched----bit-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-012-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-013-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    }
+  ],
+  "pairs": [
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000787125,
+          "views_median_s": 0.00200025,
+          "materialized_over_views": 0.3935133108361455,
+          "materialized_min_s": 0.000787125,
+          "materialized_max_s": 0.000787125,
+          "views_min_s": 0.00200025,
+          "views_max_s": 0.00200025,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000609,
+          "views_median_s": 0.001943375,
+          "materialized_over_views": 0.3133723547951373,
+          "materialized_min_s": 0.000609,
+          "materialized_max_s": 0.000609,
+          "views_min_s": 0.001943375,
+          "views_max_s": 0.001943375,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 329,
+      "views_final_nodes": 216,
+      "materialized_final_bytes_est": 64880,
+      "views_final_bytes_est": 32512
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000268291,
+          "views_median_s": 0.000478791,
+          "materialized_over_views": 0.5603509673323015,
+          "materialized_min_s": 0.000268291,
+          "materialized_max_s": 0.000268291,
+          "views_min_s": 0.000478791,
+          "views_max_s": 0.000478791,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 8.625e-06,
+          "views_median_s": 9.958e-06,
+          "materialized_over_views": 0.8661377786704156,
+          "materialized_min_s": 8.625e-06,
+          "materialized_max_s": 8.625e-06,
+          "views_min_s": 9.958e-06,
+          "views_max_s": 9.958e-06,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 329,
+      "views_final_nodes": 216,
+      "materialized_final_bytes_est": 72272,
+      "views_final_bytes_est": 38588
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007254375,
+          "views_median_s": 0.062569667,
+          "materialized_over_views": 0.1159407640766252,
+          "materialized_min_s": 0.007254375,
+          "materialized_max_s": 0.007254375,
+          "views_min_s": 0.062569667,
+          "views_max_s": 0.062569667,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.005774,
+          "views_median_s": 0.061097166,
+          "materialized_over_views": 0.0945052017633682,
+          "materialized_min_s": 0.005774,
+          "materialized_max_s": 0.005774,
+          "views_min_s": 0.061097166,
+          "views_max_s": 0.061097166,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 3112,
+      "views_final_nodes": 1792,
+      "materialized_final_bytes_est": 583944,
+      "views_final_bytes_est": 311208
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002642375,
+          "views_median_s": 0.012273666,
+          "materialized_over_views": 0.21528816247729082,
+          "materialized_min_s": 0.002642375,
+          "materialized_max_s": 0.002642375,
+          "views_min_s": 0.012273666,
+          "views_max_s": 0.012273666,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 1.5042e-05,
+          "views_median_s": 1.3e-05,
+          "materialized_over_views": 1.1570769230769231,
+          "materialized_min_s": 1.5042e-05,
+          "materialized_max_s": 1.5042e-05,
+          "views_min_s": 1.3e-05,
+          "views_max_s": 1.3e-05,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 3112,
+      "views_final_nodes": 1792,
+      "materialized_final_bytes_est": 591336,
+      "views_final_bytes_est": 317284
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000579583,
+          "views_median_s": 0.00072025,
+          "materialized_over_views": 0.8046969802152032,
+          "materialized_min_s": 0.000579583,
+          "materialized_max_s": 0.000579583,
+          "views_min_s": 0.00072025,
+          "views_max_s": 0.00072025,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.0002285,
+          "views_median_s": 0.000644625,
+          "materialized_over_views": 0.35446965289897225,
+          "materialized_min_s": 0.0002285,
+          "materialized_max_s": 0.0002285,
+          "views_min_s": 0.000644625,
+          "views_max_s": 0.000644625,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 345,
+      "views_final_nodes": 130,
+      "materialized_final_bytes_est": 66864,
+      "views_final_bytes_est": 22720
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000326375,
+          "views_median_s": 0.000388708,
+          "materialized_over_views": 0.8396405528057052,
+          "materialized_min_s": 0.000326375,
+          "materialized_max_s": 0.000326375,
+          "views_min_s": 0.000388708,
+          "views_max_s": 0.000388708,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 1.0667e-05,
+          "views_median_s": 8.667e-06,
+          "materialized_over_views": 1.2307603553709472,
+          "materialized_min_s": 1.0667e-05,
+          "materialized_max_s": 1.0667e-05,
+          "views_min_s": 8.667e-06,
+          "views_max_s": 8.667e-06,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 345,
+      "views_final_nodes": 130,
+      "materialized_final_bytes_est": 79856,
+      "views_final_bytes_est": 34492
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003257625,
+          "views_median_s": 0.015365583,
+          "materialized_over_views": 0.21200790103440917,
+          "materialized_min_s": 0.003257625,
+          "materialized_max_s": 0.003257625,
+          "views_min_s": 0.015365583,
+          "views_max_s": 0.015365583,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001646167,
+          "views_median_s": 0.014453917,
+          "materialized_over_views": 0.1138907190348471,
+          "materialized_min_s": 0.001646167,
+          "materialized_max_s": 0.001646167,
+          "views_min_s": 0.014453917,
+          "views_max_s": 0.014453917,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 2668,
+      "views_final_nodes": 1011,
+      "materialized_final_bytes_est": 450472,
+      "views_final_bytes_est": 195464
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002373667,
+          "views_median_s": 0.007919625,
+          "materialized_over_views": 0.2997196205628423,
+          "materialized_min_s": 0.002373667,
+          "materialized_max_s": 0.002373667,
+          "views_min_s": 0.007919625,
+          "views_max_s": 0.007919625,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 2.6125e-05,
+          "views_median_s": 1.9041e-05,
+          "materialized_over_views": 1.3720392836510689,
+          "materialized_min_s": 2.6125e-05,
+          "materialized_max_s": 2.6125e-05,
+          "views_min_s": 1.9041e-05,
+          "views_max_s": 1.9041e-05,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 2668,
+      "views_final_nodes": 1011,
+      "materialized_final_bytes_est": 463464,
+      "views_final_bytes_est": 207236
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001659916,
+          "views_median_s": 0.00363675,
+          "materialized_over_views": 0.4564284044820238,
+          "materialized_min_s": 0.001659916,
+          "materialized_max_s": 0.001659916,
+          "views_min_s": 0.00363675,
+          "views_max_s": 0.00363675,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001261292,
+          "views_median_s": 0.003494667,
+          "materialized_over_views": 0.36091908041595955,
+          "materialized_min_s": 0.001261292,
+          "materialized_max_s": 0.001261292,
+          "views_min_s": 0.003494667,
+          "views_max_s": 0.003494667,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 829,
+      "views_final_nodes": 486,
+      "materialized_final_bytes_est": 125168,
+      "views_final_bytes_est": 79552
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000568417,
+          "views_median_s": 0.000790292,
+          "materialized_over_views": 0.7192493407500014,
+          "materialized_min_s": 0.000568417,
+          "materialized_max_s": 0.000568417,
+          "views_min_s": 0.000790292,
+          "views_max_s": 0.000790292,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 8.708e-06,
+          "views_median_s": 7.458e-06,
+          "materialized_over_views": 1.1676052561008312,
+          "materialized_min_s": 8.708e-06,
+          "materialized_max_s": 8.708e-06,
+          "views_min_s": 7.458e-06,
+          "views_max_s": 7.458e-06,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 829,
+      "views_final_nodes": 486,
+      "materialized_final_bytes_est": 132560,
+      "views_final_bytes_est": 85628
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010546584,
+          "views_median_s": 0.034492125,
+          "materialized_over_views": 0.3057678817991063,
+          "materialized_min_s": 0.010546584,
+          "materialized_max_s": 0.010546584,
+          "views_min_s": 0.034492125,
+          "views_max_s": 0.034492125,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.008317875,
+          "views_median_s": 0.033491709,
+          "materialized_over_views": 0.2483562424360011,
+          "materialized_min_s": 0.008317875,
+          "materialized_max_s": 0.008317875,
+          "views_min_s": 0.033491709,
+          "views_max_s": 0.033491709,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 5582,
+      "views_final_nodes": 3102,
+      "materialized_final_bytes_est": 826744,
+      "views_final_bytes_est": 408360
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003324416,
+          "views_median_s": 0.007473458,
+          "materialized_over_views": 0.4448296892817221,
+          "materialized_min_s": 0.003324416,
+          "materialized_max_s": 0.003324416,
+          "views_min_s": 0.007473458,
+          "views_max_s": 0.007473458,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 2.0375e-05,
+          "views_median_s": 1.4125e-05,
+          "materialized_over_views": 1.4424778761061947,
+          "materialized_min_s": 2.0375e-05,
+          "materialized_max_s": 2.0375e-05,
+          "views_min_s": 1.4125e-05,
+          "views_max_s": 1.4125e-05,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 5582,
+      "views_final_nodes": 3102,
+      "materialized_final_bytes_est": 834136,
+      "views_final_bytes_est": 414436
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001099417,
+          "views_median_s": 0.00094775,
+          "materialized_over_views": 1.160028488525455,
+          "materialized_min_s": 0.001099417,
+          "materialized_max_s": 0.001099417,
+          "views_min_s": 0.00094775,
+          "views_max_s": 0.00094775,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.00063875,
+          "views_median_s": 0.000866583,
+          "materialized_over_views": 0.737090388341336,
+          "materialized_min_s": 0.00063875,
+          "materialized_max_s": 0.00063875,
+          "views_min_s": 0.000866583,
+          "views_max_s": 0.000866583,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 1159,
+      "views_final_nodes": 495,
+      "materialized_final_bytes_est": 167936,
+      "views_final_bytes_est": 79468
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000725167,
+          "views_median_s": 0.000543959,
+          "materialized_over_views": 1.3331280482536367,
+          "materialized_min_s": 0.000725167,
+          "materialized_max_s": 0.000725167,
+          "views_min_s": 0.000543959,
+          "views_max_s": 0.000543959,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 9.917e-06,
+          "views_median_s": 9.042e-06,
+          "materialized_over_views": 1.0967706259677061,
+          "materialized_min_s": 9.917e-06,
+          "materialized_max_s": 9.917e-06,
+          "views_min_s": 9.042e-06,
+          "views_max_s": 9.042e-06,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 1159,
+      "views_final_nodes": 495,
+      "materialized_final_bytes_est": 180928,
+      "views_final_bytes_est": 91240
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.004732,
+          "views_median_s": 0.006857208,
+          "materialized_over_views": 0.6900767776039461,
+          "materialized_min_s": 0.004732,
+          "materialized_max_s": 0.004732,
+          "views_min_s": 0.006857208,
+          "views_max_s": 0.006857208,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 0.002844166,
+          "views_median_s": 0.006159209,
+          "materialized_over_views": 0.4617745557911739,
+          "materialized_min_s": 0.002844166,
+          "materialized_max_s": 0.002844166,
+          "views_min_s": 0.006159209,
+          "views_max_s": 0.006159209,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 5699,
+      "views_final_nodes": 2640,
+      "materialized_final_bytes_est": 879464,
+      "views_final_bytes_est": 415112
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-native-smoke.json",
+      "materialized_source": "view-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00331425,
+          "views_median_s": 0.0042075,
+          "materialized_over_views": 0.7877005347593582,
+          "materialized_min_s": 0.00331425,
+          "materialized_max_s": 0.00331425,
+          "views_min_s": 0.0042075,
+          "views_max_s": 0.0042075,
+          "materialized_samples": 1,
+          "views_samples": 1
+        },
+        "warm_s": {
+          "materialized_median_s": 2.9916e-05,
+          "views_median_s": 2.6125e-05,
+          "materialized_over_views": 1.1451100478468899,
+          "materialized_min_s": 2.9916e-05,
+          "materialized_max_s": 2.9916e-05,
+          "views_min_s": 2.6125e-05,
+          "views_max_s": 2.6125e-05,
+          "materialized_samples": 1,
+          "views_samples": 1
+        }
+      },
+      "materialized_final_nodes": 5699,
+      "views_final_nodes": 2640,
+      "materialized_final_bytes_est": 892456,
+      "views_final_bytes_est": 426884
+    }
+  ],
+  "missing_baselines": [],
+  "checker_sha256": "1c62a6b1c8c5d60600feafe5ea74aa5f9e40cbe1b6e548a0dea1e5e5444747f9",
+  "selection": "Latest supplied process per exact case; a later failed job invalidates earlier timings. Resource refusals/timeouts are retained; never mathematical answers."
+}

@@ -1,0 +1,1509 @@
+{
+  "seed": 20260917,
+  "trials": 3,
+  "timeout_s": 120,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "227e8c1dd9429ec76164f74e1cff605cd4b0d0c98cbdbb858808def819f2a9d9",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "223783ce05cd0a6755ec05cf91cdaef303b473ae6db86a208232dc48c0346cd4",
+      "src/carrier.rs": "01120642e06ea00d15c06ab7838a0cbb8199d7ee01376953a65e4aecf46bb096",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagram.rs": "2bc9f674b850fb69304f814aeba00d39ea56e3b7e54ffa43d7d20e2871bea7c3",
+      "src/finite.rs": "404048365f303c278bb966821ae35c68308da6751c01ef3edc3a1d3d7e10af86",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "ee97de14428c4757da3a199688580c41c703578ed4d7895391934fbdbad25177",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/packed.rs": "b29f8fee984cd134cd24772b135f380d87da55b1610e555ec451b10228fa8d6d",
+      "src/relational_core.rs": "c757b649a062f3b3eada667f166dc6afe40d4cc7c7c7ffce5adce438a638bbae",
+      "src/relations.rs": "65b5f3652a76dee22cad0022067a855ca4e1464b89aafa14196ccfafcd419db9",
+      "src/semantic_checks.rs": "cd55b2559349e30fbf8760762a37def4b4bb977b5cbe3995443b80a9c0241222",
+      "src/transfer.rs": "3c45c54c88d3fb32afb89d3db20c2d73d77cb65588c8e6b64a7b253df7a6a360",
+      "src/transfer_bench.rs": "cf2f34288df0c616d5f773965a1ed86b1a591440f0d1350dc238cfd2f9d9be74",
+      "src/transfer_checks.rs": "4ae1e7ea83f94a121123feedee8aa04b38f227f0988b1454e95e98a402a34211"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T22:55:26.160119+00:00",
+    "build_started_utc": "2026-09-17T22:49:26.955831+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct"
+      },
+      "status": "passed",
+      "elapsed_s": 1.7180583477020264,
+      "max_rss_bytes": 37748736,
+      "log": "transfer-dense-control-logs/job-000-verify-local-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        25.5498046875,
+        20.04345703125,
+        17.81982421875
+      ],
+      "loadavg_end": [
+        25.5498046875,
+        20.04345703125,
+        17.81982421875
+      ]
+    },
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "recursive"
+      },
+      "status": "passed",
+      "elapsed_s": 6.69484281539917,
+      "max_rss_bytes": 34734080,
+      "log": "transfer-dense-control-logs/job-001-verify-local-recursive.log",
+      "rows": [
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        25.5498046875,
+        20.04345703125,
+        17.81982421875
+      ],
+      "loadavg_end": [
+        28.54833984375,
+        20.75634765625,
+        18.08447265625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "recursive",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 34.93369221687317,
+      "max_rss_bytes": 241958912,
+      "log": "transfer-dense-control-logs/job-002-transport-dense-dispatched----bit-major-recursive.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.000212208,
+            0.000115584,
+            0.000160083
+          ],
+          "encode_s": [
+            6.5375e-05,
+            4.5208e-05,
+            6.4625e-05
+          ],
+          "decode_s": [
+            4.6833e-05,
+            2.275e-05,
+            4.3917e-05
+          ],
+          "target_setup_s": [
+            4.083e-06,
+            2.083e-06,
+            2.542e-06
+          ],
+          "restore_s": [
+            0.006371459,
+            0.009881458,
+            0.0059625
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 318232,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "recursive"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            7.0709e-05,
+            6.3083e-05,
+            6.4833e-05
+          ],
+          "encode_s": [
+            2.9459e-05,
+            2.9375e-05,
+            3.0333e-05
+          ],
+          "decode_s": [
+            1.7959e-05,
+            1.5625e-05,
+            1.6375e-05
+          ],
+          "target_setup_s": [
+            9.58e-07,
+            1e-06,
+            8.75e-07
+          ],
+          "restore_s": [
+            0.004887375,
+            0.0049735,
+            0.0049815
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 318232,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "recursive"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            7.0542e-05,
+            6.5333e-05,
+            6.3375e-05
+          ],
+          "encode_s": [
+            3.3084e-05,
+            2.8167e-05,
+            2.8708e-05
+          ],
+          "decode_s": [
+            1.6584e-05,
+            1.575e-05,
+            1.5583e-05
+          ],
+          "target_setup_s": [
+            2.2209e-05,
+            2.2083e-05,
+            2.1875e-05
+          ],
+          "restore_s": [
+            0.001476458,
+            0.001365,
+            0.001357542
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 127076,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "recursive"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.004540125,
+            0.002521084,
+            0.002532916
+          ],
+          "encode_s": [
+            0.001382042,
+            0.001317834,
+            0.001042166
+          ],
+          "decode_s": [
+            0.001032375,
+            0.000352875,
+            0.000317
+          ],
+          "target_setup_s": [
+            4.0042e-05,
+            1.0166e-05,
+            8.834e-06
+          ],
+          "restore_s": [
+            7.901511,
+            5.258641375,
+            5.024096334
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 99462136,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "recursive"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.002315541,
+            0.002301125,
+            0.0022875
+          ],
+          "encode_s": [
+            0.000926167,
+            0.000913916,
+            0.000919667
+          ],
+          "decode_s": [
+            0.000314791,
+            0.000310125,
+            0.000311875
+          ],
+          "target_setup_s": [
+            6.084e-06,
+            5.916e-06,
+            6.5e-06
+          ],
+          "restore_s": [
+            4.882916125,
+            4.8198922920000005,
+            4.919649833
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 99462136,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "recursive"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.002751209,
+            0.002351042,
+            0.0024305
+          ],
+          "encode_s": [
+            0.001166792,
+            0.000973541,
+            0.000939542
+          ],
+          "decode_s": [
+            0.000371542,
+            0.000325792,
+            0.000312791
+          ],
+          "target_setup_s": [
+            0.001287875,
+            0.00115925,
+            0.001135
+          ],
+          "restore_s": [
+            0.075271333,
+            0.075617541,
+            0.074916625
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 841892,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "recursive"
+        }
+      ],
+      "loadavg_start": [
+        28.54833984375,
+        20.75634765625,
+        18.08447265625
+      ],
+      "loadavg_end": [
+        24.9326171875,
+        21.04052734375,
+        18.3154296875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 1.7679717540740967,
+      "max_rss_bytes": 43319296,
+      "log": "transfer-dense-control-logs/job-003-transport-dense-dispatched----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            9.9625e-05,
+            6.0166e-05,
+            5.5167e-05
+          ],
+          "encode_s": [
+            3.5042e-05,
+            2.7375e-05,
+            2.8458e-05
+          ],
+          "decode_s": [
+            2.4041e-05,
+            1.8916e-05,
+            1.5e-05
+          ],
+          "target_setup_s": [
+            2.083e-06,
+            8.75e-07,
+            5.83e-07
+          ],
+          "restore_s": [
+            3.3542e-05,
+            2.8458e-05,
+            2.2291e-05
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 20872,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            5.9125e-05,
+            5.4334e-05,
+            5.3625e-05
+          ],
+          "encode_s": [
+            2.3667e-05,
+            2.35e-05,
+            2.3583e-05
+          ],
+          "decode_s": [
+            1.4417e-05,
+            1.3458e-05,
+            1.3291e-05
+          ],
+          "target_setup_s": [
+            6.25e-07,
+            4.17e-07,
+            4.17e-07
+          ],
+          "restore_s": [
+            2.5958e-05,
+            2.2292e-05,
+            2.1291e-05
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 20872,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            6.9084e-05,
+            6.4042e-05,
+            6.6125e-05
+          ],
+          "encode_s": [
+            2.8959e-05,
+            2.5625e-05,
+            3.175e-05
+          ],
+          "decode_s": [
+            1.4833e-05,
+            1.3959e-05,
+            1.5458e-05
+          ],
+          "target_setup_s": [
+            2.1875e-05,
+            1.925e-05,
+            2.0458e-05
+          ],
+          "restore_s": [
+            0.00069125,
+            0.000681792,
+            0.000697333
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.002761708,
+            0.002331958,
+            0.002393416
+          ],
+          "encode_s": [
+            0.001321625,
+            0.000934959,
+            0.000977417
+          ],
+          "decode_s": [
+            0.000395959,
+            0.000320042,
+            0.000329584
+          ],
+          "target_setup_s": [
+            1.4542e-05,
+            5.959e-06,
+            1.0417e-05
+          ],
+          "restore_s": [
+            0.000927375,
+            0.000844042,
+            0.000902208
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 1477216,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.002329292,
+            0.002323583,
+            0.002379791
+          ],
+          "encode_s": [
+            0.001035833,
+            0.000964042,
+            0.000976208
+          ],
+          "decode_s": [
+            0.000363625,
+            0.000347708,
+            0.000354125
+          ],
+          "target_setup_s": [
+            7.709e-06,
+            7e-06,
+            6.541e-06
+          ],
+          "restore_s": [
+            0.000852584,
+            0.00087625,
+            0.000848958
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 1477216,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.002355667,
+            0.002311042,
+            0.00230525
+          ],
+          "encode_s": [
+            0.000966333,
+            0.000920833,
+            0.000919542
+          ],
+          "decode_s": [
+            0.000326625,
+            0.000323917,
+            0.000322541
+          ],
+          "target_setup_s": [
+            0.001149,
+            0.0011235,
+            0.001170667
+          ],
+          "restore_s": [
+            0.049177667,
+            0.049046416,
+            0.048536833
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 79524,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        24.9326171875,
+        21.04052734375,
+        18.3154296875
+      ],
+      "loadavg_end": [
+        23.33642578125,
+        20.77392578125,
+        18.2373046875
+      ]
+    }
+  ]
+}

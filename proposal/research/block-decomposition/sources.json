@@ -1,0 +1,29 @@
+[
+  {
+    "arxiv": "1401.3448v1",
+    "url": "https://arxiv.org/pdf/1401.3448v1",
+    "file": "mateescu-dechter-marinescu-aomdd.pdf",
+    "sha256": "f86971c5a419808aad50d4189d514bdd4f17e9647cfe0147ed4cb9c9b16be03b",
+    "retrieved_utc": "2026-09-17T20:59:14.097905+00:00",
+    "text_file": "mateescu-dechter-marinescu-aomdd.txt",
+    "text_sha256": "b83429045f3c28001ec0a739050dde6f376e96575a456ee0aff56d2ed3a34539"
+  },
+  {
+    "arxiv": "1206.5266v1",
+    "url": "https://arxiv.org/pdf/1206.5266v1",
+    "file": "mateescu-dechter-weighted-aomdd.pdf",
+    "sha256": "12de1899187ca7b2cf036be1f0b39833ce793dc57035138fd4b05e5e9e43dde4",
+    "retrieved_utc": "2026-09-17T20:59:14.636012+00:00",
+    "text_file": "mateescu-dechter-weighted-aomdd.txt",
+    "text_sha256": "a446af346df95dc33792bf7f97ba228bf9ff838e683de54fdd6b3f2a22f92c5b"
+  },
+  {
+    "arxiv": "2212.03684v1",
+    "url": "https://arxiv.org/pdf/2212.03684v1",
+    "file": "decision-diagram-reachability.pdf",
+    "sha256": "99108bc42737f92d3d7668669b772f87eb30f469432e8325f58ece0ca057c66c",
+    "retrieved_utc": "2026-09-17T21:00:24.354475+00:00",
+    "text_file": "decision-diagram-reachability.txt",
+    "text_sha256": "04066ae52b7d0024253c8610e8f69fda87fbefedd41fb603c8108ebac42f651a"
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "files": {
+    "proposal/research/event-algebra/desharnais-moeller-struth-2003-kleene-algebra-domain.txt": "003e522467c336251f71e96099f68b07b4cb05e546bf289e089120754f32c50f",
+    "proposal/research/space-maps/abbadini-guffanti-beck-chevalley.txt": "0f4a32fb81da67871674cabbcf37c83a05b184f7ea35188a6d4c4079e3059aea"
+  },
+  "sources": [
+    "arXiv:cs/0310054v1",
+    "arXiv:2607.06386v1"
+  ],
+  "reading": "Kleene Algebra with Domain, Example 2.7; Abbadini\u2013Guffanti Definition 2.10, Remark 2.11 and Example 2.12.",
+  "consequence": "The relational laws concern actual binary predicates over legal state domains. Full workspace support does not certify the input face role. The supported existential fixed-point admission condition and its counterexample are derived and independently checked here; the papers supply neither a Rust refinement nor a throughput claim."
+}

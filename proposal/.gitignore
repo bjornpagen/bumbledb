@@ -1,0 +1,17 @@
+# Local research downloads and disposable builds are not the proposal package.
+**/.scratch/
+**/target/
+**/__pycache__/
+*.pdf
+*.txt
+*.html
+*.png
+# Historical native binaries are represented by source/assembly/hash records.
+**/bumbledb-pack
+**/bumbledb-relation-pack
+**/bumbledb-range
+**/event-difference-prototype
+**/event-range-prototype
+**/event-unary-prototype
+**/event-essential-prototype
+**/event-classify-prototype

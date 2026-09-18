@@ -1,0 +1,15 @@
+000 join-retraction512-coup_product_65536-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 10.45s
+001 join-essential512-coup_4290-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 1.55s
+002 join-range-step-coup_product_65536-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 6.41s
+003 join-range-shannon-coup_product_65536-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 6.27s
+004 join-retraction512-coup_4290-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 1.96s
+005 join-packed512-coup_product_65536-local-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 1.74s
+006 join-dense-coup_4290-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 0.95s
+007 join-range-group-coup_product_65536-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 6.28s
+008 join-packed512-coup_4290-local-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 1.13s
+009 join-essential512-coup_product_65536-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 3.85s
+010 join-range-shannon-coup_4290-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 2.00s
+011 join-dense-coup_product_65536-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 1.26s
+012 join-range-step-coup_4290-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 1.96s
+013 join-range-group-coup_4290-words-identity-native-product-materialized-normalize-ite-complete-local-needed-project-witness: passed, 2.14s
+Native range phase passed: join

@@ -1,0 +1,15 @@
+FusedProjection.lean:31:37: warning: This simp argument is unused:
+  hs
+
+Hint: Omit it from the simp argument list.
+  simp only [h̵s̵,̵ ̵Bool.false_eq_true, if_false, if_true]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'FusedProjection.hidden_split' does not depend on any axioms
+'FusedProjection.observed_split' depends on axioms: [propext]
+'FusedProjection.graph_substitution' does not depend on any axioms
+'FusedProjection.absent_hidden_bit' does not depend on any axioms
+'FusedProjection.contract_union' does not depend on any axioms
+'FusedProjection.complement_memo_obstruction' does not depend on any axioms
+'FusedProjection.separate_witness_obstruction' does not depend on any axioms
+'FusedProjection.target_abstraction_obstruction' does not depend on any axioms

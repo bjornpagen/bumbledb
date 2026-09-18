@@ -1,0 +1,6 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-staged-execute-fused-complete-local-needed-project-witness: passed, 16.30s
+001 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-fused-complete-local-needed-project-witness: passed, 15.33s
+002 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-fused-complete-local-needed-project-witness: passed, 7.92s
+003 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-staged-complete-local-needed-project-witness: passed, 15.36s
+004 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-staged-complete-local-needed-project-witness: passed, 7.91s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/fused-normalization-control.json

@@ -1,0 +1,43 @@
+
+running 1 test
+test shared_semantics ... EVENT_LAB {"kind":"verification","candidate":"dense","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense-dispatched","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"sparse","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"roaring","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"runs","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-root","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"mdd4-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-anchored","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed256","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed4096","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"block64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"high_coordinate_verification","bits":40,"candidates":9,"passed":true}
+EVENT_LAB {"kind":"coordinate_boundary_verification","candidates":14,"extra_orders_per_candidate":2,"face_layouts_per_candidate":3,"passed":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.93s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+     Locking 5 packages to highest Rust 1.99.0-nightly compatible versions
+      Adding autocfg v1.5.1
+      Adding num-bigint v0.4.8
+      Adding num-integer v0.1.47
+      Adding num-rational v0.4.2
+      Adding num-traits v0.2.19
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.47
+   Compiling num-bigint v0.4.8
+   Compiling num-rational v0.4.2
+   Compiling event-repr-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/checker)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.78s
+     Running unittests src/lib.rs (target/debug/build/event-repr-checker/60afa6a7ee296659/out/event_repr_checker-60afa6a7ee296659)
+   Doc-tests event_repr_checker

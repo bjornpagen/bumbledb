@@ -1,0 +1,9 @@
+000 symbolic-relations-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source: passed, 0.01s
+001 owned-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source: passed, 2.14s
+002 symbolic-relations-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source: passed, 0.01s
+003 owned-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source: passed, 2.42s
+004 symbolic-relations-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source: passed, 0.01s
+005 owned-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source: passed, 2.43s
+006 symbolic-relations-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source: passed, 0.01s
+007 owned-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source: passed, 2.15s
+Native acceptance passed.

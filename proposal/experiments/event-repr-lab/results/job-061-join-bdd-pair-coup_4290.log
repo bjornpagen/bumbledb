@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"free_join","candidate":"bdd-pair","scenario":"coup_4290","shape":"triangle","memo":false,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":4285,"final_nodes":75380,"input_bytes_est":373056,"final_bytes_est":11430912,"colt_bytes":163104,"build_s":[0.00164825, 0.001678875, 0.0016815, 0.00161725, 0.001765125, 0.00171275, 0.001742375],"native_setup_s":0.000247708,"native_first_join_s":0.000102334,"join_only_s":[4.9208e-5, 4.4584e-5, 4.4708e-5, 4.4833e-5, 4.4875e-5, 4.4667e-5, 4.675e-5],"fresh_s":[0.01591225, 0.01634925, 0.014465458, 0.016178666, 0.015539375, 0.015276, 0.01561625],"warm_s":[0.00115373309375, 0.00117288671875, 0.001147165375, 0.00116644790625, 0.00120018228125, 0.001138765625, 0.00111113803125],"warm_loops":32,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"bdd-pair","scenario":"coup_4290","shape":"triangle","memo":true,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":4285,"final_nodes":75380,"input_bytes_est":373056,"final_bytes_est":11502592,"colt_bytes":163104,"build_s":[0.00164825, 0.001678875, 0.0016815, 0.00161725, 0.001765125, 0.00171275, 0.001742375],"native_setup_s":0.000247708,"native_first_join_s":0.000102334,"join_only_s":[4.9208e-5, 4.4584e-5, 4.4708e-5, 4.4833e-5, 4.4875e-5, 4.4667e-5, 4.675e-5],"fresh_s":[0.013564083, 0.014378917, 0.01549575, 0.016245167, 0.01586675, 0.013360833, 0.014343792],"warm_s":[0.00096080209375, 0.0009349830625, 0.00086326434375, 0.0009524935, 0.00091121615625, 0.0009070299375, 0.00089218228125],"warm_loops":32,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"bdd-pair","scenario":"coup_4290","shape":"clover","memo":false,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":4285,"final_nodes":109168,"input_bytes_est":373056,"final_bytes_est":16997888,"colt_bytes":41104,"build_s":[0.001613458, 0.00163525, 0.001640209, 0.001646542, 0.00155075, 0.0016145, 0.001609],"native_setup_s":0.000140583,"native_first_join_s":0.000093125,"join_only_s":[7.25e-5, 7.0125e-5, 6.9875e-5, 7.0042e-5, 6.9875e-5, 6.9958e-5, 7.9625e-5],"fresh_s":[0.032013083, 0.030054583, 0.02896675, 0.029947, 0.030591625, 0.027530709, 0.027267875],"warm_s":[0.0017250104375, 0.0018136953125, 0.0017780963125, 0.0017491926875, 0.001900966125, 0.0017568411875, 0.0018554400625],"warm_loops":16,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"bdd-pair","scenario":"coup_4290","shape":"clover","memo":true,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":4285,"final_nodes":109168,"input_bytes_est":373056,"final_bytes_est":17284608,"colt_bytes":41104,"build_s":[0.001613458, 0.00163525, 0.001640209, 0.001646542, 0.00155075, 0.0016145, 0.001609],"native_setup_s":0.000140583,"native_first_join_s":0.000093125,"join_only_s":[7.25e-5, 7.0125e-5, 6.9875e-5, 7.0042e-5, 6.9875e-5, 6.9958e-5, 7.9625e-5],"fresh_s":[0.028708792, 0.027599292, 0.028777791, 0.02956575, 0.028450542, 0.027936917, 0.027018625],"warm_s":[0.00095069403125, 0.0009878268125, 0.00096323696875, 0.0009268385625, 0.00093697265625, 0.00095429946875, 0.00094151821875],"warm_loops":32,"checksum":5691950,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 1.85s
+
+
+        1.85 real         1.78 user         0.04 sys
+            58884096  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3806  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                1553  involuntary context switches
+         14419294498  instructions retired
+          6127593565  cycles elapsed
+            56426928  peak memory footprint

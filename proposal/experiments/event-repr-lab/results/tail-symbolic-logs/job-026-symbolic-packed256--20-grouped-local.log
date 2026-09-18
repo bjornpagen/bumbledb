@@ -1,0 +1,34 @@
+
+running 1 test
+test event_repr_lab::experiment ... FAILED
+
+failures:
+
+failures:
+    event_repr_lab::experiment
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.59s
+
+
+
+thread 'event_repr_lab::experiment' (8920090) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/packed.rs:94:9:
+RESOURCE_CAP: packed diagram records
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+        0.59 real         0.56 user         0.02 sys
+           440451072  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               28517  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 226  involuntary context switches
+          3732603560  instructions retired
+          1964620796  cycles elapsed
+           438993640  peak memory footprint

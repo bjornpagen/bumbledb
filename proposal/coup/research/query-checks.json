@@ -1,0 +1,26 @@
+{
+  "scope": "Finite staged semantic evaluator; not query! or Free Join execution.",
+  "groups_passed": [
+    "held_roles_match_all_direct_deal_predicates",
+    "three_way_steal_query_and_indicator_lowering",
+    "overlap_and_duplicate_paths_pack_idempotently",
+    "anti_join_is_not_event_complement",
+    "complement_after_pack_and_boolean_rewrites",
+    "explicit_empty_groups_and_missing_parent_distinction",
+    "captain_xor_and_event_equality_not_equal_probability",
+    "tax_conditioning_and_repeated_evidence",
+    "bobs_declaration_updates_cleos_hand_probability",
+    "cross_position_proof_and_replacement",
+    "partial_decision_complement_retains_absence_worlds",
+    "zero_answer_impossible_evidence_and_scope_errors"
+  ],
+  "initial_deals": 4290,
+  "decision_worlds": 21450,
+  "steal_support": "189/1430",
+  "incorrect_independent_product": "77/676",
+  "bob_lacks_duke_given_tax": "55/147",
+  "tax_evidence": "49/130",
+  "cleo_duke_before_tax": "23/78",
+  "cleo_duke_given_tax": "5/21",
+  "proved_duke_then_no_duke": "9/10"
+}

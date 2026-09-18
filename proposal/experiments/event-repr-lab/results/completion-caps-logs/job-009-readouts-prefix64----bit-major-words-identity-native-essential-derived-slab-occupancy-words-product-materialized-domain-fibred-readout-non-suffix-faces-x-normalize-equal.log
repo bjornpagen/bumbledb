@@ -1,0 +1,36 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"readout_free_join","candidate":"prefix64","domain":"fibred","readout_family":"non-suffix","readout_faces":"x","hidden":8,"width":4,"bits":13,"worlds":8192,"admissible_worlds":3197,"environments":2,"rows":128,"groups":16,"outputs":64,"memo":false,"changed_possible_groups":16,"changed_guaranteed_groups":16,"nonconstant_readouts":48,"build_s":[0.004096459],"support_s":[0.000318292],"import_s":[0.003723167],"admission_s":[5.4667e-5],"join_only_s":[3.0875e-5],"fresh_s":[0.032610417],"fresh_group_s":[0.000429459],"fresh_readout_s":[0.032079042],"fresh_compute_s":[0.032510125],"fresh_count_s":[0.000100125],"warm_s":[0.000212],"warm_group_s":[3.8583e-5],"warm_readout_s":[7.75e-5],"warm_compute_s":[0.000122542],"warm_count_s":[8.9333e-5],"input_nodes":7338,"final_nodes":67301,"input_bytes_est":757964,"final_bytes_est":7689476,"input_storage":{"layout":"slab","record_bytes":117408,"table_bytes":30320,"interner_bytes":273064,"metadata_bytes":58964,"cache_bytes":278208,"records":7338,"tables":3790,"logical_words":3790,"total_bytes_est":757964},"final_storage":{"layout":"slab","record_bytes":1878528,"table_bytes":242560,"interner_bytes":2419328,"metadata_bytes":939524,"cache_bytes":2209536,"records":67301,"tables":19690,"logical_words":19690,"total_bytes_est":7689476},"outer_memo_bytes":0,"colt_bytes":14992,"checksum":607690,"verified":true}
+EVENT_LAB {"kind":"readout_free_join","candidate":"prefix64","domain":"fibred","readout_family":"non-suffix","readout_faces":"x","hidden":8,"width":4,"bits":13,"worlds":8192,"admissible_worlds":3197,"environments":2,"rows":128,"groups":16,"outputs":64,"memo":true,"changed_possible_groups":16,"changed_guaranteed_groups":16,"nonconstant_readouts":48,"build_s":[0.004096459],"support_s":[0.000318292],"import_s":[0.003723167],"admission_s":[5.4667e-5],"join_only_s":[3.0875e-5],"fresh_s":[0.030309958],"fresh_group_s":[0.000412791],"fresh_readout_s":[0.029812667],"fresh_compute_s":[0.03022875],"fresh_count_s":[8.1041e-5],"warm_s":[0.000152125],"warm_group_s":[1.0959e-5],"warm_readout_s":[4.9375e-5],"warm_compute_s":[6.05e-5],"warm_count_s":[9.1542e-5],"input_nodes":7338,"final_nodes":67301,"input_bytes_est":757964,"final_bytes_est":7698436,"input_storage":{"layout":"slab","record_bytes":117408,"table_bytes":30320,"interner_bytes":273064,"metadata_bytes":58964,"cache_bytes":278208,"records":7338,"tables":3790,"logical_words":3790,"total_bytes_est":757964},"final_storage":{"layout":"slab","record_bytes":1878528,"table_bytes":242560,"interner_bytes":2419328,"metadata_bytes":939524,"cache_bytes":2209536,"records":67301,"tables":19690,"logical_words":19690,"total_bytes_est":7689476},"outer_memo_bytes":8960,"colt_bytes":14992,"checksum":607690,"verified":true}
+FAILED
+
+failures:
+
+failures:
+    event_repr_lab::experiment
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1378 filtered out; finished in 6.27s
+
+
+
+thread 'event_repr_lab::experiment' (10307797) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/essential_raw.rs:185:9:
+RESOURCE_CAP: essential raw nodes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+        6.27 real         6.10 user         0.11 sys
+           451362816  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               33324  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 314  involuntary context switches
+         60370316292  instructions retired
+         20935555138  cycles elapsed
+           448168776  peak memory footprint

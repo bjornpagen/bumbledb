@@ -1,0 +1,20 @@
+[
+  {
+    "id": "mdd-odd-coordinate-permutation",
+    "failure_log": "relations-verification-logs/job-000-verify.log",
+    "source_snapshot": "relations-v1-src",
+    "build_metadata": "build-relations-v1.json",
+    "finding": "An MDD with an odd number of semantic coordinates has a padded upper bit. The first permutation implementation omitted its identity mapping. The exhaustive two-state XYZ relation check caught an index overrun before any benchmark ran.",
+    "resolution": "Padding coordinates remain fixed while substituting semantic coordinates. The corrected full verification passed for all eleven candidates, both extra packed orders, and forty-coordinate symbolic permutations/quantification.",
+    "verified_by": "relations-v2-verification.json"
+  },
+  {
+    "id": "classifier-cloned-arena-footprint",
+    "failure_log": "classify-smoke-logs/job-001-classify-packed512-coup_4290-local-words-identity-native-classify-direct.log",
+    "source_snapshot": "classify-v1-src",
+    "build_metadata": "build-classify-v1.json",
+    "finding": "The first native classifier smoke matched the independent query oracle, then failed its no-resident-growth assertion because it compared a cloned owner against the original construction template. Vec clone had reduced spare capacity from 101,976 to 86,008 estimated bytes while preserving all 719 nodes.",
+    "resolution": "Measure the actual retained query owner immediately before execution, compare its final footprint against that same owner, and require identical input footprints across trials. The corrected smoke and full same-binary classifier sweep passed.",
+    "verified_by": "classify-initial-sweep.json"
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "passed": true,
+  "command": [
+    "cargo",
+    "test",
+    "--release",
+    "--offline",
+    "--",
+    "--test-threads=1"
+  ],
+  "profile": "standalone release; correctness only, no native timing",
+  "source_hashes": {
+    "classify-prototype/Cargo.toml": "f85fb5f04c1e74e53c29aa108330e1b4908347c30320c67cd1cd5e09e03bb433",
+    "classify-prototype/src/lib.rs": "952aa3fa850b840d75f837618224e2afbc771d186f92e57e783e277c0ed5d83f",
+    "src/essential_raw.rs": "aa746aeaff953fb9846c2a45aa0946c7c199de419ab6bc73c53df3548b5ea01a",
+    "src/essential_words.rs": "3457ad2bc1ac55958e0fbb658128fcd7ffea633e2cdefa7e321de314646cc25a",
+    "src/occupancy.rs": "527f898849c28053e54550a07e18db9f34bd8e280ee937d7447c208076fb3e1b"
+  },
+  "essential_kernel": "derived",
+  "log": "classify-check.log",
+  "scope": "Read-only raw finite-binary classifier; 15,360 supported predicate triples plus complement/swap checks and scattered sixty-coordinate cases. Not a scoped/public API or native filter.",
+  "cargo_lock_sha256": "2edaeaf727d58102485c54a57a19f0fbe155a86ed6e6430b307fa44beb971433"
+}

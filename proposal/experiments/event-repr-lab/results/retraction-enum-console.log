@@ -1,0 +1,73 @@
+ue}
+EVENT_LAB {"kind":"mapped_product_verification","candidate":"essential64","cases":1080,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"essential64","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"essential64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"essential64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"essential64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"essential512","admission_cases":765,"relation_pairs":3456,"passed":true}
+EVENT_LAB {"kind":"scoped_product_verification","candidate":"essential512","cases":40128,"passed":true}
+EVENT_LAB {"kind":"mapped_product_verification","candidate":"essential512","cases":1080,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"essential512","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"essential512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"essential512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"essential512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"retraction64","admission_cases":765,"relation_pairs":3456,"passed":true}
+EVENT_LAB {"kind":"scoped_product_verification","candidate":"retraction64","cases":40128,"passed":true}
+EVENT_LAB {"kind":"mapped_product_verification","candidate":"retraction64","cases":1080,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"retraction64","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"retraction64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"retraction64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"retraction64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"retraction512","admission_cases":765,"relation_pairs":3456,"passed":true}
+EVENT_LAB {"kind":"scoped_product_verification","candidate":"retraction512","cases":40128,"passed":true}
+EVENT_LAB {"kind":"mapped_product_verification","candidate":"retraction512","cases":1080,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"retraction512","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"retraction512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"retraction512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"retraction512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"high_coordinate_verification","bits":40,"candidates":11,"passed":true}
+EVENT_LAB {"kind":"coordinate_boundary_verification","candidates":16,"extra_orders_per_candidate":2,"face_layouts_per_candidate":3,"passed":true}
+EVENT_LAB {"kind":"observation_verification","candidates":16,"parameter_groups":[1,2,3],"high_coordinate_candidates":11,"passed":true}
+ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.47s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling event-repr-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/checker)
+warning: unused import: `view_product::Statistics as ViewProductStatistics`
+ --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/essential_raw.rs:9:9
+  |
+9 | pub use view_product::Statistics as ViewProductStatistics;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `event-repr-checker` (lib) generated 1 warning (run `cargo fix --lib -p event-repr-checker` to apply 1 suggestion)
+warning: `event-repr-checker` (lib test) generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 13.12s
+     Running unittests src/lib.rs (target/release/build/event-repr-checker/ba801357085ced12/out/event_repr_checker-ba801357085ced12)
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (10024397) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:148:9:
+assertion `left == right` failed: map dimension mismatch
+  left: 1
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (10024397) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:155:13:
+map must be a bijection
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (10024397) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:595:9:
+assertion `left == right` failed: elimination coordinate outside presentation
+  left: 1
+ right: 0
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (10024397) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:155:13:
+map must be a bijection
+   Doc-tests event_repr_checker
+
+{"passed": true, "elapsed_s": 21.910754680633545, "profile": "release; not a performance measurement", "lab_sources": {"src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed", "src/carrier.rs": "e271d7ec3b58a35cef677d15e191a11ed85c69ee738295b147bf85f1b2623ac4", "src/contraction.rs": "958bc54583cf7eabf64b06c23f359698b882a93c175af1115feee4440261987e", "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347", "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331", "src/diagonal_checks.rs": "a45ce14c303b65fc9aacdccb7c16fc4ce9f19874cd62aa1b674faec9da85d169", "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d", "src/essential.rs": "f3d8c452f9186801078158ec4b04552896153a53453d88078b130ee03f289bf1", "src/essential_raw.rs": "8b753d47a9b29abf18013ca9c2569512b83a0f787c3d37aae68a7f583417aed1", "src/essential_store.rs": "e916c0389378ad0bc004ad4fc05945a333cc8ce8c4c5e2ae32c85556b11a750d", "src/essential_words.rs": "b6c4af1aecfe01dd519a87ee1b22fb7624f4be0ef8a2752a0f807a28bc097cc1", "src/finite.rs": "1ad66e84ba8488713f2fc8bd514a0d2e1ae8f6b2c4a2499dfa6f6aec21c976ca", "src/law_bench.rs": "a41feb1d92de313ef108ebfe4f185820084c03ce088490ca8507c8d998bf2751", "src/legal.rs": "c34d0b39149026bb9f9b3bc701e749a660d4603cbd69081f7b2cb9df0c396d0a", "src/legal_bench.rs": "b84ab772abf66d34372f24b9e9a67192ac4a1eb9cb8d28d63ebbb9079ef3bde5", "src/legal_checks.rs": "1653271d66f8e0ffbdec22bd5be1ff8c2b77f5c8ffcd2e2294dd365a940ee48b", "src/lib.rs": "b17637ee300c3ba560872e7a83f2d20532549ebf98db6b6f10b8794fc717712b", "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6", "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c", "src/observation.rs": "280d1e20e660cb00840c40f09a6998c00fdf435258a11a064d0a9cc68f9a8312", "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7", "src/occupancy.rs": "d168c4a7009b4a5b08051dae61d79f07e90209097c9b32f9c2f24aae3636b927", "src/occupancy_scratch.rs": "703a931d77305b7b19d057cf6c699b0ee644bbdec3f59bd975bb6a0b5b635116", "src/occupancy_words.rs": "f467cb77299c876320beac58b867ca29def0261e3f7647f11f6f39e099f1d113", "src/owned_bench.rs": "f914d04d6031a547cea8e3307a9bf89079a0e6b8465439dce423e3c470f91423", "src/packed.rs": "782f59878f4169f09b45777484d32eaa53d6e97619e3322b0e3e724676c57954", "src/relational_core.rs": "f83dca1dd7732d1dff2472b418036b92f05f30e333e4b217708fda992f62ce46", "src/relations.rs": "5cc0917e482452a984d5da704d4835c50b60428f803340e4bf0065628eb642dd", "src/retraction.rs": "bd0801df0f0f1cc452c1b84490ab6c3a3a952ad8a770b6074fdf21fedf0d21b9", "src/retraction_checks.rs": "4f086dc5c6175aa8856f588b22ab0cedfcd22ec6768a8e74fdfc08bd4c98d93a", "src/scoped_bench.rs": "de6261ebf7a4b251806246a0b9967320bec07265d57bf5e187a8958bb43368c0", "src/semantic_checks.rs": "d055cb135333d2d57d6ea7936369f2a5a59685d4fa27842d2125c2e7dd566ab5", "src/signature.rs": "e23b491ac9af760fbbee1cd9b39177607f8ff4a5caa700ca06111eabb6f329e0", "src/signature_bench.rs": "e41be54c10c1da7beedc0705dddc848099473c4b267d009c2f36aba6f9dc879a", "src/symbolic_relations.rs": "245af210921b06a15a2560e1fe993730ad5073f85b448be1e4ab845c7cd07c74", "src/transfer.rs": "d2fe8ebdf739d1d3e8b49c231c4c0f5df0eaf7985f5201513281d91e6f7bdfe2", "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29", "src/transfer_checks.rs": "5f8df5e7cd8cf828b8bebe95a9c6137549e6312c8782cbcba84c801986f3b5f0", "src/view_bench.rs": "a045c8aed63b7ef23d5ecd2233891b5b242d3e115d46ee616435105b19b898c1", "src/view_product.rs": "edfe6956dfe85cfab75732f564b73c8f81e680a8a170f8614c4f4b50af44064a"}, "shared_modules": ["carrier", "essential", "essential_raw", "diagram", "diagonal_checks", "finite", "packed", "relational_core", "legal", "legal_checks", "semantic_checks", "observation", "observation_checks", "dependencies", "transfer", "transfer_checks", "occupancy", "signature", "contraction", "retraction", "retraction_checks", "blocks"], "packed_map": "local", "transfer_import": "words", "essential_kernel": "derived", "essential_layout": "enum", "occupancy_kernel": "words", "product_mode": "views-inputs", "view_kernel": "words", "view_reuse": "bounded", "view_normalize": "source", "log": "retraction-complete-enum-check.log"}

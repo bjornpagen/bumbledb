@@ -1,0 +1,21 @@
+{
+  "files": {
+    "proposal/research/event-algebra/abo-khamis-ngo-rudra-2016-faq.txt": "1e183a13708bdc09eed2f0866bed448b246ac19ef8e26191c5ab189e2ee8ed1d",
+    "proposal/papers/abo-khamis-ngo-rudra-2016-faq.pdf": "e084e3cc57f11f4808bc9b38f8fd05b1974ceedbd572ed7dc86b2d58bc829dc0",
+    "proposal/research/event-algebra/desharnais-moeller-struth-2003-kleene-algebra-domain.txt": "003e522467c336251f71e96099f68b07b4cb05e546bf289e089120754f32c50f",
+    "proposal/papers/desharnais-moeller-struth-2003-kleene-algebra-domain.pdf": "41f7446d51d79fa7d93acc6294efea3ba30f8729a9d52fb0b964f7637ac4f643"
+  },
+  "sources": [
+    {
+      "arxiv": "1504.04044v7",
+      "scope": "Sections 1.2 and 2.2: commutative semiring assumption, variable elimination and folding by distributivity.",
+      "application": "Event union/intersection at one owner; arbitrary FAQ reordering and width guarantees are not established for typed relational composition."
+    },
+    {
+      "arxiv": "cs/0310054v1",
+      "scope": "Sections 2.1, 2.3 and 2.4, Examples 2.7 and 2.8: noncommutative multiplicative monoid, distributivity, concrete relation and matrix models.",
+      "application": "Ordered typed relation composition distributes over union with one shared intermediate world. Residual laws are independently proved for concrete relation predicates. The paper states its main abstract results use i-semirings rather than quantales."
+    }
+  ],
+  "boundary": "Retained primary sources cross-checked for the query rewrite. Twelve separate Lean denotational reports; no generic optimizer, probabilistic independence or native relational Pack implementation follows automatically."
+}

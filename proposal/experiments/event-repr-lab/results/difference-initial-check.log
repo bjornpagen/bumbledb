@@ -1,0 +1,19 @@
+
+running 2 tests
+test tests::all_small_functions ... DIFFERENCE_CHECK {"passed":true,"orders":6,"basis_schedules":4,"functions_per_manager":256,"binary_cases":25165824,"projection_cases":49152,"map_cases":178176,"completed_projection_cases":49152}
+ok
+test tests::symbolic_width_and_quantifier_obstruction ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling rustc-hash v2.1.0
+   Compiling event-difference-prototype v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/difference-prototype)
+    Finished `release` profile [optimized] target(s) in 1.30s
+     Running unittests src/lib.rs (target/release/build/event-difference-prototype/0454974cdac8d07e/out/event_difference_prototype-0454974cdac8d07e)
+   Doc-tests event_difference_prototype

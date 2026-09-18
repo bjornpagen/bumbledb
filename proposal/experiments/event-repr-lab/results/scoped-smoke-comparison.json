@@ -1,0 +1,5717 @@
+{
+  "passed": true,
+  "inputs": [
+    "scoped-smoke.json"
+  ],
+  "binary_sha256": "eba1e378503ae7186f7965ceca6549b615773cba65bd385d3a5b54936990314b",
+  "cases": 120,
+  "matched_cases": 72,
+  "pairs": [
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003195583,
+          "candidate_median_s": 0.003475416,
+          "baseline_over_candidate": 0.9194821569561745,
+          "baseline_min_s": 0.003195583,
+          "baseline_max_s": 0.003195583,
+          "candidate_min_s": 0.003475416,
+          "candidate_max_s": 0.003475416,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001572792,
+          "candidate_median_s": 0.001846042,
+          "baseline_over_candidate": 0.8519806158256421,
+          "baseline_min_s": 0.001572792,
+          "baseline_max_s": 0.001572792,
+          "candidate_min_s": 0.001846042,
+          "candidate_max_s": 0.001846042,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2829,
+      "candidate_final_nodes": 2467,
+      "baseline_final_bytes_est": 492264,
+      "candidate_final_bytes_est": 485048
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002293167,
+          "candidate_median_s": 0.003475416,
+          "baseline_over_candidate": 0.6598251835175991,
+          "baseline_min_s": 0.002293167,
+          "baseline_max_s": 0.002293167,
+          "candidate_min_s": 0.003475416,
+          "candidate_max_s": 0.003475416,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001458875,
+          "candidate_median_s": 0.001846042,
+          "baseline_over_candidate": 0.7902718356353756,
+          "baseline_min_s": 0.001458875,
+          "baseline_max_s": 0.001458875,
+          "candidate_min_s": 0.001846042,
+          "candidate_max_s": 0.001846042,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1235,
+      "candidate_final_nodes": 2467,
+      "baseline_final_bytes_est": 247352,
+      "candidate_final_bytes_est": 485048
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001922875,
+          "candidate_median_s": 0.001944209,
+          "baseline_over_candidate": 0.9890268998857634,
+          "baseline_min_s": 0.001922875,
+          "baseline_max_s": 0.001922875,
+          "candidate_min_s": 0.001944209,
+          "candidate_max_s": 0.001944209,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7e-06,
+          "candidate_median_s": 1.0083e-05,
+          "baseline_over_candidate": 0.6942378260438362,
+          "baseline_min_s": 7e-06,
+          "baseline_max_s": 7e-06,
+          "candidate_min_s": 1.0083e-05,
+          "candidate_max_s": 1.0083e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2829,
+      "candidate_final_nodes": 2467,
+      "baseline_final_bytes_est": 497640,
+      "candidate_final_bytes_est": 490424
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001026875,
+          "candidate_median_s": 0.001944209,
+          "baseline_over_candidate": 0.5281710968316679,
+          "baseline_min_s": 0.001026875,
+          "baseline_max_s": 0.001026875,
+          "candidate_min_s": 0.001944209,
+          "candidate_max_s": 0.001944209,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 4.0042e-05,
+          "candidate_median_s": 1.0083e-05,
+          "baseline_over_candidate": 3.971238718635327,
+          "baseline_min_s": 4.0042e-05,
+          "baseline_max_s": 4.0042e-05,
+          "candidate_min_s": 1.0083e-05,
+          "candidate_max_s": 1.0083e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1235,
+      "candidate_final_nodes": 2467,
+      "baseline_final_bytes_est": 252728,
+      "candidate_final_bytes_est": 490424
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.026408708,
+          "candidate_median_s": 0.0258015,
+          "baseline_over_candidate": 1.023533825552778,
+          "baseline_min_s": 0.026408708,
+          "baseline_max_s": 0.026408708,
+          "candidate_min_s": 0.0258015,
+          "candidate_max_s": 0.0258015,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.00866775,
+          "candidate_median_s": 0.010262084,
+          "baseline_over_candidate": 0.8446383794948473,
+          "baseline_min_s": 0.00866775,
+          "baseline_max_s": 0.00866775,
+          "candidate_min_s": 0.010262084,
+          "candidate_max_s": 0.010262084,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 33764,
+      "candidate_final_nodes": 29466,
+      "baseline_final_bytes_est": 6633496,
+      "candidate_final_bytes_est": 6499224
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.038169458,
+          "candidate_median_s": 0.0258015,
+          "baseline_over_candidate": 1.4793503478479935,
+          "baseline_min_s": 0.038169458,
+          "baseline_max_s": 0.038169458,
+          "candidate_min_s": 0.0258015,
+          "candidate_max_s": 0.0258015,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.081418959,
+          "candidate_median_s": 0.010262084,
+          "baseline_over_candidate": 7.933959515435657,
+          "baseline_min_s": 0.081418959,
+          "baseline_max_s": 0.081418959,
+          "candidate_min_s": 0.010262084,
+          "candidate_max_s": 0.010262084,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 14258,
+      "candidate_final_nodes": 29466,
+      "baseline_final_bytes_est": 2602728,
+      "candidate_final_bytes_est": 6499224
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.017769458,
+          "candidate_median_s": 0.016897458,
+          "baseline_over_candidate": 1.0516053953204083,
+          "baseline_min_s": 0.017769458,
+          "baseline_max_s": 0.017769458,
+          "candidate_min_s": 0.016897458,
+          "candidate_max_s": 0.016897458,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.5083e-05,
+          "candidate_median_s": 1.2625e-05,
+          "baseline_over_candidate": 1.1946930693069306,
+          "baseline_min_s": 1.5083e-05,
+          "baseline_max_s": 1.5083e-05,
+          "candidate_min_s": 1.2625e-05,
+          "candidate_max_s": 1.2625e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 33764,
+      "candidate_final_nodes": 29466,
+      "baseline_final_bytes_est": 6638872,
+      "candidate_final_bytes_est": 6504600
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.0133305,
+          "candidate_median_s": 0.016897458,
+          "baseline_over_candidate": 0.7889056448609015,
+          "baseline_min_s": 0.0133305,
+          "baseline_max_s": 0.0133305,
+          "candidate_min_s": 0.016897458,
+          "candidate_max_s": 0.016897458,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.75e-05,
+          "candidate_median_s": 1.2625e-05,
+          "baseline_over_candidate": 1.386138613861386,
+          "baseline_min_s": 1.75e-05,
+          "baseline_max_s": 1.75e-05,
+          "candidate_min_s": 1.2625e-05,
+          "candidate_max_s": 1.2625e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 14258,
+      "candidate_final_nodes": 29466,
+      "baseline_final_bytes_est": 2608104,
+      "candidate_final_bytes_est": 6504600
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003476625,
+          "candidate_median_s": 0.003229042,
+          "baseline_over_candidate": 1.0766738246204293,
+          "baseline_min_s": 0.003476625,
+          "baseline_max_s": 0.003476625,
+          "candidate_min_s": 0.003229042,
+          "candidate_max_s": 0.003229042,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.003077458,
+          "candidate_median_s": 0.001893958,
+          "baseline_over_candidate": 1.624881861160596,
+          "baseline_min_s": 0.003077458,
+          "baseline_max_s": 0.003077458,
+          "candidate_min_s": 0.001893958,
+          "candidate_max_s": 0.001893958,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2982,
+      "candidate_final_nodes": 2287,
+      "baseline_final_bytes_est": 490440,
+      "candidate_final_bytes_est": 473832
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002931083,
+          "candidate_median_s": 0.003229042,
+          "baseline_over_candidate": 0.9077252634062982,
+          "baseline_min_s": 0.002931083,
+          "baseline_max_s": 0.002931083,
+          "candidate_min_s": 0.003229042,
+          "candidate_max_s": 0.003229042,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001772167,
+          "candidate_median_s": 0.001893958,
+          "baseline_over_candidate": 0.9356949837324798,
+          "baseline_min_s": 0.001772167,
+          "baseline_max_s": 0.001772167,
+          "candidate_min_s": 0.001893958,
+          "candidate_max_s": 0.001893958,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1889,
+      "candidate_final_nodes": 2287,
+      "baseline_final_bytes_est": 432056,
+      "candidate_final_bytes_est": 473832
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.00266075,
+          "candidate_median_s": 0.001675208,
+          "baseline_over_candidate": 1.588310227744853,
+          "baseline_min_s": 0.00266075,
+          "baseline_max_s": 0.00266075,
+          "candidate_min_s": 0.001675208,
+          "candidate_max_s": 0.001675208,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 9.875e-06,
+          "candidate_median_s": 7e-06,
+          "baseline_over_candidate": 1.4107142857142856,
+          "baseline_min_s": 9.875e-06,
+          "baseline_max_s": 9.875e-06,
+          "candidate_min_s": 7e-06,
+          "candidate_max_s": 7e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2982,
+      "candidate_final_nodes": 2287,
+      "baseline_final_bytes_est": 495816,
+      "candidate_final_bytes_est": 479208
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001385708,
+          "candidate_median_s": 0.001675208,
+          "baseline_over_candidate": 0.8271856390370629,
+          "baseline_min_s": 0.001385708,
+          "baseline_max_s": 0.001385708,
+          "candidate_min_s": 0.001675208,
+          "candidate_max_s": 0.001675208,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7e-06,
+          "candidate_median_s": 7e-06,
+          "baseline_over_candidate": 1.0,
+          "baseline_min_s": 7e-06,
+          "baseline_max_s": 7e-06,
+          "candidate_min_s": 7e-06,
+          "candidate_max_s": 7e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1889,
+      "candidate_final_nodes": 2287,
+      "baseline_final_bytes_est": 437432,
+      "candidate_final_bytes_est": 479208
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.039440791,
+          "candidate_median_s": 0.031761917,
+          "baseline_over_candidate": 1.241763556022138,
+          "baseline_min_s": 0.039440791,
+          "baseline_max_s": 0.039440791,
+          "candidate_min_s": 0.031761917,
+          "candidate_max_s": 0.031761917,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.017612334,
+          "candidate_median_s": 0.016967292,
+          "baseline_over_candidate": 1.0380167913654108,
+          "baseline_min_s": 0.017612334,
+          "baseline_max_s": 0.017612334,
+          "candidate_min_s": 0.016967292,
+          "candidate_max_s": 0.016967292,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 32499,
+      "candidate_final_nodes": 24133,
+      "baseline_final_bytes_est": 7054296,
+      "candidate_final_bytes_est": 4355432
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.025696583,
+          "candidate_median_s": 0.031761917,
+          "baseline_over_candidate": 0.809037533849106,
+          "baseline_min_s": 0.025696583,
+          "baseline_max_s": 0.025696583,
+          "candidate_min_s": 0.031761917,
+          "candidate_max_s": 0.031761917,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.014541333,
+          "candidate_median_s": 0.016967292,
+          "baseline_over_candidate": 0.8570214386597461,
+          "baseline_min_s": 0.014541333,
+          "baseline_max_s": 0.014541333,
+          "candidate_min_s": 0.016967292,
+          "candidate_max_s": 0.016967292,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 18210,
+      "candidate_final_nodes": 24133,
+      "baseline_final_bytes_est": 3721144,
+      "candidate_final_bytes_est": 4355432
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.023553333,
+          "candidate_median_s": 0.017650541,
+          "baseline_over_candidate": 1.3344255567010666,
+          "baseline_min_s": 0.023553333,
+          "baseline_max_s": 0.023553333,
+          "candidate_min_s": 0.017650541,
+          "candidate_max_s": 0.017650541,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.6167e-05,
+          "candidate_median_s": 1.55e-05,
+          "baseline_over_candidate": 1.0430322580645162,
+          "baseline_min_s": 1.6167e-05,
+          "baseline_max_s": 1.6167e-05,
+          "candidate_min_s": 1.55e-05,
+          "candidate_max_s": 1.55e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 32499,
+      "candidate_final_nodes": 24133,
+      "baseline_final_bytes_est": 7059672,
+      "candidate_final_bytes_est": 4360808
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.013699792,
+          "candidate_median_s": 0.017650541,
+          "baseline_over_candidate": 0.7761683905326189,
+          "baseline_min_s": 0.013699792,
+          "baseline_max_s": 0.013699792,
+          "candidate_min_s": 0.017650541,
+          "candidate_max_s": 0.017650541,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.8042e-05,
+          "candidate_median_s": 1.55e-05,
+          "baseline_over_candidate": 1.164,
+          "baseline_min_s": 1.8042e-05,
+          "baseline_max_s": 1.8042e-05,
+          "candidate_min_s": 1.55e-05,
+          "candidate_max_s": 1.55e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 18210,
+      "candidate_final_nodes": 24133,
+      "baseline_final_bytes_est": 3726520,
+      "candidate_final_bytes_est": 4360808
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002600459,
+          "candidate_median_s": 0.00229425,
+          "baseline_over_candidate": 1.133468017870764,
+          "baseline_min_s": 0.002600459,
+          "baseline_max_s": 0.002600459,
+          "candidate_min_s": 0.00229425,
+          "candidate_max_s": 0.00229425,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001298291,
+          "candidate_median_s": 0.001439709,
+          "baseline_over_candidate": 0.9017732055575121,
+          "baseline_min_s": 0.001298291,
+          "baseline_max_s": 0.001298291,
+          "candidate_min_s": 0.001439709,
+          "candidate_max_s": 0.001439709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2087,
+      "candidate_final_nodes": 1434,
+      "baseline_final_bytes_est": 407592,
+      "candidate_final_bytes_est": 296664
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001573958,
+          "candidate_median_s": 0.001058042,
+          "baseline_over_candidate": 1.4876139132473003,
+          "baseline_min_s": 0.001573958,
+          "baseline_max_s": 0.001573958,
+          "candidate_min_s": 0.001058042,
+          "candidate_max_s": 0.001058042,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7.084e-06,
+          "candidate_median_s": 6.959e-06,
+          "baseline_over_candidate": 1.0179623509124875,
+          "baseline_min_s": 7.084e-06,
+          "baseline_max_s": 7.084e-06,
+          "candidate_min_s": 6.959e-06,
+          "candidate_max_s": 6.959e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2087,
+      "candidate_final_nodes": 1434,
+      "baseline_final_bytes_est": 412968,
+      "candidate_final_bytes_est": 302040
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.023534875,
+          "candidate_median_s": 0.016983667,
+          "baseline_over_candidate": 1.3857357777916866,
+          "baseline_min_s": 0.023534875,
+          "baseline_max_s": 0.023534875,
+          "candidate_min_s": 0.016983667,
+          "candidate_max_s": 0.016983667,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.012477958,
+          "candidate_median_s": 0.011007458,
+          "baseline_over_candidate": 1.1335912433188482,
+          "baseline_min_s": 0.012477958,
+          "baseline_max_s": 0.012477958,
+          "candidate_min_s": 0.011007458,
+          "candidate_max_s": 0.011007458,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 20047,
+      "candidate_final_nodes": 10459,
+      "baseline_final_bytes_est": 3798296,
+      "candidate_final_bytes_est": 1992280
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.013537583,
+          "candidate_median_s": 0.008263333,
+          "baseline_over_candidate": 1.638271506182796,
+          "baseline_min_s": 0.013537583,
+          "baseline_max_s": 0.013537583,
+          "candidate_min_s": 0.008263333,
+          "candidate_max_s": 0.008263333,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 2.1959e-05,
+          "candidate_median_s": 1.4291e-05,
+          "baseline_over_candidate": 1.5365614722552656,
+          "baseline_min_s": 2.1959e-05,
+          "baseline_max_s": 2.1959e-05,
+          "candidate_min_s": 1.4291e-05,
+          "candidate_max_s": 1.4291e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 20047,
+      "candidate_final_nodes": 10459,
+      "baseline_final_bytes_est": 3803672,
+      "candidate_final_bytes_est": 1997656
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003476625,
+          "candidate_median_s": 0.002931083,
+          "baseline_over_candidate": 1.1861230132343574,
+          "baseline_min_s": 0.003476625,
+          "baseline_max_s": 0.003476625,
+          "candidate_min_s": 0.002931083,
+          "candidate_max_s": 0.002931083,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.003077458,
+          "candidate_median_s": 0.001772167,
+          "baseline_over_candidate": 1.7365507878207866,
+          "baseline_min_s": 0.003077458,
+          "baseline_max_s": 0.003077458,
+          "candidate_min_s": 0.001772167,
+          "candidate_max_s": 0.001772167,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2982,
+      "candidate_final_nodes": 1889,
+      "baseline_final_bytes_est": 490440,
+      "candidate_final_bytes_est": 432056
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.00266075,
+          "candidate_median_s": 0.001385708,
+          "baseline_over_candidate": 1.9201375758817874,
+          "baseline_min_s": 0.00266075,
+          "baseline_max_s": 0.00266075,
+          "candidate_min_s": 0.001385708,
+          "candidate_max_s": 0.001385708,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 9.875e-06,
+          "candidate_median_s": 7e-06,
+          "baseline_over_candidate": 1.4107142857142856,
+          "baseline_min_s": 9.875e-06,
+          "baseline_max_s": 9.875e-06,
+          "candidate_min_s": 7e-06,
+          "candidate_max_s": 7e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2982,
+      "candidate_final_nodes": 1889,
+      "baseline_final_bytes_est": 495816,
+      "candidate_final_bytes_est": 437432
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.039440791,
+          "candidate_median_s": 0.025696583,
+          "baseline_over_candidate": 1.534865199781621,
+          "baseline_min_s": 0.039440791,
+          "baseline_max_s": 0.039440791,
+          "candidate_min_s": 0.025696583,
+          "candidate_max_s": 0.025696583,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.017612334,
+          "candidate_median_s": 0.014541333,
+          "baseline_over_candidate": 1.2111911610854382,
+          "baseline_min_s": 0.017612334,
+          "baseline_max_s": 0.017612334,
+          "candidate_min_s": 0.014541333,
+          "candidate_max_s": 0.014541333,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 32499,
+      "candidate_final_nodes": 18210,
+      "baseline_final_bytes_est": 7054296,
+      "candidate_final_bytes_est": 3721144
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.023553333,
+          "candidate_median_s": 0.013699792,
+          "baseline_over_candidate": 1.719247489304947,
+          "baseline_min_s": 0.023553333,
+          "baseline_max_s": 0.023553333,
+          "candidate_min_s": 0.013699792,
+          "candidate_max_s": 0.013699792,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.6167e-05,
+          "candidate_median_s": 1.8042e-05,
+          "baseline_over_candidate": 0.8960758230794811,
+          "baseline_min_s": 1.6167e-05,
+          "baseline_max_s": 1.6167e-05,
+          "candidate_min_s": 1.8042e-05,
+          "candidate_max_s": 1.8042e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 32499,
+      "candidate_final_nodes": 18210,
+      "baseline_final_bytes_est": 7059672,
+      "candidate_final_bytes_est": 3726520
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002227625,
+          "candidate_median_s": 0.003263667,
+          "baseline_over_candidate": 0.6825527849501802,
+          "baseline_min_s": 0.002227625,
+          "baseline_max_s": 0.002227625,
+          "candidate_min_s": 0.003263667,
+          "candidate_max_s": 0.003263667,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001272166,
+          "candidate_median_s": 0.002673208,
+          "baseline_over_candidate": 0.47589487985970413,
+          "baseline_min_s": 0.001272166,
+          "baseline_max_s": 0.001272166,
+          "candidate_min_s": 0.002673208,
+          "candidate_max_s": 0.002673208,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1655,
+      "candidate_final_nodes": 1154,
+      "baseline_final_bytes_est": 276552,
+      "candidate_final_bytes_est": 247816
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003150666,
+          "candidate_median_s": 0.003263667,
+          "baseline_over_candidate": 0.9653760631829166,
+          "baseline_min_s": 0.003150666,
+          "baseline_max_s": 0.003150666,
+          "candidate_min_s": 0.003263667,
+          "candidate_max_s": 0.003263667,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.002418334,
+          "candidate_median_s": 0.002673208,
+          "baseline_over_candidate": 0.9046561285167484,
+          "baseline_min_s": 0.002418334,
+          "baseline_max_s": 0.002418334,
+          "candidate_min_s": 0.002673208,
+          "candidate_max_s": 0.002673208,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1262,
+      "candidate_final_nodes": 1154,
+      "baseline_final_bytes_est": 275800,
+      "candidate_final_bytes_est": 247816
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001030417,
+          "candidate_median_s": 0.001082084,
+          "baseline_over_candidate": 0.9522523205222515,
+          "baseline_min_s": 0.001030417,
+          "baseline_max_s": 0.001030417,
+          "candidate_min_s": 0.001082084,
+          "candidate_max_s": 0.001082084,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 8.833e-06,
+          "candidate_median_s": 8.167e-06,
+          "baseline_over_candidate": 1.0815476919309417,
+          "baseline_min_s": 8.833e-06,
+          "baseline_max_s": 8.833e-06,
+          "candidate_min_s": 8.167e-06,
+          "candidate_max_s": 8.167e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1655,
+      "candidate_final_nodes": 1154,
+      "baseline_final_bytes_est": 277728,
+      "candidate_final_bytes_est": 248992
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.00117775,
+          "candidate_median_s": 0.001082084,
+          "baseline_over_candidate": 1.0884090329401412,
+          "baseline_min_s": 0.00117775,
+          "baseline_max_s": 0.00117775,
+          "candidate_min_s": 0.001082084,
+          "candidate_max_s": 0.001082084,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7.625e-06,
+          "candidate_median_s": 8.167e-06,
+          "baseline_over_candidate": 0.9336353618219665,
+          "baseline_min_s": 7.625e-06,
+          "baseline_max_s": 7.625e-06,
+          "candidate_min_s": 8.167e-06,
+          "candidate_max_s": 8.167e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1262,
+      "candidate_final_nodes": 1154,
+      "baseline_final_bytes_est": 276976,
+      "candidate_final_bytes_est": 248992
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.028904417,
+          "candidate_median_s": 0.040049709,
+          "baseline_over_candidate": 0.7217135335490202,
+          "baseline_min_s": 0.028904417,
+          "baseline_max_s": 0.028904417,
+          "candidate_min_s": 0.040049709,
+          "candidate_max_s": 0.040049709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.019264666,
+          "candidate_median_s": 0.032977792,
+          "baseline_over_candidate": 0.58417088688048,
+          "baseline_min_s": 0.019264666,
+          "baseline_max_s": 0.019264666,
+          "candidate_min_s": 0.032977792,
+          "candidate_max_s": 0.032977792,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 25882,
+      "candidate_final_nodes": 19116,
+      "baseline_final_bytes_est": 4449064,
+      "candidate_final_bytes_est": 3718232
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.045098167,
+          "candidate_median_s": 0.040049709,
+          "baseline_over_candidate": 1.1260547985504714,
+          "baseline_min_s": 0.045098167,
+          "baseline_max_s": 0.045098167,
+          "candidate_min_s": 0.040049709,
+          "candidate_max_s": 0.040049709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.044158042,
+          "candidate_median_s": 0.032977792,
+          "baseline_over_candidate": 1.3390236071596304,
+          "baseline_min_s": 0.044158042,
+          "baseline_max_s": 0.044158042,
+          "candidate_min_s": 0.032977792,
+          "candidate_max_s": 0.032977792,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 25516,
+      "candidate_final_nodes": 19116,
+      "baseline_final_bytes_est": 5097912,
+      "candidate_final_bytes_est": 3718232
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.013070542,
+          "candidate_median_s": 0.013493875,
+          "baseline_over_candidate": 0.9686277663013774,
+          "baseline_min_s": 0.013070542,
+          "baseline_max_s": 0.013070542,
+          "candidate_min_s": 0.013493875,
+          "candidate_max_s": 0.013493875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.4583e-05,
+          "candidate_median_s": 1.3875e-05,
+          "baseline_over_candidate": 1.051027027027027,
+          "baseline_min_s": 1.4583e-05,
+          "baseline_max_s": 1.4583e-05,
+          "candidate_min_s": 1.3875e-05,
+          "candidate_max_s": 1.3875e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 25882,
+      "candidate_final_nodes": 19116,
+      "baseline_final_bytes_est": 4450240,
+      "candidate_final_bytes_est": 3719408
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.019557209,
+          "candidate_median_s": 0.013493875,
+          "baseline_over_candidate": 1.4493397189465589,
+          "baseline_min_s": 0.019557209,
+          "baseline_max_s": 0.019557209,
+          "candidate_min_s": 0.013493875,
+          "candidate_max_s": 0.013493875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.5625e-05,
+          "candidate_median_s": 1.3875e-05,
+          "baseline_over_candidate": 1.1261261261261262,
+          "baseline_min_s": 1.5625e-05,
+          "baseline_max_s": 1.5625e-05,
+          "candidate_min_s": 1.3875e-05,
+          "candidate_max_s": 1.3875e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 25516,
+      "candidate_final_nodes": 19116,
+      "baseline_final_bytes_est": 5099088,
+      "candidate_final_bytes_est": 3719408
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002600459,
+          "candidate_median_s": 0.002970791,
+          "baseline_over_candidate": 0.8753422909925336,
+          "baseline_min_s": 0.002600459,
+          "baseline_max_s": 0.002600459,
+          "candidate_min_s": 0.002970791,
+          "candidate_max_s": 0.002970791,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001298291,
+          "candidate_median_s": 0.001764625,
+          "baseline_over_candidate": 0.7357319543812425,
+          "baseline_min_s": 0.001298291,
+          "baseline_max_s": 0.001298291,
+          "candidate_min_s": 0.001764625,
+          "candidate_max_s": 0.001764625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2087,
+      "candidate_final_nodes": 1845,
+      "baseline_final_bytes_est": 407592,
+      "candidate_final_bytes_est": 411960
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.00229425,
+          "candidate_median_s": 0.002970791,
+          "baseline_over_candidate": 0.7722690690795818,
+          "baseline_min_s": 0.00229425,
+          "baseline_max_s": 0.00229425,
+          "candidate_min_s": 0.002970791,
+          "candidate_max_s": 0.002970791,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001439709,
+          "candidate_median_s": 0.001764625,
+          "baseline_over_candidate": 0.8158724941559822,
+          "baseline_min_s": 0.001439709,
+          "baseline_max_s": 0.001439709,
+          "candidate_min_s": 0.001764625,
+          "candidate_max_s": 0.001764625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1434,
+      "candidate_final_nodes": 1845,
+      "baseline_final_bytes_est": 296664,
+      "candidate_final_bytes_est": 411960
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001573958,
+          "candidate_median_s": 0.001751875,
+          "baseline_over_candidate": 0.8984419550481627,
+          "baseline_min_s": 0.001573958,
+          "baseline_max_s": 0.001573958,
+          "candidate_min_s": 0.001751875,
+          "candidate_max_s": 0.001751875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7.084e-06,
+          "candidate_median_s": 8.917e-06,
+          "baseline_over_candidate": 0.7944375911180891,
+          "baseline_min_s": 7.084e-06,
+          "baseline_max_s": 7.084e-06,
+          "candidate_min_s": 8.917e-06,
+          "candidate_max_s": 8.917e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2087,
+      "candidate_final_nodes": 1845,
+      "baseline_final_bytes_est": 412968,
+      "candidate_final_bytes_est": 417336
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001058042,
+          "candidate_median_s": 0.001751875,
+          "baseline_over_candidate": 0.6039483410631467,
+          "baseline_min_s": 0.001058042,
+          "baseline_max_s": 0.001058042,
+          "candidate_min_s": 0.001751875,
+          "candidate_max_s": 0.001751875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 6.959e-06,
+          "candidate_median_s": 8.917e-06,
+          "baseline_over_candidate": 0.7804194235729506,
+          "baseline_min_s": 6.959e-06,
+          "baseline_max_s": 6.959e-06,
+          "candidate_min_s": 8.917e-06,
+          "candidate_max_s": 8.917e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1434,
+      "candidate_final_nodes": 1845,
+      "baseline_final_bytes_est": 302040,
+      "candidate_final_bytes_est": 417336
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.023534875,
+          "candidate_median_s": 0.023608625,
+          "baseline_over_candidate": 0.9968761416643281,
+          "baseline_min_s": 0.023534875,
+          "baseline_max_s": 0.023534875,
+          "candidate_min_s": 0.023608625,
+          "candidate_max_s": 0.023608625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.012477958,
+          "candidate_median_s": 0.013463208,
+          "baseline_over_candidate": 0.9268190761072695,
+          "baseline_min_s": 0.012477958,
+          "baseline_max_s": 0.012477958,
+          "candidate_min_s": 0.013463208,
+          "candidate_max_s": 0.013463208,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 20047,
+      "candidate_final_nodes": 16302,
+      "baseline_final_bytes_est": 3798296,
+      "candidate_final_bytes_est": 2947864
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.016983667,
+          "candidate_median_s": 0.023608625,
+          "baseline_over_candidate": 0.7193839963149061,
+          "baseline_min_s": 0.016983667,
+          "baseline_max_s": 0.016983667,
+          "candidate_min_s": 0.023608625,
+          "candidate_max_s": 0.023608625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.011007458,
+          "candidate_median_s": 0.013463208,
+          "baseline_over_candidate": 0.8175954794726487,
+          "baseline_min_s": 0.011007458,
+          "baseline_max_s": 0.011007458,
+          "candidate_min_s": 0.013463208,
+          "candidate_max_s": 0.013463208,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 10459,
+      "candidate_final_nodes": 16302,
+      "baseline_final_bytes_est": 1992280,
+      "candidate_final_bytes_est": 2947864
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.013537583,
+          "candidate_median_s": 0.012534791,
+          "baseline_over_candidate": 1.0800006956637729,
+          "baseline_min_s": 0.013537583,
+          "baseline_max_s": 0.013537583,
+          "candidate_min_s": 0.012534791,
+          "candidate_max_s": 0.012534791,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 2.1959e-05,
+          "candidate_median_s": 1.475e-05,
+          "baseline_over_candidate": 1.4887457627118645,
+          "baseline_min_s": 2.1959e-05,
+          "baseline_max_s": 2.1959e-05,
+          "candidate_min_s": 1.475e-05,
+          "candidate_max_s": 1.475e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 20047,
+      "candidate_final_nodes": 16302,
+      "baseline_final_bytes_est": 3803672,
+      "candidate_final_bytes_est": 2953240
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.008263333,
+          "candidate_median_s": 0.012534791,
+          "baseline_over_candidate": 0.6592318132787375,
+          "baseline_min_s": 0.008263333,
+          "baseline_max_s": 0.008263333,
+          "candidate_min_s": 0.012534791,
+          "candidate_max_s": 0.012534791,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.4291e-05,
+          "candidate_median_s": 1.475e-05,
+          "baseline_over_candidate": 0.9688813559322034,
+          "baseline_min_s": 1.4291e-05,
+          "baseline_max_s": 1.4291e-05,
+          "candidate_min_s": 1.475e-05,
+          "candidate_max_s": 1.475e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 10459,
+      "candidate_final_nodes": 16302,
+      "baseline_final_bytes_est": 1997656,
+      "candidate_final_bytes_est": 2953240
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.005332041,
+          "candidate_median_s": 0.0031415,
+          "baseline_over_candidate": 1.6972914212955594,
+          "baseline_min_s": 0.005332041,
+          "baseline_max_s": 0.005332041,
+          "candidate_min_s": 0.0031415,
+          "candidate_max_s": 0.0031415,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.002727583,
+          "candidate_median_s": 0.001546667,
+          "baseline_over_candidate": 1.7635231113096743,
+          "baseline_min_s": 0.002727583,
+          "baseline_max_s": 0.002727583,
+          "candidate_min_s": 0.001546667,
+          "candidate_max_s": 0.001546667,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 4445,
+      "candidate_final_nodes": 2494,
+      "baseline_final_bytes_est": 893336,
+      "candidate_final_bytes_est": 594536
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003135708,
+          "candidate_median_s": 0.001921792,
+          "baseline_over_candidate": 1.6316583688557347,
+          "baseline_min_s": 0.003135708,
+          "baseline_max_s": 0.003135708,
+          "candidate_min_s": 0.001921792,
+          "candidate_max_s": 0.001921792,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 9.209e-06,
+          "candidate_median_s": 7.042e-06,
+          "baseline_over_candidate": 1.3077250781028116,
+          "baseline_min_s": 9.209e-06,
+          "baseline_max_s": 9.209e-06,
+          "candidate_min_s": 7.042e-06,
+          "candidate_max_s": 7.042e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 4445,
+      "candidate_final_nodes": 2494,
+      "baseline_final_bytes_est": 898712,
+      "candidate_final_bytes_est": 599912
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.182492792,
+          "candidate_median_s": 0.139079375,
+          "baseline_over_candidate": 1.3121484907449432,
+          "baseline_min_s": 0.182492792,
+          "baseline_max_s": 0.182492792,
+          "candidate_min_s": 0.139079375,
+          "candidate_max_s": 0.139079375,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.048385708,
+          "candidate_median_s": 0.046710084,
+          "baseline_over_candidate": 1.035872853493477,
+          "baseline_min_s": 0.048385708,
+          "baseline_max_s": 0.048385708,
+          "candidate_min_s": 0.046710084,
+          "candidate_max_s": 0.046710084,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 158235,
+      "candidate_final_nodes": 94203,
+      "baseline_final_bytes_est": 26967544,
+      "candidate_final_bytes_est": 21038136
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.12404425,
+          "candidate_median_s": 0.085224,
+          "baseline_over_candidate": 1.455508424856848,
+          "baseline_min_s": 0.12404425,
+          "baseline_max_s": 0.12404425,
+          "candidate_min_s": 0.085224,
+          "candidate_max_s": 0.085224,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.7833e-05,
+          "candidate_median_s": 1.5666e-05,
+          "baseline_over_candidate": 1.138325035107877,
+          "baseline_min_s": 1.7833e-05,
+          "baseline_max_s": 1.7833e-05,
+          "candidate_min_s": 1.5666e-05,
+          "candidate_max_s": 1.5666e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 158235,
+      "candidate_final_nodes": 94203,
+      "baseline_final_bytes_est": 26972920,
+      "candidate_final_bytes_est": 21043512
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002560209,
+          "candidate_median_s": 0.001485167,
+          "baseline_over_candidate": 1.7238526037812583,
+          "baseline_min_s": 0.002560209,
+          "baseline_max_s": 0.002560209,
+          "candidate_min_s": 0.001485167,
+          "candidate_max_s": 0.001485167,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.000717167,
+          "candidate_median_s": 0.000991833,
+          "baseline_over_candidate": 0.7230723317332657,
+          "baseline_min_s": 0.000717167,
+          "baseline_max_s": 0.000717167,
+          "candidate_min_s": 0.000991833,
+          "candidate_max_s": 0.000991833,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 956,
+      "candidate_final_nodes": 780,
+      "baseline_final_bytes_est": 200824,
+      "candidate_final_bytes_est": 153976
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001435667,
+          "candidate_median_s": 0.001485167,
+          "baseline_over_candidate": 0.9666704148422367,
+          "baseline_min_s": 0.001435667,
+          "baseline_max_s": 0.001435667,
+          "candidate_min_s": 0.001485167,
+          "candidate_max_s": 0.001485167,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.000995916,
+          "candidate_median_s": 0.000991833,
+          "baseline_over_candidate": 1.0041166204391263,
+          "baseline_min_s": 0.000995916,
+          "baseline_max_s": 0.000995916,
+          "candidate_min_s": 0.000991833,
+          "candidate_max_s": 0.000991833,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 789,
+      "candidate_final_nodes": 780,
+      "baseline_final_bytes_est": 154168,
+      "candidate_final_bytes_est": 153976
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.000584916,
+          "candidate_median_s": 0.000520625,
+          "baseline_over_candidate": 1.1234881152460983,
+          "baseline_min_s": 0.000584916,
+          "baseline_max_s": 0.000584916,
+          "candidate_min_s": 0.000520625,
+          "candidate_max_s": 0.000520625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7.5e-06,
+          "candidate_median_s": 6.708e-06,
+          "baseline_over_candidate": 1.118067978533095,
+          "baseline_min_s": 7.5e-06,
+          "baseline_max_s": 7.5e-06,
+          "candidate_min_s": 6.708e-06,
+          "candidate_max_s": 6.708e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 956,
+      "candidate_final_nodes": 780,
+      "baseline_final_bytes_est": 202000,
+      "candidate_final_bytes_est": 155152
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.000564708,
+          "candidate_median_s": 0.000520625,
+          "baseline_over_candidate": 1.0846732292917167,
+          "baseline_min_s": 0.000564708,
+          "baseline_max_s": 0.000564708,
+          "candidate_min_s": 0.000520625,
+          "candidate_max_s": 0.000520625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 6.875e-06,
+          "candidate_median_s": 6.708e-06,
+          "baseline_over_candidate": 1.0248956469886703,
+          "baseline_min_s": 6.875e-06,
+          "baseline_max_s": 6.875e-06,
+          "candidate_min_s": 6.708e-06,
+          "candidate_max_s": 6.708e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 789,
+      "candidate_final_nodes": 780,
+      "baseline_final_bytes_est": 155344,
+      "candidate_final_bytes_est": 155152
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.005721334,
+          "candidate_median_s": 0.005374709,
+          "baseline_over_candidate": 1.0644918636525251,
+          "baseline_min_s": 0.005721334,
+          "baseline_max_s": 0.005721334,
+          "candidate_min_s": 0.005374709,
+          "candidate_max_s": 0.005374709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.003986166,
+          "candidate_median_s": 0.003993792,
+          "baseline_over_candidate": 0.9980905365126677,
+          "baseline_min_s": 0.003986166,
+          "baseline_max_s": 0.003986166,
+          "candidate_min_s": 0.003993792,
+          "candidate_max_s": 0.003993792,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 6698,
+      "candidate_final_nodes": 4606,
+      "baseline_final_bytes_est": 955848,
+      "candidate_final_bytes_est": 965736
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.005266375,
+          "candidate_median_s": 0.005374709,
+          "baseline_over_candidate": 0.9798437459590835,
+          "baseline_min_s": 0.005266375,
+          "baseline_max_s": 0.005266375,
+          "candidate_min_s": 0.005374709,
+          "candidate_max_s": 0.005374709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.003631875,
+          "candidate_median_s": 0.003993792,
+          "baseline_over_candidate": 0.9093801079275035,
+          "baseline_min_s": 0.003631875,
+          "baseline_max_s": 0.003631875,
+          "candidate_min_s": 0.003993792,
+          "candidate_max_s": 0.003993792,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 4596,
+      "candidate_final_nodes": 4606,
+      "baseline_final_bytes_est": 960904,
+      "candidate_final_bytes_est": 965736
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002631625,
+          "candidate_median_s": 0.0020635,
+          "baseline_over_candidate": 1.2753210564574753,
+          "baseline_min_s": 0.002631625,
+          "baseline_max_s": 0.002631625,
+          "candidate_min_s": 0.0020635,
+          "candidate_max_s": 0.0020635,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.2917e-05,
+          "candidate_median_s": 1.5041e-05,
+          "baseline_over_candidate": 0.8587859849744033,
+          "baseline_min_s": 1.2917e-05,
+          "baseline_max_s": 1.2917e-05,
+          "candidate_min_s": 1.5041e-05,
+          "candidate_max_s": 1.5041e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 6698,
+      "candidate_final_nodes": 4606,
+      "baseline_final_bytes_est": 957024,
+      "candidate_final_bytes_est": 966912
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.0020615,
+          "candidate_median_s": 0.0020635,
+          "baseline_over_candidate": 0.9990307729585656,
+          "baseline_min_s": 0.0020615,
+          "baseline_max_s": 0.0020615,
+          "candidate_min_s": 0.0020635,
+          "candidate_max_s": 0.0020635,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 3.3916e-05,
+          "candidate_median_s": 1.5041e-05,
+          "baseline_over_candidate": 2.254903264410611,
+          "baseline_min_s": 3.3916e-05,
+          "baseline_max_s": 3.3916e-05,
+          "candidate_min_s": 1.5041e-05,
+          "candidate_max_s": 1.5041e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 4596,
+      "candidate_final_nodes": 4606,
+      "baseline_final_bytes_est": 962080,
+      "candidate_final_bytes_est": 966912
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.005332041,
+          "candidate_median_s": 0.00458375,
+          "baseline_over_candidate": 1.1632486501227162,
+          "baseline_min_s": 0.005332041,
+          "baseline_max_s": 0.005332041,
+          "candidate_min_s": 0.00458375,
+          "candidate_max_s": 0.00458375,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.002727583,
+          "candidate_median_s": 0.002574709,
+          "baseline_over_candidate": 1.0593752536694439,
+          "baseline_min_s": 0.002727583,
+          "baseline_max_s": 0.002727583,
+          "candidate_min_s": 0.002574709,
+          "candidate_max_s": 0.002574709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 4445,
+      "candidate_final_nodes": 3306,
+      "baseline_final_bytes_est": 893336,
+      "candidate_final_bytes_est": 631832
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.0031415,
+          "candidate_median_s": 0.00458375,
+          "baseline_over_candidate": 0.6853558767384783,
+          "baseline_min_s": 0.0031415,
+          "baseline_max_s": 0.0031415,
+          "candidate_min_s": 0.00458375,
+          "candidate_max_s": 0.00458375,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001546667,
+          "candidate_median_s": 0.002574709,
+          "baseline_over_candidate": 0.6007152652979424,
+          "baseline_min_s": 0.001546667,
+          "baseline_max_s": 0.001546667,
+          "candidate_min_s": 0.002574709,
+          "candidate_max_s": 0.002574709,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2494,
+      "candidate_final_nodes": 3306,
+      "baseline_final_bytes_est": 594536,
+      "candidate_final_bytes_est": 631832
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003135708,
+          "candidate_median_s": 0.002582292,
+          "baseline_over_candidate": 1.2143119368375073,
+          "baseline_min_s": 0.003135708,
+          "baseline_max_s": 0.003135708,
+          "candidate_min_s": 0.002582292,
+          "candidate_max_s": 0.002582292,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 9.209e-06,
+          "candidate_median_s": 8.875e-06,
+          "baseline_over_candidate": 1.0376338028169012,
+          "baseline_min_s": 9.209e-06,
+          "baseline_max_s": 9.209e-06,
+          "candidate_min_s": 8.875e-06,
+          "candidate_max_s": 8.875e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 4445,
+      "candidate_final_nodes": 3306,
+      "baseline_final_bytes_est": 898712,
+      "candidate_final_bytes_est": 637208
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001921792,
+          "candidate_median_s": 0.002582292,
+          "baseline_over_candidate": 0.7442194763411729,
+          "baseline_min_s": 0.001921792,
+          "baseline_max_s": 0.001921792,
+          "candidate_min_s": 0.002582292,
+          "candidate_max_s": 0.002582292,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7.042e-06,
+          "candidate_median_s": 8.875e-06,
+          "baseline_over_candidate": 0.7934647887323942,
+          "baseline_min_s": 7.042e-06,
+          "baseline_max_s": 7.042e-06,
+          "candidate_min_s": 8.875e-06,
+          "candidate_max_s": 8.875e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2494,
+      "candidate_final_nodes": 3306,
+      "baseline_final_bytes_est": 599912,
+      "candidate_final_bytes_est": 637208
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.182492792,
+          "candidate_median_s": 0.140434917,
+          "baseline_over_candidate": 1.2994830338383723,
+          "baseline_min_s": 0.182492792,
+          "baseline_max_s": 0.182492792,
+          "candidate_min_s": 0.140434917,
+          "candidate_max_s": 0.140434917,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.048385708,
+          "candidate_median_s": 0.040581625,
+          "baseline_over_candidate": 1.192305828068738,
+          "baseline_min_s": 0.048385708,
+          "baseline_max_s": 0.048385708,
+          "candidate_min_s": 0.040581625,
+          "candidate_max_s": 0.040581625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 158235,
+      "candidate_final_nodes": 121532,
+      "baseline_final_bytes_est": 26967544,
+      "candidate_final_bytes_est": 26324664
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.139079375,
+          "candidate_median_s": 0.140434917,
+          "baseline_over_candidate": 0.9903475429832027,
+          "baseline_min_s": 0.139079375,
+          "baseline_max_s": 0.139079375,
+          "candidate_min_s": 0.140434917,
+          "candidate_max_s": 0.140434917,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.046710084,
+          "candidate_median_s": 0.040581625,
+          "baseline_over_candidate": 1.1510156135935905,
+          "baseline_min_s": 0.046710084,
+          "baseline_max_s": 0.046710084,
+          "candidate_min_s": 0.040581625,
+          "candidate_max_s": 0.040581625,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 94203,
+      "candidate_final_nodes": 121532,
+      "baseline_final_bytes_est": 21038136,
+      "candidate_final_bytes_est": 26324664
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.12404425,
+          "candidate_median_s": 0.115066166,
+          "baseline_over_candidate": 1.0780254032275656,
+          "baseline_min_s": 0.12404425,
+          "baseline_max_s": 0.12404425,
+          "candidate_min_s": 0.115066166,
+          "candidate_max_s": 0.115066166,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.7833e-05,
+          "candidate_median_s": 2.8166e-05,
+          "baseline_over_candidate": 0.6331392458993113,
+          "baseline_min_s": 1.7833e-05,
+          "baseline_max_s": 1.7833e-05,
+          "candidate_min_s": 2.8166e-05,
+          "candidate_max_s": 2.8166e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 158235,
+      "candidate_final_nodes": 121532,
+      "baseline_final_bytes_est": 26972920,
+      "candidate_final_bytes_est": 26330040
+    },
+    {
+      "comparison": "output-order",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views-inputs",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "asymmetric",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.085224,
+          "candidate_median_s": 0.115066166,
+          "baseline_over_candidate": 0.7406521218409241,
+          "baseline_min_s": 0.085224,
+          "baseline_max_s": 0.085224,
+          "candidate_min_s": 0.115066166,
+          "candidate_max_s": 0.115066166,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.5666e-05,
+          "candidate_median_s": 2.8166e-05,
+          "baseline_over_candidate": 0.5562025136689626,
+          "baseline_min_s": 1.5666e-05,
+          "baseline_max_s": 1.5666e-05,
+          "candidate_min_s": 2.8166e-05,
+          "candidate_max_s": 2.8166e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 94203,
+      "candidate_final_nodes": 121532,
+      "baseline_final_bytes_est": 21043512,
+      "candidate_final_bytes_est": 26330040
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002560209,
+          "candidate_median_s": 0.001435667,
+          "baseline_over_candidate": 1.7832888824497601,
+          "baseline_min_s": 0.002560209,
+          "baseline_max_s": 0.002560209,
+          "candidate_min_s": 0.001435667,
+          "candidate_max_s": 0.001435667,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.000717167,
+          "candidate_median_s": 0.000995916,
+          "baseline_over_candidate": 0.7201079207483363,
+          "baseline_min_s": 0.000717167,
+          "baseline_max_s": 0.000717167,
+          "candidate_min_s": 0.000995916,
+          "candidate_max_s": 0.000995916,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 956,
+      "candidate_final_nodes": 789,
+      "baseline_final_bytes_est": 200824,
+      "candidate_final_bytes_est": 154168
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.000584916,
+          "candidate_median_s": 0.000564708,
+          "baseline_over_candidate": 1.0357848658067532,
+          "baseline_min_s": 0.000584916,
+          "baseline_max_s": 0.000584916,
+          "candidate_min_s": 0.000564708,
+          "candidate_max_s": 0.000564708,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7.5e-06,
+          "candidate_median_s": 6.875e-06,
+          "baseline_over_candidate": 1.0909090909090908,
+          "baseline_min_s": 7.5e-06,
+          "baseline_max_s": 7.5e-06,
+          "candidate_min_s": 6.875e-06,
+          "candidate_max_s": 6.875e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 956,
+      "candidate_final_nodes": 789,
+      "baseline_final_bytes_est": 202000,
+      "candidate_final_bytes_est": 155344
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.005721334,
+          "candidate_median_s": 0.005266375,
+          "baseline_over_candidate": 1.0863894044765137,
+          "baseline_min_s": 0.005721334,
+          "baseline_max_s": 0.005721334,
+          "candidate_min_s": 0.005266375,
+          "candidate_max_s": 0.005266375,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.003986166,
+          "candidate_median_s": 0.003631875,
+          "baseline_over_candidate": 1.097550438822922,
+          "baseline_min_s": 0.003986166,
+          "baseline_max_s": 0.003986166,
+          "candidate_min_s": 0.003631875,
+          "candidate_max_s": 0.003631875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 6698,
+      "candidate_final_nodes": 4596,
+      "baseline_final_bytes_est": 955848,
+      "candidate_final_bytes_est": 960904
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002631625,
+          "candidate_median_s": 0.0020615,
+          "baseline_over_candidate": 1.2765583313121514,
+          "baseline_min_s": 0.002631625,
+          "baseline_max_s": 0.002631625,
+          "candidate_min_s": 0.0020615,
+          "candidate_max_s": 0.0020615,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.2917e-05,
+          "candidate_median_s": 3.3916e-05,
+          "baseline_over_candidate": 0.38085269489326573,
+          "baseline_min_s": 1.2917e-05,
+          "baseline_max_s": 1.2917e-05,
+          "candidate_min_s": 3.3916e-05,
+          "candidate_max_s": 3.3916e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 6698,
+      "candidate_final_nodes": 4596,
+      "baseline_final_bytes_est": 957024,
+      "candidate_final_bytes_est": 962080
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.002227625,
+          "candidate_median_s": 0.003150666,
+          "baseline_over_candidate": 0.7070330526942558,
+          "baseline_min_s": 0.002227625,
+          "baseline_max_s": 0.002227625,
+          "candidate_min_s": 0.003150666,
+          "candidate_max_s": 0.003150666,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001272166,
+          "candidate_median_s": 0.002418334,
+          "baseline_over_candidate": 0.5260505786214807,
+          "baseline_min_s": 0.001272166,
+          "baseline_max_s": 0.001272166,
+          "candidate_min_s": 0.002418334,
+          "candidate_max_s": 0.002418334,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1655,
+      "candidate_final_nodes": 1262,
+      "baseline_final_bytes_est": 276552,
+      "candidate_final_bytes_est": 275800
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001030417,
+          "candidate_median_s": 0.00117775,
+          "baseline_over_candidate": 0.8749029929951179,
+          "baseline_min_s": 0.001030417,
+          "baseline_max_s": 0.001030417,
+          "candidate_min_s": 0.00117775,
+          "candidate_max_s": 0.00117775,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 8.833e-06,
+          "candidate_median_s": 7.625e-06,
+          "baseline_over_candidate": 1.1584262295081968,
+          "baseline_min_s": 8.833e-06,
+          "baseline_max_s": 8.833e-06,
+          "candidate_min_s": 7.625e-06,
+          "candidate_max_s": 7.625e-06,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 1655,
+      "candidate_final_nodes": 1262,
+      "baseline_final_bytes_est": 277728,
+      "candidate_final_bytes_est": 276976
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.028904417,
+          "candidate_median_s": 0.045098167,
+          "baseline_over_candidate": 0.6409222130912771,
+          "baseline_min_s": 0.028904417,
+          "baseline_max_s": 0.028904417,
+          "candidate_min_s": 0.045098167,
+          "candidate_max_s": 0.045098167,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.019264666,
+          "candidate_median_s": 0.044158042,
+          "baseline_over_candidate": 0.4362663090904257,
+          "baseline_min_s": 0.019264666,
+          "baseline_max_s": 0.019264666,
+          "candidate_min_s": 0.044158042,
+          "candidate_max_s": 0.044158042,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 25882,
+      "candidate_final_nodes": 25516,
+      "baseline_final_bytes_est": 4449064,
+      "candidate_final_bytes_est": 5097912
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "copied-face",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.013070542,
+          "candidate_median_s": 0.019557209,
+          "baseline_over_candidate": 0.6683234811265759,
+          "baseline_min_s": 0.013070542,
+          "baseline_max_s": 0.013070542,
+          "candidate_min_s": 0.019557209,
+          "candidate_max_s": 0.019557209,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.4583e-05,
+          "candidate_median_s": 1.5625e-05,
+          "baseline_over_candidate": 0.933312,
+          "baseline_min_s": 1.4583e-05,
+          "baseline_max_s": 1.4583e-05,
+          "candidate_min_s": 1.5625e-05,
+          "candidate_max_s": 1.5625e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 25882,
+      "candidate_final_nodes": 25516,
+      "baseline_final_bytes_est": 4450240,
+      "candidate_final_bytes_est": 5099088
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.003195583,
+          "candidate_median_s": 0.002293167,
+          "baseline_over_candidate": 1.3935238907589373,
+          "baseline_min_s": 0.003195583,
+          "baseline_max_s": 0.003195583,
+          "candidate_min_s": 0.002293167,
+          "candidate_max_s": 0.002293167,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.001572792,
+          "candidate_median_s": 0.001458875,
+          "baseline_over_candidate": 1.0780855110958785,
+          "baseline_min_s": 0.001572792,
+          "baseline_max_s": 0.001572792,
+          "candidate_min_s": 0.001458875,
+          "candidate_max_s": 0.001458875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2829,
+      "candidate_final_nodes": 1235,
+      "baseline_final_bytes_est": 492264,
+      "candidate_final_bytes_est": 247352
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.001922875,
+          "candidate_median_s": 0.001026875,
+          "baseline_over_candidate": 1.8725502130249545,
+          "baseline_min_s": 0.001922875,
+          "baseline_max_s": 0.001922875,
+          "candidate_min_s": 0.001026875,
+          "candidate_max_s": 0.001026875,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 7e-06,
+          "candidate_median_s": 4.0042e-05,
+          "baseline_over_candidate": 0.1748164427351281,
+          "baseline_min_s": 7e-06,
+          "baseline_max_s": 7e-06,
+          "candidate_min_s": 4.0042e-05,
+          "candidate_max_s": 4.0042e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 2829,
+      "candidate_final_nodes": 1235,
+      "baseline_final_bytes_est": 497640,
+      "candidate_final_bytes_est": 252728
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.026408708,
+          "candidate_median_s": 0.038169458,
+          "baseline_over_candidate": 0.6918806130283537,
+          "baseline_min_s": 0.026408708,
+          "baseline_max_s": 0.026408708,
+          "candidate_min_s": 0.038169458,
+          "candidate_max_s": 0.038169458,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 0.00866775,
+          "candidate_median_s": 0.081418959,
+          "baseline_over_candidate": 0.10645861979149107,
+          "baseline_min_s": 0.00866775,
+          "baseline_max_s": 0.00866775,
+          "candidate_min_s": 0.081418959,
+          "candidate_max_s": 0.081418959,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 33764,
+      "candidate_final_nodes": 14258,
+      "baseline_final_bytes_est": 6633496,
+      "candidate_final_bytes_est": 2602728
+    },
+    {
+      "comparison": "materialized",
+      "case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views",
+        "view_kernel": "words",
+        "view_normalize": "source",
+        "view_reuse": "off"
+      },
+      "baseline_case": {
+        "kind": "scoped_product_free_join",
+        "support": "legal-product",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "materialized",
+        "view_kernel": "words",
+        "view_normalize": "deferred",
+        "view_reuse": "off"
+      },
+      "source": "scoped-smoke.json",
+      "baseline_source": "scoped-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "baseline_median_s": 0.017769458,
+          "candidate_median_s": 0.0133305,
+          "baseline_over_candidate": 1.3329926109298225,
+          "baseline_min_s": 0.017769458,
+          "baseline_max_s": 0.017769458,
+          "candidate_min_s": 0.0133305,
+          "candidate_max_s": 0.0133305,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        },
+        "warm_s": {
+          "baseline_median_s": 1.5083e-05,
+          "candidate_median_s": 1.75e-05,
+          "baseline_over_candidate": 0.8618857142857144,
+          "baseline_min_s": 1.5083e-05,
+          "baseline_max_s": 1.5083e-05,
+          "candidate_min_s": 1.75e-05,
+          "candidate_max_s": 1.75e-05,
+          "baseline_samples": 1,
+          "candidate_samples": 1
+        }
+      },
+      "baseline_final_nodes": 33764,
+      "candidate_final_nodes": 14258,
+      "baseline_final_bytes_est": 6638872,
+      "candidate_final_bytes_est": 2608104
+    }
+  ],
+  "processes": [
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-000-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-001-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-002-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-003-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-004-scoped-products-packed512----face-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-005-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-006-scoped-products-packed512----face-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-007-scoped-products-dense-dispatched----bit-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-008-scoped-products-dense-dispatched----face-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-009-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-010-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-011-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-012-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-013-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-014-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-015-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-016-scoped-products-packed512----bit-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-017-scoped-products-packed512----bit-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-018-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-019-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-020-scoped-products-packed512----bit-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-021-scoped-products-dense-dispatched----bit-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views-inputs",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-022-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-inputs-view-kernel-words-reuse-off-normalize-source-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-023-scoped-products-dense-dispatched----face-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-024-scoped-products-dense-dispatched----bit-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-025-scoped-products-packed512----face-major-local-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-026-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-027-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-028-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-029-scoped-products-dense-dispatched----face-major-words-identity-native-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-asymmetric.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "copied-face"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-030-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source-support-copied-face.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "face-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "legal-product"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-031-scoped-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views-view-kernel-words-reuse-off-normalize-source-support-legal-product.log"
+    },
+    {
+      "file": "scoped-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_VIEW_NORMALIZE": "deferred",
+        "EVENT_LAB_VIEW_REUSE": "off",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "scoped-products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_SCOPED_SUPPORT": "asymmetric"
+      },
+      "status": "passed",
+      "log": "scoped-smoke-logs/job-032-scoped-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized-view-kernel-words-reuse-off-normalize-deferred-support-asymmetric.log"
+    }
+  ],
+  "missing_baselines": [
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        12,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "asymmetric",
+        18,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views-inputs",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "bit-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "bit-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        12,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "copied-face",
+        18,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        12,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "face-major",
+        false,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    },
+    {
+      "comparison": "normalization",
+      "case": [
+        "scoped_product_free_join",
+        "legal-product",
+        18,
+        "face-major",
+        true,
+        "essential512",
+        "enum",
+        "views",
+        "words",
+        "source",
+        "off"
+      ]
+    }
+  ],
+  "checker_sha256": "3662d4de89fa8bae1f002920fec847a011f6f699056fa1034072c3ad704c424e",
+  "selection": "Latest supplied process per exact case; later failure invalidates earlier samples. Resource limits are not answers."
+}

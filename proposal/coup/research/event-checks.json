@@ -1,0 +1,28 @@
+{
+  "scope": "Finite specification examples, not macro compilation or native admission.",
+  "groups_passed": [
+    "card_and_hand_slot_partitions_over_4290_deals",
+    "overlap_and_gap_refusals",
+    "role_union_avoids_double_counting_two_dukes",
+    "one_live_captain_implies_disjoint_opponents",
+    "tax_event_conditioning_and_retained_evidence",
+    "proof_changes_position_not_historical_truth",
+    "exchange_buffers_partition_the_pending_event",
+    "legal_claim_does_not_require_possession"
+  ],
+  "initial_deals": 4290,
+  "decision_worlds": 21450,
+  "has_duke": "23/78",
+  "incorrect_sum_of_individual_duke_events": "4/13",
+  "tax_evidence": "49/130",
+  "duke_given_tax": "92/147",
+  "duke_given_tax_rate_rectangle": [
+    "161/326",
+    "207/262"
+  ],
+  "duke_after_proof_replacement": "1/10",
+  "old_duke_and_no_new_duke": "9/10",
+  "exchange_worlds": 73,
+  "exchange_evidence": "1/2",
+  "specific_first_draw_given_exchange": "1/9"
+}

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "command": [
+    "cargo",
+    "test",
+    "--release",
+    "--offline",
+    "--",
+    "--test-threads=1"
+  ],
+  "profile": "standalone release; correctness only, no native timing",
+  "source_hashes": {
+    "classify-prototype/Cargo.toml": "f85fb5f04c1e74e53c29aa108330e1b4908347c30320c67cd1cd5e09e03bb433",
+    "classify-prototype/src/lib.rs": "952aa3fa850b840d75f837618224e2afbc771d186f92e57e783e277c0ed5d83f",
+    "src/essential_raw.rs": "d9317ab492d47125533bcf6533f4a3114b0817e93d6e6a98b1399f921256f6c2",
+    "src/essential_words.rs": "b6c4af1aecfe01dd519a87ee1b22fb7624f4be0ef8a2752a0f807a28bc097cc1",
+    "src/occupancy.rs": "22277734c034661559ad55bd1f3dc5413fc1d1403cee9c6a606f86c28db3269d",
+    "src/essential_store.rs": "929dcbed68bae9fdd084b1e6ae28bc4d3917d4943dde6befe605183005a29637",
+    "src/occupancy_words.rs": "f467cb77299c876320beac58b867ca29def0261e3f7647f11f6f39e099f1d113"
+  },
+  "essential_kernel": "derived",
+  "essential_layout": "slab",
+  "occupancy_kernel": "words",
+  "log": "words-raw-check.log",
+  "scope": "Read-only raw finite-binary classifier; Matched scalar/word classification, all small supported predicates and symmetries, scattered coordinates, pointwise axis insertion and pinned/broadcast views up to twelve local axes. Not a scoped/public API or native filter.",
+  "cargo_lock_sha256": "2edaeaf727d58102485c54a57a19f0fbe155a86ed6e6430b307fa44beb971433"
+}

@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "groups": 12,
+  "checks": [
+    "oracle: exact solve, inconsistent and lower-dimensional systems, redundant generators",
+    "P02/P07: 216 convex-choice triples including conflict and endpoint mixtures",
+    "P03: extended marginal oracle, Frechet endpoints, scoped laws, zero scope, implication conflict",
+    "P04/P05: map reduction, homomorphisms, payoff pullback and choice interpretation",
+    "X01/X02: nondistributivity and conflict erased by invalid projection pushdown",
+    "P06/X03: feasible regular extension, impossible event, sequential likelihoods, Bayes reweighting",
+    "X04/X05: singleton and all-event information loss, independent H-oracle, separating payoff",
+    "decision: strict robust preference despite overlapping expected-payoff intervals",
+    "X06/X11: late refinement loses factorization; copy, couple, and product are distinct",
+    "X07: 81 exact moment checks; infinite-extreme claim rests on analytic proof",
+    "X08: partial equality atom in PO composition; general singleton argument is analytic",
+    "X09/X10: rounded-product nonassociativity and 16 strict refinement steps"
+  ],
+  "limits": "Tiny exact finite models only; cited and analytic claims are not proved by enumeration. No engine tests."
+}

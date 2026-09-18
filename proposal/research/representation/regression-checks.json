@@ -1,0 +1,37 @@
+[
+  {
+    "script": "event-checks.py",
+    "passed": true,
+    "groups": 8
+  },
+  {
+    "script": "coup/event-checks.py",
+    "passed": true,
+    "groups": 8
+  },
+  {
+    "script": "coup/query-checks.py",
+    "passed": true,
+    "groups": 12
+  },
+  {
+    "script": "representation-checks.py",
+    "passed": true,
+    "groups": 8
+  },
+  {
+    "script": "process-checks.py",
+    "passed": true,
+    "groups": 11
+  },
+  {
+    "script": "spec-checks.py",
+    "passed": true,
+    "groups": null
+  },
+  {
+    "script": "review-checks.py",
+    "passed": true,
+    "groups": null
+  }
+]

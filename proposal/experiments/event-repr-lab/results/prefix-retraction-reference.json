@@ -1,0 +1,38 @@
+{
+  "passed": true,
+  "cases": {
+    "domains": 273,
+    "events": 6648,
+    "suffix_projections": 26496,
+    "prefix_readouts": 8352
+  },
+  "nonprefix_counterexample": {
+    "dimensions": 2,
+    "legal": [
+      1,
+      2
+    ],
+    "decoder": [
+      1,
+      1,
+      2,
+      2
+    ],
+    "event": [
+      1
+    ],
+    "mask": 2,
+    "raw": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "expected": [
+      0,
+      1
+    ]
+  },
+  "checker_sha256": "aa3acc508b0a1bc7f1c4e1ef9ec84795604472b8ce22e9a4110cbc631e638266",
+  "boundary": "Exhaustive sets through three coordinates. No Rust implementation, native performance, or general algorithm proof is claimed."
+}

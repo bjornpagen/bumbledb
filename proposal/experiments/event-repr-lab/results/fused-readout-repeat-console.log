@@ -1,0 +1,10 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-ite-execute-fused-complete-local-needed-project-witness: passed, 15.21s
+001 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-execute-fused-complete-local-needed-project-witness: passed, 32.38s
+002 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-execute-fused-complete-local-needed-project-witness: passed, 24.04s
+003 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-execute-staged-complete-local-needed-project-witness: passed, 23.79s
+004 readouts-dense-dispatched----face-major-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-staged-complete-full-project-joint: passed, 1.51s
+005 readouts-dense-dispatched----bit-major-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-staged-complete-full-project-joint: passed, 1.54s
+006 readouts-packed512----bit-major-local-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-staged-complete-full-project-joint: passed, 13.51s
+007 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-ite-execute-staged-complete-local-needed-project-witness: passed, 32.20s
+008 readouts-packed512----face-major-local-words-identity-native-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-execute-staged-complete-full-project-joint: passed, 9.70s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/fused-readout-repeat.json

@@ -1,0 +1,44 @@
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:60:68: error: unsolved goals
+F : Type
+p : F → Bool
+x : F
+xs : List F
+ih :
+  xs.Nodup →
+    (∀ (a : F), a ∈ xs → ∀ (b : F), b ∈ xs → p a = true → p b = true → a = b) →
+      (∃ a, a ∈ xs ∧ p a = true) → (sum xs fun a => if p a = true then 1 else 0) = 1
+distinct : (x :: xs).Nodup
+key : ∀ (a : F), a ∈ x :: xs → ∀ (b : F), b ∈ x :: xs → p a = true → p b = true → a = b
+cover : ∃ a, a ∈ x :: xs ∧ p a = true
+absent : ¬x ∈ xs
+tailDistinct : xs.Nodup
+hx : p x = true
+a : F
+member : a ∈ xs
+ha : p a = false
+⊢ (sum xs fun x => 0) = 0
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:71:26: warning: This simp argument is unused:
+  Bool.true_eq
+
+Hint: Omit it from the simp argument list.
+  simp only [sum, hx, B̵o̵o̵l̵.̵t̵r̵u̵e̵_̵e̵q̵,̵ ̵ite_true, tailZero, Nat.add_zero]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+'FiniteMeasure.sum_congr' depends on axioms: [propext]
+'FiniteMeasure.sum_add' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.sum_mul' depends on axioms: [propext]
+'FiniteMeasure.sum_zero' does not depend on any axioms
+'FiniteMeasure.sum_map' depends on axioms: [propext]
+'FiniteMeasure.key_and_coverage' depends on axioms: [propext, sorryAx]
+'FiniteMeasure.sum_swap' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.complement_mass' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.conditional_complement' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.intersection_bound' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.partial_partition_mass' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.partition_mass' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.schema_partition_mass' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.repeated_evidence' depends on axioms: [Quot.sound]
+'FiniteMeasure.zero_evidence' depends on axioms: [propext]
+'FiniteMeasure.positive_evidence' depends on axioms: [propext]
+'FiniteMeasure.zero_mass_can_be_possible' depends on axioms: [propext]
+'FiniteMeasure.full_mass_need_not_be_full' depends on axioms: [propext]

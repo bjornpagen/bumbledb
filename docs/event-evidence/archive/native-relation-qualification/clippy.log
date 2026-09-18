@@ -1,0 +1,21 @@
+    Checking bumbledb-event v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-event)
+error: 5 bindings with single-character names in scope
+   --> crates/bumbledb-event/src/relation_tests.rs:684:13
+    |
+684 |         let r = relation(&left, seed.wrapping_mul(137) & 255);
+    |             ^
+685 |         let q = relation(&middle, seed.wrapping_mul(91) & 255);
+    |             ^
+686 |         let t = relation(&right, seed.wrapping_mul(53) & 255);
+    |             ^
+687 |         let a = before
+    |             ^
+...
+690 |         let b = after
+    |             ^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#many_single_char_names
+    = note: `-D clippy::many-single-char-names` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(clippy::many_single_char_names)]`
+
+error: could not compile `bumbledb-event` (lib test) due to 1 previous error

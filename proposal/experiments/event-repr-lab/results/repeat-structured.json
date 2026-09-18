@@ -1,0 +1,2136 @@
+{
+  "seed": 20260919,
+  "trials": 7,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/4eb96717b825fda0/out/bumbledb-4eb96717b825fda0",
+    "binary_sha256": "613ca36688b3e944d3091f97ce3533a7aabe327943dd10ee02873d04147440bb",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/carrier.rs": "6c63733aad1bbef6c9056875088a8b53fda3fcdd6bde1569e8729dae99d0a71b",
+      "src/diagram.rs": "b4157292244c7a04acffb59cbe654717c738a70b7791ac92cefde15110370a7d",
+      "src/finite.rs": "d24d8cd368596de7f651fc2aa556b976225d4925613011e5d89f7256e5ed8f11",
+      "src/lib.rs": "1b3058ddd00b7ad7d58cd394236c12cd6ffcf92ed58bda981473e4677530e6ea",
+      "src/modal.rs": "5fa961a555ea525046c14717de075b4b3bcb97145076159ddc941742d598897e",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c"
+    },
+    "cargo_lock_sha256": "e6a31bb03b41f4ef4e151edee14284bcdfa447c8b730b240518ae01ea9330913",
+    "built_utc": "2026-09-17T19:58:02.756966+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true
+      },
+      "status": "passed",
+      "elapsed_s": 0.047725677490234375,
+      "max_rss_bytes": 5947392,
+      "log": "repeat-structured-logs/job-000-verify.log",
+      "rows": [
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        7.5439453125,
+        11.45068359375,
+        14.12109375
+      ],
+      "loadavg_end": [
+        7.5439453125,
+        11.45068359375,
+        14.12109375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "dense",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 1.3367619514465332,
+      "max_rss_bytes": 86245376,
+      "log": "repeat-structured-logs/job-001-join-dense-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "dense",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 289136,
+          "final_bytes_est": 14725208,
+          "colt_bytes": 163104,
+          "build_s": [
+            9.6625e-05,
+            8.3791e-05,
+            7.4125e-05,
+            6.9209e-05,
+            6.8375e-05,
+            6.7542e-05,
+            7.5667e-05
+          ],
+          "native_setup_s": 0.000207584,
+          "native_first_join_s": 0.000111625,
+          "join_only_s": [
+            4.9375e-05,
+            4.5583e-05,
+            4.5708e-05,
+            4.5583e-05,
+            4.5584e-05,
+            4.55e-05,
+            4.5875e-05
+          ],
+          "fresh_s": [
+            0.007462417,
+            0.008104542,
+            0.007364125,
+            0.007142625,
+            0.007426125,
+            0.007052958,
+            0.00680475
+          ],
+          "warm_s": [
+            0.0071876875,
+            0.00725645825,
+            0.00737502075,
+            0.00738389575,
+            0.00735013525,
+            0.0072484375,
+            0.007300802
+          ],
+          "warm_loops": 4,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "dense",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 289136,
+          "final_bytes_est": 14868568,
+          "colt_bytes": 163104,
+          "build_s": [
+            9.6625e-05,
+            8.3791e-05,
+            7.4125e-05,
+            6.9209e-05,
+            6.8375e-05,
+            6.7542e-05,
+            7.5667e-05
+          ],
+          "native_setup_s": 0.000207584,
+          "native_first_join_s": 0.000111625,
+          "join_only_s": [
+            4.9375e-05,
+            4.5583e-05,
+            4.5708e-05,
+            4.5583e-05,
+            4.5584e-05,
+            4.55e-05,
+            4.5875e-05
+          ],
+          "fresh_s": [
+            0.003948083,
+            0.0039225,
+            0.003852458,
+            0.003920916,
+            0.003683042,
+            0.003873542,
+            0.003867333
+          ],
+          "warm_s": [
+            9.690023046875e-05,
+            9.581526953125e-05,
+            9.472672265625e-05,
+            9.41700859375e-05,
+            9.519108203125e-05,
+            9.399446875e-05,
+            9.434716796875e-05
+          ],
+          "warm_loops": 256,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "dense",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 289136,
+          "final_bytes_est": 38500576,
+          "colt_bytes": 41104,
+          "build_s": [
+            7.9792e-05,
+            7.7708e-05,
+            7.0792e-05,
+            7.0542e-05,
+            7.0875e-05,
+            7.1417e-05,
+            7.1625e-05
+          ],
+          "native_setup_s": 0.000142583,
+          "native_first_join_s": 0.000100167,
+          "join_only_s": [
+            7.3167e-05,
+            7.1209e-05,
+            7.1917e-05,
+            7.0958e-05,
+            7.0958e-05,
+            7.1e-05,
+            7.1459e-05
+          ],
+          "fresh_s": [
+            0.028301417,
+            0.031287125,
+            0.028529292,
+            0.028521167,
+            0.028661791,
+            0.027481458,
+            0.0281125
+          ],
+          "warm_s": [
+            0.029453542,
+            0.0294295,
+            0.029537583,
+            0.029423083,
+            0.030471542,
+            0.029151708,
+            0.02948475
+          ],
+          "warm_loops": 1,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "dense",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 289136,
+          "final_bytes_est": 38787296,
+          "colt_bytes": 41104,
+          "build_s": [
+            7.9792e-05,
+            7.7708e-05,
+            7.0792e-05,
+            7.0542e-05,
+            7.0875e-05,
+            7.1417e-05,
+            7.1625e-05
+          ],
+          "native_setup_s": 0.000142583,
+          "native_first_join_s": 0.000100167,
+          "join_only_s": [
+            7.3167e-05,
+            7.1209e-05,
+            7.1917e-05,
+            7.0958e-05,
+            7.0958e-05,
+            7.1e-05,
+            7.1459e-05
+          ],
+          "fresh_s": [
+            0.010921917,
+            0.010554083,
+            0.010424458,
+            0.010644125,
+            0.010665125,
+            0.010924416,
+            0.011338041
+          ],
+          "warm_s": [
+            0.000176169265625,
+            0.0001734602890625,
+            0.0001752171171875,
+            0.0001760546875,
+            0.0001755563203125,
+            0.0001713782578125,
+            0.0001723776015625
+          ],
+          "warm_loops": 128,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        7.5439453125,
+        11.45068359375,
+        14.12109375
+      ],
+      "loadavg_end": [
+        7.5439453125,
+        11.45068359375,
+        14.12109375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "runs",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 34.512186765670776,
+      "max_rss_bytes": 841072640,
+      "log": "repeat-structured-logs/job-002-join-runs-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "runs",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 1406736,
+          "final_bytes_est": 100077704,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.00470125,
+            0.004690542,
+            0.004764041,
+            0.004673667,
+            0.004785292,
+            0.004647459,
+            0.00464025
+          ],
+          "native_setup_s": 0.000237542,
+          "native_first_join_s": 9.9917e-05,
+          "join_only_s": [
+            5.2583e-05,
+            4.525e-05,
+            4.525e-05,
+            4.875e-05,
+            4.6e-05,
+            4.5291e-05,
+            4.5375e-05
+          ],
+          "fresh_s": [
+            0.270762417,
+            0.266010916,
+            0.263518166,
+            0.260718917,
+            0.26215875,
+            0.262266291,
+            0.262573458
+          ],
+          "warm_s": [
+            0.275010709,
+            0.273152417,
+            0.271066875,
+            0.272309208,
+            0.269452208,
+            0.270693791,
+            0.270682042
+          ],
+          "warm_loops": 1,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "runs",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 1406736,
+          "final_bytes_est": 100221064,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.00470125,
+            0.004690542,
+            0.004764041,
+            0.004673667,
+            0.004785292,
+            0.004647459,
+            0.00464025
+          ],
+          "native_setup_s": 0.000237542,
+          "native_first_join_s": 9.9917e-05,
+          "join_only_s": [
+            5.2583e-05,
+            4.525e-05,
+            4.525e-05,
+            4.875e-05,
+            4.6e-05,
+            4.5291e-05,
+            4.5375e-05
+          ],
+          "fresh_s": [
+            0.152688416,
+            0.153973125,
+            0.152970583,
+            0.1537135,
+            0.1534975,
+            0.151335917,
+            0.152044959
+          ],
+          "warm_s": [
+            0.000137868,
+            0.000135986,
+            0.00013747347265625,
+            0.00013641715625,
+            0.00013580810546875,
+            0.0001384173203125,
+            0.000136635578125
+          ],
+          "warm_loops": 256,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "runs",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 1406736,
+          "final_bytes_est": 285486768,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.004906166,
+            0.004775708,
+            0.004661,
+            0.004604042,
+            0.004657083,
+            0.0051915,
+            0.004801334
+          ],
+          "native_setup_s": 0.000146625,
+          "native_first_join_s": 0.0001115,
+          "join_only_s": [
+            7.575e-05,
+            7.3958e-05,
+            7.3667e-05,
+            9.6708e-05,
+            7.2042e-05,
+            7.15e-05,
+            7.1417e-05
+          ],
+          "fresh_s": [
+            1.040854,
+            1.051744959,
+            1.0344235,
+            1.029277833,
+            1.03416225,
+            1.035079041,
+            1.03098325
+          ],
+          "warm_s": [
+            1.043042458,
+            1.045834833,
+            1.042133209,
+            1.042033,
+            1.03756375,
+            1.111577875,
+            2.356302917
+          ],
+          "warm_loops": 1,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "runs",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 1406736,
+          "final_bytes_est": 285773488,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.004906166,
+            0.004775708,
+            0.004661,
+            0.004604042,
+            0.004657083,
+            0.0051915,
+            0.004801334
+          ],
+          "native_setup_s": 0.000146625,
+          "native_first_join_s": 0.0001115,
+          "join_only_s": [
+            7.575e-05,
+            7.3958e-05,
+            7.3667e-05,
+            9.6708e-05,
+            7.2042e-05,
+            7.15e-05,
+            7.1417e-05
+          ],
+          "fresh_s": [
+            1.04083925,
+            1.544239833,
+            1.480607708,
+            1.065303833,
+            1.388676083,
+            1.099876625,
+            0.611559541
+          ],
+          "warm_s": [
+            0.001371106125,
+            0.000236887375,
+            0.001837357421875,
+            0.000826923171875,
+            0.000238892578125,
+            0.0002317155,
+            0.00111197525
+          ],
+          "warm_loops": 64,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        7.5439453125,
+        11.45068359375,
+        14.12109375
+      ],
+      "loadavg_end": [
+        22.9609375,
+        14.275390625,
+        15.0078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 4.149560928344727,
+      "max_rss_bytes": 88375296,
+      "log": "repeat-structured-logs/job-003-join-bdd-root-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "bdd-root",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 138698,
+          "input_bytes_est": 2896,
+          "final_bytes_est": 17170512,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.015149208,
+            0.015449125,
+            0.01549,
+            0.01553175,
+            0.015576083,
+            0.015942709,
+            0.015998125
+          ],
+          "native_setup_s": 0.000279375,
+          "native_first_join_s": 0.000139333,
+          "join_only_s": [
+            6.0667e-05,
+            5.6542e-05,
+            5.6625e-05,
+            5.6292e-05,
+            5.6667e-05,
+            5.6459e-05,
+            5.65e-05
+          ],
+          "fresh_s": [
+            0.023172583,
+            0.039182125,
+            0.07530825,
+            0.048052,
+            0.020906625,
+            0.1233535,
+            0.034272666
+          ],
+          "warm_s": [
+            0.0070019165,
+            0.005496552,
+            0.002810927,
+            0.008667125,
+            0.00653821875,
+            0.002805073,
+            0.009748052
+          ],
+          "warm_loops": 4,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-root",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 138698,
+          "input_bytes_est": 2896,
+          "final_bytes_est": 17313872,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.015149208,
+            0.015449125,
+            0.01549,
+            0.01553175,
+            0.015576083,
+            0.015942709,
+            0.015998125
+          ],
+          "native_setup_s": 0.000279375,
+          "native_first_join_s": 0.000139333,
+          "join_only_s": [
+            6.0667e-05,
+            5.6542e-05,
+            5.6625e-05,
+            5.6292e-05,
+            5.6667e-05,
+            5.6459e-05,
+            5.65e-05
+          ],
+          "fresh_s": [
+            0.021175167,
+            0.021638166,
+            0.0389255,
+            0.021306292,
+            0.02114475,
+            0.023938875,
+            0.037329958
+          ],
+          "warm_s": [
+            0.005172823,
+            0.0034793855,
+            0.00330608325,
+            0.00519794775,
+            0.003094729,
+            0.003109302,
+            0.00318714575
+          ],
+          "warm_loops": 4,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-root",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 71058,
+          "input_bytes_est": 2896,
+          "final_bytes_est": 11337808,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.015409083,
+            0.018270667,
+            0.026219584,
+            0.020381208,
+            0.015982167,
+            0.031807375,
+            0.02582025
+          ],
+          "native_setup_s": 0.000156,
+          "native_first_join_s": 0.000110333,
+          "join_only_s": [
+            9.15e-05,
+            7.95e-05,
+            7.9375e-05,
+            7.9375e-05,
+            7.95e-05,
+            7.9375e-05,
+            7.9208e-05
+          ],
+          "fresh_s": [
+            0.019463584,
+            0.014049,
+            0.016088709,
+            0.016159958,
+            0.024140208,
+            0.0243625,
+            0.039951292
+          ],
+          "warm_s": [
+            0.000694548828125,
+            0.00075491665625,
+            0.0006613359375,
+            0.00093010678125,
+            0.0022238815,
+            0.00097066796875,
+            0.0019680045625
+          ],
+          "warm_loops": 64,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-root",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 71058,
+          "input_bytes_est": 2896,
+          "final_bytes_est": 11624528,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.015409083,
+            0.018270667,
+            0.026219584,
+            0.020381208,
+            0.015982167,
+            0.031807375,
+            0.02582025
+          ],
+          "native_setup_s": 0.000156,
+          "native_first_join_s": 0.000110333,
+          "join_only_s": [
+            9.15e-05,
+            7.95e-05,
+            7.9375e-05,
+            7.9375e-05,
+            7.95e-05,
+            7.9375e-05,
+            7.9208e-05
+          ],
+          "fresh_s": [
+            0.025915,
+            0.017377917,
+            0.021874875,
+            0.015544583,
+            0.014664208,
+            0.013144042,
+            0.012836542
+          ],
+          "warm_s": [
+            0.000844481765625,
+            0.000950783203125,
+            0.001242130859375,
+            0.000601854828125,
+            0.000467944671875,
+            0.000721974609375,
+            0.000573737625
+          ],
+          "warm_loops": 64,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        22.9609375,
+        14.275390625,
+        15.0078125
+      ],
+      "loadavg_end": [
+        32.8935546875,
+        16.478515625,
+        15.78076171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 2.7498743534088135,
+      "max_rss_bytes": 89751552,
+      "log": "repeat-structured-logs/job-004-join-bdd-pair-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "bdd-pair",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 138698,
+          "input_bytes_est": 4672,
+          "final_bytes_est": 17230336,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.018463208,
+            0.015560667,
+            0.015594416,
+            0.0159775,
+            0.016085917,
+            0.016336,
+            0.023490625
+          ],
+          "native_setup_s": 0.000275791,
+          "native_first_join_s": 0.000134,
+          "join_only_s": [
+            5.95e-05,
+            5.3916e-05,
+            5.375e-05,
+            5.3875e-05,
+            5.4042e-05,
+            5.3666e-05,
+            5.4083e-05
+          ],
+          "fresh_s": [
+            0.03675925,
+            0.023571667,
+            0.0334405,
+            0.026655917,
+            0.021152916,
+            0.021352042,
+            0.039414167
+          ],
+          "warm_s": [
+            0.003076703125,
+            0.002910354125,
+            0.002825474,
+            0.002950625,
+            0.002905630125,
+            0.002987671875,
+            0.0038029635
+          ],
+          "warm_loops": 8,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-pair",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 138698,
+          "input_bytes_est": 4672,
+          "final_bytes_est": 17373696,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.018463208,
+            0.015560667,
+            0.015594416,
+            0.0159775,
+            0.016085917,
+            0.016336,
+            0.023490625
+          ],
+          "native_setup_s": 0.000275791,
+          "native_first_join_s": 0.000134,
+          "join_only_s": [
+            5.95e-05,
+            5.3916e-05,
+            5.375e-05,
+            5.3875e-05,
+            5.4042e-05,
+            5.3666e-05,
+            5.4083e-05
+          ],
+          "fresh_s": [
+            0.023698875,
+            0.020897666,
+            0.021424417,
+            0.020535125,
+            0.02274475,
+            0.020406083,
+            0.021514917
+          ],
+          "warm_s": [
+            0.002737979125,
+            0.002710734375,
+            0.002709015625,
+            0.002810802125,
+            0.00288725525,
+            0.002776151125,
+            0.003265875
+          ],
+          "warm_loops": 8,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-pair",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 71058,
+          "input_bytes_est": 4672,
+          "final_bytes_est": 11577344,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.015473,
+            0.015166833,
+            0.016396292,
+            0.015310041,
+            0.015340917,
+            0.015453917,
+            0.015028458
+          ],
+          "native_setup_s": 0.000175583,
+          "native_first_join_s": 0.000116792,
+          "join_only_s": [
+            8.5959e-05,
+            8.2791e-05,
+            8.2875e-05,
+            8.275e-05,
+            8.2708e-05,
+            8.2833e-05,
+            8.2708e-05
+          ],
+          "fresh_s": [
+            0.013854,
+            0.013838334,
+            0.014696917,
+            0.01714075,
+            0.012980416,
+            0.013030208,
+            0.013301542
+          ],
+          "warm_s": [
+            0.0008409166875,
+            0.00080626171875,
+            0.00090698565625,
+            0.00080573178125,
+            0.00090534896875,
+            0.000773977875,
+            0.00080205859375
+          ],
+          "warm_loops": 32,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-pair",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 71058,
+          "input_bytes_est": 4672,
+          "final_bytes_est": 11864064,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.015473,
+            0.015166833,
+            0.016396292,
+            0.015310041,
+            0.015340917,
+            0.015453917,
+            0.015028458
+          ],
+          "native_setup_s": 0.000175583,
+          "native_first_join_s": 0.000116792,
+          "join_only_s": [
+            8.5959e-05,
+            8.2791e-05,
+            8.2875e-05,
+            8.275e-05,
+            8.2708e-05,
+            8.2833e-05,
+            8.2708e-05
+          ],
+          "fresh_s": [
+            0.012890625,
+            0.013597792,
+            0.016038333,
+            0.014715,
+            0.015352208,
+            0.018213208,
+            0.013722375
+          ],
+          "warm_s": [
+            0.000493091140625,
+            0.000557013015625,
+            0.0004806796875,
+            0.00056536784375,
+            0.00068356315625,
+            0.0005269173125,
+            0.00046015365625
+          ],
+          "warm_loops": 64,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        32.8935546875,
+        16.478515625,
+        15.78076171875
+      ],
+      "loadavg_end": [
+        31.22021484375,
+        16.40380859375,
+        15.75830078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 2.5632741451263428,
+      "max_rss_bytes": 85803008,
+      "log": "repeat-structured-logs/job-005-join-bdd-anchored-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "bdd-anchored",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 138698,
+          "input_bytes_est": 2912,
+          "final_bytes_est": 17170528,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.015847666,
+            0.015582584,
+            0.016046667,
+            0.016891917,
+            0.016135083,
+            0.015556416,
+            0.016473542
+          ],
+          "native_setup_s": 0.000289125,
+          "native_first_join_s": 0.0001325,
+          "join_only_s": [
+            6.0875e-05,
+            6.1708e-05,
+            5.7e-05,
+            5.7208e-05,
+            5.7333e-05,
+            5.6542e-05,
+            5.9292e-05
+          ],
+          "fresh_s": [
+            0.026833458,
+            0.025649208,
+            0.022311875,
+            0.026600916,
+            0.024975958,
+            0.023774542,
+            0.027215125
+          ],
+          "warm_s": [
+            0.002860599,
+            0.003154822875,
+            0.003156099,
+            0.00388565625,
+            0.00289325525,
+            0.0027162605,
+            0.002706625
+          ],
+          "warm_loops": 8,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-anchored",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 138698,
+          "input_bytes_est": 2912,
+          "final_bytes_est": 17313888,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.015847666,
+            0.015582584,
+            0.016046667,
+            0.016891917,
+            0.016135083,
+            0.015556416,
+            0.016473542
+          ],
+          "native_setup_s": 0.000289125,
+          "native_first_join_s": 0.0001325,
+          "join_only_s": [
+            6.0875e-05,
+            6.1708e-05,
+            5.7e-05,
+            5.7208e-05,
+            5.7333e-05,
+            5.6542e-05,
+            5.9292e-05
+          ],
+          "fresh_s": [
+            0.022469833,
+            0.021655584,
+            0.020783791,
+            0.021305667,
+            0.022350333,
+            0.021159917,
+            0.0219735
+          ],
+          "warm_s": [
+            0.002812197875,
+            0.0026807605,
+            0.002637859375,
+            0.002846916625,
+            0.002769823,
+            0.0027694635,
+            0.00291534375
+          ],
+          "warm_loops": 8,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-anchored",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 71058,
+          "input_bytes_est": 2912,
+          "final_bytes_est": 11337824,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.014975917,
+            0.015251125,
+            0.014898042,
+            0.015172583,
+            0.014863667,
+            0.015474209,
+            0.014844542
+          ],
+          "native_setup_s": 0.000162917,
+          "native_first_join_s": 0.000120792,
+          "join_only_s": [
+            8.6584e-05,
+            8.35e-05,
+            8.3208e-05,
+            8.3333e-05,
+            8.3417e-05,
+            8.35e-05,
+            8.3875e-05
+          ],
+          "fresh_s": [
+            0.014221583,
+            0.013390208,
+            0.012935916,
+            0.013509042,
+            0.013362458,
+            0.013830458,
+            0.01399975
+          ],
+          "warm_s": [
+            0.00061002215625,
+            0.00063696875,
+            0.0006087174375,
+            0.00060841928125,
+            0.0005781484375,
+            0.0006258111875,
+            0.00062036978125
+          ],
+          "warm_loops": 32,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "bdd-anchored",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 71058,
+          "input_bytes_est": 2912,
+          "final_bytes_est": 11624544,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.014975917,
+            0.015251125,
+            0.014898042,
+            0.015172583,
+            0.014863667,
+            0.015474209,
+            0.014844542
+          ],
+          "native_setup_s": 0.000162917,
+          "native_first_join_s": 0.000120792,
+          "join_only_s": [
+            8.6584e-05,
+            8.35e-05,
+            8.3208e-05,
+            8.3333e-05,
+            8.3417e-05,
+            8.35e-05,
+            8.3875e-05
+          ],
+          "fresh_s": [
+            0.013198958,
+            0.012721959,
+            0.013305791,
+            0.012551291,
+            0.013007084,
+            0.013254125,
+            0.01308425
+          ],
+          "warm_s": [
+            0.000513242828125,
+            0.00042874675,
+            0.000442501296875,
+            0.00048915559375,
+            0.00049843034375,
+            0.0004796861875,
+            0.000475285796875
+          ],
+          "warm_loops": 64,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        31.22021484375,
+        16.40380859375,
+        15.75830078125
+      ],
+      "loadavg_end": [
+        31.22021484375,
+        16.40380859375,
+        15.75830078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "roaring",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 4.869550943374634,
+      "max_rss_bytes": 88457216,
+      "log": "repeat-structured-logs/job-006-join-roaring-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "roaring",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 2174352,
+          "final_bytes_est": 117075800,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.00816325,
+            0.0084925,
+            0.008341166,
+            0.007732792,
+            0.008135458,
+            0.007630875,
+            0.007898833
+          ],
+          "native_setup_s": 0.000261542,
+          "native_first_join_s": 0.000105084,
+          "join_only_s": [
+            5.2125e-05,
+            4.7334e-05,
+            4.725e-05,
+            4.7125e-05,
+            4.7167e-05,
+            4.7167e-05,
+            4.7209e-05
+          ],
+          "fresh_s": [
+            0.02959,
+            0.02974375,
+            0.028834833,
+            0.028833042,
+            0.02926025,
+            0.028507625,
+            0.029148209
+          ],
+          "warm_s": [
+            0.065718667,
+            0.06581775,
+            0.06559775,
+            0.064402834,
+            0.064039875,
+            0.063950834,
+            0.063745625
+          ],
+          "warm_loops": 1,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "roaring",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 2174352,
+          "final_bytes_est": 117219160,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.00816325,
+            0.0084925,
+            0.008341166,
+            0.007732792,
+            0.008135458,
+            0.007630875,
+            0.007898833
+          ],
+          "native_setup_s": 0.000261542,
+          "native_first_join_s": 0.000105084,
+          "join_only_s": [
+            5.2125e-05,
+            4.7334e-05,
+            4.725e-05,
+            4.7125e-05,
+            4.7167e-05,
+            4.7167e-05,
+            4.7209e-05
+          ],
+          "fresh_s": [
+            0.002312375,
+            0.002349583,
+            0.002129083,
+            0.002107,
+            0.002177167,
+            0.002537292,
+            0.002122
+          ],
+          "warm_s": [
+            8.3125e-05,
+            8.45286484375e-05,
+            8.3243328125e-05,
+            8.4587890625e-05,
+            8.483951953125e-05,
+            8.4985515625e-05,
+            8.425651171875e-05
+          ],
+          "warm_loops": 256,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "roaring",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 2174352,
+          "final_bytes_est": 305807168,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.007111375,
+            0.007200042,
+            0.007422375,
+            0.007069166,
+            0.007343709,
+            0.007381958,
+            0.00694775
+          ],
+          "native_setup_s": 0.0001515,
+          "native_first_join_s": 0.000105375,
+          "join_only_s": [
+            7.6375e-05,
+            7.3125e-05,
+            7.3e-05,
+            7.2916e-05,
+            7.3292e-05,
+            7.2916e-05,
+            7.3167e-05
+          ],
+          "fresh_s": [
+            0.145301166,
+            0.147160542,
+            0.145220459,
+            0.144837791,
+            0.143922,
+            0.146311833,
+            0.144701916
+          ],
+          "warm_s": [
+            0.250329625,
+            0.2531775,
+            0.258244209,
+            0.270300042,
+            0.27206025,
+            0.2750095,
+            0.281799375
+          ],
+          "warm_loops": 1,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "roaring",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 2174352,
+          "final_bytes_est": 306093888,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.007111375,
+            0.007200042,
+            0.007422375,
+            0.007069166,
+            0.007343709,
+            0.007381958,
+            0.00694775
+          ],
+          "native_setup_s": 0.0001515,
+          "native_first_join_s": 0.000105375,
+          "join_only_s": [
+            7.6375e-05,
+            7.3125e-05,
+            7.3e-05,
+            7.2916e-05,
+            7.3292e-05,
+            7.2916e-05,
+            7.3167e-05
+          ],
+          "fresh_s": [
+            0.012780292,
+            0.012834292,
+            0.012236833,
+            0.012677167,
+            0.013529541,
+            0.014869458,
+            0.013695875
+          ],
+          "warm_s": [
+            0.0001939479140625,
+            0.0002020250625,
+            0.000185519203125,
+            0.0001883502578125,
+            0.000187778640625,
+            0.0001995686875,
+            0.0001873837890625
+          ],
+          "warm_loops": 128,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        31.22021484375,
+        16.40380859375,
+        15.75830078125
+      ],
+      "loadavg_end": [
+        29.0400390625,
+        16.19775390625,
+        15.68896484375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 1.9387331008911133,
+      "max_rss_bytes": 86654976,
+      "log": "repeat-structured-logs/job-007-join-mdd4-pair-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "mdd4-pair",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 77217,
+          "input_bytes_est": 6592,
+          "final_bytes_est": 15395328,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.010759791,
+            0.011132084,
+            0.010991791,
+            0.010944166,
+            0.010909958,
+            0.0110725,
+            0.012068708
+          ],
+          "native_setup_s": 0.000275583,
+          "native_first_join_s": 0.000122958,
+          "join_only_s": [
+            5.55e-05,
+            5.0875e-05,
+            5.0833e-05,
+            5.1292e-05,
+            5.0834e-05,
+            5.0792e-05,
+            5.0834e-05
+          ],
+          "fresh_s": [
+            0.019736,
+            0.017461625,
+            0.01654575,
+            0.015963,
+            0.01581975,
+            0.016468583,
+            0.016785084
+          ],
+          "warm_s": [
+            0.0021010078125,
+            0.0021438489375,
+            0.0021270181875,
+            0.0021612005625,
+            0.002078716125,
+            0.0020413306875,
+            0.001894737
+          ],
+          "warm_loops": 16,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "mdd4-pair",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 77217,
+          "input_bytes_est": 6592,
+          "final_bytes_est": 15538688,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.010759791,
+            0.011132084,
+            0.010991791,
+            0.010944166,
+            0.010909958,
+            0.0110725,
+            0.012068708
+          ],
+          "native_setup_s": 0.000275583,
+          "native_first_join_s": 0.000122958,
+          "join_only_s": [
+            5.55e-05,
+            5.0875e-05,
+            5.0833e-05,
+            5.1292e-05,
+            5.0834e-05,
+            5.0792e-05,
+            5.0834e-05
+          ],
+          "fresh_s": [
+            0.014568875,
+            0.014273542,
+            0.014384208,
+            0.014251958,
+            0.0148815,
+            0.0146065,
+            0.014324041
+          ],
+          "warm_s": [
+            0.0017358359375,
+            0.00176951825,
+            0.0017555599375,
+            0.0017839323125,
+            0.0017301770625,
+            0.001761765625,
+            0.0017466015625
+          ],
+          "warm_loops": 16,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "mdd4-pair",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 49449,
+          "input_bytes_est": 6592,
+          "final_bytes_est": 7907328,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.009560458,
+            0.009734375,
+            0.009393709,
+            0.009928667,
+            0.009878083,
+            0.009812459,
+            0.009655375
+          ],
+          "native_setup_s": 0.00015225,
+          "native_first_join_s": 0.000104583,
+          "join_only_s": [
+            7.5875e-05,
+            7.3292e-05,
+            7.3125e-05,
+            7.3416e-05,
+            7.3167e-05,
+            7.3375e-05,
+            7.3167e-05
+          ],
+          "fresh_s": [
+            0.011057625,
+            0.011304125,
+            0.010987667,
+            0.010886833,
+            0.011257792,
+            0.010920458,
+            0.011058125
+          ],
+          "warm_s": [
+            0.00066998959375,
+            0.00066004815625,
+            0.0006512330625,
+            0.0006721041875,
+            0.0006699453125,
+            0.0006887044375,
+            0.0006775885625
+          ],
+          "warm_loops": 32,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "mdd4-pair",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 49449,
+          "input_bytes_est": 6592,
+          "final_bytes_est": 8194048,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.009560458,
+            0.009734375,
+            0.009393709,
+            0.009928667,
+            0.009878083,
+            0.009812459,
+            0.009655375
+          ],
+          "native_setup_s": 0.00015225,
+          "native_first_join_s": 0.000104583,
+          "join_only_s": [
+            7.5875e-05,
+            7.3292e-05,
+            7.3125e-05,
+            7.3416e-05,
+            7.3167e-05,
+            7.3375e-05,
+            7.3167e-05
+          ],
+          "fresh_s": [
+            0.011371917,
+            0.01054275,
+            0.011063084,
+            0.011435541,
+            0.011248167,
+            0.010998417,
+            0.01110775
+          ],
+          "warm_s": [
+            0.000388940765625,
+            0.000388621734375,
+            0.000381729171875,
+            0.000400754546875,
+            0.000393887375,
+            0.00038926303125,
+            0.000385626953125
+          ],
+          "warm_loops": 64,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        29.0400390625,
+        16.19775390625,
+        15.68896484375
+      ],
+      "loadavg_end": [
+        27.11474609375,
+        16.01171875,
+        15.6259765625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "join",
+        "EVENT_LAB_CANDIDATE": "sparse",
+        "EVENT_LAB_SCENARIO": "structured_65536"
+      },
+      "status": "passed",
+      "elapsed_s": 35.24410915374756,
+      "max_rss_bytes": 1596555264,
+      "log": "repeat-structured-logs/job-008-join-sparse-structured_65536.log",
+      "rows": [
+        {
+          "kind": "free_join",
+          "candidate": "sparse",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 5908848,
+          "final_bytes_est": 175142400,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.010514792,
+            0.010252666,
+            0.010171625,
+            0.010245583,
+            0.010133542,
+            0.01008225,
+            0.010419834
+          ],
+          "native_setup_s": 0.000299042,
+          "native_first_join_s": 0.00012,
+          "join_only_s": [
+            5.3958e-05,
+            4.9209e-05,
+            4.8959e-05,
+            4.9083e-05,
+            4.9e-05,
+            5.85e-05,
+            5.4125e-05
+          ],
+          "fresh_s": [
+            0.390527917,
+            0.390820292,
+            0.397954208,
+            0.39154825,
+            0.403622209,
+            0.396270417,
+            0.386041292
+          ],
+          "warm_s": [
+            0.389456542,
+            0.398251875,
+            0.3952235,
+            0.391295375,
+            0.389605,
+            0.397521125,
+            0.395088125
+          ],
+          "warm_loops": 1,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "sparse",
+          "scenario": "structured_65536",
+          "shape": "triangle",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 1024,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 1784,
+          "input_bytes_est": 5908848,
+          "final_bytes_est": 175285760,
+          "colt_bytes": 163104,
+          "build_s": [
+            0.010514792,
+            0.010252666,
+            0.010171625,
+            0.010245583,
+            0.010133542,
+            0.01008225,
+            0.010419834
+          ],
+          "native_setup_s": 0.000299042,
+          "native_first_join_s": 0.00012,
+          "join_only_s": [
+            5.3958e-05,
+            4.9209e-05,
+            4.8959e-05,
+            4.9083e-05,
+            4.9e-05,
+            5.85e-05,
+            5.4125e-05
+          ],
+          "fresh_s": [
+            0.187287583,
+            0.1892445,
+            0.191279583,
+            0.188226292,
+            0.186551584,
+            0.188415083,
+            0.18727975
+          ],
+          "warm_s": [
+            8.300569921875e-05,
+            8.3900390625e-05,
+            8.366959765625e-05,
+            8.377457421875e-05,
+            8.39982109375e-05,
+            8.379638671875e-05,
+            8.40138359375e-05
+          ],
+          "warm_loops": 256,
+          "checksum": 109067234,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "sparse",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": false,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 5908848,
+          "final_bytes_est": 415084000,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.00996875,
+            0.009746708,
+            0.009932667,
+            0.009933208,
+            0.010064625,
+            0.009924791,
+            0.009812459
+          ],
+          "native_setup_s": 0.000160292,
+          "native_first_join_s": 9.9084e-05,
+          "join_only_s": [
+            8.5667e-05,
+            7.5958e-05,
+            7.3209e-05,
+            7.2292e-05,
+            7.7625e-05,
+            7.0875e-05,
+            7.5625e-05
+          ],
+          "fresh_s": [
+            1.469098958,
+            1.4836339170000001,
+            1.4723416249999999,
+            1.462274917,
+            1.4750225829999999,
+            1.473383292,
+            1.4887764159999999
+          ],
+          "warm_s": [
+            1.502149208,
+            1.503655584,
+            1.504859084,
+            1.502222792,
+            1.5061488330000001,
+            1.505023167,
+            1.507731916
+          ],
+          "warm_loops": 1,
+          "checksum": 112347088,
+          "verified": true
+        },
+        {
+          "kind": "free_join",
+          "candidate": "sparse",
+          "scenario": "structured_65536",
+          "shape": "clover",
+          "memo": true,
+          "worlds": 65536,
+          "admissible_worlds": 65536,
+          "rows": 4096,
+          "groups": 64,
+          "plan_nodes": 3,
+          "input_nodes": 33,
+          "final_nodes": 4659,
+          "input_bytes_est": 5908848,
+          "final_bytes_est": 415370720,
+          "colt_bytes": 41104,
+          "build_s": [
+            0.00996875,
+            0.009746708,
+            0.009932667,
+            0.009933208,
+            0.010064625,
+            0.009924791,
+            0.009812459
+          ],
+          "native_setup_s": 0.000160292,
+          "native_first_join_s": 9.9084e-05,
+          "join_only_s": [
+            8.5667e-05,
+            7.5958e-05,
+            7.3209e-05,
+            7.2292e-05,
+            7.7625e-05,
+            7.0875e-05,
+            7.5625e-05
+          ],
+          "fresh_s": [
+            0.450660458,
+            0.457506667,
+            0.452654333,
+            0.448929125,
+            0.448737375,
+            0.449179292,
+            0.454836709
+          ],
+          "warm_s": [
+            0.0001656591796875,
+            0.000164144859375,
+            0.0001651552734375,
+            0.000162987953125,
+            0.0001638186875,
+            0.0001645247421875,
+            0.00016488215625
+          ],
+          "warm_loops": 128,
+          "checksum": 112347088,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        27.11474609375,
+        16.01171875,
+        15.6259765625
+      ],
+      "loadavg_end": [
+        17.23193359375,
+        14.76220703125,
+        15.1845703125
+      ]
+    }
+  ]
+}

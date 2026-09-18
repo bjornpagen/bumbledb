@@ -1,0 +1,4 @@
+UNARY_PHASE {"phase":"inputs_constructed","records":30,"bytes":1848}
+UNARY_PHASE {"phase":"inputs_verified","records":30,"bytes":1848}
+UNARY_SHAPE {"passed":true,"shape":"composition","mode":"plain","layout":"bit-major","input_policy":"keep","kernel":"blocks","dimensions":12,"inputs":2,"outputs":4,"input_records":30,"input_reachable":29,"input_bytes":1848,"final_records":164,"output_reachable":32,"live_union":60,"final_bytes":15568,"query_apply_misses":122,"query_cofactor_misses":0,"query_projection_misses":61,"checked_world_answers":16384,"checksum":3072,"compacted_records":61,"compacted_bytes":3520}
+

@@ -1,0 +1,31 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"transfer_free_join","candidate":"block64","bits":12,"target_layout":"bit-major","target_candidate":"block64","query_s":[0.000293125, 0.00021925, 0.0002245, 0.000230333, 0.000219875, 0.000214458, 0.000205333],"encode_s":[3.8833e-5, 3.6125e-5, 3.1666e-5, 3.1666e-5, 3.1875e-5, 3.0541e-5, 2.7666e-5],"decode_s":[1.925e-5, 1.625e-5, 1.9083e-5, 1.5792e-5, 1.5708e-5, 3.275e-5, 1.6542e-5],"target_setup_s":[1.9209e-5, 1.8667e-5, 1.8e-5, 1.825e-5, 1.8166e-5, 2.3167e-5, 1.8042e-5],"restore_s":[0.000162416, 0.000153958, 0.000145958, 0.000153042, 0.000152833, 0.000189334, 0.000161209],"packet_bytes":11553,"packet_nodes":82,"canonical_packet_bytes":11553,"canonical_packet_hash":305237893217458157,"source_bytes_est":56716,"target_bytes_est":52668,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"block64","bits":12,"target_layout":"face-major","target_candidate":"block64","query_s":[0.000234208, 0.000232792, 0.000218083, 0.000227958, 0.000224, 0.00021825, 0.000224375],"encode_s":[3.6666e-5, 3.15e-5, 3.0833e-5, 3.2291e-5, 3.3959e-5, 3.0875e-5, 3.2541e-5],"decode_s":[2.025e-5, 1.5375e-5, 2.1291e-5, 1.5584e-5, 1.75e-5, 1.5125e-5, 1.5792e-5],"target_setup_s":[1.542e-6, 2.791e-6, 1.375e-6, 1.541e-6, 1.667e-6, 1.458e-6, 1.708e-6],"restore_s":[0.000144208, 0.000141042, 0.000131375, 0.000133458, 0.000134125, 0.000141917, 0.000131542],"packet_bytes":11553,"packet_nodes":82,"canonical_packet_bytes":9875,"canonical_packet_hash":13706261729038098115,"source_bytes_est":56716,"target_bytes_est":54204,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"block64","bits":12,"target_layout":"bit-major","target_candidate":"packed512","query_s":[0.000230125, 0.000224083, 0.000214875, 0.000253333, 0.000218167, 0.000211291, 0.000213541],"encode_s":[3.2083e-5, 3.225e-5, 3.0792e-5, 3.2209e-5, 3.0167e-5, 2.95e-5, 3.8083e-5],"decode_s":[1.5333e-5, 1.5666e-5, 1.4916e-5, 1.5125e-5, 1.4958e-5, 1.4958e-5, 1.5083e-5],"target_setup_s":[2.0167e-5, 1.9375e-5, 1.8416e-5, 2.6333e-5, 1.8416e-5, 1.8417e-5, 2e-5],"restore_s":[0.000201125, 0.000200917, 0.000209958, 0.000215708, 0.000194166, 0.000191708, 0.000203333],"packet_bytes":11553,"packet_nodes":82,"canonical_packet_bytes":6127,"canonical_packet_hash":18102733595059858741,"source_bytes_est":56716,"target_bytes_est":72292,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"block64","bits":18,"target_layout":"bit-major","target_candidate":"block64","query_s":[0.001125292, 0.001051958, 0.001058417, 0.0011485, 0.001016042, 0.001018541, 0.001044],"encode_s":[0.000129709, 0.000148291, 0.000141458, 0.000185709, 0.000127375, 0.00012925, 0.000131958],"decode_s":[6.6e-5, 6.0375e-5, 6.3916e-5, 0.000100666, 6.0375e-5, 6.2875e-5, 6.075e-5],"target_setup_s":[0.001142458, 0.001229291, 0.001098375, 0.001163125, 0.0010885, 0.001104, 0.001145833],"restore_s":[0.000691875, 0.00074775, 0.000631709, 0.000713041, 0.000670417, 0.000669333, 0.0006885],"packet_bytes":53443,"packet_nodes":247,"canonical_packet_bytes":53443,"canonical_packet_hash":5408875353925629884,"source_bytes_est":220336,"target_bytes_est":300520,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"block64","bits":18,"target_layout":"face-major","target_candidate":"block64","query_s":[0.001109667, 0.001111375, 0.001060208, 0.001081917, 0.001066916, 0.001076833, 0.001041917],"encode_s":[0.000131167, 0.000147292, 0.00013275, 0.00013175, 0.000145833, 0.000140375, 0.000133583],"decode_s":[6.0375e-5, 6.3959e-5, 6.1875e-5, 6.4208e-5, 6.9417e-5, 6.4542e-5, 6.8958e-5],"target_setup_s":[4.9459e-5, 5.0792e-5, 4.9833e-5, 5e-5, 5.0084e-5, 5.2542e-5, 5.1542e-5],"restore_s":[0.00076025, 0.00077225, 0.000740792, 0.000743, 0.000817458, 0.000761292, 0.000740542],"packet_bytes":53443,"packet_nodes":247,"canonical_packet_bytes":17439,"canonical_packet_hash":1335153889291681650,"source_bytes_est":220336,"target_bytes_est":492776,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"block64","bits":18,"target_layout":"bit-major","target_candidate":"packed512","query_s":[0.001066708, 0.001146, 0.001068416, 0.001067375, 0.001100458, 0.001125208, 0.001112],"encode_s":[0.000131542, 0.000132042, 0.000136458, 0.000135541, 0.000135708, 0.000135125, 0.000145792],"decode_s":[6.0125e-5, 6.1959e-5, 6.275e-5, 6.6375e-5, 6.0875e-5, 6.15e-5, 6.7125e-5],"target_setup_s":[0.001119208, 0.0011575, 0.001131667, 0.001189667, 0.00112375, 0.001119667, 0.001177],"restore_s":[0.000547625, 0.00057675, 0.000544875, 0.000587166, 0.0005775, 0.00054625, 0.000567833],"packet_bytes":53443,"packet_nodes":247,"canonical_packet_bytes":25379,"canonical_packet_hash":1828067518556718950,"source_bytes_est":220336,"target_bytes_est":270500,"roots":104,"rows":128,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 10.73s
+
+
+       10.73 real        10.55 user         0.15 sys
+            27754496  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1907  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                3065  involuntary context switches
+        210155567690  instructions retired
+         35846219281  cycles elapsed
+            24805760  peak memory footprint

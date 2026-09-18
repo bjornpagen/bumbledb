@@ -1,0 +1,9 @@
+[package]
+name = "event-classify-prototype"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+rustc-hash = "=2.1.0"

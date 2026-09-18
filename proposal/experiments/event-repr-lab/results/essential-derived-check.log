@@ -1,0 +1,119 @@
+
+running 4 tests
+test essential_raw::tests::canonical_small_tables_and_branches ... ok
+test essential_raw::tests::matched_kernels_preserve_resident_ids ... ok
+test essential_raw::tests::noncontiguous_sixty_coordinate_table ... ok
+test shared_semantics ... EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"bdd-root","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"bdd-pair","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"mdd4-pair","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"bdd-anchored","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed64","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed256","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed512","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed4096","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"block64","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"essential64","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"essential512","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"dense","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"dense","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"dense-dispatched","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"dense-dispatched","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"sparse","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"sparse","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"roaring","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"roaring","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"runs","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"runs","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-root","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"bdd-root","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-pair","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"bdd-pair","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"mdd4-pair","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"mdd4-pair","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-anchored","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"bdd-anchored","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed64","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed64","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed256","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed256","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed512","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed512","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed4096","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed4096","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"block64","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"block64","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"essential64","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"essential64","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"essential512","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"essential512","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_support_maps","cases":3825,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed64","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed256","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed512","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed4096","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_symbolic","bits":40,"source_target_pairs":121,"packet_bytes":[1343, 1343, 1037, 1343, 1265, 1255, 1365, 1667, 2043, 1265, 1365],"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"dense","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"dense-dispatched","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense-dispatched","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense-dispatched","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"sparse","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"sparse","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"sparse","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"roaring","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"roaring","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"roaring","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"runs","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"runs","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"runs","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"bdd-root","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-root","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-root","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"bdd-pair","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-pair","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"mdd4-pair","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"mdd4-pair","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"mdd4-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"bdd-anchored","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-anchored","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-anchored","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed256","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed256","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed256","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed4096","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed4096","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed4096","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"block64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"block64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"block64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"essential64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"essential64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"essential64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"essential512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"essential512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"essential512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"high_coordinate_verification","bits":40,"candidates":11,"passed":true}
+EVENT_LAB {"kind":"coordinate_boundary_verification","candidates":16,"extra_orders_per_candidate":2,"face_layouts_per_candidate":3,"passed":true}
+EVENT_LAB {"kind":"observation_verification","candidates":16,"parameter_groups":[1,2,3],"high_coordinate_candidates":11,"passed":true}
+ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.64s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling event-repr-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/checker)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.73s
+     Running unittests src/lib.rs (target/debug/build/event-repr-checker/60afa6a7ee296659/out/event_repr_checker-60afa6a7ee296659)
+   Doc-tests event_repr_checker

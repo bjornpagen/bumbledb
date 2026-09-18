@@ -1,0 +1,28 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential512","bits":18,"states":64,"identity_mode":"native","input_s":[4.4917e-5, 3.7167e-5, 3.3583e-5, 3.1417e-5, 2.9666e-5],"program_setup_s":[2.1458e-5, 1.3041e-5, 1.1834e-5, 1.1e-5, 1.0541e-5],"query_s":[0.000398792, 0.000339458, 0.000323084, 0.000314208, 0.000306875],"owned_compute_s":[0.000422917, 0.0003535, 0.000336792, 0.000325834, 0.000317958],"iterations":[7, 7, 7, 7, 7],"output_counts":[133120, 133120, 262144, 262144, 4096],"output_packet_bytes":811,"final_arena_bytes_est":70560,"new_classes":3,"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential512","bits":36,"states":4096,"identity_mode":"native","input_s":[7.7959e-5, 8.2292e-5, 7.8791e-5, 8.0542e-5, 8.2167e-5],"program_setup_s":[2.2167e-5, 2.3e-5, 2.2125e-5, 2.2042e-5, 2.4458e-5],"query_s":[0.001328875, 0.001269208, 0.001254791, 0.001287958, 0.001400917],"owned_compute_s":[0.001351875, 0.001292917, 0.001277583, 0.00131075, 0.001426875],"iterations":[13, 13, 13, 13, 13],"output_counts":[34368126976, 34368126976, 68719476736, 68719476736, 16777216],"output_packet_bytes":1641,"final_arena_bytes_est":422192,"new_classes":3,"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential512","bits":60,"states":1048576,"identity_mode":"native","input_s":[0.000162, 0.000137041, 0.000133375, 0.000151208, 0.000131458],"program_setup_s":[4.1333e-5, 3.85e-5, 3.7792e-5, 3.875e-5, 3.7167e-5],"query_s":[0.003946666, 0.00401675, 0.003847666, 0.003934917, 0.003924375],"owned_compute_s":[0.003989333, 0.004056542, 0.003887166, 0.003974625, 0.003962791],"iterations":[21, 21, 21, 21, 21],"output_counts":[576461302059237376, 576461302059237376, 1152921504606846976, 1152921504606846976, 1099511627776],"output_packet_bytes":2713,"final_arena_bytes_est":816112,"new_classes":3,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1363 filtered out; finished in 0.03s
+
+
+        0.03 real         0.03 user         0.00 sys
+             8486912  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 732  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  23  involuntary context switches
+           504255356  instructions retired
+           112274495  cycles elapsed
+             5849472  peak memory footprint

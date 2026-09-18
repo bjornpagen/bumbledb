@@ -1,0 +1,2 @@
+DIFFERENCE_SHAPE {"passed":true,"shape":"composition","basis":"mixed","layout":"face-major","dimensions":12,"inputs":2,"outputs":4,"input_records":65,"input_reachable":64,"input_bytes":4556,"final_records":491,"output_reachable":70,"live_union":125,"final_bytes":47100,"query_apply_misses":708,"query_cofactor_misses":66,"query_projection_misses":88,"checked_world_answers":16384,"checksum":3072}
+

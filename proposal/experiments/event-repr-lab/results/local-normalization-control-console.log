@@ -1,0 +1,10 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-normalize-staged-complete-local-needed-project-witness: passed, 14.56s
+001 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-needed-project-witness: passed, 15.34s
+002 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-local-needed-project-witness: passed, 15.26s
+003 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-local-project-witness: passed, 15.34s
+004 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-local-needed-project-witness: passed, 7.88s
+005 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-local-project-witness: passed, 7.89s
+006 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-full-project-witness: passed, 7.86s
+007 readouts-prefix512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-full-project-witness: passed, 15.50s
+008 readouts-prefix512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged-complete-needed-project-witness: passed, 9.14s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/local-normalization-control.json

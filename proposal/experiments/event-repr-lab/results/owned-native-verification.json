@@ -1,0 +1,521 @@
+{
+  "seed": 20260917,
+  "trials": 7,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "6c4c4389c73ce36905d199462958ee7b438b00d3f4375d36be459b53b5b6793a",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "5ffc61dde8e0f651ba8f466d506d7058ed5c186082e2ff608f5a73bb61b63a50",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/finite.rs": "a65e6a304ef8b6f23f576f80900d26c19449beacda82500b1cec9bfc58d8bad3",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "8ec54f42be749577e232d479a25227940aac2a38060f4d4cf926b155e5579c70",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/owned_bench.rs": "61c2f7f7fca6a466314ea92e867d7cc0d6ed21b10cefefeadd264fd7ea2efa36",
+      "src/packed.rs": "90d1ee2dafde7461acda1867e7b39efeb5db3aa39d6cbba88083dfc07ceefede",
+      "src/relational_core.rs": "f43b10ff5d66f1c4c4e70198d511243a0d53a9959049c6ff1682524d84a501be",
+      "src/relations.rs": "0edd99420cb63986ace66e258c0002a5d3c4e603845bf666bbf81e4eb8b03921",
+      "src/semantic_checks.rs": "cd55b2559349e30fbf8760762a37def4b4bb977b5cbe3995443b80a9c0241222",
+      "src/transfer.rs": "8359b5f084057758eff207c81dde8306bb9a3c93978462d603c342fc57c00e48",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "7e4a02aae2e8a1cb2a49dbc9a3e255f90fa8c5066521014bd4f23204b1dee203"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T23:35:35.222096+00:00",
+    "build_started_utc": "2026-09-17T23:29:30.988175+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words"
+      },
+      "status": "passed",
+      "elapsed_s": 1.5996310710906982,
+      "max_rss_bytes": 42762240,
+      "log": "owned-native-verification-logs/job-000-verify-local-words.log",
+      "rows": [
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        6.052734375,
+        10.12744140625,
+        13.49853515625
+      ],
+      "loadavg_end": [
+        6.052734375,
+        10.12744140625,
+        13.49853515625
+      ]
+    }
+  ]
+}

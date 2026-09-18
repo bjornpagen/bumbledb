@@ -1,0 +1,131 @@
+{
+  "passed": true,
+  "multi_records": [
+    {
+      "passed": true,
+      "four_axis_masks": 128,
+      "visible_worlds": 16384,
+      "hidden_assignments_per_world": 16
+    }
+  ],
+  "long_shapes": [
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Plain",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Chains",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Plain",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Chains",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Plain",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Chains",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Plain",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Chains",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    }
+  ],
+  "source_hashes": {
+    "unary-prototype/Cargo.toml": "3669934cd4c451a4bac2ca1ff36c347fa966b80494ec7492804e44ff1bc6c1e5",
+    "unary-prototype/Cargo.lock": "33874778d833595fcf3f52f775e5ccdead826ceb840289c6fd23cd33f419f112",
+    "unary-prototype/src/lib.rs": "fd1c7f8c9e53a89ca2b4570abf416ed89c0a156cae75e8cd9e549ac19d4be4fa",
+    "unary-prototype/src/main.rs": "1b141ffc8b5df17b5b6ae6c589e9d4e9b3f2489ad1c8aa64f1a7931c7c75784d",
+    "unary-prototype/src/tests.rs": "a6595af966967ccad6e3a0cc40174ff0446663f139779d170202c0244590b1d1"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--release",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "records": [
+    {
+      "passed": true,
+      "binary": 25165824,
+      "projection": 49152,
+      "maps": 178176,
+      "completed_projection": 49152,
+      "orders": 6,
+      "modes": 2,
+      "kernels": 2
+    }
+  ],
+  "chain_records": [
+    {
+      "passed": true,
+      "world_checks": 19200,
+      "max_dimensions": 61
+    }
+  ],
+  "log": "unary-block-deep-check.log",
+  "checker_sha256": "896cc2f6dfd22e15d9ad14fe44be02ed13fe084b8fe1a18cb742a6f1431c27fb",
+  "boundary": "Raw canonical managers, copied-live-graph compaction, full-cube uniform counting. No Event ownership/common packet/designated law or native Free Join claim."
+}

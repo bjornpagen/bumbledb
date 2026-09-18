@@ -1,0 +1,2108 @@
+{
+  "input": "completion-caps.json",
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "79c66a42020bd736d0ba9b53426d84d6c24b0b09392b73ddf0a37540f9a6b8fa",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "e271d7ec3b58a35cef677d15e191a11ed85c69ee738295b147bf85f1b2623ac4",
+      "src/contraction.rs": "948d7c5223a78c4a801f9defe6211a126239bd95fb844079a490951a695d483f",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagonal_checks.rs": "a45ce14c303b65fc9aacdccb7c16fc4ce9f19874cd62aa1b674faec9da85d169",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/essential.rs": "f3d8c452f9186801078158ec4b04552896153a53453d88078b130ee03f289bf1",
+      "src/essential_raw.rs": "8b753d47a9b29abf18013ca9c2569512b83a0f787c3d37aae68a7f583417aed1",
+      "src/essential_store.rs": "e916c0389378ad0bc004ad4fc05945a333cc8ce8c4c5e2ae32c85556b11a750d",
+      "src/essential_words.rs": "b6c4af1aecfe01dd519a87ee1b22fb7624f4be0ef8a2752a0f807a28bc097cc1",
+      "src/factor_checks.rs": "77c68a19bd97e1d0bcfe2be846a40773fe1296f0d607a0e29a42e8936391249d",
+      "src/finite.rs": "1ad66e84ba8488713f2fc8bd514a0d2e1ae8f6b2c4a2499dfa6f6aec21c976ca",
+      "src/law_bench.rs": "a41feb1d92de313ef108ebfe4f185820084c03ce088490ca8507c8d998bf2751",
+      "src/legal.rs": "99b6df5ebe012eced944c642fea57e5bd838ba27313b67f0997ecb3c49104f89",
+      "src/legal_bench.rs": "887cbe4d5793a1d31b5f55a1e085b7fc206067fcd33353161ebbc4c08cdac03c",
+      "src/legal_checks.rs": "1653271d66f8e0ffbdec22bd5be1ff8c2b77f5c8ffcd2e2294dd365a940ee48b",
+      "src/lib.rs": "588d3e7bbcc2fe9c21c3e6d23036e58edec9a96ede1257ee8a0e802971a1571c",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "280d1e20e660cb00840c40f09a6998c00fdf435258a11a064d0a9cc68f9a8312",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/occupancy.rs": "33dc8a5a90b19dabdf7d94e5a5d33328f1d11788ddc0e883b608b5dbadc12400",
+      "src/occupancy_scratch.rs": "703a931d77305b7b19d057cf6c699b0ee644bbdec3f59bd975bb6a0b5b635116",
+      "src/occupancy_words.rs": "4a95912b2dab9ddd7fa18938450ad3c7374dea5cc88e3cceb2950303b6612d98",
+      "src/owned_bench.rs": "f914d04d6031a547cea8e3307a9bf89079a0e6b8465439dce423e3c470f91423",
+      "src/packed.rs": "782f59878f4169f09b45777484d32eaa53d6e97619e3322b0e3e724676c57954",
+      "src/readout.rs": "df7520ff30598cc6b69c8f6ebd39a1c0f41b3b632da563942657440007f7e8c8",
+      "src/readout_bench.rs": "8101270bc412f72f74ad18f1712084fbf6e9cebbabcab264583d4f105d82e970",
+      "src/relational_core.rs": "f83dca1dd7732d1dff2472b418036b92f05f30e333e4b217708fda992f62ce46",
+      "src/relations.rs": "5cc0917e482452a984d5da704d4835c50b60428f803340e4bf0065628eb642dd",
+      "src/retraction.rs": "74b28e397c49c17daaf77233da81709620dce5f65c8d80d872a715af5b16142a",
+      "src/retraction_checks.rs": "3866c76ee8cb682773a8913209ca796fe98fd49ac5f2046a618c751110e40eba",
+      "src/scoped_bench.rs": "de6261ebf7a4b251806246a0b9967320bec07265d57bf5e187a8958bb43368c0",
+      "src/semantic_checks.rs": "0aa0a1af47cc5145a88e7e96f7ec20918a8b16b3106ab1e6f6c44f725cca3931",
+      "src/signature.rs": "e23b491ac9af760fbbee1cd9b39177607f8ff4a5caa700ca06111eabb6f329e0",
+      "src/signature_bench.rs": "e41be54c10c1da7beedc0705dddc848099473c4b267d009c2f36aba6f9dc879a",
+      "src/symbolic_relations.rs": "245af210921b06a15a2560e1fe993730ad5073f85b448be1e4ab845c7cd07c74",
+      "src/transfer.rs": "d2fe8ebdf739d1d3e8b49c231c4c0f5df0eaf7985f5201513281d91e6f7bdfe2",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "7bacfd432b25fbb2cee4319f44ae96a1bd0e265016cb2e1786bd3311ec754e20",
+      "src/view_bench.rs": "a045c8aed63b7ef23d5ecd2233891b5b242d3e115d46ee616435105b19b898c1",
+      "src/view_product.rs": "edfe6956dfe85cfab75732f564b73c8f81e680a8a170f8614c4f4b50af44064a"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-18T10:09:51.916990+00:00",
+    "build_started_utc": "2026-09-18T09:59:14.120031+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "non-suffix",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "staged"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 7.755988836288452,
+      "max_rss_bytes": 449282048,
+      "log": "completion-cap-diagnostics-logs/job-000-readouts-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004297667
+          ],
+          "support_s": [
+            0.000278167
+          ],
+          "import_s": [
+            0.003961041
+          ],
+          "admission_s": [
+            5.8292e-05
+          ],
+          "join_only_s": [
+            3.125e-05
+          ],
+          "fresh_s": [
+            0.04384025
+          ],
+          "fresh_group_s": [
+            0.000555791
+          ],
+          "fresh_readout_s": [
+            0.043158667
+          ],
+          "fresh_compute_s": [
+            0.043716792
+          ],
+          "fresh_count_s": [
+            0.000123333
+          ],
+          "warm_s": [
+            0.000215167
+          ],
+          "warm_group_s": [
+            4.0334e-05
+          ],
+          "warm_readout_s": [
+            7.5792e-05
+          ],
+          "warm_compute_s": [
+            0.000116709
+          ],
+          "warm_count_s": [
+            9.8375e-05
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 74569,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8006916,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 74569,
+            "tables": 19826,
+            "logical_words": 19826,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004297667
+          ],
+          "support_s": [
+            0.000278167
+          ],
+          "import_s": [
+            0.003961041
+          ],
+          "admission_s": [
+            5.8292e-05
+          ],
+          "join_only_s": [
+            3.125e-05
+          ],
+          "fresh_s": [
+            0.042209667
+          ],
+          "fresh_group_s": [
+            0.000549708
+          ],
+          "fresh_readout_s": [
+            0.041560958
+          ],
+          "fresh_compute_s": [
+            0.0421115
+          ],
+          "fresh_count_s": [
+            9.7958e-05
+          ],
+          "warm_s": [
+            0.000187708
+          ],
+          "warm_group_s": [
+            1.4875e-05
+          ],
+          "warm_readout_s": [
+            7.4125e-05
+          ],
+          "warm_compute_s": [
+            8.9291e-05
+          ],
+          "warm_count_s": [
+            9.8292e-05
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 74569,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8015876,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 74569,
+            "tables": 19826,
+            "logical_words": 19826,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        18.3154296875,
+        11.021484375,
+        8.68994140625
+      ],
+      "loadavg_end": [
+        15.88037109375,
+        10.740234375,
+        8.6171875
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "suffix-1",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "equal"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 8.266268014907837,
+      "max_rss_bytes": 443695104,
+      "log": "completion-cap-diagnostics-logs/job-001-readouts-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-suffix-1-faces-x-normalize-equal.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004410459
+          ],
+          "support_s": [
+            0.000280875
+          ],
+          "import_s": [
+            0.0040695
+          ],
+          "admission_s": [
+            5.9667e-05
+          ],
+          "join_only_s": [
+            2.8791e-05
+          ],
+          "fresh_s": [
+            0.03685625
+          ],
+          "fresh_group_s": [
+            0.000552625
+          ],
+          "fresh_readout_s": [
+            0.036184291
+          ],
+          "fresh_compute_s": [
+            0.036738917
+          ],
+          "fresh_count_s": [
+            0.00011725
+          ],
+          "warm_s": [
+            0.0012525
+          ],
+          "warm_group_s": [
+            3.7542e-05
+          ],
+          "warm_readout_s": [
+            0.001111083
+          ],
+          "warm_compute_s": [
+            0.001149
+          ],
+          "warm_count_s": [
+            0.000103416
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 69944,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8006916,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 69944,
+            "tables": 19451,
+            "logical_words": 19451,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004410459
+          ],
+          "support_s": [
+            0.000280875
+          ],
+          "import_s": [
+            0.0040695
+          ],
+          "admission_s": [
+            5.9667e-05
+          ],
+          "join_only_s": [
+            2.8791e-05
+          ],
+          "fresh_s": [
+            0.03438425
+          ],
+          "fresh_group_s": [
+            0.000538125
+          ],
+          "fresh_readout_s": [
+            0.033749917
+          ],
+          "fresh_compute_s": [
+            0.03428875
+          ],
+          "fresh_count_s": [
+            9.5459e-05
+          ],
+          "warm_s": [
+            0.001190625
+          ],
+          "warm_group_s": [
+            1.4917e-05
+          ],
+          "warm_readout_s": [
+            0.001074208
+          ],
+          "warm_compute_s": [
+            0.00108925
+          ],
+          "warm_count_s": [
+            0.000101292
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 69944,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8015876,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 69944,
+            "tables": 19451,
+            "logical_words": 19451,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        15.88037109375,
+        10.740234375,
+        8.6171875
+      ],
+      "loadavg_end": [
+        14.13330078125,
+        10.5341796875,
+        8.568359375
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "retraction512",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "suffix-1",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "equal"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 6.658224821090698,
+      "max_rss_bytes": 427098112,
+      "log": "completion-cap-diagnostics-logs/job-002-readouts-retraction512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-suffix-1-faces-x-normalize-equal.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction512",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.001370583
+          ],
+          "support_s": [
+            0.000202375
+          ],
+          "import_s": [
+            0.001109708
+          ],
+          "admission_s": [
+            5.8125e-05
+          ],
+          "join_only_s": [
+            2.9708e-05
+          ],
+          "fresh_s": [
+            0.024229458
+          ],
+          "fresh_group_s": [
+            0.000170167
+          ],
+          "fresh_readout_s": [
+            0.02403825
+          ],
+          "fresh_compute_s": [
+            0.024209833
+          ],
+          "fresh_count_s": [
+            1.9459e-05
+          ],
+          "warm_s": [
+            0.000374709
+          ],
+          "warm_group_s": [
+            3.4209e-05
+          ],
+          "warm_readout_s": [
+            0.000327917
+          ],
+          "warm_compute_s": [
+            0.000362334
+          ],
+          "warm_count_s": [
+            1.225e-05
+          ],
+          "input_nodes": 1525,
+          "final_nodes": 34461,
+          "input_bytes_est": 181496,
+          "final_bytes_est": 4509700,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 24400,
+            "table_bytes": 58344,
+            "interner_bytes": 36564,
+            "metadata_bytes": 12460,
+            "cache_bytes": 49728,
+            "records": 1525,
+            "tables": 1511,
+            "logical_words": 7293,
+            "total_bytes_est": 181496
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 780800,
+            "table_bytes": 933504,
+            "interner_bytes": 1170048,
+            "metadata_bytes": 390660,
+            "cache_bytes": 1234688,
+            "records": 34461,
+            "tables": 20010,
+            "logical_words": 113778,
+            "total_bytes_est": 4509700
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction512",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.001370583
+          ],
+          "support_s": [
+            0.000202375
+          ],
+          "import_s": [
+            0.001109708
+          ],
+          "admission_s": [
+            5.8125e-05
+          ],
+          "join_only_s": [
+            2.9708e-05
+          ],
+          "fresh_s": [
+            0.022828792
+          ],
+          "fresh_group_s": [
+            0.000169
+          ],
+          "fresh_readout_s": [
+            0.022643625
+          ],
+          "fresh_compute_s": [
+            0.022812708
+          ],
+          "fresh_count_s": [
+            1.6e-05
+          ],
+          "warm_s": [
+            0.000373541
+          ],
+          "warm_group_s": [
+            1.6542e-05
+          ],
+          "warm_readout_s": [
+            0.00034125
+          ],
+          "warm_compute_s": [
+            0.000358916
+          ],
+          "warm_count_s": [
+            1.4459e-05
+          ],
+          "input_nodes": 1525,
+          "final_nodes": 34461,
+          "input_bytes_est": 181496,
+          "final_bytes_est": 4518660,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 24400,
+            "table_bytes": 58344,
+            "interner_bytes": 36564,
+            "metadata_bytes": 12460,
+            "cache_bytes": 49728,
+            "records": 1525,
+            "tables": 1511,
+            "logical_words": 7293,
+            "total_bytes_est": 181496
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 780800,
+            "table_bytes": 933504,
+            "interner_bytes": 1170048,
+            "metadata_bytes": 390660,
+            "cache_bytes": 1234688,
+            "records": 34461,
+            "tables": 20010,
+            "logical_words": 113778,
+            "total_bytes_est": 4509700
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        14.13330078125,
+        10.5341796875,
+        8.568359375
+      ],
+      "loadavg_end": [
+        13.32177734375,
+        10.42529296875,
+        8.54150390625
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "prefix64",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "non-suffix",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "staged"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 6.308152198791504,
+      "max_rss_bytes": 456359936,
+      "log": "completion-cap-diagnostics-logs/job-003-readouts-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-staged.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "prefix64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004186208
+          ],
+          "support_s": [
+            0.000305958
+          ],
+          "import_s": [
+            0.003820125
+          ],
+          "admission_s": [
+            5.9541e-05
+          ],
+          "join_only_s": [
+            3.3958e-05
+          ],
+          "fresh_s": [
+            0.034791917
+          ],
+          "fresh_group_s": [
+            0.000429416
+          ],
+          "fresh_readout_s": [
+            0.034217042
+          ],
+          "fresh_compute_s": [
+            0.034648584
+          ],
+          "fresh_count_s": [
+            0.000142584
+          ],
+          "warm_s": [
+            0.00016875
+          ],
+          "warm_group_s": [
+            2.9084e-05
+          ],
+          "warm_readout_s": [
+            5.7042e-05
+          ],
+          "warm_compute_s": [
+            8.6334e-05
+          ],
+          "warm_count_s": [
+            8.2334e-05
+          ],
+          "input_nodes": 7338,
+          "final_nodes": 67301,
+          "input_bytes_est": 757964,
+          "final_bytes_est": 7689476,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 117408,
+            "table_bytes": 30320,
+            "interner_bytes": 273064,
+            "metadata_bytes": 58964,
+            "cache_bytes": 278208,
+            "records": 7338,
+            "tables": 3790,
+            "logical_words": 3790,
+            "total_bytes_est": 757964
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 1878528,
+            "table_bytes": 242560,
+            "interner_bytes": 2419328,
+            "metadata_bytes": 939524,
+            "cache_bytes": 2209536,
+            "records": 67301,
+            "tables": 19690,
+            "logical_words": 19690,
+            "total_bytes_est": 7689476
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "prefix64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004186208
+          ],
+          "support_s": [
+            0.000305958
+          ],
+          "import_s": [
+            0.003820125
+          ],
+          "admission_s": [
+            5.9541e-05
+          ],
+          "join_only_s": [
+            3.3958e-05
+          ],
+          "fresh_s": [
+            0.034979708
+          ],
+          "fresh_group_s": [
+            0.000405541
+          ],
+          "fresh_readout_s": [
+            0.034491541
+          ],
+          "fresh_compute_s": [
+            0.03489775
+          ],
+          "fresh_count_s": [
+            8.175e-05
+          ],
+          "warm_s": [
+            0.000153125
+          ],
+          "warm_group_s": [
+            1.425e-05
+          ],
+          "warm_readout_s": [
+            5.625e-05
+          ],
+          "warm_compute_s": [
+            7.0709e-05
+          ],
+          "warm_count_s": [
+            8.2208e-05
+          ],
+          "input_nodes": 7338,
+          "final_nodes": 67301,
+          "input_bytes_est": 757964,
+          "final_bytes_est": 7698436,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 117408,
+            "table_bytes": 30320,
+            "interner_bytes": 273064,
+            "metadata_bytes": 58964,
+            "cache_bytes": 278208,
+            "records": 7338,
+            "tables": 3790,
+            "logical_words": 3790,
+            "total_bytes_est": 757964
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 1878528,
+            "table_bytes": 242560,
+            "interner_bytes": 2419328,
+            "metadata_bytes": 939524,
+            "cache_bytes": 2209536,
+            "records": 67301,
+            "tables": 19690,
+            "logical_words": 19690,
+            "total_bytes_est": 7689476
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        13.32177734375,
+        10.42529296875,
+        8.54150390625
+      ],
+      "loadavg_end": [
+        12.6552734375,
+        10.3349609375,
+        8.5205078125
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "non-suffix",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "equal"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 7.826230049133301,
+      "max_rss_bytes": 446791680,
+      "log": "completion-cap-diagnostics-logs/job-004-readouts-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-equal.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004446792
+          ],
+          "support_s": [
+            0.000306625
+          ],
+          "import_s": [
+            0.004079625
+          ],
+          "admission_s": [
+            6e-05
+          ],
+          "join_only_s": [
+            2.9917e-05
+          ],
+          "fresh_s": [
+            0.04079125
+          ],
+          "fresh_group_s": [
+            0.000554666
+          ],
+          "fresh_readout_s": [
+            0.04013075
+          ],
+          "fresh_compute_s": [
+            0.040687333
+          ],
+          "fresh_count_s": [
+            0.000103833
+          ],
+          "warm_s": [
+            0.000206458
+          ],
+          "warm_group_s": [
+            3.3917e-05
+          ],
+          "warm_readout_s": [
+            7.1541e-05
+          ],
+          "warm_compute_s": [
+            0.000105875
+          ],
+          "warm_count_s": [
+            0.0001005
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 74569,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8006916,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 74569,
+            "tables": 19826,
+            "logical_words": 19826,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004446792
+          ],
+          "support_s": [
+            0.000306625
+          ],
+          "import_s": [
+            0.004079625
+          ],
+          "admission_s": [
+            6e-05
+          ],
+          "join_only_s": [
+            2.9917e-05
+          ],
+          "fresh_s": [
+            0.03657425
+          ],
+          "fresh_group_s": [
+            0.000542916
+          ],
+          "fresh_readout_s": [
+            0.035940459
+          ],
+          "fresh_compute_s": [
+            0.036483666
+          ],
+          "fresh_count_s": [
+            9.0542e-05
+          ],
+          "warm_s": [
+            0.00017925
+          ],
+          "warm_group_s": [
+            1.2583e-05
+          ],
+          "warm_readout_s": [
+            7.3459e-05
+          ],
+          "warm_compute_s": [
+            8.625e-05
+          ],
+          "warm_count_s": [
+            9.2958e-05
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 74569,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8015876,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 74569,
+            "tables": 19826,
+            "logical_words": 19826,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        12.6552734375,
+        10.3349609375,
+        8.5205078125
+      ],
+      "loadavg_end": [
+        11.404296875,
+        10.142578125,
+        8.47314453125
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "prefix64",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "non-suffix",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "equal"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 6.4505579471588135,
+      "max_rss_bytes": 457097216,
+      "log": "completion-cap-diagnostics-logs/job-005-readouts-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-non-suffix-faces-x-normalize-equal.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "prefix64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004084625
+          ],
+          "support_s": [
+            0.000306875
+          ],
+          "import_s": [
+            0.003722167
+          ],
+          "admission_s": [
+            5.5083e-05
+          ],
+          "join_only_s": [
+            3.1625e-05
+          ],
+          "fresh_s": [
+            0.03533725
+          ],
+          "fresh_group_s": [
+            0.000413916
+          ],
+          "fresh_readout_s": [
+            0.034818125
+          ],
+          "fresh_compute_s": [
+            0.035234
+          ],
+          "fresh_count_s": [
+            0.000103125
+          ],
+          "warm_s": [
+            0.000207708
+          ],
+          "warm_group_s": [
+            4.1708e-05
+          ],
+          "warm_readout_s": [
+            7.6042e-05
+          ],
+          "warm_compute_s": [
+            0.000118208
+          ],
+          "warm_count_s": [
+            8.9416e-05
+          ],
+          "input_nodes": 7338,
+          "final_nodes": 67301,
+          "input_bytes_est": 757964,
+          "final_bytes_est": 7689476,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 117408,
+            "table_bytes": 30320,
+            "interner_bytes": 273064,
+            "metadata_bytes": 58964,
+            "cache_bytes": 278208,
+            "records": 7338,
+            "tables": 3790,
+            "logical_words": 3790,
+            "total_bytes_est": 757964
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 1878528,
+            "table_bytes": 242560,
+            "interner_bytes": 2419328,
+            "metadata_bytes": 939524,
+            "cache_bytes": 2209536,
+            "records": 67301,
+            "tables": 19690,
+            "logical_words": 19690,
+            "total_bytes_est": 7689476
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "prefix64",
+          "domain": "fibred",
+          "readout_family": "non-suffix",
+          "readout_faces": "x",
+          "hidden": 8,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004084625
+          ],
+          "support_s": [
+            0.000306875
+          ],
+          "import_s": [
+            0.003722167
+          ],
+          "admission_s": [
+            5.5083e-05
+          ],
+          "join_only_s": [
+            3.1625e-05
+          ],
+          "fresh_s": [
+            0.033621334
+          ],
+          "fresh_group_s": [
+            0.00042525
+          ],
+          "fresh_readout_s": [
+            0.033104333
+          ],
+          "fresh_compute_s": [
+            0.033530375
+          ],
+          "fresh_count_s": [
+            9.075e-05
+          ],
+          "warm_s": [
+            0.000197416
+          ],
+          "warm_group_s": [
+            2.2167e-05
+          ],
+          "warm_readout_s": [
+            8.5084e-05
+          ],
+          "warm_compute_s": [
+            0.000107791
+          ],
+          "warm_count_s": [
+            8.9542e-05
+          ],
+          "input_nodes": 7338,
+          "final_nodes": 67301,
+          "input_bytes_est": 757964,
+          "final_bytes_est": 7698436,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 117408,
+            "table_bytes": 30320,
+            "interner_bytes": 273064,
+            "metadata_bytes": 58964,
+            "cache_bytes": 278208,
+            "records": 7338,
+            "tables": 3790,
+            "logical_words": 3790,
+            "total_bytes_est": 757964
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 1878528,
+            "table_bytes": 242560,
+            "interner_bytes": 2419328,
+            "metadata_bytes": 939524,
+            "cache_bytes": 2209536,
+            "records": 67301,
+            "tables": 19690,
+            "logical_words": 19690,
+            "total_bytes_est": 7689476
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 607690,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "equal",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        11.404296875,
+        10.142578125,
+        8.47314453125
+      ],
+      "loadavg_end": [
+        10.97119140625,
+        10.07373046875,
+        8.45849609375
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "suffix-1",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "staged"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 8.01968002319336,
+      "max_rss_bytes": 445349888,
+      "log": "completion-cap-diagnostics-logs/job-006-readouts-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-suffix-1-faces-x-normalize-staged.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004404166
+          ],
+          "support_s": [
+            0.000283
+          ],
+          "import_s": [
+            0.00406175
+          ],
+          "admission_s": [
+            5.9084e-05
+          ],
+          "join_only_s": [
+            3.2083e-05
+          ],
+          "fresh_s": [
+            0.035466833
+          ],
+          "fresh_group_s": [
+            0.000530542
+          ],
+          "fresh_readout_s": [
+            0.034829542
+          ],
+          "fresh_compute_s": [
+            0.035361792
+          ],
+          "fresh_count_s": [
+            0.000104959
+          ],
+          "warm_s": [
+            0.001217875
+          ],
+          "warm_group_s": [
+            3.6208e-05
+          ],
+          "warm_readout_s": [
+            0.001081708
+          ],
+          "warm_compute_s": [
+            0.001118208
+          ],
+          "warm_count_s": [
+            9.9625e-05
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 69944,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8006916,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 69944,
+            "tables": 19451,
+            "logical_words": 19451,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction64",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.004404166
+          ],
+          "support_s": [
+            0.000283
+          ],
+          "import_s": [
+            0.00406175
+          ],
+          "admission_s": [
+            5.9084e-05
+          ],
+          "join_only_s": [
+            3.2083e-05
+          ],
+          "fresh_s": [
+            0.034271167
+          ],
+          "fresh_group_s": [
+            0.000521291
+          ],
+          "fresh_readout_s": [
+            0.033651292
+          ],
+          "fresh_compute_s": [
+            0.034172917
+          ],
+          "fresh_count_s": [
+            9.8125e-05
+          ],
+          "warm_s": [
+            0.001191583
+          ],
+          "warm_group_s": [
+            1.2875e-05
+          ],
+          "warm_readout_s": [
+            0.00107875
+          ],
+          "warm_compute_s": [
+            0.001092
+          ],
+          "warm_count_s": [
+            9.95e-05
+          ],
+          "input_nodes": 8015,
+          "final_nodes": 69944,
+          "input_bytes_est": 778688,
+          "final_bytes_est": 8015876,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 128240,
+            "table_bytes": 32088,
+            "interner_bytes": 275772,
+            "metadata_bytes": 64380,
+            "cache_bytes": 278208,
+            "records": 8015,
+            "tables": 4011,
+            "logical_words": 4011,
+            "total_bytes_est": 778688
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 2051840,
+            "table_bytes": 256704,
+            "interner_bytes": 2462656,
+            "metadata_bytes": 1026180,
+            "cache_bytes": 2209536,
+            "records": 69944,
+            "tables": 19451,
+            "logical_words": 19451,
+            "total_bytes_est": 8006916
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        10.97119140625,
+        10.07373046875,
+        8.45849609375
+      ],
+      "loadavg_end": [
+        10.43994140625,
+        9.98876953125,
+        8.44677734375
+      ],
+      "cap_in_canonical_reimport": true
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_RETRACTION_FACTOR": "faces",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LANE": "readouts",
+        "EVENT_LAB_CANDIDATE": "retraction512",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_LEGAL_DOMAIN": "fibred",
+        "EVENT_LAB_READOUT_FAMILY": "suffix-1",
+        "EVENT_LAB_READOUT_FACES": "x",
+        "EVENT_LAB_RETRACTION_NORMALIZE": "staged"
+      },
+      "status": "resource_cap",
+      "elapsed_s": 6.606371879577637,
+      "max_rss_bytes": 424837120,
+      "log": "completion-cap-diagnostics-logs/job-007-readouts-retraction512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-domain-fibred-readout-suffix-1-faces-x-normalize-staged.log",
+      "rows": [
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction512",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": false,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.001359708
+          ],
+          "support_s": [
+            0.000207375
+          ],
+          "import_s": [
+            0.001093416
+          ],
+          "admission_s": [
+            5.8541e-05
+          ],
+          "join_only_s": [
+            3.0875e-05
+          ],
+          "fresh_s": [
+            0.024237417
+          ],
+          "fresh_group_s": [
+            0.000183209
+          ],
+          "fresh_readout_s": [
+            0.024030834
+          ],
+          "fresh_compute_s": [
+            0.024215542
+          ],
+          "fresh_count_s": [
+            2.1792e-05
+          ],
+          "warm_s": [
+            0.000407125
+          ],
+          "warm_group_s": [
+            3.7125e-05
+          ],
+          "warm_readout_s": [
+            0.0003525
+          ],
+          "warm_compute_s": [
+            0.000393125
+          ],
+          "warm_count_s": [
+            1.3917e-05
+          ],
+          "input_nodes": 1525,
+          "final_nodes": 34461,
+          "input_bytes_est": 181496,
+          "final_bytes_est": 4509700,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 24400,
+            "table_bytes": 58344,
+            "interner_bytes": 36564,
+            "metadata_bytes": 12460,
+            "cache_bytes": 49728,
+            "records": 1525,
+            "tables": 1511,
+            "logical_words": 7293,
+            "total_bytes_est": 181496
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 780800,
+            "table_bytes": 933504,
+            "interner_bytes": 1170048,
+            "metadata_bytes": 390660,
+            "cache_bytes": 1234688,
+            "records": 34461,
+            "tables": 20010,
+            "logical_words": 113778,
+            "total_bytes_est": 4509700
+          },
+          "outer_memo_bytes": 0,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "readout_free_join",
+          "candidate": "retraction512",
+          "domain": "fibred",
+          "readout_family": "suffix-1",
+          "readout_faces": "x",
+          "hidden": 1,
+          "width": 4,
+          "bits": 13,
+          "worlds": 8192,
+          "admissible_worlds": 3197,
+          "environments": 2,
+          "rows": 128,
+          "groups": 16,
+          "outputs": 64,
+          "memo": true,
+          "changed_possible_groups": 16,
+          "changed_guaranteed_groups": 16,
+          "nonconstant_readouts": 48,
+          "build_s": [
+            0.001359708
+          ],
+          "support_s": [
+            0.000207375
+          ],
+          "import_s": [
+            0.001093416
+          ],
+          "admission_s": [
+            5.8541e-05
+          ],
+          "join_only_s": [
+            3.0875e-05
+          ],
+          "fresh_s": [
+            0.022652833
+          ],
+          "fresh_group_s": [
+            0.000177458
+          ],
+          "fresh_readout_s": [
+            0.022462958
+          ],
+          "fresh_compute_s": [
+            0.02264075
+          ],
+          "fresh_count_s": [
+            1.2e-05
+          ],
+          "warm_s": [
+            0.000366083
+          ],
+          "warm_group_s": [
+            1.1875e-05
+          ],
+          "warm_readout_s": [
+            0.000341042
+          ],
+          "warm_compute_s": [
+            0.000353083
+          ],
+          "warm_count_s": [
+            1.2916e-05
+          ],
+          "input_nodes": 1525,
+          "final_nodes": 34461,
+          "input_bytes_est": 181496,
+          "final_bytes_est": 4518660,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 24400,
+            "table_bytes": 58344,
+            "interner_bytes": 36564,
+            "metadata_bytes": 12460,
+            "cache_bytes": 49728,
+            "records": 1525,
+            "tables": 1511,
+            "logical_words": 7293,
+            "total_bytes_est": 181496
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 780800,
+            "table_bytes": 933504,
+            "interner_bytes": 1170048,
+            "metadata_bytes": 390660,
+            "cache_bytes": 1234688,
+            "records": 34461,
+            "tables": 20010,
+            "logical_words": 113778,
+            "total_bytes_est": 4509700
+          },
+          "outer_memo_bytes": 8960,
+          "colt_bytes": 14992,
+          "checksum": 598930,
+          "verified": true,
+          "layout": "bit-major",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "retraction_factor": "faces",
+          "retraction_normalize": "staged",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "assignments",
+          "view_reuse": "off",
+          "view_normalize": "deferred",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        10.43994140625,
+        9.98876953125,
+        8.44677734375
+      ],
+      "loadavg_end": [
+        9.923828125,
+        9.88916015625,
+        8.42041015625
+      ],
+      "cap_in_canonical_reimport": true
+    }
+  ],
+  "checker_sha256": "2b3f49c490e9d92bba1d38947a3734e916660b2a1020149af70924f2dbc87292",
+  "environment": {
+    "RUST_BACKTRACE": "full"
+  },
+  "boundary": "Untimed-failure diagnosis. These processes are excluded from comparative timings."
+}

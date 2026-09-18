@@ -1,0 +1,28 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"packed512","bits":18,"states":64,"identity_mode":"native","input_s":[1.5042e-5],"program_setup_s":[3.8833e-5],"query_s":[0.000192708],"owned_compute_s":[0.000234125],"iterations":[7],"output_counts":[133120, 133120, 262144, 262144, 4096],"output_packet_bytes":857,"final_arena_bytes_est":67052,"new_classes":3,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"packed512","bits":36,"states":4096,"identity_mode":"native","input_s":[1.7625e-5],"program_setup_s":[4.1083e-5],"query_s":[0.000443208],"owned_compute_s":[0.000485208],"iterations":[13],"output_counts":[34368126976, 34368126976, 68719476736, 68719476736, 16777216],"output_packet_bytes":1661,"final_arena_bytes_est":274996,"new_classes":3,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"packed512","bits":60,"states":1048576,"identity_mode":"native","input_s":[2.5167e-5],"program_setup_s":[4.9541e-5],"query_s":[0.0009765],"owned_compute_s":[0.001026833],"iterations":[21],"output_counts":[576461302059237376, 576461302059237376, 1152921504606846976, 1152921504606846976, 1099511627776],"output_packet_bytes":2733,"final_arena_bytes_est":541332,"new_classes":3,"input_storage":null,"final_storage":null,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1378 filtered out; finished in 0.00s
+
+
+        0.00 real         0.00 user         0.00 sys
+             6324224  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 600  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                   9  involuntary context switches
+            47060133  instructions retired
+            17707552  cycles elapsed
+             3637632  peak memory footprint

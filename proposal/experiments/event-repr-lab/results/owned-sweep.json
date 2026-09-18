@@ -1,0 +1,5649 @@
+{
+  "seed": 20260917,
+  "trials": 5,
+  "timeout_s": 120,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "6c4c4389c73ce36905d199462958ee7b438b00d3f4375d36be459b53b5b6793a",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "5ffc61dde8e0f651ba8f466d506d7058ed5c186082e2ff608f5a73bb61b63a50",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/finite.rs": "a65e6a304ef8b6f23f576f80900d26c19449beacda82500b1cec9bfc58d8bad3",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "8ec54f42be749577e232d479a25227940aac2a38060f4d4cf926b155e5579c70",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/owned_bench.rs": "61c2f7f7fca6a466314ea92e867d7cc0d6ed21b10cefefeadd264fd7ea2efa36",
+      "src/packed.rs": "90d1ee2dafde7461acda1867e7b39efeb5db3aa39d6cbba88083dfc07ceefede",
+      "src/relational_core.rs": "f43b10ff5d66f1c4c4e70198d511243a0d53a9959049c6ff1682524d84a501be",
+      "src/relations.rs": "0edd99420cb63986ace66e258c0002a5d3c4e603845bf666bbf81e4eb8b03921",
+      "src/semantic_checks.rs": "cd55b2559349e30fbf8760762a37def4b4bb977b5cbe3995443b80a9c0241222",
+      "src/transfer.rs": "8359b5f084057758eff207c81dde8306bb9a3c93978462d603c342fc57c00e48",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "7e4a02aae2e8a1cb2a49dbc9a3e255f90fa8c5066521014bd4f23204b1dee203"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T23:35:35.222096+00:00",
+    "build_started_utc": "2026-09-17T23:29:30.988175+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words"
+      },
+      "status": "passed",
+      "elapsed_s": 1.2741858959197998,
+      "max_rss_bytes": 41828352,
+      "log": "owned-sweep-logs/job-000-verify-local-words.log",
+      "rows": [
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        8.08154296875,
+        12.00439453125,
+        13.583984375
+      ],
+      "loadavg_end": [
+        7.83447265625,
+        11.8876953125,
+        13.533203125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "dense",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 4.22026515007019,
+      "max_rss_bytes": 26574848,
+      "log": "owned-sweep-logs/job-001-owned-dense----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense",
+          "target_candidate": "dense",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            8.709e-06,
+            8.542e-06,
+            8.667e-06,
+            9.875e-06,
+            8.75e-06
+          ],
+          "restore_inputs_s": [
+            2.9834e-05,
+            2.5666e-05,
+            2.3584e-05,
+            2.5292e-05,
+            2.4667e-05
+          ],
+          "program_setup_s": [
+            9.292e-06,
+            5.375e-06,
+            5.333e-06,
+            6.292e-06,
+            5.458e-06
+          ],
+          "query_s": [
+            0.000186083,
+            9.95e-05,
+            0.000140417,
+            9.0333e-05,
+            8.1167e-05
+          ],
+          "owned_compute_s": [
+            0.0001985,
+            0.000106208,
+            0.000163083,
+            9.7875e-05,
+            8.7625e-05
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 82488,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense",
+          "target_candidate": "dense",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            8.875e-06,
+            8.542e-06,
+            8.584e-06,
+            8.75e-06,
+            8.083e-06
+          ],
+          "restore_inputs_s": [
+            2.2375e-05,
+            2.0917e-05,
+            2.0667e-05,
+            2.025e-05,
+            2.0542e-05
+          ],
+          "program_setup_s": [
+            5.708e-06,
+            4.875e-06,
+            4.833e-06,
+            4.792e-06,
+            4.833e-06
+          ],
+          "query_s": [
+            8.5791e-05,
+            7.7292e-05,
+            7.6292e-05,
+            7.8e-05,
+            7.8625e-05
+          ],
+          "owned_compute_s": [
+            9.2541e-05,
+            8.3083e-05,
+            8.1833e-05,
+            8.35e-05,
+            8.4166e-05
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 82488,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.209e-06,
+            2.666e-06,
+            2.667e-06,
+            5.042e-06,
+            2.417e-06
+          ],
+          "restore_inputs_s": [
+            4.3666e-05,
+            5.0667e-05,
+            4.4209e-05,
+            5.5875e-05,
+            4.6083e-05
+          ],
+          "program_setup_s": [
+            4.4625e-05,
+            4.2417e-05,
+            5.5542e-05,
+            4.9667e-05,
+            5.3375e-05
+          ],
+          "query_s": [
+            0.000277709,
+            0.000237375,
+            0.000250584,
+            0.000257875,
+            0.000265
+          ],
+          "owned_compute_s": [
+            0.000324,
+            0.000283625,
+            0.000308041,
+            0.000313167,
+            0.00032025
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense",
+          "target_candidate": "dense",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            0.000561166,
+            0.0005855,
+            0.000536292,
+            0.000551833,
+            0.000547
+          ],
+          "restore_inputs_s": [
+            0.000905208,
+            0.000863042,
+            0.000837584,
+            0.000852542,
+            0.000855125
+          ],
+          "program_setup_s": [
+            0.000279792,
+            0.000262792,
+            0.000253958,
+            0.000261291,
+            0.000251083
+          ],
+          "query_s": [
+            0.003691667,
+            0.0034275,
+            0.003563542,
+            0.003433042,
+            0.003282666
+          ],
+          "owned_compute_s": [
+            0.003974084,
+            0.003692333,
+            0.003820208,
+            0.003696958,
+            0.003535375
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 5810560,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense",
+          "target_candidate": "dense",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            0.000542667,
+            0.000534042,
+            0.000534042,
+            0.000528125,
+            0.000549333
+          ],
+          "restore_inputs_s": [
+            0.000851125,
+            0.000829292,
+            0.000845875,
+            0.000820375,
+            0.000840208
+          ],
+          "program_setup_s": [
+            0.000253625,
+            0.000251584,
+            0.000254041,
+            0.000249083,
+            0.000250875
+          ],
+          "query_s": [
+            0.003311916,
+            0.003330417,
+            0.003290209,
+            0.0033095,
+            0.003363417
+          ],
+          "owned_compute_s": [
+            0.003568083,
+            0.003583542,
+            0.00354575,
+            0.003559875,
+            0.003615667
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 5810560,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.083e-06,
+            5.667e-06,
+            7.042e-06,
+            9.208e-06,
+            7.292e-06
+          ],
+          "restore_inputs_s": [
+            0.001693125,
+            0.001642416,
+            0.001734583,
+            0.001564,
+            0.001566958
+          ],
+          "program_setup_s": [
+            0.001264709,
+            0.001301542,
+            0.001243875,
+            0.001215125,
+            0.001220417
+          ],
+          "query_s": [
+            0.000730042,
+            0.000787083,
+            0.000715666,
+            0.000724417,
+            0.000722791
+          ],
+          "owned_compute_s": [
+            0.00199675,
+            0.00209075,
+            0.001961958,
+            0.001941833,
+            0.001945458
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        7.83447265625,
+        11.8876953125,
+        13.533203125
+      ],
+      "loadavg_end": [
+        7.447265625,
+        11.73974609375,
+        13.47119140625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 4.1733176708221436,
+      "max_rss_bytes": 23101440,
+      "log": "owned-sweep-logs/job-002-owned-dense-dispatched----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense-dispatched",
+          "target_candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            9.167e-06,
+            9.125e-06,
+            9.083e-06,
+            1.0041e-05,
+            8.833e-06
+          ],
+          "restore_inputs_s": [
+            2.8459e-05,
+            2.1417e-05,
+            2.1958e-05,
+            1.9125e-05,
+            1.9667e-05
+          ],
+          "program_setup_s": [
+            8.709e-06,
+            5.208e-06,
+            4.667e-06,
+            4.417e-06,
+            4.292e-06
+          ],
+          "query_s": [
+            0.000142375,
+            6.5042e-05,
+            5.9417e-05,
+            5.9208e-05,
+            5.9667e-05
+          ],
+          "owned_compute_s": [
+            0.000154459,
+            7.1416e-05,
+            6.6209e-05,
+            6.4542e-05,
+            6.4875e-05
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 82488,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense-dispatched",
+          "target_candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.0917e-05,
+            8.875e-06,
+            9.458e-06,
+            9.333e-06,
+            9.041e-06
+          ],
+          "restore_inputs_s": [
+            1.9333e-05,
+            1.9542e-05,
+            1.8291e-05,
+            1.9e-05,
+            2.0125e-05
+          ],
+          "program_setup_s": [
+            5.166e-06,
+            4.459e-06,
+            4.334e-06,
+            4.417e-06,
+            4.208e-06
+          ],
+          "query_s": [
+            6.0875e-05,
+            5.8084e-05,
+            5.8708e-05,
+            5.8708e-05,
+            5.8792e-05
+          ],
+          "owned_compute_s": [
+            6.6916e-05,
+            6.3334e-05,
+            6.3959e-05,
+            6.3917e-05,
+            6.3708e-05
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 82488,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense-dispatched",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.208e-06,
+            3.459e-06,
+            4.291e-06,
+            3.208e-06,
+            3.083e-06
+          ],
+          "restore_inputs_s": [
+            4.625e-05,
+            4.9459e-05,
+            6.2083e-05,
+            4.7083e-05,
+            4.5e-05
+          ],
+          "program_setup_s": [
+            4.575e-05,
+            4.8708e-05,
+            4.5667e-05,
+            4.3208e-05,
+            4.35e-05
+          ],
+          "query_s": [
+            0.000261959,
+            0.000270167,
+            0.0002765,
+            0.000239958,
+            0.0002435
+          ],
+          "owned_compute_s": [
+            0.000309208,
+            0.000320834,
+            0.000324083,
+            0.000285,
+            0.000288583
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense-dispatched",
+          "target_candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            0.000549458,
+            0.00053,
+            0.00054525,
+            0.000518083,
+            0.000535
+          ],
+          "restore_inputs_s": [
+            0.000753917,
+            0.000773125,
+            0.000710417,
+            0.000720084,
+            0.000765
+          ],
+          "program_setup_s": [
+            0.000222208,
+            0.000217333,
+            0.000210958,
+            0.000216959,
+            0.000233917
+          ],
+          "query_s": [
+            0.002572542,
+            0.002278083,
+            0.002418125,
+            0.002359583,
+            0.002381292
+          ],
+          "owned_compute_s": [
+            0.002796709,
+            0.002496792,
+            0.002630292,
+            0.002578166,
+            0.002616459
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 5810560,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense-dispatched",
+          "target_candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            0.000522,
+            0.000540167,
+            0.000560541,
+            0.000566708,
+            0.000537
+          ],
+          "restore_inputs_s": [
+            0.000710208,
+            0.00076375,
+            0.00071825,
+            0.000794875,
+            0.000724708
+          ],
+          "program_setup_s": [
+            0.000210542,
+            0.000225875,
+            0.000217041,
+            0.000225916,
+            0.000219542
+          ],
+          "query_s": [
+            0.00246675,
+            0.002451667,
+            0.002375292,
+            0.002358459,
+            0.00242375
+          ],
+          "owned_compute_s": [
+            0.002680792,
+            0.002679333,
+            0.002595458,
+            0.002586083,
+            0.002645084
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 5810560,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "dense-dispatched",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.167e-06,
+            6.25e-06,
+            5.458e-06,
+            7.125e-06,
+            4.75e-06
+          ],
+          "restore_inputs_s": [
+            0.001622542,
+            0.001619,
+            0.001710208,
+            0.001618125,
+            0.001531459
+          ],
+          "program_setup_s": [
+            0.001318792,
+            0.001328125,
+            0.001265709,
+            0.001225167,
+            0.001214958
+          ],
+          "query_s": [
+            0.000702417,
+            0.000719125,
+            0.000731625,
+            0.000706167,
+            0.000698041
+          ],
+          "owned_compute_s": [
+            0.002023667,
+            0.002050208,
+            0.002000083,
+            0.001933625,
+            0.001915417
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        7.447265625,
+        11.73974609375,
+        13.47119140625
+      ],
+      "loadavg_end": [
+        7.447265625,
+        11.73974609375,
+        13.47119140625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "sparse",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 6.267745018005371,
+      "max_rss_bytes": 114393088,
+      "log": "owned-sweep-logs/job-003-owned-sparse----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "sparse",
+          "target_candidate": "sparse",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.4459e-05,
+            1.3834e-05,
+            1.4167e-05,
+            1.6292e-05,
+            1.4833e-05
+          ],
+          "restore_inputs_s": [
+            0.000417333,
+            0.00041625,
+            0.000402833,
+            0.000415625,
+            0.000413292
+          ],
+          "program_setup_s": [
+            8.1958e-05,
+            7.0875e-05,
+            7.25e-05,
+            7.425e-05,
+            7.5833e-05
+          ],
+          "query_s": [
+            0.002711208,
+            0.002489875,
+            0.002715375,
+            0.002579709,
+            0.002581166
+          ],
+          "owned_compute_s": [
+            0.002797833,
+            0.002562833,
+            0.002795209,
+            0.002656541,
+            0.002659625
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 1211640,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "sparse",
+          "target_candidate": "sparse",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.3708e-05,
+            1.3583e-05,
+            1.25e-05,
+            1.325e-05,
+            1.2834e-05
+          ],
+          "restore_inputs_s": [
+            0.000425,
+            0.000400583,
+            0.000384667,
+            0.000402167,
+            0.000403416
+          ],
+          "program_setup_s": [
+            7.5709e-05,
+            7.1042e-05,
+            7.1375e-05,
+            7.85e-05,
+            7.6083e-05
+          ],
+          "query_s": [
+            0.002507875,
+            0.002514833,
+            0.002428791,
+            0.00248175,
+            0.002497375
+          ],
+          "owned_compute_s": [
+            0.0025865,
+            0.002587334,
+            0.002501375,
+            0.002561291,
+            0.002575292
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 1211640,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "sparse",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.917e-06,
+            2.5e-06,
+            3.333e-06,
+            3.083e-06,
+            3.416e-06
+          ],
+          "restore_inputs_s": [
+            5.4167e-05,
+            5.4333e-05,
+            5.7084e-05,
+            5.8666e-05,
+            5.2625e-05
+          ],
+          "program_setup_s": [
+            4.5667e-05,
+            4.3375e-05,
+            4.825e-05,
+            4.8208e-05,
+            4.4166e-05
+          ],
+          "query_s": [
+            0.000270666,
+            0.000248166,
+            0.0002745,
+            0.000302542,
+            0.000241708
+          ],
+          "owned_compute_s": [
+            0.000318375,
+            0.0002935,
+            0.000324708,
+            0.000353666,
+            0.000287833
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "sparse",
+          "target_candidate": "sparse",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            0.000740625,
+            0.00072575,
+            0.000742625,
+            0.000712917,
+            0.000718
+          ],
+          "restore_inputs_s": [
+            0.016399209,
+            0.01681125,
+            0.01669025,
+            0.0167775,
+            0.016622417
+          ],
+          "program_setup_s": [
+            0.004310084,
+            0.004540041,
+            0.004325667,
+            0.004224,
+            0.004432208
+          ],
+          "query_s": [
+            0.106099291,
+            0.104875708,
+            0.104002084,
+            0.102848792,
+            0.103865209
+          ],
+          "owned_compute_s": [
+            0.110414,
+            0.109420833,
+            0.108332709,
+            0.107077167,
+            0.108301916
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 45568896,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "sparse",
+          "target_candidate": "sparse",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            0.000772084,
+            0.000720916,
+            0.000739541,
+            0.000752708,
+            0.000733708
+          ],
+          "restore_inputs_s": [
+            0.016944041,
+            0.016783875,
+            0.028503667,
+            0.016997792,
+            0.01658375
+          ],
+          "program_setup_s": [
+            0.004273708,
+            0.004416917,
+            0.005149791,
+            0.004461167,
+            0.004250792
+          ],
+          "query_s": [
+            0.101425792,
+            0.14600825,
+            0.107930458,
+            0.104365292,
+            0.103234625
+          ],
+          "owned_compute_s": [
+            0.105703708,
+            0.150429667,
+            0.113085083,
+            0.10883125,
+            0.107489792
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 45568896,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "sparse",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.75e-06,
+            6.584e-06,
+            9.208e-06,
+            6.25e-06,
+            6.292e-06
+          ],
+          "restore_inputs_s": [
+            0.001805125,
+            0.00181325,
+            0.001819291,
+            0.001820583,
+            0.0018635
+          ],
+          "program_setup_s": [
+            0.001240459,
+            0.001276,
+            0.001276167,
+            0.001317333,
+            0.001321875
+          ],
+          "query_s": [
+            0.0007085,
+            0.000731167,
+            0.000763167,
+            0.000731125,
+            0.000730333
+          ],
+          "owned_compute_s": [
+            0.001951416,
+            0.002013416,
+            0.002042458,
+            0.002051083,
+            0.002054958
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        7.447265625,
+        11.73974609375,
+        13.47119140625
+      ],
+      "loadavg_end": [
+        7.29150390625,
+        11.56591796875,
+        13.38916015625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 7.674685001373291,
+      "max_rss_bytes": 20004864,
+      "log": "owned-sweep-logs/job-004-owned-bdd-anchored----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-anchored",
+          "target_candidate": "bdd-anchored",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.209e-06,
+            1.792e-06,
+            1.083e-06,
+            1.834e-06,
+            4.042e-06
+          ],
+          "restore_inputs_s": [
+            6.8583e-05,
+            4.975e-05,
+            4.325e-05,
+            5.6e-05,
+            5.2792e-05
+          ],
+          "program_setup_s": [
+            2.8042e-05,
+            2.4709e-05,
+            2.5834e-05,
+            3.425e-05,
+            2.4917e-05
+          ],
+          "query_s": [
+            0.00043075,
+            0.000336791,
+            0.000386042,
+            0.0003545,
+            0.0003715
+          ],
+          "owned_compute_s": [
+            0.000462458,
+            0.000363125,
+            0.000413958,
+            0.000390291,
+            0.000398459
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 863,
+          "final_arena_bytes_est": 176320,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-anchored",
+          "target_candidate": "bdd-anchored",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.041e-06,
+            1.041e-06,
+            1.625e-06,
+            1.042e-06,
+            1.833e-06
+          ],
+          "restore_inputs_s": [
+            7.7125e-05,
+            7.1334e-05,
+            8.5625e-05,
+            7.1959e-05,
+            7.85e-05
+          ],
+          "program_setup_s": [
+            3.9125e-05,
+            3.8792e-05,
+            3.6375e-05,
+            3.3125e-05,
+            3.2916e-05
+          ],
+          "query_s": [
+            0.000512584,
+            0.000492333,
+            0.000442625,
+            0.000424667,
+            0.000472417
+          ],
+          "owned_compute_s": [
+            0.00055425,
+            0.000538,
+            0.000480708,
+            0.000459542,
+            0.000506916
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 863,
+          "final_arena_bytes_est": 352448,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-anchored",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.5e-06,
+            2.166e-06,
+            4.708e-06,
+            3.584e-06,
+            3.292e-06
+          ],
+          "restore_inputs_s": [
+            6.5833e-05,
+            5.7792e-05,
+            6.9583e-05,
+            7.3167e-05,
+            6.1291e-05
+          ],
+          "program_setup_s": [
+            4.7917e-05,
+            4.0666e-05,
+            4.6292e-05,
+            4.5042e-05,
+            4.2917e-05
+          ],
+          "query_s": [
+            0.000255667,
+            0.000226083,
+            0.000273125,
+            0.00025525,
+            0.000240375
+          ],
+          "owned_compute_s": [
+            0.000305625,
+            0.000268,
+            0.000321584,
+            0.000302083,
+            0.000285209
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-anchored",
+          "target_candidate": "bdd-anchored",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.959e-06,
+            1.025e-05,
+            1.0834e-05,
+            4.792e-06,
+            4.208e-06
+          ],
+          "restore_inputs_s": [
+            0.000146833,
+            0.000155083,
+            0.000158083,
+            0.000146834,
+            0.000137333
+          ],
+          "program_setup_s": [
+            0.001150291,
+            0.001161375,
+            0.001222375,
+            0.001147084,
+            0.001192042
+          ],
+          "query_s": [
+            0.001228458,
+            0.001196833,
+            0.001292333,
+            0.001175916,
+            0.00115
+          ],
+          "owned_compute_s": [
+            0.002381708,
+            0.002360333,
+            0.002517292,
+            0.0023255,
+            0.002345
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 3357,
+          "final_arena_bytes_est": 934128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-anchored",
+          "target_candidate": "bdd-anchored",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.708e-06,
+            5.75e-06,
+            5.166e-06,
+            6.375e-06,
+            5.625e-06
+          ],
+          "restore_inputs_s": [
+            0.000386084,
+            0.000440625,
+            0.000392958,
+            0.000438791,
+            0.000397375
+          ],
+          "program_setup_s": [
+            0.001408,
+            0.001431584,
+            0.001879875,
+            0.001424834,
+            0.00149575
+          ],
+          "query_s": [
+            0.002904,
+            0.003197041,
+            0.002920709,
+            0.003158125,
+            0.0035365
+          ],
+          "owned_compute_s": [
+            0.004315125,
+            0.004632291,
+            0.004803334,
+            0.004586875,
+            0.005036
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 4295,
+          "final_arena_bytes_est": 1409264,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-anchored",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.958e-06,
+            1.0291e-05,
+            6.5e-06,
+            5.5e-06,
+            5.416e-06
+          ],
+          "restore_inputs_s": [
+            0.000163667,
+            0.000165,
+            0.000163375,
+            0.000175958,
+            0.000164125
+          ],
+          "program_setup_s": [
+            0.001343333,
+            0.001246334,
+            0.001274292,
+            0.00122525,
+            0.001234
+          ],
+          "query_s": [
+            0.000732916,
+            0.000693459,
+            0.000675833,
+            0.000770834,
+            0.000718458
+          ],
+          "owned_compute_s": [
+            0.002079459,
+            0.001952041,
+            0.001953209,
+            0.001999083,
+            0.001955458
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        7.29150390625,
+        11.56591796875,
+        13.38916015625
+      ],
+      "loadavg_end": [
+        7.10791015625,
+        11.45654296875,
+        13.33984375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 6.755919694900513,
+      "max_rss_bytes": 16728064,
+      "log": "owned-sweep-logs/job-005-owned-mdd4-pair----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "mdd4-pair",
+          "target_candidate": "mdd4-pair",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.041e-06,
+            1.125e-06,
+            6.67e-07,
+            9.59e-07,
+            7.09e-07
+          ],
+          "restore_inputs_s": [
+            8.1541e-05,
+            6.5292e-05,
+            5.9791e-05,
+            6.625e-05,
+            5.8583e-05
+          ],
+          "program_setup_s": [
+            1.9875e-05,
+            1.6583e-05,
+            1.7417e-05,
+            1.675e-05,
+            1.5625e-05
+          ],
+          "query_s": [
+            0.00053,
+            0.000370667,
+            0.000365,
+            0.000399709,
+            0.000364875
+          ],
+          "owned_compute_s": [
+            0.000553083,
+            0.000388709,
+            0.000383667,
+            0.000418041,
+            0.000381792
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 4499,
+          "output_packet_bytes": 1187,
+          "final_arena_bytes_est": 263216,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "mdd4-pair",
+          "target_candidate": "mdd4-pair",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            5.84e-07,
+            5.84e-07,
+            5.41e-07,
+            1.708e-06,
+            7.92e-07
+          ],
+          "restore_inputs_s": [
+            8.4583e-05,
+            8.175e-05,
+            7.5167e-05,
+            8.2e-05,
+            9.1291e-05
+          ],
+          "program_setup_s": [
+            1.8667e-05,
+            1.8125e-05,
+            1.7041e-05,
+            2.5083e-05,
+            1.7625e-05
+          ],
+          "query_s": [
+            0.000425375,
+            0.000381625,
+            0.000379625,
+            0.0004485,
+            0.000406416
+          ],
+          "owned_compute_s": [
+            0.000445167,
+            0.000400875,
+            0.00039775,
+            0.000475167,
+            0.000425292
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 4499,
+          "output_packet_bytes": 927,
+          "final_arena_bytes_est": 349232,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "mdd4-pair",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            8.33e-07,
+            1.459e-06,
+            4.417e-06,
+            3.125e-06,
+            2.25e-06
+          ],
+          "restore_inputs_s": [
+            6.6625e-05,
+            6.0125e-05,
+            9.2834e-05,
+            6.8917e-05,
+            6.8417e-05
+          ],
+          "program_setup_s": [
+            4.475e-05,
+            4.0792e-05,
+            4.5208e-05,
+            4.275e-05,
+            4.0417e-05
+          ],
+          "query_s": [
+            0.000258042,
+            0.000227667,
+            0.000256875,
+            0.000238958,
+            0.0002265
+          ],
+          "owned_compute_s": [
+            0.000304375,
+            0.000269584,
+            0.000304167,
+            0.000283334,
+            0.000268291
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 4499,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "mdd4-pair",
+          "target_candidate": "mdd4-pair",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.958e-06,
+            3.416e-06,
+            3.875e-06,
+            7.042e-06,
+            3.667e-06
+          ],
+          "restore_inputs_s": [
+            0.000222208,
+            0.000226959,
+            0.000227375,
+            0.0002495,
+            0.00023375
+          ],
+          "program_setup_s": [
+            0.000826709,
+            0.000812667,
+            0.000836,
+            0.000849833,
+            0.000826958
+          ],
+          "query_s": [
+            0.001249084,
+            0.001177834,
+            0.001204041,
+            0.001201,
+            0.00122725
+          ],
+          "owned_compute_s": [
+            0.002077916,
+            0.001992833,
+            0.002041875,
+            0.002053,
+            0.002056333
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 16037,
+          "output_packet_bytes": 4873,
+          "final_arena_bytes_est": 1009736,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "mdd4-pair",
+          "target_candidate": "mdd4-pair",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.75e-06,
+            3.417e-06,
+            7.333e-06,
+            2.917e-06,
+            3.458e-06
+          ],
+          "restore_inputs_s": [
+            0.000373333,
+            0.000379333,
+            0.000376291,
+            0.000385541,
+            0.000379292
+          ],
+          "program_setup_s": [
+            0.000904459,
+            0.000932208,
+            0.000923167,
+            0.000901,
+            0.0009015
+          ],
+          "query_s": [
+            0.002956625,
+            0.003104458,
+            0.002957625,
+            0.003004167,
+            0.002960666
+          ],
+          "owned_compute_s": [
+            0.003863334,
+            0.004039333,
+            0.003883,
+            0.003907417,
+            0.003864709
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 16037,
+          "output_packet_bytes": 4535,
+          "final_arena_bytes_est": 1960008,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "mdd4-pair",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.667e-06,
+            6.291e-06,
+            5.166e-06,
+            4.875e-06,
+            5.375e-06
+          ],
+          "restore_inputs_s": [
+            0.00018325,
+            0.000198542,
+            0.000233083,
+            0.000186958,
+            0.000187792
+          ],
+          "program_setup_s": [
+            0.00130975,
+            0.001250417,
+            0.001263166,
+            0.00123725,
+            0.001244958
+          ],
+          "query_s": [
+            0.000686333,
+            0.000786083,
+            0.00071325,
+            0.000758125,
+            0.000684375
+          ],
+          "owned_compute_s": [
+            0.001998791,
+            0.002043208,
+            0.001978792,
+            0.00199775,
+            0.001931917
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 16037,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        7.10791015625,
+        11.45654296875,
+        13.33984375
+      ],
+      "loadavg_end": [
+        6.482421875,
+        11.177734375,
+        13.21826171875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 7.359727144241333,
+      "max_rss_bytes": 16384000,
+      "log": "owned-sweep-logs/job-006-owned-packed512----bit-major-local-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed512",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.0875e-05,
+            5.25e-06,
+            1.833e-06,
+            1.292e-06,
+            3.666e-06
+          ],
+          "restore_inputs_s": [
+            6.9791e-05,
+            3.8166e-05,
+            3.4334e-05,
+            2.9458e-05,
+            3.2958e-05
+          ],
+          "program_setup_s": [
+            5.0792e-05,
+            4.5833e-05,
+            4.3583e-05,
+            3.9917e-05,
+            4.1e-05
+          ],
+          "query_s": [
+            0.000309875,
+            0.000261,
+            0.00025875,
+            0.000229209,
+            0.000232708
+          ],
+          "owned_compute_s": [
+            0.000365584,
+            0.000309042,
+            0.000305166,
+            0.000270417,
+            0.000275042
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 4661,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed512",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            5.83e-07,
+            5.75e-06,
+            1.959e-06,
+            9.59e-07,
+            3.5e-06
+          ],
+          "restore_inputs_s": [
+            0.000209791,
+            0.000256458,
+            0.000203084,
+            0.000191084,
+            0.000234916
+          ],
+          "program_setup_s": [
+            2.2041e-05,
+            2.4334e-05,
+            2.1375e-05,
+            2.2541e-05,
+            2.2792e-05
+          ],
+          "query_s": [
+            0.000525042,
+            0.000582791,
+            0.000493459,
+            0.000490625,
+            0.00051525
+          ],
+          "owned_compute_s": [
+            0.000548542,
+            0.000609459,
+            0.000516083,
+            0.000514292,
+            0.000540125
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 4661,
+          "output_packet_bytes": 1403,
+          "final_arena_bytes_est": 340068,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed512",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.958e-06,
+            5.417e-06,
+            5.875e-06,
+            5.833e-06,
+            6.459e-06
+          ],
+          "restore_inputs_s": [
+            0.000143667,
+            0.000146833,
+            0.000157459,
+            0.000150417,
+            0.000154083
+          ],
+          "program_setup_s": [
+            0.001246041,
+            0.001225417,
+            0.001233166,
+            0.001461,
+            0.001353166
+          ],
+          "query_s": [
+            0.0007205,
+            0.000698209,
+            0.000674542,
+            0.000798667,
+            0.000681416
+          ],
+          "owned_compute_s": [
+            0.001971875,
+            0.001926125,
+            0.001910208,
+            0.002262625,
+            0.002037292
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 21017,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed512",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.334e-06,
+            5.25e-06,
+            7.125e-06,
+            7.542e-06,
+            1e-05
+          ],
+          "restore_inputs_s": [
+            0.00080625,
+            0.00077775,
+            0.000857291,
+            0.000792458,
+            0.000838167
+          ],
+          "program_setup_s": [
+            0.00016575,
+            0.000161208,
+            0.000165958,
+            0.000186541,
+            0.000161583
+          ],
+          "query_s": [
+            0.002322042,
+            0.002257917,
+            0.002223666,
+            0.002328,
+            0.002225667
+          ],
+          "owned_compute_s": [
+            0.002490333,
+            0.002421834,
+            0.002392,
+            0.002518625,
+            0.002390125
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 21017,
+          "output_packet_bytes": 8987,
+          "final_arena_bytes_est": 1253540,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.482421875,
+        11.177734375,
+        13.21826171875
+      ],
+      "loadavg_end": [
+        6.603515625,
+        11.12451171875,
+        13.1875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 13.408444166183472,
+      "max_rss_bytes": 19267584,
+      "log": "owned-sweep-logs/job-007-owned-block64----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "block64",
+          "target_candidate": "block64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.792e-06,
+            5e-06,
+            2.833e-06,
+            1.666e-06,
+            2.375e-06
+          ],
+          "restore_inputs_s": [
+            0.000156333,
+            0.000185833,
+            0.000144334,
+            0.000141958,
+            0.000133208
+          ],
+          "program_setup_s": [
+            2.7084e-05,
+            2.8e-05,
+            2.5417e-05,
+            2.5375e-05,
+            2.4459e-05
+          ],
+          "query_s": [
+            0.000293666,
+            0.000273833,
+            0.000256791,
+            0.000252708,
+            0.000294958
+          ],
+          "owned_compute_s": [
+            0.000325,
+            0.000304083,
+            0.000284166,
+            0.000279708,
+            0.000321709
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 8559,
+          "output_packet_bytes": 3261,
+          "final_arena_bytes_est": 88252,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "block64",
+          "target_candidate": "block64",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            5.42e-07,
+            1.209e-06,
+            9.59e-07,
+            5.042e-06,
+            1e-06
+          ],
+          "restore_inputs_s": [
+            0.000125791,
+            0.000142042,
+            0.000112958,
+            0.000132458,
+            0.000115833
+          ],
+          "program_setup_s": [
+            7.833e-06,
+            7.375e-06,
+            6.417e-06,
+            7.959e-06,
+            6.584e-06
+          ],
+          "query_s": [
+            0.000581875,
+            0.00055325,
+            0.000526125,
+            0.000583125,
+            0.000539583
+          ],
+          "owned_compute_s": [
+            0.000591375,
+            0.000563458,
+            0.000534041,
+            0.000592791,
+            0.000547417
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 8559,
+          "output_packet_bytes": 1073,
+          "final_arena_bytes_est": 322748,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "block64",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1e-06,
+            1.25e-06,
+            1.958e-06,
+            1.334e-06,
+            1e-06
+          ],
+          "restore_inputs_s": [
+            8.25e-05,
+            7.2291e-05,
+            9.1333e-05,
+            6.725e-05,
+            6.6625e-05
+          ],
+          "program_setup_s": [
+            4.4542e-05,
+            4.0417e-05,
+            4.2667e-05,
+            3.9708e-05,
+            3.9375e-05
+          ],
+          "query_s": [
+            0.0002475,
+            0.000229791,
+            0.000234666,
+            0.000219541,
+            0.000216792
+          ],
+          "owned_compute_s": [
+            0.000293959,
+            0.000271458,
+            0.000278834,
+            0.0002605,
+            0.000257084
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 8559,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "block64",
+          "target_candidate": "block64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.917e-06,
+            5.416e-06,
+            5.5e-06,
+            4.333e-06,
+            4.5e-06
+          ],
+          "restore_inputs_s": [
+            0.000576084,
+            0.000537625,
+            0.000545167,
+            0.000520625,
+            0.000526917
+          ],
+          "program_setup_s": [
+            0.001234333,
+            0.001205417,
+            0.001258542,
+            0.001214584,
+            0.001204709
+          ],
+          "query_s": [
+            0.001122792,
+            0.001179584,
+            0.001277875,
+            0.001283667,
+            0.001127834
+          ],
+          "owned_compute_s": [
+            0.002359333,
+            0.002389167,
+            0.00254075,
+            0.002501167,
+            0.00233475
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 38683,
+          "output_packet_bytes": 15517,
+          "final_arena_bytes_est": 365800,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "block64",
+          "target_candidate": "block64",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.291e-06,
+            5.625e-06,
+            6.083e-06,
+            5.792e-06,
+            4.417e-06
+          ],
+          "restore_inputs_s": [
+            0.00066425,
+            0.000702208,
+            0.000667416,
+            0.000680875,
+            0.000643167
+          ],
+          "program_setup_s": [
+            0.000224209,
+            0.000218666,
+            0.000223292,
+            0.000228042,
+            0.000218667
+          ],
+          "query_s": [
+            0.002627208,
+            0.002564875,
+            0.002659,
+            0.00269175,
+            0.0025235
+          ],
+          "owned_compute_s": [
+            0.002854666,
+            0.00278675,
+            0.002885791,
+            0.002924375,
+            0.002744916
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 38683,
+          "output_packet_bytes": 4115,
+          "final_arena_bytes_est": 1755368,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "block64",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.5e-06,
+            6e-06,
+            5.125e-06,
+            5.792e-06,
+            5.458e-06
+          ],
+          "restore_inputs_s": [
+            0.000321292,
+            0.000353542,
+            0.0003225,
+            0.000333542,
+            0.000331916
+          ],
+          "program_setup_s": [
+            0.001291167,
+            0.0012775,
+            0.001236417,
+            0.001249208,
+            0.001279083
+          ],
+          "query_s": [
+            0.000716084,
+            0.000717584,
+            0.000689875,
+            0.000687125,
+            0.000713792
+          ],
+          "owned_compute_s": [
+            0.00201,
+            0.001997708,
+            0.001928833,
+            0.001939083,
+            0.001995208
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 38683,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.603515625,
+        11.12451171875,
+        13.1875
+      ],
+      "loadavg_end": [
+        6.69140625,
+        10.92138671875,
+        13.07861328125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 10.602965116500854,
+      "max_rss_bytes": 20316160,
+      "log": "owned-sweep-logs/job-008-owned-packed64----bit-major-local-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed64",
+          "target_candidate": "packed64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2e-06,
+            4.958e-06,
+            3.541e-06,
+            4.125e-06,
+            3.334e-06
+          ],
+          "restore_inputs_s": [
+            6.0833e-05,
+            6.8125e-05,
+            5.0084e-05,
+            6.2583e-05,
+            5.6833e-05
+          ],
+          "program_setup_s": [
+            2.5e-05,
+            2.5208e-05,
+            2.3333e-05,
+            2.125e-05,
+            2.2958e-05
+          ],
+          "query_s": [
+            0.000320041,
+            0.000220916,
+            0.000203083,
+            0.000195708,
+            0.000202792
+          ],
+          "owned_compute_s": [
+            0.000348833,
+            0.00025175,
+            0.000228167,
+            0.000218791,
+            0.00022775
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3723,
+          "output_packet_bytes": 1003,
+          "final_arena_bytes_est": 148056,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed64",
+          "target_candidate": "packed64",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            6.67e-07,
+            2.167e-06,
+            2.875e-06,
+            4.5e-06,
+            3.167e-06
+          ],
+          "restore_inputs_s": [
+            7.9833e-05,
+            7.9e-05,
+            7.6458e-05,
+            8.7709e-05,
+            0.000112
+          ],
+          "program_setup_s": [
+            6.458e-06,
+            6.083e-06,
+            5.666e-06,
+            5.375e-06,
+            1.1292e-05
+          ],
+          "query_s": [
+            0.000309667,
+            0.000262583,
+            0.000246292,
+            0.000255917,
+            0.000303875
+          ],
+          "owned_compute_s": [
+            0.000319125,
+            0.000272125,
+            0.000253333,
+            0.000262583,
+            0.000321375
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3723,
+          "output_packet_bytes": 805,
+          "final_arena_bytes_est": 205912,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed64",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            8.75e-07,
+            2.667e-06,
+            3.5e-06,
+            2.041e-06,
+            3.375e-06
+          ],
+          "restore_inputs_s": [
+            6.0375e-05,
+            5.9125e-05,
+            7.1125e-05,
+            6.1042e-05,
+            7.2125e-05
+          ],
+          "program_setup_s": [
+            4.4167e-05,
+            4.3292e-05,
+            4.9375e-05,
+            4.5041e-05,
+            4.45e-05
+          ],
+          "query_s": [
+            0.000257291,
+            0.000242959,
+            0.000251292,
+            0.000255375,
+            0.000245583
+          ],
+          "owned_compute_s": [
+            0.000303625,
+            0.000287917,
+            0.000303,
+            0.000301958,
+            0.000292
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3723,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed64",
+          "target_candidate": "packed64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.958e-06,
+            6e-06,
+            4.75e-06,
+            9.459e-06,
+            4.875e-06
+          ],
+          "restore_inputs_s": [
+            0.000141208,
+            0.000151042,
+            0.000147125,
+            0.000165125,
+            0.000148291
+          ],
+          "program_setup_s": [
+            0.001025292,
+            0.001021834,
+            0.00101775,
+            0.001099416,
+            0.001018667
+          ],
+          "query_s": [
+            0.000874709,
+            0.000802291,
+            0.000829292,
+            0.000877583,
+            0.0007995
+          ],
+          "owned_compute_s": [
+            0.001902625,
+            0.001826625,
+            0.001849708,
+            0.001979625,
+            0.001820625
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 12343,
+          "output_packet_bytes": 3655,
+          "final_arena_bytes_est": 734360,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed64",
+          "target_candidate": "packed64",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.208e-06,
+            4.417e-06,
+            4.833e-06,
+            5.25e-06,
+            4.625e-06
+          ],
+          "restore_inputs_s": [
+            0.000415,
+            0.000406875,
+            0.000416417,
+            0.000418167,
+            0.000406875
+          ],
+          "program_setup_s": [
+            0.00018875,
+            0.000193416,
+            0.000191375,
+            0.000194791,
+            0.000192167
+          ],
+          "query_s": [
+            0.002345959,
+            0.002433667,
+            0.002265542,
+            0.0023175,
+            0.002426667
+          ],
+          "owned_compute_s": [
+            0.002537542,
+            0.002629833,
+            0.002459083,
+            0.002515,
+            0.002622125
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 12343,
+          "output_packet_bytes": 4237,
+          "final_arena_bytes_est": 1468568,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed64",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.875e-06,
+            6.166e-06,
+            5.334e-06,
+            9.667e-06,
+            5.541e-06
+          ],
+          "restore_inputs_s": [
+            0.000169417,
+            0.000221167,
+            0.000167375,
+            0.000187083,
+            0.000167875
+          ],
+          "program_setup_s": [
+            0.00122675,
+            0.001286667,
+            0.001276167,
+            0.001225083,
+            0.001247167
+          ],
+          "query_s": [
+            0.000674917,
+            0.000720166,
+            0.0006895,
+            0.000672167,
+            0.000714083
+          ],
+          "owned_compute_s": [
+            0.001904125,
+            0.002013084,
+            0.001968208,
+            0.001899542,
+            0.001963958
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 12343,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.69140625,
+        10.92138671875,
+        13.07861328125
+      ],
+      "loadavg_end": [
+        6.6708984375,
+        10.77587890625,
+        13.00146484375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "roaring",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 5.510676145553589,
+      "max_rss_bytes": 28262400,
+      "log": "owned-sweep-logs/job-009-owned-roaring----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "roaring",
+          "target_candidate": "roaring",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            4.6666e-05,
+            4.5417e-05,
+            4.6375e-05,
+            4.5583e-05,
+            4.5583e-05
+          ],
+          "restore_inputs_s": [
+            0.00052275,
+            0.00052325,
+            0.00051675,
+            0.000518792,
+            0.000535667
+          ],
+          "program_setup_s": [
+            0.000187167,
+            0.0001865,
+            0.000181583,
+            0.000182083,
+            0.000192625
+          ],
+          "query_s": [
+            0.002993667,
+            0.002979375,
+            0.002917875,
+            0.002887375,
+            0.003056916
+          ],
+          "owned_compute_s": [
+            0.003185584,
+            0.003167334,
+            0.003101292,
+            0.003070834,
+            0.003251125
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 1213432,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "roaring",
+          "target_candidate": "roaring",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            4.4833e-05,
+            4.5625e-05,
+            4.5208e-05,
+            4.5208e-05,
+            4.8083e-05
+          ],
+          "restore_inputs_s": [
+            0.000512333,
+            0.000522459,
+            0.000592167,
+            0.00051925,
+            0.000545083
+          ],
+          "program_setup_s": [
+            0.000182542,
+            0.000184041,
+            0.000194792,
+            0.000181083,
+            0.000193666
+          ],
+          "query_s": [
+            0.003052583,
+            0.002940667,
+            0.002971625,
+            0.002893708,
+            0.002881208
+          ],
+          "owned_compute_s": [
+            0.003236542,
+            0.003125833,
+            0.003167667,
+            0.003075958,
+            0.003076042
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 1213432,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "roaring",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.167e-06,
+            1.75e-06,
+            1.792e-06,
+            9.58e-07,
+            1.75e-06
+          ],
+          "restore_inputs_s": [
+            7.9459e-05,
+            8.0875e-05,
+            8.1584e-05,
+            7.675e-05,
+            8.0875e-05
+          ],
+          "program_setup_s": [
+            4.5291e-05,
+            4.2917e-05,
+            4.1834e-05,
+            4.8083e-05,
+            4.3125e-05
+          ],
+          "query_s": [
+            0.000261834,
+            0.000239541,
+            0.000233208,
+            0.00024,
+            0.000236625
+          ],
+          "owned_compute_s": [
+            0.000308542,
+            0.000283875,
+            0.000276291,
+            0.000289292,
+            0.000281291
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "roaring",
+          "target_candidate": "roaring",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            0.001450417,
+            0.001478958,
+            0.001423167,
+            0.0014455,
+            0.001451208
+          ],
+          "restore_inputs_s": [
+            0.00807375,
+            0.007941583,
+            0.008096416,
+            0.008015417,
+            0.007806667
+          ],
+          "program_setup_s": [
+            0.003726583,
+            0.003738958,
+            0.003807375,
+            0.003792625,
+            0.003667542
+          ],
+          "query_s": [
+            0.0513185,
+            0.051393542,
+            0.052212875,
+            0.050737292,
+            0.050794
+          ],
+          "owned_compute_s": [
+            0.055047042,
+            0.055135625,
+            0.056024375,
+            0.054533833,
+            0.054464208
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 31041760,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "roaring",
+          "target_candidate": "roaring",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            0.001427458,
+            0.001445834,
+            0.001507167,
+            0.001392042,
+            0.001443667
+          ],
+          "restore_inputs_s": [
+            0.007801875,
+            0.0079765,
+            0.007953625,
+            0.007946292,
+            0.007827583
+          ],
+          "program_setup_s": [
+            0.003748166,
+            0.003661125,
+            0.003804083,
+            0.00369825,
+            0.0037055
+          ],
+          "query_s": [
+            0.051038375,
+            0.051147875,
+            0.051269208,
+            0.050826333,
+            0.0509985
+          ],
+          "owned_compute_s": [
+            0.054789417,
+            0.054811625,
+            0.055075666,
+            0.054527,
+            0.054709833
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 31041760,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "roaring",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.542e-06,
+            7.166e-06,
+            5.292e-06,
+            4.916e-06,
+            5.25e-06
+          ],
+          "restore_inputs_s": [
+            0.002471459,
+            0.002460583,
+            0.002541583,
+            0.002467167,
+            0.002565125
+          ],
+          "program_setup_s": [
+            0.001305458,
+            0.001218125,
+            0.001259959,
+            0.001291209,
+            0.001236209
+          ],
+          "query_s": [
+            0.000710208,
+            0.000695333,
+            0.000782125,
+            0.000769208,
+            0.000796625
+          ],
+          "owned_compute_s": [
+            0.002017791,
+            0.001915792,
+            0.002045,
+            0.002062792,
+            0.002041916
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.6708984375,
+        10.77587890625,
+        13.00146484375
+      ],
+      "loadavg_end": [
+        6.53662109375,
+        10.6796875,
+        12.9541015625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 7.2935097217559814,
+      "max_rss_bytes": 19464192,
+      "log": "owned-sweep-logs/job-010-owned-bdd-pair----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-pair",
+          "target_candidate": "bdd-pair",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.5e-06,
+            8.34e-07,
+            6.66e-07,
+            7.5e-07,
+            5.83e-07
+          ],
+          "restore_inputs_s": [
+            6.9583e-05,
+            5.3542e-05,
+            4.6875e-05,
+            5.425e-05,
+            4.4917e-05
+          ],
+          "program_setup_s": [
+            2.5625e-05,
+            2.4125e-05,
+            2.2459e-05,
+            2.2375e-05,
+            2.2333e-05
+          ],
+          "query_s": [
+            0.000437292,
+            0.000311667,
+            0.000301916,
+            0.000309375,
+            0.000304334
+          ],
+          "owned_compute_s": [
+            0.000466042,
+            0.000337125,
+            0.000329375,
+            0.000332791,
+            0.000327625
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 863,
+          "final_arena_bytes_est": 201824,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-pair",
+          "target_candidate": "bdd-pair",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            5.41e-07,
+            8.75e-07,
+            6.66e-07,
+            7.5e-07,
+            5.83e-07
+          ],
+          "restore_inputs_s": [
+            7.7458e-05,
+            7.75e-05,
+            7.5333e-05,
+            7.0167e-05,
+            8.3916e-05
+          ],
+          "program_setup_s": [
+            3.3541e-05,
+            3.4375e-05,
+            3.3083e-05,
+            3.7334e-05,
+            3.8292e-05
+          ],
+          "query_s": [
+            0.0005435,
+            0.000424459,
+            0.000397125,
+            0.000404125,
+            0.000436708
+          ],
+          "owned_compute_s": [
+            0.000579,
+            0.00046,
+            0.00043125,
+            0.000442416,
+            0.000476417
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 863,
+          "final_arena_bytes_est": 377952,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-pair",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            8.33e-07,
+            4.167e-06,
+            4e-06,
+            3.084e-06,
+            4.291e-06
+          ],
+          "restore_inputs_s": [
+            5.5583e-05,
+            7.2709e-05,
+            6.5416e-05,
+            5.5541e-05,
+            6.4417e-05
+          ],
+          "program_setup_s": [
+            5.1708e-05,
+            4.1542e-05,
+            4.6584e-05,
+            4.7292e-05,
+            4.2833e-05
+          ],
+          "query_s": [
+            0.00027375,
+            0.0002365,
+            0.000273458,
+            0.000296167,
+            0.000240334
+          ],
+          "owned_compute_s": [
+            0.000327834,
+            0.000279584,
+            0.000322541,
+            0.000346625,
+            0.000284959
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-pair",
+          "target_candidate": "bdd-pair",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.792e-06,
+            4.167e-06,
+            9.083e-06,
+            5.167e-06,
+            2.75e-06
+          ],
+          "restore_inputs_s": [
+            0.000176875,
+            0.000177125,
+            0.000196084,
+            0.000198625,
+            0.000176208
+          ],
+          "program_setup_s": [
+            0.001209083,
+            0.001154541,
+            0.001144041,
+            0.001136084,
+            0.001168042
+          ],
+          "query_s": [
+            0.001167292,
+            0.001235291,
+            0.001091584,
+            0.001103875,
+            0.001077208
+          ],
+          "owned_compute_s": [
+            0.002378667,
+            0.002393,
+            0.002237792,
+            0.002242208,
+            0.002247625
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 3357,
+          "final_arena_bytes_est": 993424,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-pair",
+          "target_candidate": "bdd-pair",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.042e-06,
+            3.75e-06,
+            3.333e-06,
+            4.042e-06,
+            8.25e-06
+          ],
+          "restore_inputs_s": [
+            0.000415209,
+            0.000408083,
+            0.000417042,
+            0.000420458,
+            0.000459167
+          ],
+          "program_setup_s": [
+            0.001401167,
+            0.001427708,
+            0.001381916,
+            0.001418958,
+            0.001423625
+          ],
+          "query_s": [
+            0.0028975,
+            0.002816083,
+            0.002748375,
+            0.002822417,
+            0.002827833
+          ],
+          "owned_compute_s": [
+            0.004301084,
+            0.004246209,
+            0.004132417,
+            0.004244083,
+            0.004254
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 4295,
+          "final_arena_bytes_est": 1468560,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-pair",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.917e-06,
+            5.708e-06,
+            5.208e-06,
+            4.708e-06,
+            5.417e-06
+          ],
+          "restore_inputs_s": [
+            0.000168875,
+            0.000166875,
+            0.000162,
+            0.000163459,
+            0.00016575
+          ],
+          "program_setup_s": [
+            0.001241292,
+            0.001243,
+            0.001232416,
+            0.001249125,
+            0.00126825
+          ],
+          "query_s": [
+            0.000710291,
+            0.000761084,
+            0.000691292,
+            0.000696625,
+            0.000691208
+          ],
+          "owned_compute_s": [
+            0.001954167,
+            0.002007125,
+            0.001926125,
+            0.001948458,
+            0.00196225
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.53662109375,
+        10.6796875,
+        12.9541015625
+      ],
+      "loadavg_end": [
+        6.4931640625,
+        10.6015625,
+        12.9130859375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 11.37604022026062,
+      "max_rss_bytes": 18759680,
+      "log": "owned-sweep-logs/job-011-owned-packed256----bit-major-local-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed256",
+          "target_candidate": "packed256",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.041e-06,
+            8.167e-06,
+            4.375e-06,
+            2.958e-06,
+            3.333e-06
+          ],
+          "restore_inputs_s": [
+            4.2709e-05,
+            4.5708e-05,
+            3.7167e-05,
+            3.2958e-05,
+            3.3917e-05
+          ],
+          "program_setup_s": [
+            3.6291e-05,
+            3.1333e-05,
+            3.2e-05,
+            3.2417e-05,
+            3.0833e-05
+          ],
+          "query_s": [
+            0.000437583,
+            0.000321792,
+            0.000342709,
+            0.000330959,
+            0.000318541
+          ],
+          "owned_compute_s": [
+            0.000478459,
+            0.000355166,
+            0.000376833,
+            0.00036525,
+            0.000351125
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3365,
+          "output_packet_bytes": 1285,
+          "final_arena_bytes_est": 155744,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed256",
+          "target_candidate": "packed256",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            7.08e-07,
+            4e-06,
+            3.875e-06,
+            4.708e-06,
+            4.833e-06
+          ],
+          "restore_inputs_s": [
+            0.000119916,
+            0.000132291,
+            0.000125208,
+            0.000122875,
+            0.000136417
+          ],
+          "program_setup_s": [
+            1.2208e-05,
+            1.4042e-05,
+            1.2292e-05,
+            1.3041e-05,
+            1.55e-05
+          ],
+          "query_s": [
+            0.000352042,
+            0.000347333,
+            0.000332292,
+            0.000339625,
+            0.000372625
+          ],
+          "owned_compute_s": [
+            0.000365584,
+            0.000367042,
+            0.000346208,
+            0.000354458,
+            0.000390667
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3365,
+          "output_packet_bytes": 1079,
+          "final_arena_bytes_est": 206944,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed256",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.125e-06,
+            4.209e-06,
+            3.917e-06,
+            2.125e-06,
+            3.458e-06
+          ],
+          "restore_inputs_s": [
+            3.9416e-05,
+            3.975e-05,
+            3.8292e-05,
+            2.9542e-05,
+            3.625e-05
+          ],
+          "program_setup_s": [
+            4.5167e-05,
+            4.4e-05,
+            4.4e-05,
+            4.3541e-05,
+            4.4542e-05
+          ],
+          "query_s": [
+            0.00026475,
+            0.0002535,
+            0.000247459,
+            0.0002755,
+            0.000245792
+          ],
+          "owned_compute_s": [
+            0.000313959,
+            0.000299417,
+            0.000293292,
+            0.000321166,
+            0.000292417
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3365,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed256",
+          "target_candidate": "packed256",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.875e-06,
+            4.708e-06,
+            5.375e-06,
+            6.083e-06,
+            5.417e-06
+          ],
+          "restore_inputs_s": [
+            0.000131208,
+            0.000137,
+            0.000129125,
+            0.000132458,
+            0.000129208
+          ],
+          "program_setup_s": [
+            0.001149459,
+            0.001132333,
+            0.001126833,
+            0.0011445,
+            0.0011385
+          ],
+          "query_s": [
+            0.001323875,
+            0.001256083,
+            0.001283666,
+            0.001337708,
+            0.001270708
+          ],
+          "owned_compute_s": [
+            0.002475834,
+            0.002390958,
+            0.002412834,
+            0.002485042,
+            0.002412
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 16049,
+          "output_packet_bytes": 4321,
+          "final_arena_bytes_est": 684192,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed256",
+          "target_candidate": "packed256",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.542e-06,
+            5.083e-06,
+            4.333e-06,
+            4.583e-06,
+            4.792e-06
+          ],
+          "restore_inputs_s": [
+            0.000549875,
+            0.000550958,
+            0.00055375,
+            0.000618625,
+            0.000603792
+          ],
+          "program_setup_s": [
+            0.000163333,
+            0.000162917,
+            0.000169583,
+            0.00016525,
+            0.000165833
+          ],
+          "query_s": [
+            0.002177834,
+            0.002056292,
+            0.002200875,
+            0.002145834,
+            0.002274417
+          ],
+          "owned_compute_s": [
+            0.002343833,
+            0.002221708,
+            0.00237275,
+            0.002313667,
+            0.002444166
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 16049,
+          "output_packet_bytes": 7649,
+          "final_arena_bytes_est": 1237152,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed256",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.25e-06,
+            1.3125e-05,
+            6e-06,
+            5.459e-06,
+            8.25e-06
+          ],
+          "restore_inputs_s": [
+            0.000145833,
+            0.000354625,
+            0.000150166,
+            0.000148667,
+            0.000145541
+          ],
+          "program_setup_s": [
+            0.00130275,
+            0.001338125,
+            0.001284,
+            0.001248834,
+            0.001296375
+          ],
+          "query_s": [
+            0.000729667,
+            0.00071475,
+            0.000721209,
+            0.000687834,
+            0.000715625
+          ],
+          "owned_compute_s": [
+            0.002036334,
+            0.002055959,
+            0.002008334,
+            0.001939542,
+            0.002014584
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 16049,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.4931640625,
+        10.6015625,
+        12.9130859375
+      ],
+      "loadavg_end": [
+        6.814453125,
+        10.45947265625,
+        12.8212890625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 7.260862112045288,
+      "max_rss_bytes": 19529728,
+      "log": "owned-sweep-logs/job-012-owned-bdd-root----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-root",
+          "target_candidate": "bdd-root",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.584e-06,
+            8.75e-07,
+            6.25e-07,
+            1.209e-06,
+            6.67e-07
+          ],
+          "restore_inputs_s": [
+            5.3708e-05,
+            4.6792e-05,
+            3.8667e-05,
+            4.3875e-05,
+            3.9167e-05
+          ],
+          "program_setup_s": [
+            2.6041e-05,
+            2.4167e-05,
+            2.2458e-05,
+            2.4208e-05,
+            2.2792e-05
+          ],
+          "query_s": [
+            0.000403625,
+            0.000308083,
+            0.000305708,
+            0.000337542,
+            0.000304709
+          ],
+          "owned_compute_s": [
+            0.000432667,
+            0.000333583,
+            0.00032925,
+            0.00036325,
+            0.000328792
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 863,
+          "final_arena_bytes_est": 176304,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-root",
+          "target_candidate": "bdd-root",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            6.25e-07,
+            5.83e-07,
+            5e-07,
+            5e-07,
+            5e-07
+          ],
+          "restore_inputs_s": [
+            6.3417e-05,
+            6.1292e-05,
+            5.9333e-05,
+            5.7959e-05,
+            5.8958e-05
+          ],
+          "program_setup_s": [
+            3.35e-05,
+            3.2167e-05,
+            3.1666e-05,
+            3.1834e-05,
+            3.1709e-05
+          ],
+          "query_s": [
+            0.000437375,
+            0.000421833,
+            0.000388292,
+            0.000446084,
+            0.00038875
+          ],
+          "owned_compute_s": [
+            0.000472208,
+            0.000456375,
+            0.000420958,
+            0.000479083,
+            0.000421417
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 863,
+          "final_arena_bytes_est": 352432,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-root",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            8.33e-07,
+            2e-06,
+            1.292e-06,
+            3.625e-06,
+            1.292e-06
+          ],
+          "restore_inputs_s": [
+            5.3583e-05,
+            5.5958e-05,
+            4.8083e-05,
+            7.2792e-05,
+            5.4917e-05
+          ],
+          "program_setup_s": [
+            6.3917e-05,
+            4.1833e-05,
+            4e-05,
+            4.4209e-05,
+            4.0333e-05
+          ],
+          "query_s": [
+            0.000279291,
+            0.000235083,
+            0.000223375,
+            0.000253959,
+            0.000220875
+          ],
+          "owned_compute_s": [
+            0.0003465,
+            0.000278375,
+            0.0002645,
+            0.000300167,
+            0.000262292
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 3243,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-root",
+          "target_candidate": "bdd-root",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.875e-06,
+            2.792e-06,
+            2.458e-06,
+            2.5e-06,
+            2.5e-06
+          ],
+          "restore_inputs_s": [
+            0.000139417,
+            0.000141334,
+            0.000141459,
+            0.000160834,
+            0.000142208
+          ],
+          "program_setup_s": [
+            0.001133375,
+            0.0011815,
+            0.001153833,
+            0.001129042,
+            0.001145583
+          ],
+          "query_s": [
+            0.001152834,
+            0.001106625,
+            0.001210709,
+            0.001071333,
+            0.001220708
+          ],
+          "owned_compute_s": [
+            0.002288167,
+            0.002290291,
+            0.002367292,
+            0.002202875,
+            0.002369084
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 3357,
+          "final_arena_bytes_est": 934112,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-root",
+          "target_candidate": "bdd-root",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.708e-06,
+            3.333e-06,
+            5.375e-06,
+            3.625e-06,
+            3.292e-06
+          ],
+          "restore_inputs_s": [
+            0.00037475,
+            0.000362583,
+            0.000380375,
+            0.000363041,
+            0.000379625
+          ],
+          "program_setup_s": [
+            0.001381,
+            0.001514041,
+            0.001408916,
+            0.001437917,
+            0.001385916
+          ],
+          "query_s": [
+            0.002852,
+            0.002767083,
+            0.002777875,
+            0.002706459,
+            0.002734958
+          ],
+          "owned_compute_s": [
+            0.004235542,
+            0.004283833,
+            0.004189625,
+            0.004146833,
+            0.004123666
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 4295,
+          "final_arena_bytes_est": 1409248,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "bdd-root",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.709e-06,
+            5.209e-06,
+            5.917e-06,
+            5.334e-06,
+            7.083e-06
+          ],
+          "restore_inputs_s": [
+            0.000186875,
+            0.000189667,
+            0.00016775,
+            0.000165375,
+            0.000179291
+          ],
+          "program_setup_s": [
+            0.001258666,
+            0.001307667,
+            0.001226292,
+            0.001259708,
+            0.001278958
+          ],
+          "query_s": [
+            0.00069075,
+            0.000725083,
+            0.000681167,
+            0.000728042,
+            0.000697208
+          ],
+          "owned_compute_s": [
+            0.001952,
+            0.002035458,
+            0.001910208,
+            0.001990333,
+            0.001978542
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 11603,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.814453125,
+        10.45947265625,
+        12.8212890625
+      ],
+      "loadavg_end": [
+        6.6689453125,
+        10.36865234375,
+        12.775390625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 11.729834079742432,
+      "max_rss_bytes": 29261824,
+      "log": "owned-sweep-logs/job-013-owned-packed4096----bit-major-local-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed4096",
+          "target_candidate": "packed4096",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.125e-06,
+            2.666e-06,
+            2.5e-06,
+            1.584e-06,
+            1.375e-06
+          ],
+          "restore_inputs_s": [
+            2.9292e-05,
+            2.55e-05,
+            2.2125e-05,
+            1.9709e-05,
+            1.95e-05
+          ],
+          "program_setup_s": [
+            0.000238459,
+            0.000232375,
+            0.00023075,
+            0.000268958,
+            0.000228416
+          ],
+          "query_s": [
+            0.00171325,
+            0.001731667,
+            0.001665375,
+            0.001719667,
+            0.001666792
+          ],
+          "owned_compute_s": [
+            0.001955875,
+            0.0019655,
+            0.001897625,
+            0.001989667,
+            0.001896125
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 127472,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed4096",
+          "target_candidate": "packed4096",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            7.92e-07,
+            1.209e-06,
+            1.708e-06,
+            1.292e-06,
+            2.959e-06
+          ],
+          "restore_inputs_s": [
+            3.4083e-05,
+            3.0625e-05,
+            3.1166e-05,
+            3.1041e-05,
+            2.9208e-05
+          ],
+          "program_setup_s": [
+            0.000222333,
+            0.000209375,
+            0.000209,
+            0.000209417,
+            0.000209166
+          ],
+          "query_s": [
+            0.0017005,
+            0.001742583,
+            0.001726791,
+            0.001751333,
+            0.001705917
+          ],
+          "owned_compute_s": [
+            0.00192425,
+            0.001952958,
+            0.001936875,
+            0.001961875,
+            0.001915958
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 127472,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed4096",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            8.75e-07,
+            1.583e-06,
+            1.291e-06,
+            1.291e-06,
+            1.542e-06
+          ],
+          "restore_inputs_s": [
+            2.5958e-05,
+            2.35e-05,
+            2.2458e-05,
+            2.1417e-05,
+            2.2417e-05
+          ],
+          "program_setup_s": [
+            4.3584e-05,
+            4.5375e-05,
+            4.1e-05,
+            4.1917e-05,
+            4.1084e-05
+          ],
+          "query_s": [
+            0.000257041,
+            0.000261584,
+            0.000235291,
+            0.000232791,
+            0.000231708
+          ],
+          "owned_compute_s": [
+            0.000303042,
+            0.000308334,
+            0.000277583,
+            0.000276042,
+            0.000274
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed4096",
+          "target_candidate": "packed4096",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2e-06,
+            6.125e-06,
+            1.0542e-05,
+            6.709e-06,
+            5.792e-06
+          ],
+          "restore_inputs_s": [
+            0.000114084,
+            0.000121375,
+            0.000127708,
+            0.00013,
+            0.000127583
+          ],
+          "program_setup_s": [
+            0.001782292,
+            0.001810375,
+            0.001760834,
+            0.001765667,
+            0.001802334
+          ],
+          "query_s": [
+            0.002925375,
+            0.002939,
+            0.002885042,
+            0.002986875,
+            0.003006125
+          ],
+          "owned_compute_s": [
+            0.004710041,
+            0.004755791,
+            0.004648667,
+            0.004754958,
+            0.004810833
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 62311,
+          "output_packet_bytes": 20419,
+          "final_arena_bytes_est": 911536,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed4096",
+          "target_candidate": "packed4096",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.125e-06,
+            6.542e-06,
+            5.75e-06,
+            5.875e-06,
+            5.542e-06
+          ],
+          "restore_inputs_s": [
+            0.00347,
+            0.003449666,
+            0.003372,
+            0.003231709,
+            0.003277125
+          ],
+          "program_setup_s": [
+            0.000358333,
+            0.00034475,
+            0.000330167,
+            0.00033575,
+            0.000332917
+          ],
+          "query_s": [
+            0.011454042,
+            0.010896833,
+            0.01122325,
+            0.011094625,
+            0.010813959
+          ],
+          "owned_compute_s": [
+            0.01181525,
+            0.011244041,
+            0.011556667,
+            0.011433625,
+            0.011149333
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 62311,
+          "output_packet_bytes": 10673,
+          "final_arena_bytes_est": 8618160,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "packed4096",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.167e-06,
+            5.208e-06,
+            5.458e-06,
+            6.25e-06,
+            5.334e-06
+          ],
+          "restore_inputs_s": [
+            0.002899584,
+            0.0030245,
+            0.003011625,
+            0.003054,
+            0.003011875
+          ],
+          "program_setup_s": [
+            0.001260625,
+            0.001242167,
+            0.001289708,
+            0.001226542,
+            0.001322917
+          ],
+          "query_s": [
+            0.000703708,
+            0.000673625,
+            0.000691042,
+            0.000682667,
+            0.000694708
+          ],
+          "owned_compute_s": [
+            0.001966875,
+            0.00192475,
+            0.001983583,
+            0.001912417,
+            0.002020375
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 62311,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.6689453125,
+        10.36865234375,
+        12.775390625
+      ],
+      "loadavg_end": [
+        6.48583984375,
+        10.20751953125,
+        12.68994140625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_CANDIDATE": "runs",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 4.893499851226807,
+      "max_rss_bytes": 41992192,
+      "log": "owned-sweep-logs/job-014-owned-runs----bit-major-words.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "runs",
+          "target_candidate": "runs",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.3958e-05,
+            1.5041e-05,
+            1.4042e-05,
+            1.5e-05,
+            1.35e-05
+          ],
+          "restore_inputs_s": [
+            0.0001635,
+            0.000168625,
+            0.000154083,
+            0.000150084,
+            0.0001525
+          ],
+          "program_setup_s": [
+            2.2542e-05,
+            2.0375e-05,
+            1.9167e-05,
+            1.8917e-05,
+            1.8834e-05
+          ],
+          "query_s": [
+            0.001313041,
+            0.00119175,
+            0.001165209,
+            0.001159083,
+            0.001235
+          ],
+          "owned_compute_s": [
+            0.001339,
+            0.001213458,
+            0.001185542,
+            0.001179042,
+            0.001255709
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 431320,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "runs",
+          "target_candidate": "runs",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            1.3583e-05,
+            1.4625e-05,
+            1.475e-05,
+            1.4e-05,
+            1.375e-05
+          ],
+          "restore_inputs_s": [
+            0.00015625,
+            0.0001595,
+            0.000178875,
+            0.000163166,
+            0.00015475
+          ],
+          "program_setup_s": [
+            1.9583e-05,
+            1.9333e-05,
+            2.1416e-05,
+            1.9417e-05,
+            1.925e-05
+          ],
+          "query_s": [
+            0.00122125,
+            0.001190333,
+            0.001246917,
+            0.001188708,
+            0.001174083
+          ],
+          "owned_compute_s": [
+            0.0012435,
+            0.001212125,
+            0.001270292,
+            0.001209333,
+            0.0011945
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 5543,
+          "final_arena_bytes_est": 431320,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "runs",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.667e-06,
+            2.709e-06,
+            1.541e-06,
+            2.458e-06,
+            3.208e-06
+          ],
+          "restore_inputs_s": [
+            6.1209e-05,
+            4.9833e-05,
+            4.7375e-05,
+            5.0791e-05,
+            5.175e-05
+          ],
+          "program_setup_s": [
+            4.5292e-05,
+            4.4084e-05,
+            4.1416e-05,
+            4.4e-05,
+            4.7042e-05
+          ],
+          "query_s": [
+            0.000265,
+            0.000251417,
+            0.000233833,
+            0.0002465,
+            0.000264708
+          ],
+          "owned_compute_s": [
+            0.000311916,
+            0.000297166,
+            0.0002765,
+            0.000292458,
+            0.000317833
+          ],
+          "novel_publication_classes": [
+            10,
+            10,
+            10,
+            10,
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 13749,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "runs",
+          "target_candidate": "runs",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            0.0008925,
+            0.000928333,
+            0.000834167,
+            0.000837875,
+            0.000835417
+          ],
+          "restore_inputs_s": [
+            0.006024125,
+            0.006044542,
+            0.006307875,
+            0.005949416,
+            0.00588125
+          ],
+          "program_setup_s": [
+            0.001013625,
+            0.001049875,
+            0.001042417,
+            0.001032791,
+            0.00101375
+          ],
+          "query_s": [
+            0.033641917,
+            0.033172,
+            0.032802083,
+            0.032380209,
+            0.03261275
+          ],
+          "owned_compute_s": [
+            0.034658833,
+            0.034224166,
+            0.033847125,
+            0.033414958,
+            0.033629417
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 8646048,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "runs",
+          "target_candidate": "runs",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            0.000845917,
+            0.000853458,
+            0.000849625,
+            0.000837791,
+            0.000833209
+          ],
+          "restore_inputs_s": [
+            0.005920875,
+            0.00599,
+            0.006177041,
+            0.005918542,
+            0.005903333
+          ],
+          "program_setup_s": [
+            0.001125125,
+            0.00116225,
+            0.001060958,
+            0.001013292,
+            0.00101325
+          ],
+          "query_s": [
+            0.0330275,
+            0.032914959,
+            0.032798625,
+            0.032212,
+            0.032287375
+          ],
+          "owned_compute_s": [
+            0.034155292,
+            0.0340815,
+            0.03386225,
+            0.033226916,
+            0.033301792
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 591713,
+          "final_arena_bytes_est": 8646048,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "runs",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.666e-06,
+            5.833e-06,
+            7.042e-06,
+            4.458e-06,
+            5.375e-06
+          ],
+          "restore_inputs_s": [
+            0.001869833,
+            0.001946708,
+            0.00194675,
+            0.00185075,
+            0.001900333
+          ],
+          "program_setup_s": [
+            0.001301583,
+            0.001233125,
+            0.001274458,
+            0.001220209,
+            0.001313083
+          ],
+          "query_s": [
+            0.000741125,
+            0.000711708,
+            0.000731458,
+            0.000690959,
+            0.000748458
+          ],
+          "owned_compute_s": [
+            0.002045458,
+            0.001947125,
+            0.002008458,
+            0.001914083,
+            0.002065666
+          ],
+          "novel_publication_classes": [
+            18,
+            18,
+            18,
+            18,
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 788541,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product"
+        }
+      ],
+      "loadavg_start": [
+        6.48583984375,
+        10.20751953125,
+        12.68994140625
+      ],
+      "loadavg_end": [
+        6.36669921875,
+        10.12060546875,
+        12.64453125
+      ]
+    }
+  ]
+}

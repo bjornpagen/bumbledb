@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"free_join","candidate":"packed256","scenario":"overlap_4096","shape":"triangle","memo":false,"worlds":4096,"admissible_worlds":4096,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":249,"final_nodes":5047,"input_bytes_est":28240,"final_bytes_est":652368,"colt_bytes":163104,"build_s":[4.7791e-5, 4.1583e-5, 3.15e-5, 3.3541e-5, 3.1416e-5, 3.5166e-5, 3.1292e-5, 3.0375e-5, 2.975e-5, 2.9625e-5, 3.4542e-5],"native_setup_s":0.000223666,"native_first_join_s":0.000125292,"join_only_s":[5.1167e-5, 4.7209e-5, 5.1584e-5, 4.7166e-5, 4.7125e-5, 4.7083e-5, 5.7875e-5, 4.7875e-5, 4.7042e-5, 4.7e-5, 5.3542e-5],"fresh_s":[0.000566875, 0.0004905, 0.000413333, 0.00048125, 0.000493333, 0.000484, 0.000462834, 0.000413667, 0.00042225, 0.000427583, 0.000457625],"warm_s":[0.00015127506640625, 0.00015136686328125, 0.00015309749609375, 0.0001522890625, 0.000152103515625, 0.00015220540625, 0.0001539259453125, 0.00015252099609375, 0.00015282503515625, 0.00015323681640625, 0.00015345947265625],"warm_loops":256,"checksum":6418664,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"packed256","scenario":"overlap_4096","shape":"triangle","memo":true,"worlds":4096,"admissible_worlds":4096,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":249,"final_nodes":5047,"input_bytes_est":28240,"final_bytes_est":670288,"colt_bytes":163104,"build_s":[4.7791e-5, 4.1583e-5, 3.15e-5, 3.3541e-5, 3.1416e-5, 3.5166e-5, 3.1292e-5, 3.0375e-5, 2.975e-5, 2.9625e-5, 3.4542e-5],"native_setup_s":0.000223666,"native_first_join_s":0.000125292,"join_only_s":[5.1167e-5, 4.7209e-5, 5.1584e-5, 4.7166e-5, 4.7125e-5, 4.7083e-5, 5.7875e-5, 4.7875e-5, 4.7042e-5, 4.7e-5, 5.3542e-5],"fresh_s":[0.000435, 0.0004325, 0.000403208, 0.000395542, 0.00039325, 0.00039025, 0.000388875, 0.000379542, 0.000409875, 0.000442541, 0.00047875],"warm_s":[0.0001258583984375, 0.00012691438671875, 0.0001263055, 0.00012335791015625, 0.0001243330078125, 0.00012583235546875, 0.00012618277734375, 0.00012611881640625, 0.00012551041796875, 0.00012434130859375, 0.00012204703515625],"warm_loops":256,"checksum":6418664,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"packed256","scenario":"overlap_4096","shape":"clover","memo":false,"worlds":4096,"admissible_worlds":4096,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":249,"final_nodes":15235,"input_bytes_est":28240,"final_bytes_est":2222160,"colt_bytes":41104,"build_s":[4.9834e-5, 4.6666e-5, 4.2667e-5, 2.8167e-5, 3.8583e-5, 3.075e-5, 2.7541e-5, 2.7333e-5, 2.7542e-5, 2.8e-5, 3.4083e-5],"native_setup_s":0.000149959,"native_first_join_s":0.000201125,"join_only_s":[7.1042e-5, 6.8584e-5, 6.8916e-5, 6.8708e-5, 6.8792e-5, 6.9e-5, 7.6916e-5, 7.2708e-5, 6.8625e-5, 7.2042e-5, 6.85e-5],"fresh_s":[0.001799083, 0.001784417, 0.001623292, 0.0013855, 0.00135175, 0.001356209, 0.001425208, 0.001519875, 0.001492667, 0.001428625, 0.001568542],"warm_s":[0.00030614225, 0.00030392415625, 0.00030624446875, 0.0003028671875, 0.0003079384765625, 0.0003103896484375, 0.00030599284375, 0.0003070166015625, 0.000305884765625, 0.0003080455703125, 0.00030536490625],"warm_loops":128,"checksum":6868992,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"packed256","scenario":"overlap_4096","shape":"clover","memo":true,"worlds":4096,"admissible_worlds":4096,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":249,"final_nodes":15235,"input_bytes_est":28240,"final_bytes_est":2258000,"colt_bytes":41104,"build_s":[4.9834e-5, 4.6666e-5, 4.2667e-5, 2.8167e-5, 3.8583e-5, 3.075e-5, 2.7541e-5, 2.7333e-5, 2.7542e-5, 2.8e-5, 3.4083e-5],"native_setup_s":0.000149959,"native_first_join_s":0.000201125,"join_only_s":[7.1042e-5, 6.8584e-5, 6.8916e-5, 6.8708e-5, 6.8792e-5, 6.9e-5, 7.6916e-5, 7.2708e-5, 6.8625e-5, 7.2042e-5, 6.85e-5],"fresh_s":[0.001365584, 0.001501792, 0.001279625, 0.001315875, 0.001279208, 0.001432, 0.001374708, 0.00140525, 0.001368708, 0.00129825, 0.001298542],"warm_s":[0.0002068681640625, 0.0002044049453125, 0.000201316078125, 0.0002079602890625, 0.0002065572890625, 0.000205472328125, 0.0002068313828125, 0.000205730140625, 0.0002039231796875, 0.0002081344453125, 0.00020730925],"warm_loops":128,"checksum":6868992,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 1.87s
+
+
+        1.86 real         1.81 user         0.04 sys
+            19283968  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1389  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 381  involuntary context switches
+         26774983151  instructions retired
+          6249982174  cycles elapsed
+            16761240  peak memory footprint

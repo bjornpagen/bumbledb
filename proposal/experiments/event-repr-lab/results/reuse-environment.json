@@ -1,0 +1,18 @@
+{
+  "observed_utc": "2026-09-18T04:34:40.828452+00:00",
+  "cpu_snapshot": [
+    "63375 102.4 /Applications/Nessie.app/Contents/MacOS/Nessie",
+    "11100 100.0 /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "  618  48.8 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+    " 2180  17.9 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    " 1090  16.1 /System/Library/CoreServices/MenuBarAgent.app/Contents/MacOS/MenuBarAgent",
+    "18163  11.5 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+    "11106   9.1 /Applications/Xcode.app/Contents/Developer/Library/Frameworks/Python3.framework/Versions/3.9/Resources/Python.app/Contents/MacOS/Python",
+    " 2014   7.2 /System/Library/CoreServices/Dock.app/Contents/MacOS/Dock",
+    " 2201   6.1 /Applications/ChatGPT.app/Contents/Resources/codex",
+    " 2187   5.6 /Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/152.0.7977.83/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)",
+    " 1164   5.3 /System/Library/ExtensionKit/Extensions/WallpaperAerialsExtension.appex/Contents/MacOS/WallpaperAerialsExtension",
+    " 1077   4.3 /System/Library/CoreServices/ControlCenter.app/Contents/MacOS/ControlCenter"
+  ],
+  "interpretation": "One read-only snapshot during the initial sweep shows other desktop applications using CPU. No processes were stopped or settings changed. Retain every timing sample and use independent shuffled repeats; this is not an isolated machine-wide benchmark."
+}

@@ -8,6 +8,10 @@ are defined in code rather than SQL.
 · [Cookbook](docs/cookbook.md)
 · [Benchmarks](docs/perf/results.md)
 
+This branch implements the proposed [Event algebra](proposal/README.md).
+The [implementation ledger](docs/event-implementation.md) separates working
+features from the remaining acceptance gates; Event is not in public v1.3.1.
+
 ## The model
 
 Relations are sets: inserting an existing fact and deleting an absent fact

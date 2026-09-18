@@ -1,0 +1,21 @@
+
+running 6 tests
+test essential_raw::tests::canonical_small_tables_and_branches ... ok
+test essential_raw::tests::matched_kernels_preserve_resident_ids ... ok
+test essential_raw::tests::noncontiguous_sixty_coordinate_table ... ok
+test essential_raw::tests::slabs_collide_grow_clone_and_preserve_raw_ids ... ok
+test occupancy::tests::exact_signatures_and_symmetries_with_no_resident_growth ... ok
+test occupancy::tests::noncontiguous_sixty_coordinate_support_and_views ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.35s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling event-classify-prototype v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/classify-prototype)
+    Finished `release` profile [optimized] target(s) in 1.44s
+     Running unittests src/lib.rs (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/classify-target/release/build/event-classify-prototype/7311d35b43db5a21/out/event_classify_prototype-7311d35b43db5a21)
+   Doc-tests event_classify_prototype

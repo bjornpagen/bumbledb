@@ -1,0 +1,14 @@
+{
+  "files": {
+    "proposal/research/space-maps/abbadini-guffanti-beck-chevalley.txt": "0f4a32fb81da67871674cabbcf37c83a05b184f7ea35188a6d4c4079e3059aea",
+    "proposal/research/space-maps/pong-probability-schemes.txt": "ba6c5323ca86c149778fc80767a9a95aa37637b5089720b967a3c7a793e50388",
+    "proposal/research/event-algebra/darwiche-marquis-2002-knowledge-compilation-map.txt": "5b4595c30e45b646828c165d519a5c7f61ea0b872a4b728dfd6bb841646408df"
+  },
+  "sources": [
+    "arXiv:2607.06386v1",
+    "arXiv:2605.03902v4",
+    "arXiv:1106.1819v1"
+  ],
+  "reading": "Revisited Abbadini\u2013Guffanti Remark 2.11 and Example 2.12 (inverse image, direct image, and pullback conditions); Pong introduction and finite strictly positive scheme definition; Knowledge Compilation Map restriction/forgetting definitions.",
+  "consequence": "Fusion of staged clipped maps must retain intermediate support, rather than assume a complete-fibre or product certificate. The gate-absorption identity is our derived set identity, checked separately in Lean. The measured fibre product is not the semantics of this Boolean contraction and supplies no law-preservation certificate."
+}

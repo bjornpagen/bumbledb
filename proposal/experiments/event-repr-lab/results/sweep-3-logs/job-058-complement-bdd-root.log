@@ -1,0 +1,27 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"complement","candidate":"bdd-root","restricted":false,"events":48,"build_s":[0.003019709, 0.00292125, 0.002860625, 0.002858583, 0.002987084, 0.002815834, 0.002823],"first_batch_s":[4.17e-7, 2.08e-7, 2.08e-7, 1.67e-7, 3.75e-7, 2.91e-7, 2.08e-7],"warm_per_not_s":[2.6855468750000003e-9, 2.6813151041666664e-9, 2.683003743489583e-9, 2.6813151041666664e-9, 2.6872355143229166e-9, 2.683003743489583e-9, 2.6813151041666664e-9],"input_bytes_est":1441872,"final_bytes_est":1278672,"verified":true}
+EVENT_LAB {"kind":"complement","candidate":"bdd-root","restricted":true,"events":48,"build_s":[0.005393875, 0.005490291, 0.005181792, 0.005800959, 0.005769209, 0.005567208, 0.005385792],"first_batch_s":[0.00214925, 0.002361166, 0.001800708, 0.001961875, 0.001811584, 0.001785625, 0.001767875],"warm_per_not_s":[5.673726399739583e-9, 5.618631998697917e-9, 4.8184000651041664e-9, 4.82177734375e-9, 4.81329345703125e-9, 4.81329345703125e-9, 4.881103515625e-9],"input_bytes_est":4259920,"final_bytes_est":5886992,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.20s
+
+
+        0.20 real         0.19 user         0.00 sys
+            30457856  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                2073  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  72  involuntary context switches
+          1392448207  instructions retired
+           675116774  cycles elapsed
+            29016448  peak memory footprint

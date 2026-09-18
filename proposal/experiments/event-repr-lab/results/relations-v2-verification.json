@@ -1,0 +1,129 @@
+{
+  "seed": 20260917,
+  "trials": 7,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/4eb96717b825fda0/out/bumbledb-4eb96717b825fda0",
+    "binary_sha256": "b0b3158b4875c55a40b7fe58eb7ce5afc3f896d465be2ac1c1f02dab7a88dad9",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/carrier.rs": "215a69982a3bc931d988032891c2e3286c0114b4ec1f254fb8d05715769c00a2",
+      "src/diagram.rs": "2873fcd2a12759a64664711b947af075ee73d9aa3f44eda597dd771bd1aaebb7",
+      "src/finite.rs": "fbfda2a96cf8f6105d592fb8a66c04052db2aacfc6fe470a041ee5e48eb802f3",
+      "src/lib.rs": "959297a9aa3a1d34426742aff957e790c5d2ebc3618a076081fef3b4c9923d53",
+      "src/modal.rs": "5d51acab5d98d33747e069b50885e0a9926d2429975aedf69b5276554ede2986",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/packed.rs": "f2af40f92bca03ff0ccf409edc5a6b05598387ae5371e05590a103e6b4743bf2",
+      "src/relations.rs": "fa8d469afb4ecd5182f106a00a56e84039e5eb09dfb1811ef4b4b58ccd4831ad"
+    },
+    "cargo_lock_sha256": "e6a31bb03b41f4ef4e151edee14284bcdfa447c8b730b240518ae01ea9330913",
+    "built_utc": "2026-09-17T20:44:44.003115+00:00",
+    "build_started_utc": "2026-09-17T20:40:38.480706+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true
+      },
+      "status": "passed",
+      "elapsed_s": 0.42803120613098145,
+      "max_rss_bytes": 18825216,
+      "log": "relations-v2-verification-logs/job-000-verify.log",
+      "rows": [
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 6,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 11,
+          "extra_packed_orders": 2,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        3.6318359375,
+        5.20166015625,
+        7.36328125
+      ],
+      "loadavg_end": [
+        3.6318359375,
+        5.20166015625,
+        7.36328125
+      ]
+    }
+  ]
+}

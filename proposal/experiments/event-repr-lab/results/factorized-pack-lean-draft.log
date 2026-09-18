@@ -1,0 +1,10 @@
+join-factorization/FactorizedPack.lean:66:56: error: failed to synthesize
+  Decidable ((∃ x x x, True) ∧ ¬∃ x x x, False)
+
+Hint: Additional diagnostic information may be available using the `set_option diagnostics true` command.
+'FactorizedPack.independent_product' does not depend on any axioms
+'FactorizedPack.factorization_iff_rectangular' does not depend on any axioms
+'FactorizedPack.clover' does not depend on any axioms
+'FactorizedPack.group_presence' does not depend on any axioms
+'FactorizedPack.coupled_counterexample' does not depend on any axioms
+'FactorizedPack.present_empty' depends on axioms: [sorryAx]

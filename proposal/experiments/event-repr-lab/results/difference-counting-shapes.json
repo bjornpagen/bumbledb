@@ -1,0 +1,676 @@
+{
+  "source_hashes": {
+    "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+    "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+    "difference-prototype/src/bin/constraint_counting.rs": "f24f404c0f9dde5b7cda85797aa93651bf917a09167fd1deff25d792ced49fed",
+    "difference-prototype/src/lib.rs": "854c7d10d939cf10a8ee81a5c4f791a15e042029d5dbb2e186054007b4b89374",
+    "difference-prototype/src/main.rs": "b3a9838b7211315587e389be99d9a46002463410e5da86e86fcbab84e39289d6",
+    "difference-prototype/src/tests.rs": "466cac54bcb2cde3da242684f167930fcda68a2e588c0ba98e8a64d6c6438bc7"
+  },
+  "checker_sha256": "586b04a940087809c16c2c1a779796704ba3d6f21f9147055cfeec467b12a431",
+  "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/difference-prototype/target/release/constraint_counting",
+  "binary_sha256": "168b36242577a9664e2ec5a533c2f1b3e78aada3b19e312895804b68fef02aa1",
+  "build_command": [
+    "cargo",
+    "build",
+    "--offline",
+    "--release",
+    "--bin",
+    "constraint_counting"
+  ],
+  "build_log": "difference-counting-shapes-build.log",
+  "runs": [
+    {
+      "job": [
+        "small"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "circuits_and_outputs": 197,
+          "manager_cases": 788,
+          "orders": 2,
+          "kernels": 2
+        }
+      ],
+      "phases": [],
+      "log": "difference-counting-shapes-logs/000-small.log"
+    },
+    {
+      "job": [
+        "8",
+        "reverse",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 8,
+          "dimensions": 21,
+          "reverse": true,
+          "kernel": "Cofactors",
+          "terms": 23,
+          "input_nodes": 26,
+          "input_bytes": 1373,
+          "final_nodes": 1311,
+          "final_bytes": 162065,
+          "apply_misses": 1760,
+          "cofactor_misses": 2620,
+          "circuit_solutions": 0,
+          "polynomial_ones": 1048576
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 26,
+          "bytes": 1373,
+          "terms": 23
+        }
+      ],
+      "log": "difference-counting-shapes-logs/001-8-reverse-cofactors.log"
+    },
+    {
+      "job": [
+        "12",
+        "forward",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 12,
+          "dimensions": 29,
+          "reverse": false,
+          "kernel": "Coefficients",
+          "terms": 33,
+          "input_nodes": 45,
+          "input_bytes": 2577,
+          "final_nodes": 21015,
+          "final_bytes": 3076473,
+          "apply_misses": 34183,
+          "cofactor_misses": 42012,
+          "circuit_solutions": 6,
+          "polynomial_ones": 268410880
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 45,
+          "bytes": 2577,
+          "terms": 33
+        }
+      ],
+      "log": "difference-counting-shapes-logs/002-12-forward-coefficients.log"
+    },
+    {
+      "job": [
+        "4",
+        "reverse",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 4,
+          "dimensions": 13,
+          "reverse": true,
+          "kernel": "Cofactors",
+          "terms": 13,
+          "input_nodes": 14,
+          "input_bytes": 719,
+          "final_nodes": 71,
+          "final_bytes": 10281,
+          "apply_misses": 66,
+          "cofactor_misses": 140,
+          "circuit_solutions": 4,
+          "polynomial_ones": 4032
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 14,
+          "bytes": 719,
+          "terms": 13
+        }
+      ],
+      "log": "difference-counting-shapes-logs/003-4-reverse-cofactors.log"
+    },
+    {
+      "job": [
+        "4",
+        "forward",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 4,
+          "dimensions": 13,
+          "reverse": false,
+          "kernel": "Coefficients",
+          "terms": 13,
+          "input_nodes": 17,
+          "input_bytes": 1269,
+          "final_nodes": 72,
+          "final_bytes": 10281,
+          "apply_misses": 84,
+          "cofactor_misses": 140,
+          "circuit_solutions": 4,
+          "polynomial_ones": 4032
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 17,
+          "bytes": 1269,
+          "terms": 13
+        }
+      ],
+      "log": "difference-counting-shapes-logs/004-4-forward-coefficients.log"
+    },
+    {
+      "job": [
+        "24",
+        "reverse",
+        "cofactors"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 73,
+          "bytes": 5089,
+          "terms": 63
+        }
+      ],
+      "log": "difference-counting-shapes-logs/005-24-reverse-cofactors.log"
+    },
+    {
+      "job": [
+        "8",
+        "reverse",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 8,
+          "dimensions": 21,
+          "reverse": true,
+          "kernel": "Coefficients",
+          "terms": 23,
+          "input_nodes": 26,
+          "input_bytes": 1373,
+          "final_nodes": 1311,
+          "final_bytes": 162065,
+          "apply_misses": 1760,
+          "cofactor_misses": 2620,
+          "circuit_solutions": 0,
+          "polynomial_ones": 1048576
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 26,
+          "bytes": 1373,
+          "terms": 23
+        }
+      ],
+      "log": "difference-counting-shapes-logs/006-8-reverse-coefficients.log"
+    },
+    {
+      "job": [
+        "24",
+        "reverse",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 73,
+          "bytes": 5089,
+          "terms": 63
+        }
+      ],
+      "log": "difference-counting-shapes-logs/007-24-reverse-coefficients.log"
+    },
+    {
+      "job": [
+        "24",
+        "forward",
+        "cofactors"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 87,
+          "bytes": 5089,
+          "terms": 63
+        }
+      ],
+      "log": "difference-counting-shapes-logs/008-24-forward-cofactors.log"
+    },
+    {
+      "job": [
+        "16",
+        "reverse",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 16,
+          "dimensions": 37,
+          "reverse": true,
+          "kernel": "Cofactors",
+          "terms": 43,
+          "input_nodes": 51,
+          "input_bytes": 2681,
+          "final_nodes": 492543,
+          "final_bytes": 74449377,
+          "apply_misses": 561889,
+          "cofactor_misses": 985084,
+          "circuit_solutions": 2,
+          "polynomial_ones": 68719345664
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 51,
+          "bytes": 2681,
+          "terms": 43
+        }
+      ],
+      "log": "difference-counting-shapes-logs/009-16-reverse-cofactors.log"
+    },
+    {
+      "job": [
+        "4",
+        "reverse",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 4,
+          "dimensions": 13,
+          "reverse": true,
+          "kernel": "Coefficients",
+          "terms": 13,
+          "input_nodes": 14,
+          "input_bytes": 719,
+          "final_nodes": 71,
+          "final_bytes": 10281,
+          "apply_misses": 66,
+          "cofactor_misses": 140,
+          "circuit_solutions": 4,
+          "polynomial_ones": 4032
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 14,
+          "bytes": 719,
+          "terms": 13
+        }
+      ],
+      "log": "difference-counting-shapes-logs/010-4-reverse-coefficients.log"
+    },
+    {
+      "job": [
+        "16",
+        "reverse",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 16,
+          "dimensions": 37,
+          "reverse": true,
+          "kernel": "Coefficients",
+          "terms": 43,
+          "input_nodes": 51,
+          "input_bytes": 2681,
+          "final_nodes": 492543,
+          "final_bytes": 74449377,
+          "apply_misses": 561889,
+          "cofactor_misses": 985084,
+          "circuit_solutions": 2,
+          "polynomial_ones": 68719345664
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 51,
+          "bytes": 2681,
+          "terms": 43
+        }
+      ],
+      "log": "difference-counting-shapes-logs/011-16-reverse-coefficients.log"
+    },
+    {
+      "job": [
+        "8",
+        "forward",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 8,
+          "dimensions": 21,
+          "reverse": false,
+          "kernel": "Cofactors",
+          "terms": 23,
+          "input_nodes": 31,
+          "input_bytes": 1961,
+          "final_nodes": 1054,
+          "final_bytes": 192529,
+          "apply_misses": 1900,
+          "cofactor_misses": 2080,
+          "circuit_solutions": 0,
+          "polynomial_ones": 1048576
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 31,
+          "bytes": 1961,
+          "terms": 23
+        }
+      ],
+      "log": "difference-counting-shapes-logs/012-8-forward-cofactors.log"
+    },
+    {
+      "job": [
+        "12",
+        "reverse",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 12,
+          "dimensions": 29,
+          "reverse": true,
+          "kernel": "Coefficients",
+          "terms": 33,
+          "input_nodes": 39,
+          "input_bytes": 2577,
+          "final_nodes": 25791,
+          "final_bytes": 3076473,
+          "apply_misses": 28952,
+          "cofactor_misses": 51580,
+          "circuit_solutions": 6,
+          "polynomial_ones": 268410880
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 39,
+          "bytes": 2577,
+          "terms": 33
+        }
+      ],
+      "log": "difference-counting-shapes-logs/013-12-reverse-coefficients.log"
+    },
+    {
+      "job": [
+        "16",
+        "forward",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 16,
+          "dimensions": 37,
+          "reverse": false,
+          "kernel": "Coefficients",
+          "terms": 43,
+          "input_nodes": 59,
+          "input_bytes": 3857,
+          "final_nodes": 334441,
+          "final_bytes": 49218017,
+          "apply_misses": 556649,
+          "cofactor_misses": 668860,
+          "circuit_solutions": 2,
+          "polynomial_ones": 68719345664
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 59,
+          "bytes": 3857,
+          "terms": 43
+        }
+      ],
+      "log": "difference-counting-shapes-logs/014-16-forward-coefficients.log"
+    },
+    {
+      "job": [
+        "24",
+        "forward",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 87,
+          "bytes": 5089,
+          "terms": 63
+        }
+      ],
+      "log": "difference-counting-shapes-logs/015-24-forward-coefficients.log"
+    },
+    {
+      "job": [
+        "12",
+        "reverse",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 12,
+          "dimensions": 29,
+          "reverse": true,
+          "kernel": "Cofactors",
+          "terms": 33,
+          "input_nodes": 39,
+          "input_bytes": 2577,
+          "final_nodes": 25791,
+          "final_bytes": 3076473,
+          "apply_misses": 28952,
+          "cofactor_misses": 51580,
+          "circuit_solutions": 6,
+          "polynomial_ones": 268410880
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 39,
+          "bytes": 2577,
+          "terms": 33
+        }
+      ],
+      "log": "difference-counting-shapes-logs/016-12-reverse-cofactors.log"
+    },
+    {
+      "job": [
+        "16",
+        "forward",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 16,
+          "dimensions": 37,
+          "reverse": false,
+          "kernel": "Cofactors",
+          "terms": 43,
+          "input_nodes": 59,
+          "input_bytes": 3857,
+          "final_nodes": 334441,
+          "final_bytes": 49218017,
+          "apply_misses": 556649,
+          "cofactor_misses": 668860,
+          "circuit_solutions": 2,
+          "polynomial_ones": 68719345664
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 59,
+          "bytes": 3857,
+          "terms": 43
+        }
+      ],
+      "log": "difference-counting-shapes-logs/017-16-forward-cofactors.log"
+    },
+    {
+      "job": [
+        "4",
+        "forward",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 4,
+          "dimensions": 13,
+          "reverse": false,
+          "kernel": "Cofactors",
+          "terms": 13,
+          "input_nodes": 17,
+          "input_bytes": 1269,
+          "final_nodes": 72,
+          "final_bytes": 10281,
+          "apply_misses": 84,
+          "cofactor_misses": 140,
+          "circuit_solutions": 4,
+          "polynomial_ones": 4032
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 17,
+          "bytes": 1269,
+          "terms": 13
+        }
+      ],
+      "log": "difference-counting-shapes-logs/018-4-forward-cofactors.log"
+    },
+    {
+      "job": [
+        "8",
+        "forward",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 8,
+          "dimensions": 21,
+          "reverse": false,
+          "kernel": "Coefficients",
+          "terms": 23,
+          "input_nodes": 31,
+          "input_bytes": 1961,
+          "final_nodes": 1054,
+          "final_bytes": 192529,
+          "apply_misses": 1900,
+          "cofactor_misses": 2080,
+          "circuit_solutions": 0,
+          "polynomial_ones": 1048576
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 31,
+          "bytes": 1961,
+          "terms": 23
+        }
+      ],
+      "log": "difference-counting-shapes-logs/019-8-forward-coefficients.log"
+    },
+    {
+      "job": [
+        "12",
+        "forward",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "gates": 12,
+          "dimensions": 29,
+          "reverse": false,
+          "kernel": "Cofactors",
+          "terms": 33,
+          "input_nodes": 45,
+          "input_bytes": 2577,
+          "final_nodes": 21015,
+          "final_bytes": 3076473,
+          "apply_misses": 34183,
+          "cofactor_misses": 42012,
+          "circuit_solutions": 6,
+          "polynomial_ones": 268410880
+        }
+      ],
+      "phases": [
+        {
+          "phase": "input_verified",
+          "nodes": 45,
+          "bytes": 2577,
+          "terms": 33
+        }
+      ],
+      "log": "difference-counting-shapes-logs/020-12-forward-cofactors.log"
+    }
+  ],
+  "passed": false,
+  "boundary": "Exact uniform counting on the full raw cube. This is not decoded support counting, arbitrary source-law contraction, a native Free Join run, or a latency comparison. Large cases use the proven constraint identity and independently evaluated four-input circuit as the scalar oracle.",
+  "semantic_failures": 0
+}

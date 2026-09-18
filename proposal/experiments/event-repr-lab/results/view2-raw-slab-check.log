@@ -1,0 +1,23 @@
+
+running 9 tests
+test raw::tests::canonical_small_tables_and_branches ... ok
+test raw::tests::matched_kernels_preserve_resident_ids ... ok
+test raw::tests::noncontiguous_sixty_coordinate_table ... ok
+test raw::tests::slabs_collide_grow_clone_and_preserve_raw_ids ... ok
+test raw::view_product::tests::all_small_predicates_maps_and_eliminations_match_exact_ids ... ok
+test raw::view_product::tests::map_identity_is_part_of_the_product ... ok
+test raw::view_product::tests::reordered_branches_retain_pending_pins ... ok
+test raw::view_product::tests::scattered_multiword_maps_and_complements_match_materialization ... ok
+test raw::view_product::tests::word_shannon_planes_match_assignments_with_pending_pins ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.62s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+    Finished `release` profile [optimized] target(s) in 0.00s
+     Running unittests src/lib.rs (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/view-target/release/build/event-essential-prototype/41deefbf948e6929/out/event_essential_prototype-41deefbf948e6929)
+   Doc-tests event_essential_prototype

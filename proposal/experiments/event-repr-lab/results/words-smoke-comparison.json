@@ -1,0 +1,1431 @@
+{
+  "passed": true,
+  "inputs": [
+    "words-native-smoke.json"
+  ],
+  "binary_sha256": "c17102bd5be46a8d8d645f47e227ebd91baba50f5a6fcdc458cf317de0923920",
+  "cases": 72,
+  "matched_kernel_cases": 24,
+  "processes": [
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "scalar"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-000-verify-local-words-identity-native-essential-derived-enum-occupancy-scalar.log",
+      "max_rss_bytes": 44564480
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-001-verify-local-words-identity-native-essential-derived-enum-occupancy-words.log",
+      "max_rss_bytes": 41844736
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "scalar"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-002-verify-local-words-identity-native-essential-derived-slab-occupancy-scalar.log",
+      "max_rss_bytes": 44335104
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-003-verify-local-words-identity-native-essential-derived-slab-occupancy-words.log",
+      "max_rss_bytes": 43925504
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "ordered_65536",
+        "EVENT_LAB_CLASSIFY": "cells",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "scalar"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-004-classify-essential512-ordered_65536-words-identity-native-classify-cells-essential-derived-enum-occupancy-scalar.log",
+      "max_rss_bytes": 8929280
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "ordered_65536",
+        "EVENT_LAB_CLASSIFY": "direct",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "scalar"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-005-classify-essential512-ordered_65536-words-identity-native-classify-direct-essential-derived-slab-occupancy-scalar.log",
+      "max_rss_bytes": 8585216
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "ordered_65536",
+        "EVENT_LAB_CLASSIFY": "direct",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-006-classify-essential512-ordered_65536-words-identity-native-classify-direct-essential-derived-enum-occupancy-words.log",
+      "max_rss_bytes": 8142848
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "ordered_65536",
+        "EVENT_LAB_CLASSIFY": "direct",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "scalar"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-007-classify-essential512-ordered_65536-words-identity-native-classify-direct-essential-derived-enum-occupancy-scalar.log",
+      "max_rss_bytes": 8208384
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "ordered_65536",
+        "EVENT_LAB_CLASSIFY": "direct",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-008-classify-essential512-ordered_65536-words-identity-native-classify-direct-essential-derived-slab-occupancy-words.log",
+      "max_rss_bytes": 8617984
+    },
+    {
+      "file": "words-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "ordered_65536",
+        "EVENT_LAB_CLASSIFY": "cells",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "scalar"
+      },
+      "status": "passed",
+      "log": "words-native-smoke-logs/job-009-classify-essential512-ordered_65536-words-identity-native-classify-cells-essential-derived-slab-occupancy-scalar.log",
+      "max_rss_bytes": 8716288
+    }
+  ],
+  "pairs": [
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "included",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.017796958,
+          "word_median_s": 0.001168375,
+          "scalar_over_words": 15.232231090189368,
+          "scalar_min_s": 0.017796958,
+          "scalar_max_s": 0.017796958,
+          "word_min_s": 0.001168375,
+          "word_max_s": 0.001168375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.017458,
+          "word_median_s": 0.001088625,
+          "scalar_over_words": 16.036743598576187,
+          "scalar_min_s": 0.017458,
+          "scalar_max_s": 0.017458,
+          "word_min_s": 0.001088625,
+          "word_max_s": 0.001088625,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 0.000101541,
+          "word_median_s": 0.000108916,
+          "scalar_over_words": 0.9322872672518271,
+          "scalar_min_s": 0.000101541,
+          "scalar_max_s": 0.000101541,
+          "word_min_s": 0.000108916,
+          "word_max_s": 0.000108916,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "included",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.013377166,
+          "word_median_s": 0.000825958,
+          "scalar_over_words": 16.19593974512021,
+          "scalar_min_s": 0.013377166,
+          "scalar_max_s": 0.013377166,
+          "word_min_s": 0.000825958,
+          "word_max_s": 0.000825958,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 6.070084765625e-05,
+          "word_median_s": 5.97111015625e-05,
+          "scalar_over_words": 1.016575579211414,
+          "scalar_min_s": 6.070084765625e-05,
+          "scalar_max_s": 6.070084765625e-05,
+          "word_min_s": 5.97111015625e-05,
+          "word_max_s": 5.97111015625e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.5583e-05,
+          "word_median_s": 8.0125e-05,
+          "scalar_over_words": 1.0681185647425897,
+          "scalar_min_s": 8.5583e-05,
+          "scalar_max_s": 8.5583e-05,
+          "word_min_s": 8.0125e-05,
+          "word_max_s": 8.0125e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 665
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "disjoint",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.017675167,
+          "word_median_s": 0.001101833,
+          "scalar_over_words": 16.041602493299802,
+          "scalar_min_s": 0.017675167,
+          "scalar_max_s": 0.017675167,
+          "word_min_s": 0.001101833,
+          "word_max_s": 0.001101833,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.017686041,
+          "word_median_s": 0.001074940125,
+          "scalar_over_words": 16.453047559276847,
+          "scalar_min_s": 0.017686041,
+          "scalar_max_s": 0.017686041,
+          "word_min_s": 0.001074940125,
+          "word_max_s": 0.001074940125,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.4667e-05,
+          "word_median_s": 9.7166e-05,
+          "scalar_over_words": 0.8713644690529608,
+          "scalar_min_s": 8.4667e-05,
+          "scalar_max_s": 8.4667e-05,
+          "word_min_s": 9.7166e-05,
+          "word_max_s": 9.7166e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "disjoint",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.013969791,
+          "word_median_s": 0.000785708,
+          "scalar_over_words": 17.779876239009912,
+          "scalar_min_s": 0.013969791,
+          "scalar_max_s": 0.013969791,
+          "word_min_s": 0.000785708,
+          "word_max_s": 0.000785708,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 6.08291015625e-05,
+          "word_median_s": 5.88787421875e-05,
+          "scalar_over_words": 1.0331250176640843,
+          "scalar_min_s": 6.08291015625e-05,
+          "scalar_max_s": 6.08291015625e-05,
+          "word_min_s": 5.88787421875e-05,
+          "word_max_s": 5.88787421875e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.9292e-05,
+          "word_median_s": 7.2542e-05,
+          "scalar_over_words": 1.230900719583138,
+          "scalar_min_s": 8.9292e-05,
+          "scalar_max_s": 8.9292e-05,
+          "word_min_s": 7.2542e-05,
+          "word_max_s": 7.2542e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 665
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "overlap",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.018045667,
+          "word_median_s": 0.001119167,
+          "scalar_over_words": 16.124195048638857,
+          "scalar_min_s": 0.018045667,
+          "scalar_max_s": 0.018045667,
+          "word_min_s": 0.001119167,
+          "word_max_s": 0.001119167,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.017569875,
+          "word_median_s": 0.0010695963125,
+          "scalar_over_words": 16.42664133623778,
+          "scalar_min_s": 0.017569875,
+          "scalar_max_s": 0.017569875,
+          "word_min_s": 0.0010695963125,
+          "word_max_s": 0.0010695963125,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.5625e-05,
+          "word_median_s": 0.000104167,
+          "scalar_over_words": 0.8219973696084173,
+          "scalar_min_s": 8.5625e-05,
+          "scalar_max_s": 8.5625e-05,
+          "word_min_s": 0.000104167,
+          "word_max_s": 0.000104167,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "overlap",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.012355792,
+          "word_median_s": 0.000789458,
+          "scalar_over_words": 15.650980799485216,
+          "scalar_min_s": 0.012355792,
+          "scalar_max_s": 0.012355792,
+          "word_min_s": 0.000789458,
+          "word_max_s": 0.000789458,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 5.9273109375e-05,
+          "word_median_s": 5.94641953125e-05,
+          "scalar_over_words": 0.996786537907462,
+          "scalar_min_s": 5.9273109375e-05,
+          "scalar_max_s": 5.9273109375e-05,
+          "word_min_s": 5.94641953125e-05,
+          "word_max_s": 5.94641953125e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.3e-05,
+          "word_median_s": 9.9958e-05,
+          "scalar_over_words": 0.8303487464735189,
+          "scalar_min_s": 8.3e-05,
+          "scalar_max_s": 8.3e-05,
+          "word_min_s": 9.9958e-05,
+          "word_max_s": 9.9958e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 665
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "included",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.072408667,
+          "word_median_s": 0.004185791,
+          "scalar_over_words": 17.29868189787784,
+          "scalar_min_s": 0.072408667,
+          "scalar_max_s": 0.072408667,
+          "word_min_s": 0.004185791,
+          "word_max_s": 0.004185791,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.072258166,
+          "word_median_s": 0.004196302,
+          "scalar_over_words": 17.219486586046475,
+          "scalar_min_s": 0.072258166,
+          "scalar_max_s": 0.072258166,
+          "word_min_s": 0.004196302,
+          "word_max_s": 0.004196302,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.9458e-05,
+          "word_median_s": 0.000102375,
+          "scalar_over_words": 0.9715067155067155,
+          "scalar_min_s": 9.9458e-05,
+          "scalar_max_s": 9.9458e-05,
+          "word_min_s": 0.000102375,
+          "word_max_s": 0.000102375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "included",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.007434125,
+          "word_median_s": 0.00053275,
+          "scalar_over_words": 13.954246832473016,
+          "scalar_min_s": 0.007434125,
+          "scalar_max_s": 0.007434125,
+          "word_min_s": 0.00053275,
+          "word_max_s": 0.00053275,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.000109763015625,
+          "word_median_s": 0.000108690109375,
+          "scalar_over_words": 1.0098712408715893,
+          "scalar_min_s": 0.000109763015625,
+          "scalar_max_s": 0.000109763015625,
+          "word_min_s": 0.000108690109375,
+          "word_max_s": 0.000108690109375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 0.000109125,
+          "word_median_s": 9.3333e-05,
+          "scalar_over_words": 1.1692006042878724,
+          "scalar_min_s": 0.000109125,
+          "scalar_max_s": 0.000109125,
+          "word_min_s": 9.3333e-05,
+          "word_max_s": 9.3333e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 384
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "disjoint",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.073004417,
+          "word_median_s": 0.004362291,
+          "scalar_over_words": 16.735338609918504,
+          "scalar_min_s": 0.073004417,
+          "scalar_max_s": 0.073004417,
+          "word_min_s": 0.004362291,
+          "word_max_s": 0.004362291,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.072740875,
+          "word_median_s": 0.00427328125,
+          "scalar_over_words": 17.022253098833595,
+          "scalar_min_s": 0.072740875,
+          "scalar_max_s": 0.072740875,
+          "word_min_s": 0.00427328125,
+          "word_max_s": 0.00427328125,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 0.000100833,
+          "word_median_s": 8.575e-05,
+          "scalar_over_words": 1.1758950437317786,
+          "scalar_min_s": 0.000100833,
+          "scalar_max_s": 0.000100833,
+          "word_min_s": 8.575e-05,
+          "word_max_s": 8.575e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "disjoint",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.0072295,
+          "word_median_s": 0.000542333,
+          "scalar_over_words": 13.33037082382964,
+          "scalar_min_s": 0.0072295,
+          "scalar_max_s": 0.0072295,
+          "word_min_s": 0.000542333,
+          "word_max_s": 0.000542333,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.0001122965546875,
+          "word_median_s": 0.0001094892578125,
+          "scalar_over_words": 1.0256399297162786,
+          "scalar_min_s": 0.0001122965546875,
+          "scalar_max_s": 0.0001122965546875,
+          "word_min_s": 0.0001094892578125,
+          "word_max_s": 0.0001094892578125,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.4459e-05,
+          "word_median_s": 0.000111792,
+          "scalar_over_words": 0.8449531272362959,
+          "scalar_min_s": 9.4459e-05,
+          "scalar_max_s": 9.4459e-05,
+          "word_min_s": 0.000111792,
+          "word_max_s": 0.000111792,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 384
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "overlap",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.072954,
+          "word_median_s": 0.004399333,
+          "scalar_over_words": 16.58296837270559,
+          "scalar_min_s": 0.072954,
+          "scalar_max_s": 0.072954,
+          "word_min_s": 0.004399333,
+          "word_max_s": 0.004399333,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.07226875,
+          "word_median_s": 0.00422721875,
+          "scalar_over_words": 17.09605162969151,
+          "scalar_min_s": 0.07226875,
+          "scalar_max_s": 0.07226875,
+          "word_min_s": 0.00422721875,
+          "word_max_s": 0.00422721875,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 0.000103333,
+          "word_median_s": 9.5667e-05,
+          "scalar_over_words": 1.0801321249751743,
+          "scalar_min_s": 0.000103333,
+          "scalar_max_s": 0.000103333,
+          "word_min_s": 9.5667e-05,
+          "word_max_s": 9.5667e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "overlap",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.007224792,
+          "word_median_s": 0.000579292,
+          "scalar_over_words": 12.471762081989738,
+          "scalar_min_s": 0.007224792,
+          "scalar_max_s": 0.007224792,
+          "word_min_s": 0.000579292,
+          "word_max_s": 0.000579292,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.000111232421875,
+          "word_median_s": 0.000108515953125,
+          "scalar_over_words": 1.025032897668704,
+          "scalar_min_s": 0.000111232421875,
+          "scalar_max_s": 0.000111232421875,
+          "word_min_s": 0.000108515953125,
+          "word_max_s": 0.000108515953125,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.3625e-05,
+          "word_median_s": 9.4417e-05,
+          "scalar_over_words": 0.991611680099982,
+          "scalar_min_s": 9.3625e-05,
+          "scalar_max_s": 9.3625e-05,
+          "word_min_s": 9.4417e-05,
+          "word_max_s": 9.4417e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 38200,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 384
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "included",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.023238917,
+          "word_median_s": 0.0011565,
+          "scalar_over_words": 20.09417812364894,
+          "scalar_min_s": 0.023238917,
+          "scalar_max_s": 0.023238917,
+          "word_min_s": 0.0011565,
+          "word_max_s": 0.0011565,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.022910791,
+          "word_median_s": 0.001081739625,
+          "scalar_over_words": 21.17958006761562,
+          "scalar_min_s": 0.022910791,
+          "scalar_max_s": 0.022910791,
+          "word_min_s": 0.001081739625,
+          "word_max_s": 0.001081739625,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 0.000156291,
+          "word_median_s": 0.000138,
+          "scalar_over_words": 1.1325434782608697,
+          "scalar_min_s": 0.000156291,
+          "scalar_max_s": 0.000156291,
+          "word_min_s": 0.000138,
+          "word_max_s": 0.000138,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "included",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.043368625,
+          "word_median_s": 0.00079175,
+          "scalar_over_words": 54.77565519419009,
+          "scalar_min_s": 0.043368625,
+          "scalar_max_s": 0.043368625,
+          "word_min_s": 0.00079175,
+          "word_max_s": 0.00079175,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 6.0123375e-05,
+          "word_median_s": 5.944287109375e-05,
+          "scalar_over_words": 1.0114480322657489,
+          "scalar_min_s": 6.0123375e-05,
+          "scalar_max_s": 6.0123375e-05,
+          "word_min_s": 5.944287109375e-05,
+          "word_max_s": 5.944287109375e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.5e-05,
+          "word_median_s": 8.1958e-05,
+          "scalar_over_words": 1.0371165719026818,
+          "scalar_min_s": 8.5e-05,
+          "scalar_max_s": 8.5e-05,
+          "word_min_s": 8.1958e-05,
+          "word_max_s": 8.1958e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 665
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "disjoint",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.034699083,
+          "word_median_s": 0.001086042,
+          "scalar_over_words": 31.950037843840292,
+          "scalar_min_s": 0.034699083,
+          "scalar_max_s": 0.034699083,
+          "word_min_s": 0.001086042,
+          "word_max_s": 0.001086042,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.035825292,
+          "word_median_s": 0.0010816484375,
+          "scalar_over_words": 33.12101303710338,
+          "scalar_min_s": 0.035825292,
+          "scalar_max_s": 0.035825292,
+          "word_min_s": 0.0010816484375,
+          "word_max_s": 0.0010816484375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.475e-05,
+          "word_median_s": 8.625e-05,
+          "scalar_over_words": 0.982608695652174,
+          "scalar_min_s": 8.475e-05,
+          "scalar_max_s": 8.475e-05,
+          "word_min_s": 8.625e-05,
+          "word_max_s": 8.625e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "disjoint",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.030052375,
+          "word_median_s": 0.0007845,
+          "scalar_over_words": 38.30768005098789,
+          "scalar_min_s": 0.030052375,
+          "scalar_max_s": 0.030052375,
+          "word_min_s": 0.0007845,
+          "word_max_s": 0.0007845,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.000110347328125,
+          "word_median_s": 5.92727890625e-05,
+          "scalar_over_words": 1.8616861104451252,
+          "scalar_min_s": 0.000110347328125,
+          "scalar_max_s": 0.000110347328125,
+          "word_min_s": 5.92727890625e-05,
+          "word_max_s": 5.92727890625e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.9583e-05,
+          "word_median_s": 8.4459e-05,
+          "scalar_over_words": 1.0606684900365857,
+          "scalar_min_s": 8.9583e-05,
+          "scalar_max_s": 8.9583e-05,
+          "word_min_s": 8.4459e-05,
+          "word_max_s": 8.4459e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 665
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "overlap",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.022530083,
+          "word_median_s": 0.001117417,
+          "scalar_over_words": 20.16264563721511,
+          "scalar_min_s": 0.022530083,
+          "scalar_max_s": 0.022530083,
+          "word_min_s": 0.001117417,
+          "word_max_s": 0.001117417,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.017471917,
+          "word_median_s": 0.001109403625,
+          "scalar_over_words": 15.74892726711615,
+          "scalar_min_s": 0.017471917,
+          "scalar_max_s": 0.017471917,
+          "word_min_s": 0.001109403625,
+          "word_max_s": 0.001109403625,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.1542e-05,
+          "word_median_s": 7.8459e-05,
+          "scalar_over_words": 1.03929440854459,
+          "scalar_min_s": 8.1542e-05,
+          "scalar_max_s": 8.1542e-05,
+          "word_min_s": 7.8459e-05,
+          "word_max_s": 7.8459e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "triangle",
+        "predicate": "overlap",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.012406833,
+          "word_median_s": 0.000811583,
+          "scalar_over_words": 15.2872016786946,
+          "scalar_min_s": 0.012406833,
+          "scalar_max_s": 0.012406833,
+          "word_min_s": 0.000811583,
+          "word_max_s": 0.000811583,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 5.84939765625e-05,
+          "word_median_s": 5.895280078125e-05,
+          "scalar_over_words": 0.9922170921030111,
+          "scalar_min_s": 5.84939765625e-05,
+          "scalar_max_s": 5.84939765625e-05,
+          "word_min_s": 5.895280078125e-05,
+          "word_max_s": 5.895280078125e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 7.8791e-05,
+          "word_median_s": 8.425e-05,
+          "scalar_over_words": 0.9352047477744807,
+          "scalar_min_s": 7.8791e-05,
+          "scalar_max_s": 7.8791e-05,
+          "word_min_s": 8.425e-05,
+          "word_max_s": 8.425e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 665
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "included",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.074202459,
+          "word_median_s": 0.009088709,
+          "scalar_over_words": 8.164246319251722,
+          "scalar_min_s": 0.074202459,
+          "scalar_max_s": 0.074202459,
+          "word_min_s": 0.009088709,
+          "word_max_s": 0.009088709,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.072743584,
+          "word_median_s": 0.0075716875,
+          "scalar_over_words": 9.607314617778401,
+          "scalar_min_s": 0.072743584,
+          "scalar_max_s": 0.072743584,
+          "word_min_s": 0.0075716875,
+          "word_max_s": 0.0075716875,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.375e-05,
+          "word_median_s": 0.000281208,
+          "scalar_over_words": 0.3333831185457028,
+          "scalar_min_s": 9.375e-05,
+          "scalar_max_s": 9.375e-05,
+          "word_min_s": 0.000281208,
+          "word_max_s": 0.000281208,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "included",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.007207417,
+          "word_median_s": 0.000573667,
+          "scalar_over_words": 12.563764344122983,
+          "scalar_min_s": 0.007207417,
+          "scalar_max_s": 0.007207417,
+          "word_min_s": 0.000573667,
+          "word_max_s": 0.000573667,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.00010962109375,
+          "word_median_s": 0.000110694984375,
+          "scalar_over_words": 0.9902986514604674,
+          "scalar_min_s": 0.00010962109375,
+          "scalar_max_s": 0.00010962109375,
+          "word_min_s": 0.000110694984375,
+          "word_max_s": 0.000110694984375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.0625e-05,
+          "word_median_s": 9.6333e-05,
+          "scalar_over_words": 0.9407471998173004,
+          "scalar_min_s": 9.0625e-05,
+          "scalar_max_s": 9.0625e-05,
+          "word_min_s": 9.6333e-05,
+          "word_max_s": 9.6333e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 384
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "disjoint",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.072856083,
+          "word_median_s": 0.004305208,
+          "scalar_over_words": 16.922778876189028,
+          "scalar_min_s": 0.072856083,
+          "scalar_max_s": 0.072856083,
+          "word_min_s": 0.004305208,
+          "word_max_s": 0.004305208,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.074050833,
+          "word_median_s": 0.00432159375,
+          "scalar_over_words": 17.13507499403432,
+          "scalar_min_s": 0.074050833,
+          "scalar_max_s": 0.074050833,
+          "word_min_s": 0.00432159375,
+          "word_max_s": 0.00432159375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.8375e-05,
+          "word_median_s": 9.1708e-05,
+          "scalar_over_words": 0.9636563876651982,
+          "scalar_min_s": 8.8375e-05,
+          "scalar_max_s": 8.8375e-05,
+          "word_min_s": 9.1708e-05,
+          "word_max_s": 9.1708e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "disjoint",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.007185208,
+          "word_median_s": 0.0005535,
+          "scalar_over_words": 12.981405600722676,
+          "scalar_min_s": 0.007185208,
+          "scalar_max_s": 0.007185208,
+          "word_min_s": 0.0005535,
+          "word_max_s": 0.0005535,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.0001178193359375,
+          "word_median_s": 0.0001114020234375,
+          "scalar_over_words": 1.0576049904838605,
+          "scalar_min_s": 0.0001178193359375,
+          "scalar_max_s": 0.0001178193359375,
+          "word_min_s": 0.0001114020234375,
+          "word_max_s": 0.0001114020234375,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.1125e-05,
+          "word_median_s": 0.000104833,
+          "scalar_over_words": 0.8692396478208197,
+          "scalar_min_s": 9.1125e-05,
+          "scalar_max_s": 9.1125e-05,
+          "word_min_s": 0.000104833,
+          "word_max_s": 0.000104833,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 384
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "overlap",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.072822542,
+          "word_median_s": 0.004317125,
+          "scalar_over_words": 16.868295914526453,
+          "scalar_min_s": 0.072822542,
+          "scalar_max_s": 0.072822542,
+          "word_min_s": 0.004317125,
+          "word_max_s": 0.004317125,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.080932583,
+          "word_median_s": 0.00667713525,
+          "scalar_over_words": 12.120854224122539,
+          "scalar_min_s": 0.080932583,
+          "scalar_max_s": 0.080932583,
+          "word_min_s": 0.00667713525,
+          "word_max_s": 0.00667713525,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 8.9959e-05,
+          "word_median_s": 9.6666e-05,
+          "scalar_over_words": 0.9306167628742267,
+          "scalar_min_s": 8.9959e-05,
+          "scalar_max_s": 8.9959e-05,
+          "word_min_s": 9.6666e-05,
+          "word_max_s": 9.6666e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 0
+    },
+    {
+      "case": {
+        "scenario": "ordered_65536",
+        "shape": "clover",
+        "predicate": "overlap",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "classifier": "direct",
+        "occupancy_kernel": "words"
+      },
+      "scalar_source": "words-native-smoke.json",
+      "word_source": "words-native-smoke.json",
+      "phases": {
+        "fresh_s": {
+          "scalar_median_s": 0.007586375,
+          "word_median_s": 0.00059775,
+          "scalar_over_words": 12.69155165202844,
+          "scalar_min_s": 0.007586375,
+          "scalar_max_s": 0.007586375,
+          "word_min_s": 0.00059775,
+          "word_max_s": 0.00059775,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "warm_s": {
+          "scalar_median_s": 0.000124514,
+          "word_median_s": 0.0001069921875,
+          "scalar_over_words": 1.1637672143117925,
+          "scalar_min_s": 0.000124514,
+          "scalar_max_s": 0.000124514,
+          "word_min_s": 0.0001069921875,
+          "word_max_s": 0.0001069921875,
+          "scalar_samples": 1,
+          "word_samples": 1
+        },
+        "join_only_s": {
+          "scalar_median_s": 9.7333e-05,
+          "word_median_s": 9.0375e-05,
+          "scalar_over_words": 1.0769903181189489,
+          "scalar_min_s": 9.7333e-05,
+          "scalar_max_s": 9.7333e-05,
+          "word_min_s": 9.0375e-05,
+          "word_max_s": 9.0375e-05,
+          "scalar_samples": 1,
+          "word_samples": 1
+        }
+      },
+      "carrier_bytes_est": 20308,
+      "carrier_nodes": 339,
+      "signature_cache_entries": 384
+    }
+  ],
+  "checker_sha256": "d2afd10cf10f789d9ffd63506776a25e0774273a17b8e8d89374bdc2dec0edf8",
+  "rule": "Latest supplied process per exact case, never fastest selection. Exact histogram and survivors match every carrier/mode."
+}

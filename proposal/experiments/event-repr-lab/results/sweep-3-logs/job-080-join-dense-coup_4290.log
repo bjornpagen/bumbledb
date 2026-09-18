@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"triangle","memo":false,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":1256,"input_bytes_est":23728,"final_bytes_est":767000,"colt_bytes":163104,"build_s":[2.0584e-5, 7.459e-6, 5.917e-6, 6.583e-6, 7.084e-6, 6.916e-6, 6.291e-6],"native_setup_s":0.000211375,"native_first_join_s":0.000109042,"join_only_s":[5.1708e-5, 6.7292e-5, 5.6083e-5, 4.9542e-5, 4.5375e-5, 4.5334e-5, 4.5458e-5],"fresh_s":[0.000681417, 0.000671417, 0.000640791, 0.000659292, 0.000618125, 0.000603458, 0.00060525],"warm_s":[0.0006537421875, 0.00065338153125, 0.00065731121875, 0.00065481640625, 0.00064811196875, 0.00064166015625, 0.0006471549375],"warm_loops":32,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"triangle","memo":true,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":1256,"input_bytes_est":23728,"final_bytes_est":838680,"colt_bytes":163104,"build_s":[2.0584e-5, 7.459e-6, 5.917e-6, 6.583e-6, 7.084e-6, 6.916e-6, 6.291e-6],"native_setup_s":0.000211375,"native_first_join_s":0.000109042,"join_only_s":[5.1708e-5, 6.7292e-5, 5.6083e-5, 4.9542e-5, 4.5375e-5, 4.5334e-5, 4.5458e-5],"fresh_s":[0.000374792, 0.000333625, 0.000327083, 0.000339917, 0.000434958, 0.00032725, 0.000314583],"warm_s":[8.153450390625e-5, 8.164111328125e-5, 8.36368828125e-5, 8.46171875e-5, 8.45322265625e-5, 8.305338671875e-5, 8.260676953125e-5],"warm_loops":256,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"clover","memo":false,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":2483,"input_bytes_est":23728,"final_bytes_est":1516416,"colt_bytes":41104,"build_s":[8.292e-6, 5.417e-6, 5.208e-6, 5.083e-6, 6.583e-6, 5.166e-6, 5.084e-6],"native_setup_s":0.000129,"native_first_join_s":0.000097875,"join_only_s":[7.1792e-5, 7.0041e-5, 7.0208e-5, 7.0084e-5, 7.0459e-5, 7e-5, 7.0042e-5],"fresh_s":[0.002358458, 0.002590666, 0.002435166, 0.002381042, 0.002494458, 0.002493542, 0.002401166],"warm_s":[0.0024033255, 0.0023855078125, 0.002467224, 0.0024189974375, 0.0023980416875, 0.0024088515625, 0.0023874609375],"warm_loops":16,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"clover","memo":true,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":2483,"input_bytes_est":23728,"final_bytes_est":1803136,"colt_bytes":41104,"build_s":[8.292e-6, 5.417e-6, 5.208e-6, 5.083e-6, 6.583e-6, 5.166e-6, 5.084e-6],"native_setup_s":0.000129,"native_first_join_s":0.000097875,"join_only_s":[7.1792e-5, 7.0041e-5, 7.0208e-5, 7.0084e-5, 7.0459e-5, 7e-5, 7.0042e-5],"fresh_s":[0.000925875, 0.000938583, 0.000910833, 0.000892, 0.000889875, 0.000995792, 0.001051167],"warm_s":[0.0001569065703125, 0.0001571673203125, 0.0001608157578125, 0.0001606875, 0.0001599840546875, 0.00015959765625, 0.0001593251953125],"warm_loops":128,"checksum":5691950,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.94s
+
+
+        0.94 real         0.93 user         0.01 sys
+            11288576  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 903  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 352  involuntary context switches
+         15139672091  instructions retired
+          3159872104  cycles elapsed
+             8831336  peak memory footprint

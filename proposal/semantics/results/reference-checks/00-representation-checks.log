@@ -1,0 +1,21 @@
+{
+  "scope": "Representation reference only, not the native engine.",
+  "groups_passed": [
+    "support_relative_canonical_identity",
+    "constant_time_relative_complement",
+    "all_sixteen_boolean_operations",
+    "venn_signature_and_symmetries",
+    "deterministic_wire_under_reallocation",
+    "reduced_ordered_complement_normalization",
+    "logical_guards_and_endpoint_support",
+    "coup_composite_through_bdd_pairs"
+  ],
+  "support_masks": 15,
+  "event_pairs": 624,
+  "boolean_operations": 9984,
+  "coup_worlds": 4290,
+  "coup_steal_support": "189/1430",
+  "coup_fixture_bdd_nodes": 3497,
+  "coup_fixture_partition_pairs": 6
+}
+

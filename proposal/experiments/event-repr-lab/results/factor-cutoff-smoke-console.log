@@ -1,0 +1,14 @@
+000 verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-gates-certified: passed, 11.07s
+001 legal-relations-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-below-gates-certified: passed, 3.18s
+002 legal-relations-retraction64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 11.19s
+003 legal-relations-prefix64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 10.53s
+004 legal-relations-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-holes-gates-certified: passed, 8.20s
+005 legal-relations-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 13.73s
+006 legal-relations-prefix64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-below-gates-certified: passed, 3.30s
+007 legal-relations-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-below-gates-certified: passed, 3.49s
+008 legal-relations-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-holes-gates-certified: passed, 8.56s
+009 legal-relations-prefix64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-fibred-gates-certified: passed, 12.98s
+010 legal-relations-prefix64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-holes-gates-certified: passed, 5.83s
+011 legal-relations-retraction64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-holes-gates-certified: passed, 6.32s
+012 legal-relations-retraction64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source-domain-below-gates-certified: passed, 3.83s
+Saved /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/results/factor-cutoff-smoke.json

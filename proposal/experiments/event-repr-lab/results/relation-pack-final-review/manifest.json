@@ -1,0 +1,15 @@
+{
+  "proposal/design-review.md": "4c7faedbcea456102490a8ebabddf4f608f269c878fd766c1f9766b85713e3bc",
+  "proposal/query-algebra.md": "6f6a99c976991432f5fff713f09ef9f91025a46faf40fc30f95441175d74fb1e",
+  "proposal/README.md": "0b0a7607409cf6ae583d4d33fcc6a0175b6d1abf01ff015eaf70494e8aaf1858",
+  "proposal/implementation-plan.md": "151b7e6ea3e214c8f182843a9e5ff3bd21581a2cd79903e5caea4d46efd923c6",
+  "proposal/experiments/event-repr-lab/RELATIONAL-PACK.md": "d53546318b012a96018ff9132357372ee3ab6722f99ad7b12743c14289afc2d0",
+  "proposal/experiments/event-repr-lab/RELATIONAL-PACK-MEASUREMENTS.md": "d241f34d5dd1a279cf9c81af1932e08d649823535da1ebfe20672a28f730758e",
+  "proposal/experiments/event-repr-lab/RELATIONAL-PACK-REPEAT.md": "9fef64ccce5ae9e5cafa48d12a4c10019503d195cf3227ea5e51ed0a96835861",
+  "proposal/experiments/event-repr-lab/FACTORIZED-PACK.md": "65de0005c90853b90494f30157b6af44d42b81ac26af74c3fa4c35a0e49ddddb",
+  "proposal/experiments/event-repr-lab/REPORT.md": "64b125abf2ce4d38cbcf2008585bd3008836d6947cbd74a8a852e82365c22b53",
+  "proposal/experiments/event-repr-lab/README.md": "947535e1d563731b42d8d9cb775c3f6d98ac5b0c5dd84826497c49cd9260fa40",
+  "proposal/experiments/event-repr-lab/QUESTIONS.md": "baa90f6d32e3858b26bb8eec0faf2586c0701a2c8f77dffabb57395ae264109a",
+  "proposal/experiments/event-repr-lab/LEAN.md": "775140d2783e3ac93594a9b0debeafaa814a169815152b0aa98a5c6d53835a7e",
+  "proposal/experiments/event-repr-lab/audit.py": "4a9b84b2476698f6f3f458b88ba245c6885c9ee19160def093d15bcdae8e81be"
+}

@@ -1,0 +1,26 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic","candidate":"mdd4-pair","pairs":16,"interleaved":false,"worlds":4294967296,"build_s":0.02334125,"count_s":0.003070583,"nodes":233024,"bytes_est":41422080,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.03s
+
+
+        0.03 real         0.02 user         0.00 sys
+            65421312  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                4464  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  18  involuntary context switches
+           270222673  instructions retired
+            96868325  cycles elapsed
+            64094640  peak memory footprint

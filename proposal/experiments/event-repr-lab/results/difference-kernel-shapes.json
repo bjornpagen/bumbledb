@@ -1,0 +1,1718 @@
+{
+  "passed": false,
+  "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/difference-prototype/target/release/event-difference-prototype",
+  "binary_sha256": "ba9ee9254b900759f6b50585a8ba6e022d893665dcfc7f546677348040117a6f",
+  "source_hashes": {
+    "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+    "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+    "difference-prototype/src/lib.rs": "89604e0095434a5d7f481a6af1d02eb3d14f562e57c76868209a6488b41ef331",
+    "difference-prototype/src/main.rs": "b8e4d90c74c53908f3d5c93fd22537c1d156a442c72b4900a5f6f1f7b55d18a2",
+    "difference-prototype/src/tests.rs": "ce77c5571a8d15babd9f53deb3146ddf4c7db97838b46619fed66a4cb410b70d"
+  },
+  "checker_sha256": "a1b4ddf7709a47f0f9f5dbc194e0957a306334f998400aafb85f0b992b5abf33",
+  "runs": [
+    {
+      "job": [
+        "composition",
+        "mixed",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "mixed",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 32,
+          "input_reachable": 31,
+          "input_bytes": 1860,
+          "final_records": 189,
+          "output_reachable": 35,
+          "live_union": 65,
+          "final_bytes": 19892,
+          "query_apply_misses": 394,
+          "query_cofactor_misses": 70,
+          "query_projection_misses": 55,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 32,
+          "bytes": 1860
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/000-composition-mixed-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "shannon",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "shannon",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 7988,
+          "input_reachable": 7987,
+          "input_bytes": 432336,
+          "final_records": 121066,
+          "output_reachable": 10218,
+          "live_union": 15079,
+          "final_bytes": 14713040,
+          "query_apply_misses": 429412,
+          "query_cofactor_misses": 0,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 7988,
+          "bytes": 432336
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 7988,
+          "bytes": 432336
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 51031,
+          "bytes": 6152400
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 76113,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 99685,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 115660,
+          "bytes": 14713040
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 121066,
+          "bytes": 14713040
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 121066,
+          "bytes": 14713040
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 121066,
+          "bytes": 14713040
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/001-coup-shannon-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "positive",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "positive",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 27,
+          "input_reachable": 26,
+          "input_bytes": 1272,
+          "final_records": 178,
+          "output_reachable": 30,
+          "live_union": 55,
+          "final_bytes": 18940,
+          "query_apply_misses": 432,
+          "query_cofactor_misses": 46,
+          "query_projection_misses": 47,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 27,
+          "bytes": 1272
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/002-composition-positive-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "negative",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "negative",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 62,
+          "input_reachable": 61,
+          "input_bytes": 3532,
+          "final_records": 651,
+          "output_reachable": 64,
+          "live_union": 120,
+          "final_bytes": 76236,
+          "query_apply_misses": 1065,
+          "query_cofactor_misses": 312,
+          "query_projection_misses": 87,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 62,
+          "bytes": 3532
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/003-composition-negative-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "positive",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "positive",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 27,
+          "input_reachable": 26,
+          "input_bytes": 1272,
+          "final_records": 187,
+          "output_reachable": 30,
+          "live_union": 55,
+          "final_bytes": 21796,
+          "query_apply_misses": 325,
+          "query_cofactor_misses": 194,
+          "query_projection_misses": 47,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 27,
+          "bytes": 1272
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/004-composition-positive-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "positive",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 22632,
+          "bytes": 1126608
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 22632,
+          "bytes": 1126608
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/005-coup-positive-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "negative",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "negative",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 62,
+          "input_reachable": 61,
+          "input_bytes": 3532,
+          "final_records": 648,
+          "output_reachable": 64,
+          "live_union": 120,
+          "final_bytes": 69572,
+          "query_apply_misses": 1031,
+          "query_cofactor_misses": 30,
+          "query_projection_misses": 87,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 62,
+          "bytes": 3532
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/006-composition-negative-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "mixed",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "mixed",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 65,
+          "input_reachable": 64,
+          "input_bytes": 4556,
+          "final_records": 491,
+          "output_reachable": 70,
+          "live_union": 125,
+          "final_bytes": 47100,
+          "query_apply_misses": 708,
+          "query_cofactor_misses": 66,
+          "query_projection_misses": 88,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 65,
+          "bytes": 4556
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/007-composition-mixed-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "mixed",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "mixed",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 9668,
+          "input_reachable": 9667,
+          "input_bytes": 563408,
+          "final_records": 415295,
+          "output_reachable": 16048,
+          "live_union": 22934,
+          "final_bytes": 53117136,
+          "query_apply_misses": 1427605,
+          "query_cofactor_misses": 158898,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 9668,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 9668,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 165665,
+          "bytes": 26558672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 254416,
+          "bytes": 31375568
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 337747,
+          "bytes": 53117136
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 395775,
+          "bytes": 53117136
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 415295,
+          "bytes": 53117136
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 415295,
+          "bytes": 53117136
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 415295,
+          "bytes": 53117136
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/008-coup-mixed-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "shannon",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 30,
+          "input_reachable": 29,
+          "input_bytes": 1860,
+          "final_records": 164,
+          "output_reachable": 32,
+          "live_union": 60,
+          "final_bytes": 19388,
+          "query_apply_misses": 122,
+          "query_cofactor_misses": 122,
+          "query_projection_misses": 63,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 30,
+          "bytes": 1860
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/009-composition-shannon-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "positive",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "positive",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 22632,
+          "input_reachable": 22631,
+          "input_bytes": 1126608,
+          "final_records": 1291111,
+          "output_reachable": 48319,
+          "live_union": 64714,
+          "final_bytes": 200769744,
+          "query_apply_misses": 3736034,
+          "query_cofactor_misses": 185996,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 22632,
+          "bytes": 1126608
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 22632,
+          "bytes": 1126608
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 504222,
+          "bytes": 60801232
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 756340,
+          "bytes": 100384976
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 1016376,
+          "bytes": 121602256
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 1215795,
+          "bytes": 138379472
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 1291111,
+          "bytes": 200769744
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 1291111,
+          "bytes": 200769744
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 1291111,
+          "bytes": 200769744
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/010-coup-positive-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "shannon",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "shannon",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 90,
+          "input_reachable": 89,
+          "input_bytes": 4556,
+          "final_records": 395,
+          "output_reachable": 60,
+          "live_union": 119,
+          "final_bytes": 31980,
+          "query_apply_misses": 324,
+          "query_cofactor_misses": 196,
+          "query_projection_misses": 98,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 90,
+          "bytes": 4556
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/011-composition-shannon-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "negative",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "negative",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 16081,
+          "input_reachable": 16080,
+          "input_bytes": 864464,
+          "final_records": 919692,
+          "output_reachable": 40477,
+          "live_union": 52279,
+          "final_bytes": 125501648,
+          "query_apply_misses": 3390961,
+          "query_cofactor_misses": 239446,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 16081,
+          "bytes": 864464
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 16081,
+          "bytes": 864464
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 346965,
+          "bytes": 51167440
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 536558,
+          "bytes": 102334672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 723304,
+          "bytes": 102334672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 872940,
+          "bytes": 102334672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 919692,
+          "bytes": 125501648
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 919692,
+          "bytes": 125501648
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 919692,
+          "bytes": 125501648
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/012-coup-negative-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "mixed",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "mixed",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 32,
+          "input_reachable": 31,
+          "input_bytes": 1860,
+          "final_records": 197,
+          "output_reachable": 35,
+          "live_union": 65,
+          "final_bytes": 21796,
+          "query_apply_misses": 304,
+          "query_cofactor_misses": 178,
+          "query_projection_misses": 55,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 32,
+          "bytes": 1860
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/013-composition-mixed-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "mixed",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 13966,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 13966,
+          "bytes": 563408
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/014-coup-mixed-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "shannon",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 5033,
+          "input_reachable": 5032,
+          "input_bytes": 281808,
+          "final_records": 93302,
+          "output_reachable": 8859,
+          "live_union": 11430,
+          "final_bytes": 12304592,
+          "query_apply_misses": 309518,
+          "query_cofactor_misses": 0,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 5033,
+          "bytes": 281808
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 5033,
+          "bytes": 281808
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 38309,
+          "bytes": 4202704
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 55718,
+          "bytes": 6152400
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 74441,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 88437,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 93302,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 93302,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 93302,
+          "bytes": 12304592
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/015-coup-shannon-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "negative",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 19771,
+          "bytes": 1126608
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 19771,
+          "bytes": 1126608
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/016-coup-negative-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "shannon",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "shannon",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 7988,
+          "input_reachable": 7987,
+          "input_bytes": 432336,
+          "final_records": 121066,
+          "output_reachable": 10218,
+          "live_union": 15079,
+          "final_bytes": 14713040,
+          "query_apply_misses": 429412,
+          "query_cofactor_misses": 0,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 7988,
+          "bytes": 432336
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 7988,
+          "bytes": 432336
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 51031,
+          "bytes": 6152400
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 76113,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 99685,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 115660,
+          "bytes": 14713040
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 121066,
+          "bytes": 14713040
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 121066,
+          "bytes": 14713040
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 121066,
+          "bytes": 14713040
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/017-coup-shannon-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "shannon",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 30,
+          "input_reachable": 29,
+          "input_bytes": 1860,
+          "final_records": 164,
+          "output_reachable": 32,
+          "live_union": 60,
+          "final_bytes": 19388,
+          "query_apply_misses": 122,
+          "query_cofactor_misses": 122,
+          "query_projection_misses": 63,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 30,
+          "bytes": 1860
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/018-composition-shannon-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "negative",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 16081,
+          "bytes": 864464
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 16081,
+          "bytes": 864464
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/019-coup-negative-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "positive",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "positive",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 73,
+          "input_reachable": 72,
+          "input_bytes": 4556,
+          "final_records": 659,
+          "output_reachable": 65,
+          "live_union": 131,
+          "final_bytes": 76236,
+          "query_apply_misses": 1098,
+          "query_cofactor_misses": 312,
+          "query_projection_misses": 87,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 73,
+          "bytes": 4556
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/020-composition-positive-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "positive",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "positive",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 13431,
+          "input_reachable": 13430,
+          "input_bytes": 563408,
+          "final_records": 965440,
+          "output_reachable": 26940,
+          "live_union": 36902,
+          "final_bytes": 125501648,
+          "query_apply_misses": 3362352,
+          "query_cofactor_misses": 239446,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 13431,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 13431,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 369485,
+          "bytes": 51167440
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 581786,
+          "bytes": 102334672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 776570,
+          "bytes": 102334672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 916055,
+          "bytes": 102334672
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 965440,
+          "bytes": 125501648
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 965440,
+          "bytes": 125501648
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 965440,
+          "bytes": 125501648
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/021-coup-positive-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "negative",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "negative",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 30,
+          "input_reachable": 29,
+          "input_bytes": 1860,
+          "final_records": 183,
+          "output_reachable": 30,
+          "live_union": 58,
+          "final_bytes": 26556,
+          "query_apply_misses": 489,
+          "query_cofactor_misses": 46,
+          "query_projection_misses": 47,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 30,
+          "bytes": 1860
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/022-composition-negative-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "positive",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 13431,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 13431,
+          "bytes": 563408
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/023-coup-positive-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "negative",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "negative",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 30,
+          "input_reachable": 29,
+          "input_bytes": 1860,
+          "final_records": 192,
+          "output_reachable": 30,
+          "live_union": 58,
+          "final_bytes": 21796,
+          "query_apply_misses": 351,
+          "query_cofactor_misses": 196,
+          "query_projection_misses": 47,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 30,
+          "bytes": 1860
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/024-composition-negative-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "mixed",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "mixed",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 65,
+          "input_reachable": 64,
+          "input_bytes": 4556,
+          "final_records": 529,
+          "output_reachable": 70,
+          "live_union": 125,
+          "final_bytes": 61004,
+          "query_apply_misses": 806,
+          "query_cofactor_misses": 320,
+          "query_projection_misses": 88,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 65,
+          "bytes": 4556
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/025-composition-mixed-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "mixed",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "resource_cap",
+      "rows": [],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 9668,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 9668,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 1127364,
+          "bytes": 196870352
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 1859432,
+          "bytes": 360186064
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/026-coup-mixed-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "composition",
+        "shannon",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "shannon",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 90,
+          "input_reachable": 89,
+          "input_bytes": 4556,
+          "final_records": 395,
+          "output_reachable": 60,
+          "live_union": 119,
+          "final_bytes": 31980,
+          "query_apply_misses": 324,
+          "query_cofactor_misses": 196,
+          "query_projection_misses": 98,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 90,
+          "bytes": 4556
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/027-composition-shannon-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "mixed",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "mixed",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 13966,
+          "input_reachable": 13965,
+          "input_bytes": 563408,
+          "final_records": 542711,
+          "output_reachable": 25436,
+          "live_union": 33919,
+          "final_bytes": 71139536,
+          "query_apply_misses": 1516326,
+          "query_cofactor_misses": 132900,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 13966,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 13966,
+          "bytes": 563408
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 220799,
+          "bytes": 25583824
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 326141,
+          "bytes": 35569872
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 437760,
+          "bytes": 51167440
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 512512,
+          "bytes": 62750928
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 542711,
+          "bytes": 71139536
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 542711,
+          "bytes": 71139536
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 542711,
+          "bytes": 71139536
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/028-coup-mixed-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "composition",
+        "positive",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "composition",
+          "basis": "positive",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 12,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 73,
+          "input_reachable": 72,
+          "input_bytes": 4556,
+          "final_records": 646,
+          "output_reachable": 65,
+          "live_union": 131,
+          "final_bytes": 69572,
+          "query_apply_misses": 1080,
+          "query_cofactor_misses": 30,
+          "query_projection_misses": 87,
+          "checked_world_answers": 16384,
+          "checksum": 3072
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 73,
+          "bytes": 4556
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/029-composition-positive-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "coup",
+        "negative",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "negative",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 19771,
+          "input_reachable": 19770,
+          "input_bytes": 1126608,
+          "final_records": 1571949,
+          "output_reachable": 51480,
+          "live_union": 65974,
+          "final_bytes": 200769744,
+          "query_apply_misses": 4395624,
+          "query_cofactor_misses": 185996,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 19771,
+          "bytes": 1126608
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 19771,
+          "bytes": 1126608
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 572015,
+          "bytes": 69189840
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 896661,
+          "bytes": 100384976
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 1230674,
+          "bytes": 138379472
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 1483638,
+          "bytes": 200769744
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 1571949,
+          "bytes": 200769744
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 1571949,
+          "bytes": 200769744
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 1571949,
+          "bytes": 200769744
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/030-coup-negative-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "coup",
+        "shannon",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "coup",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 16,
+          "inputs": 36,
+          "outputs": 64,
+          "input_records": 5033,
+          "input_reachable": 5032,
+          "input_bytes": 281808,
+          "final_records": 93302,
+          "output_reachable": 8859,
+          "live_union": 11430,
+          "final_bytes": 12304592,
+          "query_apply_misses": 309518,
+          "query_cofactor_misses": 0,
+          "query_projection_misses": 0,
+          "checked_world_answers": 4194304,
+          "checksum": 5691950
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 5033,
+          "bytes": 281808
+        },
+        {
+          "phase": "group",
+          "completed_groups": 0,
+          "records": 5033,
+          "bytes": 281808
+        },
+        {
+          "phase": "group",
+          "completed_groups": 8,
+          "records": 38309,
+          "bytes": 4202704
+        },
+        {
+          "phase": "group",
+          "completed_groups": 16,
+          "records": 55718,
+          "bytes": 6152400
+        },
+        {
+          "phase": "group",
+          "completed_groups": 24,
+          "records": 74441,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 32,
+          "records": 88437,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 40,
+          "records": 93302,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 48,
+          "records": 93302,
+          "bytes": 12304592
+        },
+        {
+          "phase": "group",
+          "completed_groups": 56,
+          "records": 93302,
+          "bytes": 12304592
+        }
+      ],
+      "log": "difference-kernel-shapes-logs/031-coup-shannon-bit-major-cofactors.log"
+    }
+  ],
+  "boundary": "Operation/graph census in a standalone raw manager. Coup explicitly replays the clover binding formula; no native Free Join, normalized wire transport, law contraction or timings are claimed. Bytes estimate retained capacities and exclude allocator/temporary/oracle memory."
+}

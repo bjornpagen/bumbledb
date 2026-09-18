@@ -1,0 +1,18 @@
+{
+  "sources": [
+    {
+      "arxiv": "2003.09340v4",
+      "reading_scope": "Negation quasi-commutation, Theorem 3, section 5.1 one-coordinate cofactor Apply and label-cost warning."
+    },
+    {
+      "arxiv": "1710.06500v1",
+      "reading_scope": "Section 3 arbitrary shared-exit OR chains; section 6 CBDD splitting and cofactoring equations (9)\u2013(10); section 7 implementation and node footprint; section 8.1 work-count/GC qualifications; section 9 complement edges; section 10 dynamic-order limitations."
+    }
+  ],
+  "files": {
+    "proposal/research/difference-decomposition/thibault-ghorbal-2020-ordered-functional.pdf": "dd4594e354c87c97e1e74bead65a23d1270bead5421a91b668dd0d2a24898476",
+    "proposal/research/difference-decomposition/thibault-ghorbal-2020-ordered-functional.txt": "1d2aee0f8a0864a48834b29df0aa4af22a14822d85f2670af74af6d835300ebc",
+    "proposal/research/representation-search/bryant-2017-chain-reduction.pdf": "6ef977e48874c759d55268a9f1cf170571a4aa33ac09332f7dfa6e7191c0a691",
+    "proposal/research/representation-search/bryant-2017-chain-reduction.txt": "795ccd57e017a49358c278ef6459097030aea526ac63c072bcf715b9b54345e3"
+  }
+}

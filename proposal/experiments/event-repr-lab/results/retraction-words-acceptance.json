@@ -1,0 +1,2545 @@
+{
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "c27b4aca8568e345e5499cc9a594a7703d397411b9a585243f83be185fc1b8d2",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "e271d7ec3b58a35cef677d15e191a11ed85c69ee738295b147bf85f1b2623ac4",
+      "src/contraction.rs": "948d7c5223a78c4a801f9defe6211a126239bd95fb844079a490951a695d483f",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagonal_checks.rs": "a45ce14c303b65fc9aacdccb7c16fc4ce9f19874cd62aa1b674faec9da85d169",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/essential.rs": "f3d8c452f9186801078158ec4b04552896153a53453d88078b130ee03f289bf1",
+      "src/essential_raw.rs": "8b753d47a9b29abf18013ca9c2569512b83a0f787c3d37aae68a7f583417aed1",
+      "src/essential_store.rs": "e916c0389378ad0bc004ad4fc05945a333cc8ce8c4c5e2ae32c85556b11a750d",
+      "src/essential_words.rs": "b6c4af1aecfe01dd519a87ee1b22fb7624f4be0ef8a2752a0f807a28bc097cc1",
+      "src/finite.rs": "1ad66e84ba8488713f2fc8bd514a0d2e1ae8f6b2c4a2499dfa6f6aec21c976ca",
+      "src/law_bench.rs": "a41feb1d92de313ef108ebfe4f185820084c03ce088490ca8507c8d998bf2751",
+      "src/legal.rs": "c34d0b39149026bb9f9b3bc701e749a660d4603cbd69081f7b2cb9df0c396d0a",
+      "src/legal_bench.rs": "887cbe4d5793a1d31b5f55a1e085b7fc206067fcd33353161ebbc4c08cdac03c",
+      "src/legal_checks.rs": "1653271d66f8e0ffbdec22bd5be1ff8c2b77f5c8ffcd2e2294dd365a940ee48b",
+      "src/lib.rs": "b17637ee300c3ba560872e7a83f2d20532549ebf98db6b6f10b8794fc717712b",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "280d1e20e660cb00840c40f09a6998c00fdf435258a11a064d0a9cc68f9a8312",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/occupancy.rs": "33dc8a5a90b19dabdf7d94e5a5d33328f1d11788ddc0e883b608b5dbadc12400",
+      "src/occupancy_scratch.rs": "703a931d77305b7b19d057cf6c699b0ee644bbdec3f59bd975bb6a0b5b635116",
+      "src/occupancy_words.rs": "4a95912b2dab9ddd7fa18938450ad3c7374dea5cc88e3cceb2950303b6612d98",
+      "src/owned_bench.rs": "f914d04d6031a547cea8e3307a9bf89079a0e6b8465439dce423e3c470f91423",
+      "src/packed.rs": "782f59878f4169f09b45777484d32eaa53d6e97619e3322b0e3e724676c57954",
+      "src/relational_core.rs": "f83dca1dd7732d1dff2472b418036b92f05f30e333e4b217708fda992f62ce46",
+      "src/relations.rs": "5cc0917e482452a984d5da704d4835c50b60428f803340e4bf0065628eb642dd",
+      "src/retraction.rs": "321813f0115f5b959cf75b5957b827b9e42b43f0207625bad008ad7502b36088",
+      "src/retraction_checks.rs": "ce8ec2460c7bcb1012a0ba916910a992fce577fc44cd0f9b553fcb7584d059ce",
+      "src/scoped_bench.rs": "de6261ebf7a4b251806246a0b9967320bec07265d57bf5e187a8958bb43368c0",
+      "src/semantic_checks.rs": "d055cb135333d2d57d6ea7936369f2a5a59685d4fa27842d2125c2e7dd566ab5",
+      "src/signature.rs": "e23b491ac9af760fbbee1cd9b39177607f8ff4a5caa700ca06111eabb6f329e0",
+      "src/signature_bench.rs": "e41be54c10c1da7beedc0705dddc848099473c4b267d009c2f36aba6f9dc879a",
+      "src/symbolic_relations.rs": "245af210921b06a15a2560e1fe993730ad5073f85b448be1e4ab845c7cd07c74",
+      "src/transfer.rs": "d2fe8ebdf739d1d3e8b49c231c4c0f5df0eaf7985f5201513281d91e6f7bdfe2",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "5f8df5e7cd8cf828b8bebe95a9c6137549e6312c8782cbcba84c801986f3b5f0",
+      "src/view_bench.rs": "a045c8aed63b7ef23d5ecd2233891b5b242d3e115d46ee616435105b19b898c1",
+      "src/view_product.rs": "edfe6956dfe85cfab75732f564b73c8f81e680a8a170f8614c4f4b50af44064a"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-18T06:59:53.319281+00:00",
+    "build_started_utc": "2026-09-18T06:50:29.188954+00:00"
+  },
+  "trials": 1,
+  "runs": [
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "elapsed_s": 0.01246786117553711,
+      "max_rss_bytes": 6488064,
+      "log": "retraction-words-acceptance-logs/job-000-symbolic-relations-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction64",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            5.2042e-05
+          ],
+          "program_setup_s": [
+            1.375e-05
+          ],
+          "query_s": [
+            0.000373875
+          ],
+          "owned_compute_s": [
+            0.000389875
+          ],
+          "iterations": [
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 611,
+          "final_arena_bytes_est": 34616,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 512,
+            "interner_bytes": 2160,
+            "metadata_bytes": 728,
+            "cache_bytes": 2380,
+            "records": 63,
+            "tables": 42,
+            "logical_words": 42,
+            "total_bytes_est": 6804
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 1024,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4312,
+            "cache_bytes": 11424,
+            "records": 365,
+            "tables": 125,
+            "logical_words": 125,
+            "total_bytes_est": 34616
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction64",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            6.625e-05
+          ],
+          "program_setup_s": [
+            2.2791e-05
+          ],
+          "query_s": [
+            0.000995833
+          ],
+          "owned_compute_s": [
+            0.001019583
+          ],
+          "iterations": [
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1415,
+          "final_arena_bytes_est": 135984,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 512,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2480,
+            "cache_bytes": 4760,
+            "records": 147,
+            "tables": 60,
+            "logical_words": 60,
+            "total_bytes_est": 16680
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 32768,
+            "table_bytes": 2048,
+            "interner_bytes": 38656,
+            "metadata_bytes": 16816,
+            "cache_bytes": 45696,
+            "records": 1391,
+            "tables": 156,
+            "logical_words": 156,
+            "total_bytes_est": 135984
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction64",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            0.000118834
+          ],
+          "program_setup_s": [
+            3.5208e-05
+          ],
+          "query_s": [
+            0.003250083
+          ],
+          "owned_compute_s": [
+            0.003286625
+          ],
+          "iterations": [
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2487,
+          "final_arena_bytes_est": 330704,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 1024,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4816,
+            "cache_bytes": 9520,
+            "records": 259,
+            "tables": 84,
+            "logical_words": 84,
+            "total_bytes_est": 33216
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 2048,
+            "interner_bytes": 138240,
+            "metadata_bytes": 33488,
+            "cache_bytes": 91392,
+            "records": 3655,
+            "tables": 196,
+            "logical_words": 196,
+            "total_bytes_est": 330704
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ],
+      "loadavg_end": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction512",
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "elapsed_s": 2.1082279682159424,
+      "max_rss_bytes": 15351808,
+      "log": "retraction-words-acceptance-logs/job-001-owned-retraction512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.875e-06
+          ],
+          "restore_inputs_s": [
+            2.25e-05
+          ],
+          "program_setup_s": [
+            1.2917e-05
+          ],
+          "query_s": [
+            0.0004145
+          ],
+          "owned_compute_s": [
+            0.00043
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1421,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 20944,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 1024,
+            "interner_bytes": 1208,
+            "metadata_bytes": 672,
+            "cache_bytes": 0,
+            "records": 37,
+            "tables": 36,
+            "logical_words": 74,
+            "total_bytes_est": 3928
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 4096,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2208,
+            "cache_bytes": 5712,
+            "records": 219,
+            "tables": 218,
+            "logical_words": 454,
+            "total_bytes_est": 20944
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.709e-06
+          ],
+          "restore_inputs_s": [
+            2.0584e-05
+          ],
+          "program_setup_s": [
+            6.625e-06
+          ],
+          "query_s": [
+            0.000488709
+          ],
+          "owned_compute_s": [
+            0.000496625
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1421,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 71872,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 1024,
+            "interner_bytes": 1208,
+            "metadata_bytes": 672,
+            "cache_bytes": 0,
+            "records": 37,
+            "tables": 36,
+            "logical_words": 74,
+            "total_bytes_est": 3928
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 16384,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8352,
+            "cache_bytes": 11424,
+            "records": 597,
+            "tables": 596,
+            "logical_words": 1177,
+            "total_bytes_est": 71872
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.791e-06
+          ],
+          "restore_inputs_s": [
+            8.5458e-05
+          ],
+          "program_setup_s": [
+            3.2458e-05
+          ],
+          "query_s": [
+            0.000284959
+          ],
+          "owned_compute_s": [
+            0.000318834
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1421,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.667e-06
+          ],
+          "restore_inputs_s": [
+            0.000108125
+          ],
+          "program_setup_s": [
+            2.1834e-05
+          ],
+          "query_s": [
+            0.002271458
+          ],
+          "owned_compute_s": [
+            0.002295666
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 9305,
+          "output_packet_bytes": 2087,
+          "final_arena_bytes_est": 275472,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 8192,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4368,
+            "cache_bytes": 3927,
+            "records": 295,
+            "tables": 101,
+            "logical_words": 626,
+            "total_bytes_est": 34343
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 32768,
+            "table_bytes": 65536,
+            "interner_bytes": 69120,
+            "metadata_bytes": 16656,
+            "cache_bytes": 91392,
+            "records": 1899,
+            "tables": 1420,
+            "logical_words": 4888,
+            "total_bytes_est": 275472
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            4.083e-06
+          ],
+          "restore_inputs_s": [
+            0.000351375
+          ],
+          "program_setup_s": [
+            3.1667e-05
+          ],
+          "query_s": [
+            0.008386833
+          ],
+          "owned_compute_s": [
+            0.008420791
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 9305,
+          "output_packet_bytes": 2389,
+          "final_arena_bytes_est": 1592592,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 32768,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8464,
+            "cache_bytes": 19040,
+            "records": 697,
+            "tables": 423,
+            "logical_words": 2588,
+            "total_bytes_est": 95984
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 262144,
+            "table_bytes": 524288,
+            "interner_bytes": 309248,
+            "metadata_bytes": 131344,
+            "cache_bytes": 365568,
+            "records": 12215,
+            "tables": 7388,
+            "logical_words": 32961,
+            "total_bytes_est": 1592592
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.541e-06
+          ],
+          "restore_inputs_s": [
+            0.000427
+          ],
+          "program_setup_s": [
+            4.2542e-05
+          ],
+          "query_s": [
+            0.000687875
+          ],
+          "owned_compute_s": [
+            0.000732958
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 9305,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ],
+      "loadavg_end": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "elapsed_s": 0.012494087219238281,
+      "max_rss_bytes": 6569984,
+      "log": "retraction-words-acceptance-logs/job-002-symbolic-relations-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction64",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            4.3708e-05
+          ],
+          "program_setup_s": [
+            1.5916e-05
+          ],
+          "query_s": [
+            0.000335542
+          ],
+          "owned_compute_s": [
+            0.00035375
+          ],
+          "iterations": [
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 611,
+          "final_arena_bytes_est": 65208,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 512,
+            "interner_bytes": 2160,
+            "metadata_bytes": 728,
+            "cache_bytes": 2380,
+            "records": 63,
+            "tables": 42,
+            "logical_words": 42,
+            "total_bytes_est": 6804
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 2048,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8408,
+            "cache_bytes": 19040,
+            "records": 573,
+            "tables": 157,
+            "logical_words": 157,
+            "total_bytes_est": 65208
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction64",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            6.75e-05
+          ],
+          "program_setup_s": [
+            2.3625e-05
+          ],
+          "query_s": [
+            0.001140583
+          ],
+          "owned_compute_s": [
+            0.001165125
+          ],
+          "iterations": [
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1415,
+          "final_arena_bytes_est": 242832,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 512,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2480,
+            "cache_bytes": 4760,
+            "records": 147,
+            "tables": 60,
+            "logical_words": 60,
+            "total_bytes_est": 16680
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 2048,
+            "interner_bytes": 77312,
+            "metadata_bytes": 33200,
+            "cache_bytes": 64736,
+            "records": 2328,
+            "tables": 182,
+            "logical_words": 182,
+            "total_bytes_est": 242832
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction64",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            0.000110125
+          ],
+          "program_setup_s": [
+            3.4792e-05
+          ],
+          "query_s": [
+            0.0035685
+          ],
+          "owned_compute_s": [
+            0.003604334
+          ],
+          "iterations": [
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2487,
+          "final_arena_bytes_est": 483472,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 1024,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4816,
+            "cache_bytes": 9520,
+            "records": 259,
+            "tables": 84,
+            "logical_words": 84,
+            "total_bytes_est": 33216
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 131072,
+            "table_bytes": 2048,
+            "interner_bytes": 154624,
+            "metadata_bytes": 66256,
+            "cache_bytes": 129472,
+            "records": 6292,
+            "tables": 214,
+            "logical_words": 214,
+            "total_bytes_est": 483472
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ],
+      "loadavg_end": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "elapsed_s": 2.4271340370178223,
+      "max_rss_bytes": 15925248,
+      "log": "retraction-words-acceptance-logs/job-003-owned-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            5.542e-06
+          ],
+          "restore_inputs_s": [
+            4.925e-05
+          ],
+          "program_setup_s": [
+            8.292e-06
+          ],
+          "query_s": [
+            0.000689917
+          ],
+          "owned_compute_s": [
+            0.00070075
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1905,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 119008,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 2048,
+            "table_bytes": 512,
+            "interner_bytes": 4320,
+            "metadata_bytes": 1184,
+            "cache_bytes": 2023,
+            "records": 116,
+            "tables": 48,
+            "logical_words": 48,
+            "total_bytes_est": 10087
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 32768,
+            "table_bytes": 8192,
+            "interner_bytes": 38656,
+            "metadata_bytes": 16544,
+            "cache_bytes": 22848,
+            "records": 1194,
+            "tables": 899,
+            "logical_words": 899,
+            "total_bytes_est": 119008
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.666e-06
+          ],
+          "restore_inputs_s": [
+            8.1583e-05
+          ],
+          "program_setup_s": [
+            1.05e-05
+          ],
+          "query_s": [
+            0.001024833
+          ],
+          "owned_compute_s": [
+            0.001037375
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1905,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 150048,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 2048,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2208,
+            "cache_bytes": 4760,
+            "records": 212,
+            "tables": 144,
+            "logical_words": 144,
+            "total_bytes_est": 17944
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 32768,
+            "table_bytes": 16384,
+            "interner_bytes": 38656,
+            "metadata_bytes": 16544,
+            "cache_bytes": 45696,
+            "records": 1450,
+            "tables": 1103,
+            "logical_words": 1103,
+            "total_bytes_est": 150048
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.875e-06
+          ],
+          "restore_inputs_s": [
+            4.7083e-05
+          ],
+          "program_setup_s": [
+            3.2709e-05
+          ],
+          "query_s": [
+            0.000246291
+          ],
+          "owned_compute_s": [
+            0.000280375
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1905,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.75e-06
+          ],
+          "restore_inputs_s": [
+            0.000240709
+          ],
+          "program_setup_s": [
+            2.5917e-05
+          ],
+          "query_s": [
+            0.003343459
+          ],
+          "owned_compute_s": [
+            0.003372
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 10553,
+          "output_packet_bytes": 2717,
+          "final_arena_bytes_est": 567056,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 2048,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8464,
+            "cache_bytes": 16184,
+            "records": 888,
+            "tables": 181,
+            "logical_words": 181,
+            "total_bytes_est": 62408
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 131072,
+            "table_bytes": 32768,
+            "interner_bytes": 154624,
+            "metadata_bytes": 65808,
+            "cache_bytes": 182784,
+            "records": 6043,
+            "tables": 3075,
+            "logical_words": 3075,
+            "total_bytes_est": 567056
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            4.333e-06
+          ],
+          "restore_inputs_s": [
+            0.001231167
+          ],
+          "program_setup_s": [
+            6.9e-05
+          ],
+          "query_s": [
+            0.017404
+          ],
+          "owned_compute_s": [
+            0.017475792
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 10553,
+          "output_packet_bytes": 4155,
+          "final_arena_bytes_est": 1377552,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 16384,
+            "interner_bytes": 77312,
+            "metadata_bytes": 33040,
+            "cache_bytes": 91392,
+            "records": 3210,
+            "tables": 1262,
+            "logical_words": 1262,
+            "total_bytes_est": 283664
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 262144,
+            "table_bytes": 65536,
+            "interner_bytes": 309248,
+            "metadata_bytes": 131344,
+            "cache_bytes": 609280,
+            "records": 11731,
+            "tables": 4251,
+            "logical_words": 4251,
+            "total_bytes_est": 1377552
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.25e-06
+          ],
+          "restore_inputs_s": [
+            0.000189042
+          ],
+          "program_setup_s": [
+            5.3458e-05
+          ],
+          "query_s": [
+            0.000727208
+          ],
+          "owned_compute_s": [
+            0.000783167
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 10553,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        3.0546875,
+        5.150390625,
+        6.873046875
+      ],
+      "loadavg_end": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction512",
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "elapsed_s": 0.01350712776184082,
+      "max_rss_bytes": 6635520,
+      "log": "retraction-words-acceptance-logs/job-004-symbolic-relations-retraction512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction512",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            4.7875e-05
+          ],
+          "program_setup_s": [
+            1.8959e-05
+          ],
+          "query_s": [
+            0.00037775
+          ],
+          "owned_compute_s": [
+            0.000399125
+          ],
+          "iterations": [
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 811,
+          "final_arena_bytes_est": 41784,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 1024,
+            "interner_bytes": 1208,
+            "metadata_bytes": 728,
+            "cache_bytes": 1190,
+            "records": 55,
+            "tables": 46,
+            "logical_words": 78,
+            "total_bytes_est": 5174
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 8192,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4312,
+            "cache_bytes": 11424,
+            "records": 304,
+            "tables": 197,
+            "logical_words": 709,
+            "total_bytes_est": 41784
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction512",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            8.4292e-05
+          ],
+          "program_setup_s": [
+            2.2916e-05
+          ],
+          "query_s": [
+            0.001148958
+          ],
+          "owned_compute_s": [
+            0.001172833
+          ],
+          "iterations": [
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1641,
+          "final_arena_bytes_est": 126896,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 2048,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2480,
+            "cache_bytes": 4760,
+            "records": 139,
+            "tables": 75,
+            "logical_words": 150,
+            "total_bytes_est": 18216
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 32768,
+            "table_bytes": 8192,
+            "interner_bytes": 38656,
+            "metadata_bytes": 16816,
+            "cache_bytes": 30464,
+            "records": 1327,
+            "tables": 248,
+            "logical_words": 843,
+            "total_bytes_est": 126896
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction512",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            0.000134041
+          ],
+          "program_setup_s": [
+            3.8083e-05
+          ],
+          "query_s": [
+            0.003381
+          ],
+          "owned_compute_s": [
+            0.003420167
+          ],
+          "iterations": [
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2713,
+          "final_arena_bytes_est": 336848,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 2048,
+            "interner_bytes": 8640,
+            "metadata_bytes": 2768,
+            "cache_bytes": 9520,
+            "records": 251,
+            "tables": 99,
+            "logical_words": 174,
+            "total_bytes_est": 27072
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 8192,
+            "interner_bytes": 138240,
+            "metadata_bytes": 33488,
+            "cache_bytes": 91392,
+            "records": 3591,
+            "tables": 288,
+            "logical_words": 883,
+            "total_bytes_est": 336848
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ],
+      "loadavg_end": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction64",
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "elapsed_s": 2.352039098739624,
+      "max_rss_bytes": 16941056,
+      "log": "retraction-words-acceptance-logs/job-005-owned-retraction64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            4.667e-06
+          ],
+          "restore_inputs_s": [
+            5.1416e-05
+          ],
+          "program_setup_s": [
+            1.0709e-05
+          ],
+          "query_s": [
+            0.000567459
+          ],
+          "owned_compute_s": [
+            0.000581375
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1905,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 67488,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 2048,
+            "table_bytes": 512,
+            "interner_bytes": 4320,
+            "metadata_bytes": 1184,
+            "cache_bytes": 2023,
+            "records": 116,
+            "tables": 48,
+            "logical_words": 48,
+            "total_bytes_est": 10087
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 8192,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8352,
+            "cache_bytes": 15232,
+            "records": 734,
+            "tables": 523,
+            "logical_words": 523,
+            "total_bytes_est": 67488
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.791e-06
+          ],
+          "restore_inputs_s": [
+            8.7166e-05
+          ],
+          "program_setup_s": [
+            1.15e-05
+          ],
+          "query_s": [
+            0.001314541
+          ],
+          "owned_compute_s": [
+            0.001328667
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1905,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 253088,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 2048,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2208,
+            "cache_bytes": 4760,
+            "records": 212,
+            "tables": 144,
+            "logical_words": 144,
+            "total_bytes_est": 17944
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 16384,
+            "interner_bytes": 77312,
+            "metadata_bytes": 32928,
+            "cache_bytes": 60928,
+            "records": 2351,
+            "tables": 1646,
+            "logical_words": 1646,
+            "total_bytes_est": 253088
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            2.083e-06
+          ],
+          "restore_inputs_s": [
+            4.6375e-05
+          ],
+          "program_setup_s": [
+            3.2125e-05
+          ],
+          "query_s": [
+            0.00024925
+          ],
+          "owned_compute_s": [
+            0.000282917
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1905,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 78436,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.75e-06
+          ],
+          "restore_inputs_s": [
+            0.000243334
+          ],
+          "program_setup_s": [
+            1.8917e-05
+          ],
+          "query_s": [
+            0.002745166
+          ],
+          "owned_compute_s": [
+            0.002768833
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 10553,
+          "output_packet_bytes": 2717,
+          "final_arena_bytes_est": 375056,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 2048,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8464,
+            "cache_bytes": 16184,
+            "records": 888,
+            "tables": 181,
+            "logical_words": 181,
+            "total_bytes_est": 62408
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 16384,
+            "interner_bytes": 138240,
+            "metadata_bytes": 33040,
+            "cache_bytes": 121856,
+            "records": 3924,
+            "tables": 1950,
+            "logical_words": 1950,
+            "total_bytes_est": 375056
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "retraction64",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            4e-06
+          ],
+          "restore_inputs_s": [
+            0.001155
+          ],
+          "program_setup_s": [
+            5.9958e-05
+          ],
+          "query_s": [
+            0.013187208
+          ],
+          "owned_compute_s": [
+            0.013249583
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 10553,
+          "output_packet_bytes": 4155,
+          "final_arena_bytes_est": 2445584,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 16384,
+            "interner_bytes": 77312,
+            "metadata_bytes": 33040,
+            "cache_bytes": 91392,
+            "records": 3210,
+            "tables": 1262,
+            "logical_words": 1262,
+            "total_bytes_est": 283664
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 524288,
+            "table_bytes": 65536,
+            "interner_bytes": 618496,
+            "metadata_bytes": 262416,
+            "cache_bytes": 974848,
+            "records": 24950,
+            "tables": 7654,
+            "logical_words": 7654,
+            "total_bytes_est": 2445584
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction64",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            6.083e-06
+          ],
+          "restore_inputs_s": [
+            0.000196208
+          ],
+          "program_setup_s": [
+            4.6125e-05
+          ],
+          "query_s": [
+            0.000685958
+          ],
+          "owned_compute_s": [
+            0.0007345
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 10553,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 489636,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "views"
+        }
+      ],
+      "loadavg_start": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ],
+      "loadavg_end": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction512",
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "elapsed_s": 0.013067960739135742,
+      "max_rss_bytes": 6553600,
+      "log": "retraction-words-acceptance-logs/job-006-symbolic-relations-retraction512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction512",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            5.2542e-05
+          ],
+          "program_setup_s": [
+            1.9291e-05
+          ],
+          "query_s": [
+            0.000382958
+          ],
+          "owned_compute_s": [
+            0.000404833
+          ],
+          "iterations": [
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 811,
+          "final_arena_bytes_est": 49400,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 1024,
+            "interner_bytes": 1208,
+            "metadata_bytes": 728,
+            "cache_bytes": 1190,
+            "records": 55,
+            "tables": 46,
+            "logical_words": 78,
+            "total_bytes_est": 5174
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 8192,
+            "interner_bytes": 17280,
+            "metadata_bytes": 4312,
+            "cache_bytes": 11424,
+            "records": 451,
+            "tables": 253,
+            "logical_words": 997,
+            "total_bytes_est": 49400
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction512",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            8.6125e-05
+          ],
+          "program_setup_s": [
+            2.45e-05
+          ],
+          "query_s": [
+            0.001278958
+          ],
+          "owned_compute_s": [
+            0.0013045
+          ],
+          "iterations": [
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1641,
+          "final_arena_bytes_est": 260976,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 2048,
+            "interner_bytes": 4832,
+            "metadata_bytes": 2480,
+            "cache_bytes": 4760,
+            "records": 139,
+            "tables": 75,
+            "logical_words": 150,
+            "total_bytes_est": 18216
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 16384,
+            "interner_bytes": 77312,
+            "metadata_bytes": 33200,
+            "cache_bytes": 68544,
+            "records": 2203,
+            "tables": 298,
+            "logical_words": 1125,
+            "total_bytes_est": 260976
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "retraction512",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            0.000133833
+          ],
+          "program_setup_s": [
+            3.6208e-05
+          ],
+          "query_s": [
+            0.00368075
+          ],
+          "owned_compute_s": [
+            0.003717834
+          ],
+          "iterations": [
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2713,
+          "final_arena_bytes_est": 497808,
+          "new_classes": 3,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 4096,
+            "table_bytes": 2048,
+            "interner_bytes": 8640,
+            "metadata_bytes": 2768,
+            "cache_bytes": 9520,
+            "records": 251,
+            "tables": 99,
+            "logical_words": 174,
+            "total_bytes_est": 27072
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 131072,
+            "table_bytes": 16384,
+            "interner_bytes": 154624,
+            "metadata_bytes": 66256,
+            "cache_bytes": 129472,
+            "records": 6167,
+            "tables": 330,
+            "logical_words": 1157,
+            "total_bytes_est": 497808
+          },
+          "verified": true,
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ],
+      "loadavg_end": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_RETRACTION_COUNT": "words",
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_VIEW_KERNEL": "words",
+        "EVENT_LAB_VIEW_REUSE": "bounded",
+        "EVENT_LAB_VIEW_NORMALIZE": "source",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_CANDIDATE": "retraction512",
+        "EVENT_LAB_LANE": "owned",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "elapsed_s": 2.096774101257324,
+      "max_rss_bytes": 14450688,
+      "log": "retraction-words-acceptance-logs/job-007-owned-retraction512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized-view-kernel-words-reuse-bounded-normalize-source.log",
+      "rows": [
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.875e-06
+          ],
+          "restore_inputs_s": [
+            2.475e-05
+          ],
+          "program_setup_s": [
+            1.2625e-05
+          ],
+          "query_s": [
+            0.000369625
+          ],
+          "owned_compute_s": [
+            0.000384958
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1421,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 37920,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 1024,
+            "interner_bytes": 1208,
+            "metadata_bytes": 672,
+            "cache_bytes": 0,
+            "records": 37,
+            "tables": 36,
+            "logical_words": 74,
+            "total_bytes_est": 3928
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 8192,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4256,
+            "cache_bytes": 7616,
+            "records": 349,
+            "tables": 348,
+            "logical_words": 938,
+            "total_bytes_est": 37920
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            2.792e-06
+          ],
+          "restore_inputs_s": [
+            1.6416e-05
+          ],
+          "program_setup_s": [
+            6.75e-06
+          ],
+          "query_s": [
+            0.000493041
+          ],
+          "owned_compute_s": [
+            0.000501167
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1421,
+          "output_packet_bytes": 707,
+          "final_arena_bytes_est": 71872,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 1024,
+            "table_bytes": 1024,
+            "interner_bytes": 1208,
+            "metadata_bytes": 672,
+            "cache_bytes": 0,
+            "records": 37,
+            "tables": 36,
+            "logical_words": 74,
+            "total_bytes_est": 3928
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 16384,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8352,
+            "cache_bytes": 11424,
+            "records": 514,
+            "tables": 513,
+            "logical_words": 1567,
+            "total_bytes_est": 71872
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.958e-06
+          ],
+          "restore_inputs_s": [
+            8.725e-05
+          ],
+          "program_setup_s": [
+            3.325e-05
+          ],
+          "query_s": [
+            0.0002485
+          ],
+          "owned_compute_s": [
+            0.000283625
+          ],
+          "novel_publication_classes": [
+            10
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 1421,
+          "output_packet_bytes": 1645,
+          "final_arena_bytes_est": 112740,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            3.709e-06
+          ],
+          "restore_inputs_s": [
+            0.000110791
+          ],
+          "program_setup_s": [
+            1.5083e-05
+          ],
+          "query_s": [
+            0.002306875
+          ],
+          "owned_compute_s": [
+            0.002323583
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 9305,
+          "output_packet_bytes": 2087,
+          "final_arena_bytes_est": 302352,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 8192,
+            "table_bytes": 8192,
+            "interner_bytes": 9664,
+            "metadata_bytes": 4368,
+            "cache_bytes": 3927,
+            "records": 295,
+            "tables": 101,
+            "logical_words": 626,
+            "total_bytes_est": 34343
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 65536,
+            "table_bytes": 65536,
+            "interner_bytes": 77312,
+            "metadata_bytes": 33040,
+            "cache_bytes": 60928,
+            "records": 2789,
+            "tables": 1999,
+            "logical_words": 7695,
+            "total_bytes_est": 302352
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "retraction512",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_setup_s": [
+            4.042e-06
+          ],
+          "restore_inputs_s": [
+            0.00035725
+          ],
+          "program_setup_s": [
+            3.6041e-05
+          ],
+          "query_s": [
+            0.006716584
+          ],
+          "owned_compute_s": [
+            0.006755458
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 9305,
+          "output_packet_bytes": 2389,
+          "final_arena_bytes_est": 857360,
+          "input_storage": {
+            "layout": "slab",
+            "record_bytes": 16384,
+            "table_bytes": 32768,
+            "interner_bytes": 19328,
+            "metadata_bytes": 8464,
+            "cache_bytes": 19040,
+            "records": 697,
+            "tables": 423,
+            "logical_words": 2588,
+            "total_bytes_est": 95984
+          },
+          "final_storage": {
+            "layout": "slab",
+            "record_bytes": 131072,
+            "table_bytes": 262144,
+            "interner_bytes": 154624,
+            "metadata_bytes": 65808,
+            "cache_bytes": 243712,
+            "records": 5740,
+            "tables": 4545,
+            "logical_words": 17087,
+            "total_bytes_est": 857360
+          },
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        },
+        {
+          "kind": "owned_free_join",
+          "candidate": "retraction512",
+          "target_candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_setup_s": [
+            1.834e-06
+          ],
+          "restore_inputs_s": [
+            0.000420334
+          ],
+          "program_setup_s": [
+            4.2625e-05
+          ],
+          "query_s": [
+            0.000676875
+          ],
+          "owned_compute_s": [
+            0.000722083
+          ],
+          "novel_publication_classes": [
+            18
+          ],
+          "input_roots": 24,
+          "output_roots": 80,
+          "input_packet_bytes": 9305,
+          "output_packet_bytes": 5221,
+          "final_arena_bytes_est": 626852,
+          "input_storage": null,
+          "final_storage": null,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "words",
+          "transfer_setup": "product",
+          "occupancy_kernel": "words",
+          "retraction_count": "words",
+          "essential_layout": "slab",
+          "essential_kernel": "derived",
+          "identity_mode": "native",
+          "view_kernel": "words",
+          "view_reuse": "bounded",
+          "view_normalize": "source",
+          "requested_product_mode": "materialized"
+        }
+      ],
+      "loadavg_start": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ],
+      "loadavg_end": [
+        2.97021484375,
+        5.09765625,
+        6.84423828125
+      ]
+    }
+  ],
+  "checker_sha256": "14d6e0000b882c47f758d7c823be9fdca955fb1ff5b9f92da033c7232531d36a"
+}

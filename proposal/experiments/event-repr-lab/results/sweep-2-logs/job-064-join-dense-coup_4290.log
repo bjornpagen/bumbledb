@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"triangle","memo":false,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":1256,"input_bytes_est":23728,"final_bytes_est":767000,"colt_bytes":163104,"build_s":[1.9333e-5, 7.333e-6, 6.292e-6, 5.375e-6, 5.208e-6, 7.667e-6, 7.375e-6],"native_setup_s":0.00023475,"native_first_join_s":0.000118625,"join_only_s":[5.0125e-5, 4.6291e-5, 4.625e-5, 4.5833e-5, 4.6042e-5, 4.5958e-5, 4.5875e-5],"fresh_s":[0.00071575, 0.000746167, 0.000630625, 0.000617833, 0.000618042, 0.000619042, 0.000624958],"warm_s":[0.00063371225, 0.00062947396875, 0.00063562109375, 0.00064102865625, 0.00062785415625, 0.0006303671875, 0.00063889971875],"warm_loops":32,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"triangle","memo":true,"worlds":4290,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":1256,"input_bytes_est":23728,"final_bytes_est":838680,"colt_bytes":163104,"build_s":[1.9333e-5, 7.333e-6, 6.292e-6, 5.375e-6, 5.208e-6, 7.667e-6, 7.375e-6],"native_setup_s":0.00023475,"native_first_join_s":0.000118625,"join_only_s":[5.0125e-5, 4.6291e-5, 4.625e-5, 4.5833e-5, 4.6042e-5, 4.5958e-5, 4.5875e-5],"fresh_s":[0.00038125, 0.000336625, 0.00031575, 0.000319083, 0.000313667, 0.000313166, 0.000312542],"warm_s":[8.21131171875e-5, 8.18377265625e-5, 8.19083671875e-5, 8.291634375e-5, 8.1132e-5, 8.293294140625e-5, 8.421142578125e-5],"warm_loops":256,"checksum":5648062,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"clover","memo":false,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":2483,"input_bytes_est":23728,"final_bytes_est":1516416,"colt_bytes":41104,"build_s":[7.209e-6, 5.375e-6, 5.084e-6, 4.791e-6, 4.833e-6, 4.917e-6, 4.958e-6],"native_setup_s":0.000147375,"native_first_join_s":0.000099,"join_only_s":[7.2209e-5, 6.9958e-5, 7.0041e-5, 6.9959e-5, 6.9959e-5, 7.4916e-5, 7.5167e-5],"fresh_s":[0.002392041, 0.002677333, 0.002523375, 0.002436958, 0.002337666, 0.002671708, 0.002413166],"warm_s":[0.0024042838125, 0.0024265755, 0.0024470181875, 0.0024728854375, 0.0024555911875, 0.0024363176875, 0.0024676171875],"warm_loops":16,"checksum":5691950,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"coup_4290","shape":"clover","memo":true,"worlds":4290,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":37,"final_nodes":2483,"input_bytes_est":23728,"final_bytes_est":1803136,"colt_bytes":41104,"build_s":[7.209e-6, 5.375e-6, 5.084e-6, 4.791e-6, 4.833e-6, 4.917e-6, 4.958e-6],"native_setup_s":0.000147375,"native_first_join_s":0.000099,"join_only_s":[7.2209e-5, 6.9958e-5, 7.0041e-5, 6.9959e-5, 6.9959e-5, 7.4916e-5, 7.5167e-5],"fresh_s":[0.000953125, 0.000941292, 0.000934667, 0.000976667, 0.000975458, 0.000944083, 0.000965084],"warm_s":[0.0001596666640625, 0.000162382484375, 0.000160490234375, 0.00015788509375, 0.0001581025390625, 0.0001598203125, 0.0001593994140625],"warm_loops":128,"checksum":5691950,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.94s
+
+
+        0.94 real         0.92 user         0.01 sys
+            11026432  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 885  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 338  involuntary context switches
+         15141092114  instructions retired
+          3177648189  cycles elapsed
+             8520064  peak memory footprint

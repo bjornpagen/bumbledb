@@ -1,0 +1,79 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"readout_free_join","candidate":"retraction64","domain":"fibred","readout_family":"non-suffix","readout_faces":"x","hidden":8,"width":4,"bits":13,"worlds":8192,"admissible_worlds":3197,"environments":2,"rows":128,"groups":16,"outputs":64,"memo":false,"changed_possible_groups":16,"changed_guaranteed_groups":16,"nonconstant_readouts":48,"build_s":[0.004446792],"support_s":[0.000306625],"import_s":[0.004079625],"admission_s":[6e-5],"join_only_s":[2.9917e-5],"fresh_s":[0.04079125],"fresh_group_s":[0.000554666],"fresh_readout_s":[0.04013075],"fresh_compute_s":[0.040687333],"fresh_count_s":[0.000103833],"warm_s":[0.000206458],"warm_group_s":[3.3917e-5],"warm_readout_s":[7.1541e-5],"warm_compute_s":[0.000105875],"warm_count_s":[0.0001005],"input_nodes":8015,"final_nodes":74569,"input_bytes_est":778688,"final_bytes_est":8006916,"input_storage":{"layout":"slab","record_bytes":128240,"table_bytes":32088,"interner_bytes":275772,"metadata_bytes":64380,"cache_bytes":278208,"records":8015,"tables":4011,"logical_words":4011,"total_bytes_est":778688},"final_storage":{"layout":"slab","record_bytes":2051840,"table_bytes":256704,"interner_bytes":2462656,"metadata_bytes":1026180,"cache_bytes":2209536,"records":74569,"tables":19826,"logical_words":19826,"total_bytes_est":8006916},"outer_memo_bytes":0,"colt_bytes":14992,"checksum":607690,"verified":true}
+EVENT_LAB {"kind":"readout_free_join","candidate":"retraction64","domain":"fibred","readout_family":"non-suffix","readout_faces":"x","hidden":8,"width":4,"bits":13,"worlds":8192,"admissible_worlds":3197,"environments":2,"rows":128,"groups":16,"outputs":64,"memo":true,"changed_possible_groups":16,"changed_guaranteed_groups":16,"nonconstant_readouts":48,"build_s":[0.004446792],"support_s":[0.000306625],"import_s":[0.004079625],"admission_s":[6e-5],"join_only_s":[2.9917e-5],"fresh_s":[0.03657425],"fresh_group_s":[0.000542916],"fresh_readout_s":[0.035940459],"fresh_compute_s":[0.036483666],"fresh_count_s":[9.0542e-5],"warm_s":[0.00017925],"warm_group_s":[1.2583e-5],"warm_readout_s":[7.3459e-5],"warm_compute_s":[8.625e-5],"warm_count_s":[9.2958e-5],"input_nodes":8015,"final_nodes":74569,"input_bytes_est":778688,"final_bytes_est":8015876,"input_storage":{"layout":"slab","record_bytes":128240,"table_bytes":32088,"interner_bytes":275772,"metadata_bytes":64380,"cache_bytes":278208,"records":8015,"tables":4011,"logical_words":4011,"total_bytes_est":778688},"final_storage":{"layout":"slab","record_bytes":2051840,"table_bytes":256704,"interner_bytes":2462656,"metadata_bytes":1026180,"cache_bytes":2209536,"records":74569,"tables":19826,"logical_words":19826,"total_bytes_est":8006916},"outer_memo_bytes":8960,"colt_bytes":14992,"checksum":607690,"verified":true}
+FAILED
+
+failures:
+
+failures:
+    event_repr_lab::experiment
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1378 filtered out; finished in 7.81s
+
+
+
+thread 'event_repr_lab::experiment' (10316551) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/essential_raw.rs:185:9:
+RESOURCE_CAP: essential raw nodes
+stack backtrace:
+   0:        0x103c407dc - <<std[cfa87ad94958a4dd]::sys::backtrace::BacktraceLock>::print::DisplayBacktrace as core[33f882b1f809aa9c]::fmt::Display>::fmt
+   1:        0x103c1bfc4 - core[33f882b1f809aa9c]::fmt::write
+   2:        0x103c3f064 - <std[cfa87ad94958a4dd]::sys::stdio::unix::Stderr as core[33f882b1f809aa9c]::io::write::Write>::write_fmt
+   3:        0x103c3f654 - std[cfa87ad94958a4dd]::panicking::default_hook::{closure#0}
+   4:        0x103c3f2a4 - std[cfa87ad94958a4dd]::panicking::default_hook
+   5:        0x103c3ec18 - std[cfa87ad94958a4dd]::panicking::panic_with_hook
+   6:        0x103c5b8a8 - std[cfa87ad94958a4dd]::panicking::panic_handler::{closure#0}
+   7:        0x103c5b838 - std[cfa87ad94958a4dd]::sys::backtrace::__rust_end_short_backtrace::<std[cfa87ad94958a4dd]::panicking::panic_handler::{closure#0}, !>
+   8:        0x103c5bd18 - __rustc[d7d9a081177ff67c]::rust_begin_unwind
+   9:        0x103d22b24 - core[33f882b1f809aa9c]::panicking::panic_fmt
+  10:        0x1035a9490 - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::intern
+  11:        0x1035a8ba0 - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::branch
+  12:        0x1035a8250 - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  13:        0x1035a8224 - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  14:        0x1035a823c - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  15:        0x1035a8224 - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  16:        0x1035a823c - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  17:        0x1035a8224 - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  18:        0x1035a823c - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  19:        0x1035a823c - <bumbledb[17fb1c286425b84f]::event_repr_lab::essential_raw::Arena<6u32>>::apply
+  20:        0x103598e68 - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  21:        0x103598e2c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  22:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  23:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  24:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  25:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  26:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  27:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  28:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  29:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  30:        0x103598e1c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  31:        0x103598e2c - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>::normalize
+  32:        0x10390bbec - <bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32> as bumbledb[17fb1c286425b84f]::event_repr_lab::carrier::RegionOps>::import
+  33:        0x103379668 - bumbledb[17fb1c286425b84f]::event_repr_lab::readout::verify_batch::<bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>
+  34:        0x10305dac8 - bumbledb[17fb1c286425b84f]::event_repr_lab::readout_bench::bench::<bumbledb[17fb1c286425b84f]::event_repr_lab::retraction::Retraction<6u32>>
+  35:        0x103705eac - bumbledb[17fb1c286425b84f]::event_repr_lab::experiment
+  36:        0x103940f84 - <bumbledb[17fb1c286425b84f]::event_repr_lab::experiment::{closure#0} as core[33f882b1f809aa9c]::ops::function::FnOnce<()>>::call_once
+  37:        0x103c6e410 - test[81e574f92286f18b]::__rust_begin_short_backtrace::<core[33f882b1f809aa9c]::result::Result<(), alloc[773536071553e078]::string::String>, fn() -> core[33f882b1f809aa9c]::result::Result<(), alloc[773536071553e078]::string::String>>
+  38:        0x103c6aa54 - test[81e574f92286f18b]::run_test::{closure#0}
+  39:        0x103c6a5c8 - std[cfa87ad94958a4dd]::sys::backtrace::__rust_begin_short_backtrace::<test[81e574f92286f18b]::run_test::{closure#1}, ()>
+  40:        0x103c7f2c4 - <std[cfa87ad94958a4dd]::thread::lifecycle::spawn_unchecked<test[81e574f92286f18b]::run_test::{closure#1}, ()>::{closure#1} as core[33f882b1f809aa9c]::ops::function::FnOnce<()>>::call_once::{shim:vtable#0}
+  41:        0x103c5cbd8 - <std[cfa87ad94958a4dd]::sys::thread::unix::Thread>::new::thread_start
+  42:        0x18c949d00 - __pthread_exit
+        7.82 real         7.71 user         0.10 sys
+           446791680  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               35645  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                  15  voluntary context switches
+                 594  involuntary context switches
+         70881329949  instructions retired
+         26164835055  cycles elapsed
+           441484152  peak memory footprint

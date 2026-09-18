@@ -1,0 +1,5267 @@
+{
+  "checked": true,
+  "inputs": [
+    "view-native-smoke.json",
+    "view-initial-sweep.json"
+  ],
+  "binary_sha256": "7e17c705f3310183de4a3d87443990e34ba4523dc8da59d76daabd47a53ae068",
+  "cases": 240,
+  "matched_cases": 96,
+  "processes": [
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-000-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-001-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-002-products-packed512----bit-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-003-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-004-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-005-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-006-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-007-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-008-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-009-relations-packed512----bit-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-010-relations-dense-dispatched----bit-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-011-products-dense-dispatched----bit-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-012-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-native-smoke.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-native-smoke-logs/job-013-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-000-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-001-verify-local-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-002-verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true,
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-003-verify-local-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-004-relations-essential512----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-005-products-dense-dispatched----bit-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-006-products-essential64----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-007-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-008-relations-essential512----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-009-products-packed512----bit-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-010-relations-packed512----face-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-011-relations-essential64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-012-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-013-relations-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-014-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-015-relations-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-016-products-essential512----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-017-products-essential512----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-018-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-019-products-essential64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-020-relations-essential512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-021-products-essential512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-022-relations-dense-dispatched----face-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-023-relations-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-024-relations-essential64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-025-products-packed512----face-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-026-relations-dense-dispatched----pair-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-027-relations-packed512----bit-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-028-products-essential512----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-029-products-essential64----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-030-relations-essential64----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-031-relations-packed512----pair-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-032-products-essential64----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-033-products-essential512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-034-relations-essential512----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-035-relations-essential512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-036-products-essential512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-037-relations-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-038-products-essential64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-039-relations-essential512----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-040-products-essential64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-041-products-essential512----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-042-relations-essential512----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-043-products-essential512----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-044-products-packed512----pair-major-local-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-045-relations-essential64----bit-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-046-relations-essential64----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-047-relations-essential512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-048-products-essential512----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-049-products-essential64----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-050-products-essential512----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-051-relations-essential64----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-052-relations-essential64----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-053-relations-essential64----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-054-relations-dense-dispatched----bit-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-055-products-essential64----pair-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-056-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "bit-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-057-products-essential64----bit-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-058-relations-essential64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-059-relations-essential64----pair-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "pair-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-060-products-dense-dispatched----pair-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "slab",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-061-products-essential64----face-major-words-identity-native-essential-derived-slab-occupancy-words-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "materialized",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-062-products-dense-dispatched----face-major-words-identity-native-product-materialized.log"
+    },
+    {
+      "file": "view-initial-sweep.json",
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_OCCUPANCY_KERNEL": "words",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_CANDIDATE": "essential64",
+        "EVENT_LAB_LANE": "products",
+        "EVENT_LAB_ESSENTIAL_LAYOUT": "enum",
+        "EVENT_LAB_PRODUCT": "views",
+        "EVENT_LAB_LAYOUT": "face-major"
+      },
+      "status": "passed",
+      "log": "view-initial-sweep-logs/job-063-products-essential64----face-major-words-identity-native-essential-derived-enum-occupancy-words-product-views.log"
+    }
+  ],
+  "pairs": [
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000750791,
+          "views_median_s": 0.001973709,
+          "materialized_over_views": 0.38039599555962905,
+          "materialized_min_s": 0.000729708,
+          "materialized_max_s": 0.000834042,
+          "views_min_s": 0.001916541,
+          "views_max_s": 0.002126667,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000608625,
+          "views_median_s": 0.001915084,
+          "materialized_over_views": 0.31780590303088535,
+          "materialized_min_s": 0.000594333,
+          "materialized_max_s": 0.000625208,
+          "views_min_s": 0.001862375,
+          "views_max_s": 0.002463167,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 329,
+      "views_final_nodes": 216,
+      "materialized_final_bytes_est": 64880,
+      "views_final_bytes_est": 32512
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000255042,
+          "views_median_s": 0.000421917,
+          "materialized_over_views": 0.6044838202774478,
+          "materialized_min_s": 0.000248,
+          "materialized_max_s": 0.000263625,
+          "views_min_s": 0.000411625,
+          "views_max_s": 0.000459708,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.167e-06,
+          "views_median_s": 7.25e-06,
+          "materialized_over_views": 1.1264827586206896,
+          "materialized_min_s": 8.125e-06,
+          "materialized_max_s": 8.458e-06,
+          "views_min_s": 7.25e-06,
+          "views_max_s": 1.0417e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 329,
+      "views_final_nodes": 216,
+      "materialized_final_bytes_est": 72272,
+      "views_final_bytes_est": 38588
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007504458,
+          "views_median_s": 0.0630335,
+          "materialized_over_views": 0.11905507388928109,
+          "materialized_min_s": 0.007370042,
+          "materialized_max_s": 0.007683458,
+          "views_min_s": 0.062583875,
+          "views_max_s": 0.067606417,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.005789625,
+          "views_median_s": 0.061564333,
+          "materialized_over_views": 0.09404186998988522,
+          "materialized_min_s": 0.005595709,
+          "materialized_max_s": 0.006083792,
+          "views_min_s": 0.060791042,
+          "views_max_s": 0.062872208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3112,
+      "views_final_nodes": 1792,
+      "materialized_final_bytes_est": 583944,
+      "views_final_bytes_est": 311208
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002527125,
+          "views_median_s": 0.012530834,
+          "materialized_over_views": 0.20167253033596966,
+          "materialized_min_s": 0.00243525,
+          "materialized_max_s": 0.002550667,
+          "views_min_s": 0.012229625,
+          "views_max_s": 0.0129845,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.833e-06,
+          "views_median_s": 7.417e-06,
+          "materialized_over_views": 1.1909127679654847,
+          "materialized_min_s": 8.792e-06,
+          "materialized_max_s": 1.7667e-05,
+          "views_min_s": 7.417e-06,
+          "views_max_s": 1.6167e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3112,
+      "views_final_nodes": 1792,
+      "materialized_final_bytes_est": 591336,
+      "views_final_bytes_est": 317284
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000472083,
+          "views_median_s": 0.000709292,
+          "materialized_over_views": 0.6655693282879265,
+          "materialized_min_s": 0.000456,
+          "materialized_max_s": 0.000484333,
+          "views_min_s": 0.000691916,
+          "views_max_s": 0.00072325,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000226792,
+          "views_median_s": 0.000603208,
+          "materialized_over_views": 0.37597644593573026,
+          "materialized_min_s": 0.000223125,
+          "materialized_max_s": 0.000236625,
+          "views_min_s": 0.000600625,
+          "views_max_s": 0.000639583,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 345,
+      "views_final_nodes": 130,
+      "materialized_final_bytes_est": 66864,
+      "views_final_bytes_est": 22720
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000331667,
+          "views_median_s": 0.000384458,
+          "materialized_over_views": 0.8626872116069896,
+          "materialized_min_s": 0.000322125,
+          "materialized_max_s": 0.000362,
+          "views_min_s": 0.0003695,
+          "views_max_s": 0.000402834,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.542e-06,
+          "views_median_s": 8.292e-06,
+          "materialized_over_views": 1.1507477086348288,
+          "materialized_min_s": 9.541e-06,
+          "materialized_max_s": 2.4166e-05,
+          "views_min_s": 8.208e-06,
+          "views_max_s": 9.458e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 345,
+      "views_final_nodes": 130,
+      "materialized_final_bytes_est": 79856,
+      "views_final_bytes_est": 34492
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003384333,
+          "views_median_s": 0.015124791,
+          "materialized_over_views": 0.22376064568429407,
+          "materialized_min_s": 0.003132209,
+          "materialized_max_s": 0.003492583,
+          "views_min_s": 0.014697375,
+          "views_max_s": 0.015482625,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001612375,
+          "views_median_s": 0.014509541,
+          "materialized_over_views": 0.11112515550974356,
+          "materialized_min_s": 0.001556208,
+          "materialized_max_s": 0.001646375,
+          "views_min_s": 0.014192083,
+          "views_max_s": 0.014644458,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 2668,
+      "views_final_nodes": 1011,
+      "materialized_final_bytes_est": 450472,
+      "views_final_bytes_est": 195464
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002356417,
+          "views_median_s": 0.007826334,
+          "materialized_over_views": 0.30108822342619157,
+          "materialized_min_s": 0.002330208,
+          "materialized_max_s": 0.002395,
+          "views_min_s": 0.007619625,
+          "views_max_s": 0.008040292,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.584e-06,
+          "views_median_s": 8.459e-06,
+          "materialized_over_views": 1.1329944437876818,
+          "materialized_min_s": 9.583e-06,
+          "materialized_max_s": 2.1041e-05,
+          "views_min_s": 8.375e-06,
+          "views_max_s": 2.05e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 2668,
+      "views_final_nodes": 1011,
+      "materialized_final_bytes_est": 463464,
+      "views_final_bytes_est": 207236
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001518417,
+          "views_median_s": 0.003737875,
+          "materialized_over_views": 0.40622465973313715,
+          "materialized_min_s": 0.001494375,
+          "materialized_max_s": 0.001615,
+          "views_min_s": 0.0036745,
+          "views_max_s": 0.003803084,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001167167,
+          "views_median_s": 0.003532708,
+          "materialized_over_views": 0.33038875559485814,
+          "materialized_min_s": 0.001148291,
+          "materialized_max_s": 0.001338625,
+          "views_min_s": 0.003480292,
+          "views_max_s": 0.003693291,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 829,
+      "views_final_nodes": 486,
+      "materialized_final_bytes_est": 125168,
+      "views_final_bytes_est": 79552
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000537875,
+          "views_median_s": 0.000796125,
+          "materialized_over_views": 0.6756162662898415,
+          "materialized_min_s": 0.000527417,
+          "materialized_max_s": 0.000581792,
+          "views_min_s": 0.000775083,
+          "views_max_s": 0.000886875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.208e-06,
+          "views_median_s": 7.125e-06,
+          "materialized_over_views": 1.152,
+          "materialized_min_s": 8.166e-06,
+          "materialized_max_s": 8.666e-06,
+          "views_min_s": 7.042e-06,
+          "views_max_s": 7.458e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 829,
+      "views_final_nodes": 486,
+      "materialized_final_bytes_est": 132560,
+      "views_final_bytes_est": 85628
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010369709,
+          "views_median_s": 0.034869541,
+          "materialized_over_views": 0.2973858761146297,
+          "materialized_min_s": 0.01027625,
+          "materialized_max_s": 0.010635541,
+          "views_min_s": 0.034699958,
+          "views_max_s": 0.035538333,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.008298875,
+          "views_median_s": 0.033238833,
+          "materialized_over_views": 0.2496740785093147,
+          "materialized_min_s": 0.008104625,
+          "materialized_max_s": 0.008809334,
+          "views_min_s": 0.032973666,
+          "views_max_s": 0.03413975,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5582,
+      "views_final_nodes": 3102,
+      "materialized_final_bytes_est": 826744,
+      "views_final_bytes_est": 408360
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003446,
+          "views_median_s": 0.007455125,
+          "materialized_over_views": 0.46223235693566506,
+          "materialized_min_s": 0.003409042,
+          "materialized_max_s": 0.003846,
+          "views_min_s": 0.007436417,
+          "views_max_s": 0.007589458,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.333e-06,
+          "views_median_s": 7.375e-06,
+          "materialized_over_views": 1.1298983050847458,
+          "materialized_min_s": 8.291e-06,
+          "materialized_max_s": 1.8166e-05,
+          "views_min_s": 7.333e-06,
+          "views_max_s": 1.6791e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5582,
+      "views_final_nodes": 3102,
+      "materialized_final_bytes_est": 834136,
+      "views_final_bytes_est": 414436
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001084625,
+          "views_median_s": 0.000885916,
+          "materialized_over_views": 1.2242977889551605,
+          "materialized_min_s": 0.000991625,
+          "materialized_max_s": 0.001130084,
+          "views_min_s": 0.000854625,
+          "views_max_s": 0.000926209,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000596667,
+          "views_median_s": 0.000730042,
+          "materialized_over_views": 0.8173050317652958,
+          "materialized_min_s": 0.00055175,
+          "materialized_max_s": 0.000648583,
+          "views_min_s": 0.000717041,
+          "views_max_s": 0.000844666,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1159,
+      "views_final_nodes": 495,
+      "materialized_final_bytes_est": 167936,
+      "views_final_bytes_est": 79468
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000654208,
+          "views_median_s": 0.00052975,
+          "materialized_over_views": 1.2349372345445966,
+          "materialized_min_s": 0.000643542,
+          "materialized_max_s": 0.000700083,
+          "views_min_s": 0.000503292,
+          "views_max_s": 0.000642875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 1.125e-05,
+          "views_median_s": 1.0458e-05,
+          "materialized_over_views": 1.0757314974182444,
+          "materialized_min_s": 1.1167e-05,
+          "materialized_max_s": 1.525e-05,
+          "views_min_s": 1.0333e-05,
+          "views_max_s": 2.225e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1159,
+      "views_final_nodes": 495,
+      "materialized_final_bytes_est": 180928,
+      "views_final_bytes_est": 91240
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.004978416,
+          "views_median_s": 0.007219417,
+          "materialized_over_views": 0.6895869846554092,
+          "materialized_min_s": 0.004647167,
+          "materialized_max_s": 0.005110625,
+          "views_min_s": 0.006997416,
+          "views_max_s": 0.007417167,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.002635125,
+          "views_median_s": 0.006100125,
+          "materialized_over_views": 0.43197885289235877,
+          "materialized_min_s": 0.002566833,
+          "materialized_max_s": 0.002901458,
+          "views_min_s": 0.005977833,
+          "views_max_s": 0.006130875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5699,
+      "views_final_nodes": 2640,
+      "materialized_final_bytes_est": 879464,
+      "views_final_bytes_est": 415112
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003371625,
+          "views_median_s": 0.003997291,
+          "materialized_over_views": 0.8434774951335792,
+          "materialized_min_s": 0.003285375,
+          "materialized_max_s": 0.003892333,
+          "views_min_s": 0.003764917,
+          "views_max_s": 0.00403225,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.584e-06,
+          "views_median_s": 8.458e-06,
+          "materialized_over_views": 1.133128399148735,
+          "materialized_min_s": 9.459e-06,
+          "materialized_max_s": 2.1584e-05,
+          "views_min_s": 8.375e-06,
+          "views_max_s": 2e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5699,
+      "views_final_nodes": 2640,
+      "materialized_final_bytes_est": 892456,
+      "views_final_bytes_est": 426884
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000615833,
+          "views_median_s": 0.000752708,
+          "materialized_over_views": 0.8181565759896268,
+          "materialized_min_s": 0.000569708,
+          "materialized_max_s": 0.000767208,
+          "views_min_s": 0.00072025,
+          "views_max_s": 0.0007655,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000328625,
+          "views_median_s": 0.000620166,
+          "materialized_over_views": 0.5298984465449573,
+          "materialized_min_s": 0.000322208,
+          "materialized_max_s": 0.000363083,
+          "views_min_s": 0.000603292,
+          "views_max_s": 0.000635834,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 430,
+      "views_final_nodes": 189,
+      "materialized_final_bytes_est": 75440,
+      "views_final_bytes_est": 34272
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000424917,
+          "views_median_s": 0.000414292,
+          "materialized_over_views": 1.0256461626099467,
+          "materialized_min_s": 0.000417042,
+          "materialized_max_s": 0.000447708,
+          "views_min_s": 0.000405625,
+          "views_max_s": 0.000479583,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 1.0625e-05,
+          "views_median_s": 8.458e-06,
+          "materialized_over_views": 1.256207141168125,
+          "materialized_min_s": 1.05e-05,
+          "materialized_max_s": 1.3584e-05,
+          "views_min_s": 8.25e-06,
+          "views_max_s": 8.875e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 430,
+      "views_final_nodes": 189,
+      "materialized_final_bytes_est": 88432,
+      "views_final_bytes_est": 46044
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.004322834,
+          "views_median_s": 0.016226208,
+          "materialized_over_views": 0.2664106117707847,
+          "materialized_min_s": 0.00416275,
+          "materialized_max_s": 0.006343875,
+          "views_min_s": 0.015951292,
+          "views_max_s": 0.016593292,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.002202541,
+          "views_median_s": 0.015278542,
+          "materialized_over_views": 0.1441591088992654,
+          "materialized_min_s": 0.00208675,
+          "materialized_max_s": 0.002292458,
+          "views_min_s": 0.015028833,
+          "views_max_s": 0.015355792,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3223,
+      "views_final_nodes": 1496,
+      "materialized_final_bytes_est": 543832,
+      "views_final_bytes_est": 235128
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003021291,
+          "views_median_s": 0.008464416,
+          "materialized_over_views": 0.3569402779825566,
+          "materialized_min_s": 0.002907042,
+          "materialized_max_s": 0.00308775,
+          "views_min_s": 0.008208875,
+          "views_max_s": 0.0086275,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.709e-06,
+          "views_median_s": 8.917e-06,
+          "materialized_over_views": 1.0888191095659976,
+          "materialized_min_s": 9.625e-06,
+          "materialized_max_s": 2.1625e-05,
+          "views_min_s": 8.459e-06,
+          "views_max_s": 2.3208e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3223,
+      "views_final_nodes": 1496,
+      "materialized_final_bytes_est": 556824,
+      "views_final_bytes_est": 246900
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001499458,
+          "views_median_s": 0.00354875,
+          "materialized_over_views": 0.42253131384290243,
+          "materialized_min_s": 0.001461375,
+          "materialized_max_s": 0.0040135,
+          "views_min_s": 0.00344325,
+          "views_max_s": 0.003638125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000715584,
+          "views_median_s": 0.002902,
+          "materialized_over_views": 0.2465830461750517,
+          "materialized_min_s": 0.000710792,
+          "materialized_max_s": 0.000724792,
+          "views_min_s": 0.002815375,
+          "views_max_s": 0.003035584,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1342,
+      "views_final_nodes": 1499,
+      "materialized_final_bytes_est": 138768,
+      "views_final_bytes_est": 127344
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001124042,
+          "views_median_s": 0.002030375,
+          "materialized_over_views": 0.5536130025241642,
+          "materialized_min_s": 0.001102792,
+          "materialized_max_s": 0.001345958,
+          "views_min_s": 0.001970084,
+          "views_max_s": 0.002082666,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.625e-06,
+          "views_median_s": 8.208e-06,
+          "materialized_over_views": 1.1726364522417154,
+          "materialized_min_s": 9.542e-06,
+          "materialized_max_s": 1.4375e-05,
+          "views_min_s": 8.083e-06,
+          "views_max_s": 1.5833e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1342,
+      "views_final_nodes": 1499,
+      "materialized_final_bytes_est": 151760,
+      "views_final_bytes_est": 139116
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.026566167,
+          "views_median_s": 0.04481,
+          "materialized_over_views": 0.5928624637357732,
+          "materialized_min_s": 0.025668917,
+          "materialized_max_s": 0.04804825,
+          "views_min_s": 0.044250291,
+          "views_max_s": 0.072637667,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.016444625,
+          "views_median_s": 0.038076833,
+          "materialized_over_views": 0.4318800620839449,
+          "materialized_min_s": 0.016256542,
+          "materialized_max_s": 0.017471458,
+          "views_min_s": 0.037492334,
+          "views_max_s": 0.03904,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 9513,
+      "views_final_nodes": 14862,
+      "materialized_final_bytes_est": 1308024,
+      "views_final_bytes_est": 1500536
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.017999,
+          "views_median_s": 0.025148584,
+          "materialized_over_views": 0.7157062998059851,
+          "materialized_min_s": 0.017743583,
+          "materialized_max_s": 0.019437417,
+          "views_min_s": 0.024817375,
+          "views_max_s": 0.025895,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.667e-06,
+          "views_median_s": 8.959e-06,
+          "materialized_over_views": 1.079026677084496,
+          "materialized_min_s": 9.666e-06,
+          "materialized_max_s": 2.3375e-05,
+          "views_min_s": 8.833e-06,
+          "views_max_s": 2.0209e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 9513,
+      "views_final_nodes": 14862,
+      "materialized_final_bytes_est": 1321016,
+      "views_final_bytes_est": 1512308
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000762625,
+          "views_median_s": 0.000717083,
+          "materialized_over_views": 1.063510081817586,
+          "materialized_min_s": 0.000727792,
+          "materialized_max_s": 0.000924417,
+          "views_min_s": 0.0006745,
+          "views_max_s": 0.000815166,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.00044025,
+          "views_median_s": 0.000550292,
+          "materialized_over_views": 0.8000298023594746,
+          "materialized_min_s": 0.000438125,
+          "materialized_max_s": 0.000448708,
+          "views_min_s": 0.000514584,
+          "views_max_s": 0.000694542,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 510,
+      "views_final_nodes": 251,
+      "materialized_final_bytes_est": 99104,
+      "views_final_bytes_est": 47456
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000500125,
+          "views_median_s": 0.000432959,
+          "materialized_over_views": 1.1551324721278458,
+          "materialized_min_s": 0.000468875,
+          "materialized_max_s": 0.000510833,
+          "views_min_s": 0.000417417,
+          "views_max_s": 0.000659875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.959e-06,
+          "views_median_s": 8.334e-06,
+          "materialized_over_views": 1.1949844012479003,
+          "materialized_min_s": 9.209e-06,
+          "materialized_max_s": 1.2625e-05,
+          "views_min_s": 8.291e-06,
+          "views_max_s": 1.3542e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 510,
+      "views_final_nodes": 251,
+      "materialized_final_bytes_est": 112096,
+      "views_final_bytes_est": 59228
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010209208,
+          "views_median_s": 0.159383875,
+          "materialized_over_views": 0.06405420874602277,
+          "materialized_min_s": 0.009858792,
+          "materialized_max_s": 0.010738875,
+          "views_min_s": 0.159226834,
+          "views_max_s": 0.1609595,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.005930917,
+          "views_median_s": 0.154173542,
+          "materialized_over_views": 0.038469097375994646,
+          "materialized_min_s": 0.005771791,
+          "materialized_max_s": 0.006316833,
+          "views_min_s": 0.153829542,
+          "views_max_s": 0.158222375,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5273,
+      "views_final_nodes": 8088,
+      "materialized_final_bytes_est": 1043640,
+      "views_final_bytes_est": 1722536
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007123917,
+          "views_median_s": 0.080624291,
+          "materialized_over_views": 0.0883594374802006,
+          "materialized_min_s": 0.006926375,
+          "materialized_max_s": 0.007322875,
+          "views_min_s": 0.0799725,
+          "views_max_s": 0.081939083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.791e-06,
+          "views_median_s": 8.458e-06,
+          "materialized_over_views": 1.1576022700401987,
+          "materialized_min_s": 9.5e-06,
+          "materialized_max_s": 2.5792e-05,
+          "views_min_s": 8.334e-06,
+          "views_max_s": 1.8875e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5273,
+      "views_final_nodes": 8088,
+      "materialized_final_bytes_est": 1056632,
+      "views_final_bytes_est": 1734308
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000991792,
+          "views_median_s": 0.00189075,
+          "materialized_over_views": 0.5245495173872802,
+          "materialized_min_s": 0.000975833,
+          "materialized_max_s": 0.001046958,
+          "views_min_s": 0.001860959,
+          "views_max_s": 0.002114083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000808833,
+          "views_median_s": 0.0017725,
+          "materialized_over_views": 0.45632327221438646,
+          "materialized_min_s": 0.000800833,
+          "materialized_max_s": 0.000825125,
+          "views_min_s": 0.001768,
+          "views_max_s": 0.001856542,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 427,
+      "views_final_nodes": 270,
+      "materialized_final_bytes_est": 41824,
+      "views_final_bytes_est": 30960
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000337541,
+          "views_median_s": 0.000430625,
+          "materialized_over_views": 0.7838397677793905,
+          "materialized_min_s": 0.000322959,
+          "materialized_max_s": 0.000385542,
+          "views_min_s": 0.000427708,
+          "views_max_s": 0.000512083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.125e-06,
+          "views_median_s": 7.833e-06,
+          "materialized_over_views": 1.0372781820503,
+          "materialized_min_s": 8e-06,
+          "materialized_max_s": 1.375e-05,
+          "views_min_s": 7.375e-06,
+          "views_max_s": 1.8041e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 427,
+      "views_final_nodes": 270,
+      "materialized_final_bytes_est": 49216,
+      "views_final_bytes_est": 37036
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007759375,
+          "views_median_s": 0.064385083,
+          "materialized_over_views": 0.12051510440702547,
+          "materialized_min_s": 0.007523,
+          "materialized_max_s": 0.007968,
+          "views_min_s": 0.063799625,
+          "views_max_s": 0.0652225,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.006281917,
+          "views_median_s": 0.062604375,
+          "materialized_over_views": 0.10034309902462886,
+          "materialized_min_s": 0.006127041,
+          "materialized_max_s": 0.006498833,
+          "views_min_s": 0.062332917,
+          "views_max_s": 0.063828667,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3479,
+      "views_final_nodes": 2378,
+      "materialized_final_bytes_est": 405112,
+      "views_final_bytes_est": 270936
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002805792,
+          "views_median_s": 0.012880625,
+          "materialized_over_views": 0.21783042360133922,
+          "materialized_min_s": 0.002586834,
+          "materialized_max_s": 0.002870333,
+          "views_min_s": 0.012761,
+          "views_max_s": 0.013591125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.25e-06,
+          "views_median_s": 7.291e-06,
+          "materialized_over_views": 1.1315320257852146,
+          "materialized_min_s": 8.042e-06,
+          "materialized_max_s": 2.05e-05,
+          "views_min_s": 7.125e-06,
+          "views_max_s": 1.5417e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3479,
+      "views_final_nodes": 2378,
+      "materialized_final_bytes_est": 412504,
+      "views_final_bytes_est": 277012
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001583666,
+          "views_median_s": 0.003787209,
+          "materialized_over_views": 0.4181617650359407,
+          "materialized_min_s": 0.001520958,
+          "materialized_max_s": 0.001624041,
+          "views_min_s": 0.003606875,
+          "views_max_s": 0.003899667,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001241333,
+          "views_median_s": 0.003611375,
+          "materialized_over_views": 0.3437286352151189,
+          "materialized_min_s": 0.0011925,
+          "materialized_max_s": 0.001259333,
+          "views_min_s": 0.003496125,
+          "views_max_s": 0.003715958,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 829,
+      "views_final_nodes": 486,
+      "materialized_final_bytes_est": 84560,
+      "views_final_bytes_est": 48160
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000569458,
+          "views_median_s": 0.000798708,
+          "materialized_over_views": 0.7129739529339885,
+          "materialized_min_s": 0.000538833,
+          "materialized_max_s": 0.000715209,
+          "views_min_s": 0.000775083,
+          "views_max_s": 0.000866959,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.542e-06,
+          "views_median_s": 7.042e-06,
+          "materialized_over_views": 1.213007668276058,
+          "materialized_min_s": 8.541e-06,
+          "materialized_max_s": 1.1083e-05,
+          "views_min_s": 6.917e-06,
+          "views_max_s": 7.833e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 829,
+      "views_final_nodes": 486,
+      "materialized_final_bytes_est": 91952,
+      "views_final_bytes_est": 54236
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010324375,
+          "views_median_s": 0.034777375,
+          "materialized_over_views": 0.2968704509756703,
+          "materialized_min_s": 0.01023675,
+          "materialized_max_s": 0.010500166,
+          "views_min_s": 0.034718708,
+          "views_max_s": 0.035099917,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.008268334,
+          "views_median_s": 0.033708291,
+          "materialized_over_views": 0.24529080990786511,
+          "materialized_min_s": 0.008144958,
+          "materialized_max_s": 0.008528291,
+          "views_min_s": 0.033240209,
+          "views_max_s": 0.033929083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5582,
+      "views_final_nodes": 3102,
+      "materialized_final_bytes_est": 543608,
+      "views_final_bytes_est": 264440
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003332834,
+          "views_median_s": 0.007641125,
+          "materialized_over_views": 0.43617059006363584,
+          "materialized_min_s": 0.003273208,
+          "materialized_max_s": 0.003774167,
+          "views_min_s": 0.007420458,
+          "views_max_s": 0.007741542,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.459e-06,
+          "views_median_s": 7.25e-06,
+          "materialized_over_views": 1.1667586206896552,
+          "materialized_min_s": 8.292e-06,
+          "materialized_max_s": 1.8667e-05,
+          "views_min_s": 7.083e-06,
+          "views_max_s": 1.7041e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5582,
+      "views_final_nodes": 3102,
+      "materialized_final_bytes_est": 551000,
+      "views_final_bytes_est": 270516
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00119275,
+          "views_median_s": 0.001615667,
+          "materialized_over_views": 0.7382399962368483,
+          "materialized_min_s": 0.0011615,
+          "materialized_max_s": 0.00127725,
+          "views_min_s": 0.001575958,
+          "views_max_s": 0.001712959,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001012875,
+          "views_median_s": 0.001464959,
+          "materialized_over_views": 0.6914016023656635,
+          "materialized_min_s": 0.000966959,
+          "materialized_max_s": 0.001064833,
+          "views_min_s": 0.001402875,
+          "views_max_s": 0.001535208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 456,
+      "views_final_nodes": 291,
+      "materialized_final_bytes_est": 88640,
+      "views_final_bytes_est": 48768
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000339791,
+          "views_median_s": 0.000438542,
+          "materialized_over_views": 0.7748197436049454,
+          "materialized_min_s": 0.00033075,
+          "materialized_max_s": 0.000439042,
+          "views_min_s": 0.000429125,
+          "views_max_s": 0.000447917,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.334e-06,
+          "views_median_s": 7.25e-06,
+          "materialized_over_views": 1.1495172413793104,
+          "materialized_min_s": 8.291e-06,
+          "materialized_max_s": 1.1167e-05,
+          "views_min_s": 7.167e-06,
+          "views_max_s": 8.959e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 456,
+      "views_final_nodes": 291,
+      "materialized_final_bytes_est": 96032,
+      "views_final_bytes_est": 54844
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007453,
+          "views_median_s": 0.138934375,
+          "materialized_over_views": 0.053644031579657664,
+          "materialized_min_s": 0.00720975,
+          "materialized_max_s": 0.011657625,
+          "views_min_s": 0.138033041,
+          "views_max_s": 0.140502667,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.006510625,
+          "views_median_s": 0.152461042,
+          "materialized_over_views": 0.04270353209313629,
+          "materialized_min_s": 0.005997541,
+          "materialized_max_s": 0.007163917,
+          "views_min_s": 0.135233542,
+          "views_max_s": 0.203894958,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3227,
+      "views_final_nodes": 5565,
+      "materialized_final_bytes_est": 512168,
+      "views_final_bytes_est": 1011464
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002290459,
+          "views_median_s": 0.029447458,
+          "materialized_over_views": 0.07778121289790106,
+          "materialized_min_s": 0.002196042,
+          "materialized_max_s": 0.002383542,
+          "views_min_s": 0.0286745,
+          "views_max_s": 0.029745166,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.5e-06,
+          "views_median_s": 1.8792e-05,
+          "materialized_over_views": 0.45232013622818223,
+          "materialized_min_s": 8.333e-06,
+          "materialized_max_s": 1.9375e-05,
+          "views_min_s": 1.8709e-05,
+          "views_max_s": 3.9167e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3227,
+      "views_final_nodes": 5565,
+      "materialized_final_bytes_est": 519560,
+      "views_final_bytes_est": 1017540
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001813166,
+          "views_median_s": 0.008448166,
+          "materialized_over_views": 0.2146224399473211,
+          "materialized_min_s": 0.001767792,
+          "materialized_max_s": 0.001847333,
+          "views_min_s": 0.008303,
+          "views_max_s": 0.008611917,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001320333,
+          "views_median_s": 0.008227792,
+          "materialized_over_views": 0.16047233571291059,
+          "materialized_min_s": 0.001299667,
+          "materialized_max_s": 0.00134325,
+          "views_min_s": 0.008191666,
+          "views_max_s": 0.008269625,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1034,
+      "views_final_nodes": 757,
+      "materialized_final_bytes_est": 115920,
+      "views_final_bytes_est": 63840
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00065725,
+          "views_median_s": 0.001818833,
+          "materialized_over_views": 0.3613580796037899,
+          "materialized_min_s": 0.000650292,
+          "materialized_max_s": 0.001105167,
+          "views_min_s": 0.001772334,
+          "views_max_s": 0.002002417,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.375e-06,
+          "views_median_s": 7.333e-06,
+          "materialized_over_views": 1.1420973680621846,
+          "materialized_min_s": 8.291e-06,
+          "materialized_max_s": 1.2292e-05,
+          "views_min_s": 7.25e-06,
+          "views_max_s": 8.084e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1034,
+      "views_final_nodes": 757,
+      "materialized_final_bytes_est": 123312,
+      "views_final_bytes_est": 69916
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010797334,
+          "views_median_s": 0.061339083,
+          "materialized_over_views": 0.17602698755701973,
+          "materialized_min_s": 0.010546208,
+          "materialized_max_s": 0.010930417,
+          "views_min_s": 0.06121975,
+          "views_max_s": 0.075498,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.008215875,
+          "views_median_s": 0.058590125,
+          "materialized_over_views": 0.14022627533223386,
+          "materialized_min_s": 0.008119458,
+          "materialized_max_s": 0.008761209,
+          "views_min_s": 0.057716458,
+          "views_max_s": 0.060192292,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6490,
+      "views_final_nodes": 4275,
+      "materialized_final_bytes_est": 574648,
+      "views_final_bytes_est": 340888
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00383225,
+          "views_median_s": 0.012729084,
+          "materialized_over_views": 0.30106251164655684,
+          "materialized_min_s": 0.00371075,
+          "materialized_max_s": 0.004057083,
+          "views_min_s": 0.012615291,
+          "views_max_s": 0.012958292,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.166e-06,
+          "views_median_s": 7.417e-06,
+          "materialized_over_views": 1.1009842254280706,
+          "materialized_min_s": 8.125e-06,
+          "materialized_max_s": 1.7625e-05,
+          "views_min_s": 7.375e-06,
+          "views_max_s": 1.7666e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6490,
+      "views_final_nodes": 4275,
+      "materialized_final_bytes_est": 582040,
+      "views_final_bytes_est": 346964
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001184875,
+          "views_median_s": 0.00160175,
+          "materialized_over_views": 0.7397377867956921,
+          "materialized_min_s": 0.001158333,
+          "materialized_max_s": 0.001226583,
+          "views_min_s": 0.001557542,
+          "views_max_s": 0.001624417,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001018583,
+          "views_median_s": 0.001411541,
+          "materialized_over_views": 0.7216106368855031,
+          "materialized_min_s": 0.000992208,
+          "materialized_max_s": 0.001099542,
+          "views_min_s": 0.00139925,
+          "views_max_s": 0.001539291,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 456,
+      "views_final_nodes": 291,
+      "materialized_final_bytes_est": 49440,
+      "views_final_bytes_est": 30960
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00034725,
+          "views_median_s": 0.000457042,
+          "materialized_over_views": 0.7597770008008017,
+          "materialized_min_s": 0.000331375,
+          "materialized_max_s": 0.000360208,
+          "views_min_s": 0.000419875,
+          "views_max_s": 0.000533709,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.708e-06,
+          "views_median_s": 7.125e-06,
+          "materialized_over_views": 1.3625263157894736,
+          "materialized_min_s": 8.542e-06,
+          "materialized_max_s": 1.7875e-05,
+          "views_min_s": 7.083e-06,
+          "views_max_s": 7.209e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 456,
+      "views_final_nodes": 291,
+      "materialized_final_bytes_est": 56832,
+      "views_final_bytes_est": 37036
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.0070995,
+          "views_median_s": 0.138478125,
+          "materialized_over_views": 0.051268025184483104,
+          "materialized_min_s": 0.007024,
+          "materialized_max_s": 0.007623709,
+          "views_min_s": 0.137401292,
+          "views_max_s": 0.139307208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.005919834,
+          "views_median_s": 0.13425075,
+          "materialized_over_views": 0.04409535142261775,
+          "materialized_min_s": 0.005861458,
+          "materialized_max_s": 0.006070958,
+          "views_min_s": 0.133623875,
+          "views_max_s": 0.134587708,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3227,
+      "views_final_nodes": 5565,
+      "materialized_final_bytes_est": 360312,
+      "views_final_bytes_est": 735352
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002227375,
+          "views_median_s": 0.028119583,
+          "materialized_over_views": 0.07921081190997747,
+          "materialized_min_s": 0.002165375,
+          "materialized_max_s": 0.00226875,
+          "views_min_s": 0.028036458,
+          "views_max_s": 0.028906125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.333e-06,
+          "views_median_s": 7.083e-06,
+          "materialized_over_views": 1.1764788931243824,
+          "materialized_min_s": 8.208e-06,
+          "materialized_max_s": 1.875e-05,
+          "views_min_s": 7e-06,
+          "views_max_s": 1.3291e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3227,
+      "views_final_nodes": 5565,
+      "materialized_final_bytes_est": 367704,
+      "views_final_bytes_est": 741428
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000555916,
+          "views_median_s": 0.000776667,
+          "materialized_over_views": 0.7157713666217311,
+          "materialized_min_s": 0.000533708,
+          "materialized_max_s": 0.000590208,
+          "views_min_s": 0.000709542,
+          "views_max_s": 0.000810708,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000307917,
+          "views_median_s": 0.000634292,
+          "materialized_over_views": 0.4854499189647671,
+          "materialized_min_s": 0.000302875,
+          "materialized_max_s": 0.000315042,
+          "views_min_s": 0.000628209,
+          "views_max_s": 0.00064625,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 430,
+      "views_final_nodes": 189,
+      "materialized_final_bytes_est": 47536,
+      "views_final_bytes_est": 22032
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000391,
+          "views_median_s": 0.000414084,
+          "materialized_over_views": 0.9442528569082602,
+          "materialized_min_s": 0.000368292,
+          "materialized_max_s": 0.000407541,
+          "views_min_s": 0.0004055,
+          "views_max_s": 0.000429291,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.25e-06,
+          "views_median_s": 9.458e-06,
+          "materialized_over_views": 0.978008035525481,
+          "materialized_min_s": 9.125e-06,
+          "materialized_max_s": 1.1083e-05,
+          "views_min_s": 8.75e-06,
+          "views_max_s": 1.0125e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 430,
+      "views_final_nodes": 189,
+      "materialized_final_bytes_est": 60528,
+      "views_final_bytes_est": 33804
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00406625,
+          "views_median_s": 0.016051333,
+          "materialized_over_views": 0.25332787002799084,
+          "materialized_min_s": 0.00390925,
+          "materialized_max_s": 0.008816833,
+          "views_min_s": 0.015928417,
+          "views_max_s": 0.01643975,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.002144375,
+          "views_median_s": 0.015152875,
+          "materialized_over_views": 0.14151604893460812,
+          "materialized_min_s": 0.002105625,
+          "materialized_max_s": 0.002322417,
+          "views_min_s": 0.014850125,
+          "views_max_s": 0.015575667,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3223,
+      "views_final_nodes": 1496,
+      "materialized_final_bytes_est": 358520,
+      "views_final_bytes_est": 150952
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002906,
+          "views_median_s": 0.008383834,
+          "materialized_over_views": 0.34661945835282526,
+          "materialized_min_s": 0.002834458,
+          "materialized_max_s": 0.003068959,
+          "views_min_s": 0.008271666,
+          "views_max_s": 0.0084605,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 1.0417e-05,
+          "views_median_s": 8.5e-06,
+          "materialized_over_views": 1.225529411764706,
+          "materialized_min_s": 1.0042e-05,
+          "materialized_max_s": 2.5625e-05,
+          "views_min_s": 8.334e-06,
+          "views_max_s": 2.0416e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3223,
+      "views_final_nodes": 1496,
+      "materialized_final_bytes_est": 371512,
+      "views_final_bytes_est": 162724
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000453167,
+          "views_median_s": 0.000716208,
+          "materialized_over_views": 0.6327309943480106,
+          "materialized_min_s": 0.000427375,
+          "materialized_max_s": 0.000486708,
+          "views_min_s": 0.000689625,
+          "views_max_s": 0.000748541,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000229417,
+          "views_median_s": 0.000639625,
+          "materialized_over_views": 0.35867422317764314,
+          "materialized_min_s": 0.000228,
+          "materialized_max_s": 0.000234125,
+          "views_min_s": 0.00062625,
+          "views_max_s": 0.000679083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 345,
+      "views_final_nodes": 130,
+      "materialized_final_bytes_est": 43728,
+      "views_final_bytes_est": 13088
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000348708,
+          "views_median_s": 0.000419291,
+          "materialized_over_views": 0.8316610659422691,
+          "materialized_min_s": 0.000307708,
+          "materialized_max_s": 0.000363166,
+          "views_min_s": 0.000375792,
+          "views_max_s": 0.000426,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.292e-06,
+          "views_median_s": 8.208e-06,
+          "materialized_over_views": 1.1320662768031189,
+          "materialized_min_s": 9.125e-06,
+          "materialized_max_s": 1.2333e-05,
+          "views_min_s": 8.083e-06,
+          "views_max_s": 1.0208e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 345,
+      "views_final_nodes": 130,
+      "materialized_final_bytes_est": 56720,
+      "views_final_bytes_est": 24860
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003262583,
+          "views_median_s": 0.015233375,
+          "materialized_over_views": 0.21417335291752482,
+          "materialized_min_s": 0.00320675,
+          "materialized_max_s": 0.003419041,
+          "views_min_s": 0.014818667,
+          "views_max_s": 0.018915375,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001672208,
+          "views_median_s": 0.0142925,
+          "materialized_over_views": 0.11699898548189609,
+          "materialized_min_s": 0.001596458,
+          "materialized_max_s": 0.0018425,
+          "views_min_s": 0.01425575,
+          "views_max_s": 0.014850167,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 2668,
+      "views_final_nodes": 1011,
+      "materialized_final_bytes_est": 288632,
+      "views_final_bytes_est": 131240
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00243775,
+          "views_median_s": 0.007794041,
+          "materialized_over_views": 0.3127710003065162,
+          "materialized_min_s": 0.002401,
+          "materialized_max_s": 0.003194458,
+          "views_min_s": 0.007742958,
+          "views_max_s": 0.007938333,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.708e-06,
+          "views_median_s": 8.625e-06,
+          "materialized_over_views": 1.1255652173913042,
+          "materialized_min_s": 9.666e-06,
+          "materialized_max_s": 2.1958e-05,
+          "views_min_s": 8.416e-06,
+          "views_max_s": 2.0833e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 2668,
+      "views_final_nodes": 1011,
+      "materialized_final_bytes_est": 301624,
+      "views_final_bytes_est": 143012
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000772458,
+          "views_median_s": 0.002013292,
+          "materialized_over_views": 0.3836790689080372,
+          "materialized_min_s": 0.0007345,
+          "materialized_max_s": 0.000874083,
+          "views_min_s": 0.0019145,
+          "views_max_s": 0.002085584,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000597666,
+          "views_median_s": 0.001960792,
+          "materialized_over_views": 0.3048084651508166,
+          "materialized_min_s": 0.000597375,
+          "materialized_max_s": 0.000634666,
+          "views_min_s": 0.001914625,
+          "views_max_s": 0.001984083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 329,
+      "views_final_nodes": 216,
+      "materialized_final_bytes_est": 41824,
+      "views_final_bytes_est": 20128
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00026275,
+          "views_median_s": 0.000432125,
+          "materialized_over_views": 0.6080416546138271,
+          "materialized_min_s": 0.000255792,
+          "materialized_max_s": 0.0003855,
+          "views_min_s": 0.00040825,
+          "views_max_s": 0.000464625,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.167e-06,
+          "views_median_s": 7.334e-06,
+          "materialized_over_views": 1.1135805835833106,
+          "materialized_min_s": 8.125e-06,
+          "materialized_max_s": 8.416e-06,
+          "views_min_s": 7.25e-06,
+          "views_max_s": 1.2208e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 329,
+      "views_final_nodes": 216,
+      "materialized_final_bytes_est": 49216,
+      "views_final_bytes_est": 26204
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007443041,
+          "views_median_s": 0.062155417,
+          "materialized_over_views": 0.11974887080236306,
+          "materialized_min_s": 0.007172459,
+          "materialized_max_s": 0.007481167,
+          "views_min_s": 0.061471375,
+          "views_max_s": 0.0628165,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.0059155,
+          "views_median_s": 0.061036709,
+          "materialized_over_views": 0.09691708640451109,
+          "materialized_min_s": 0.005662291,
+          "materialized_max_s": 0.006055542,
+          "views_min_s": 0.060548542,
+          "views_max_s": 0.0622595,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3112,
+      "views_final_nodes": 1792,
+      "materialized_final_bytes_est": 356728,
+      "views_final_bytes_est": 231512
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002403208,
+          "views_median_s": 0.012542459,
+          "materialized_over_views": 0.19160580871741337,
+          "materialized_min_s": 0.002370459,
+          "materialized_max_s": 0.002466667,
+          "views_min_s": 0.01232125,
+          "views_max_s": 0.016544459,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.417e-06,
+          "views_median_s": 7.5e-06,
+          "materialized_over_views": 1.1222666666666665,
+          "materialized_min_s": 8.375e-06,
+          "materialized_max_s": 2.225e-05,
+          "views_min_s": 7.458e-06,
+          "views_max_s": 1.6959e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3112,
+      "views_final_nodes": 1792,
+      "materialized_final_bytes_est": 364120,
+      "views_final_bytes_est": 237588
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00138825,
+          "views_median_s": 0.008733667,
+          "materialized_over_views": 0.1589538506563165,
+          "materialized_min_s": 0.001317583,
+          "materialized_max_s": 0.001501417,
+          "views_min_s": 0.008200042,
+          "views_max_s": 0.008802584,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001072833,
+          "views_median_s": 0.007531792,
+          "materialized_over_views": 0.14244060377663112,
+          "materialized_min_s": 0.00105825,
+          "materialized_max_s": 0.00121125,
+          "views_min_s": 0.007419542,
+          "views_max_s": 0.007738708,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 851,
+      "views_final_nodes": 1018,
+      "materialized_final_bytes_est": 65744,
+      "views_final_bytes_est": 107184
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000454334,
+          "views_median_s": 0.001855625,
+          "materialized_over_views": 0.24484149545301445,
+          "materialized_min_s": 0.000449083,
+          "materialized_max_s": 0.0004855,
+          "views_min_s": 0.00179875,
+          "views_max_s": 0.001935834,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.375e-06,
+          "views_median_s": 7.084e-06,
+          "materialized_over_views": 1.1822416713721062,
+          "materialized_min_s": 8.292e-06,
+          "materialized_max_s": 9.083e-06,
+          "views_min_s": 7e-06,
+          "views_max_s": 8.792e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 851,
+      "views_final_nodes": 1018,
+      "materialized_final_bytes_est": 73136,
+      "views_final_bytes_est": 113260
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.006299083,
+          "views_median_s": 0.113240291,
+          "materialized_over_views": 0.05562581078142937,
+          "materialized_min_s": 0.006169958,
+          "materialized_max_s": 0.006497709,
+          "views_min_s": 0.112020375,
+          "views_max_s": 0.129328208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.003824667,
+          "views_median_s": 0.109434917,
+          "materialized_over_views": 0.03494923836786023,
+          "materialized_min_s": 0.003717416,
+          "materialized_max_s": 0.003852542,
+          "views_min_s": 0.108826083,
+          "views_max_s": 0.112682791,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 7382,
+      "views_final_nodes": 9887,
+      "materialized_final_bytes_est": 639032,
+      "views_final_bytes_est": 979896
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00301375,
+          "views_median_s": 0.023489416,
+          "materialized_over_views": 0.12830246609792256,
+          "materialized_min_s": 0.002890542,
+          "materialized_max_s": 0.010848208,
+          "views_min_s": 0.023316166,
+          "views_max_s": 0.023790208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.541e-06,
+          "views_median_s": 7.625e-06,
+          "materialized_over_views": 1.1201311475409836,
+          "materialized_min_s": 8.5e-06,
+          "materialized_max_s": 1.7542e-05,
+          "views_min_s": 7.541e-06,
+          "views_max_s": 1.8833e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 7382,
+      "views_final_nodes": 9887,
+      "materialized_final_bytes_est": 646424,
+      "views_final_bytes_est": 985972
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00096125,
+          "views_median_s": 0.001950542,
+          "materialized_over_views": 0.4928117415569621,
+          "materialized_min_s": 0.000931459,
+          "materialized_max_s": 0.001170542,
+          "views_min_s": 0.001912041,
+          "views_max_s": 0.002002792,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000766292,
+          "views_median_s": 0.001832459,
+          "materialized_over_views": 0.41817688690442734,
+          "materialized_min_s": 0.000763291,
+          "materialized_max_s": 0.000878708,
+          "views_min_s": 0.001792875,
+          "views_max_s": 0.001902875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 427,
+      "views_final_nodes": 270,
+      "materialized_final_bytes_est": 68800,
+      "views_final_bytes_est": 46416
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00032525,
+          "views_median_s": 0.000444167,
+          "materialized_over_views": 0.7322696193098542,
+          "materialized_min_s": 0.0003165,
+          "materialized_max_s": 0.000357583,
+          "views_min_s": 0.000436959,
+          "views_max_s": 0.000451,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.375e-06,
+          "views_median_s": 8.958e-06,
+          "materialized_over_views": 1.0465505693235098,
+          "materialized_min_s": 8.458e-06,
+          "materialized_max_s": 1.0208e-05,
+          "views_min_s": 7.333e-06,
+          "views_max_s": 1.4541e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 427,
+      "views_final_nodes": 270,
+      "materialized_final_bytes_est": 76192,
+      "views_final_bytes_est": 52492
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007670041,
+          "views_median_s": 0.06330825,
+          "materialized_over_views": 0.12115389384479906,
+          "materialized_min_s": 0.007545,
+          "materialized_max_s": 0.008183458,
+          "views_min_s": 0.062938458,
+          "views_max_s": 0.0641035,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.006143416,
+          "views_median_s": 0.062598667,
+          "materialized_over_views": 0.09813972556316575,
+          "materialized_min_s": 0.006043709,
+          "materialized_max_s": 0.007039125,
+          "views_min_s": 0.062247375,
+          "views_max_s": 0.063164709,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3479,
+      "views_final_nodes": 2378,
+      "materialized_final_bytes_est": 639656,
+      "views_final_bytes_est": 418424
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.002614834,
+          "views_median_s": 0.012678625,
+          "materialized_over_views": 0.2062395567342673,
+          "materialized_min_s": 0.002592084,
+          "materialized_max_s": 0.002791958,
+          "views_min_s": 0.012385333,
+          "views_max_s": 0.015688708,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.584e-06,
+          "views_median_s": 7.166e-06,
+          "materialized_over_views": 1.1978788724532514,
+          "materialized_min_s": 8.542e-06,
+          "materialized_max_s": 1.725e-05,
+          "views_min_s": 7.042e-06,
+          "views_max_s": 1.5875e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 3479,
+      "views_final_nodes": 2378,
+      "materialized_final_bytes_est": 647048,
+      "views_final_bytes_est": 424500
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001030333,
+          "views_median_s": 0.00092925,
+          "materialized_over_views": 1.1087791229486146,
+          "materialized_min_s": 0.000963208,
+          "materialized_max_s": 0.00124225,
+          "views_min_s": 0.000870792,
+          "views_max_s": 0.000989125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000593625,
+          "views_median_s": 0.000728542,
+          "materialized_over_views": 0.8148123237919022,
+          "materialized_min_s": 0.000573125,
+          "materialized_max_s": 0.000658,
+          "views_min_s": 0.000717584,
+          "views_max_s": 0.000753209,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1159,
+      "views_final_nodes": 495,
+      "materialized_final_bytes_est": 106064,
+      "views_final_bytes_est": 46732
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000735333,
+          "views_median_s": 0.000508166,
+          "materialized_over_views": 1.4470330561273286,
+          "materialized_min_s": 0.00068225,
+          "materialized_max_s": 0.00074475,
+          "views_min_s": 0.000489,
+          "views_max_s": 0.000512542,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.167e-06,
+          "views_median_s": 8.291e-06,
+          "materialized_over_views": 1.1056567362199976,
+          "materialized_min_s": 9.125e-06,
+          "materialized_max_s": 2.2041e-05,
+          "views_min_s": 8.208e-06,
+          "views_max_s": 8.75e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1159,
+      "views_final_nodes": 495,
+      "materialized_final_bytes_est": 119056,
+      "views_final_bytes_est": 58504
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.004924417,
+          "views_median_s": 0.007043625,
+          "materialized_over_views": 0.6991310582264104,
+          "materialized_min_s": 0.004728542,
+          "materialized_max_s": 0.004953,
+          "views_min_s": 0.006837625,
+          "views_max_s": 0.00717475,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.002743209,
+          "views_median_s": 0.00602325,
+          "materialized_over_views": 0.45543668285394096,
+          "materialized_min_s": 0.002616292,
+          "materialized_max_s": 0.00290325,
+          "views_min_s": 0.005797583,
+          "views_max_s": 0.00623675,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5699,
+      "views_final_nodes": 2640,
+      "materialized_final_bytes_est": 595704,
+      "views_final_bytes_est": 275256
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "bit-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003438833,
+          "views_median_s": 0.003882333,
+          "materialized_over_views": 0.885764564760416,
+          "materialized_min_s": 0.003375459,
+          "materialized_max_s": 0.003739416,
+          "views_min_s": 0.003772541,
+          "views_max_s": 0.003983458,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.584e-06,
+          "views_median_s": 8.583e-06,
+          "materialized_over_views": 1.1166258883840148,
+          "materialized_min_s": 9.459e-06,
+          "materialized_max_s": 2.2375e-05,
+          "views_min_s": 8.458e-06,
+          "views_max_s": 2.0166e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5699,
+      "views_final_nodes": 2640,
+      "materialized_final_bytes_est": 608696,
+      "views_final_bytes_est": 287028
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001460208,
+          "views_median_s": 0.003399834,
+          "materialized_over_views": 0.4294939105850462,
+          "materialized_min_s": 0.001449834,
+          "materialized_max_s": 0.001722291,
+          "views_min_s": 0.003363542,
+          "views_max_s": 0.00361825,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000678875,
+          "views_median_s": 0.002895917,
+          "materialized_over_views": 0.23442488165234018,
+          "materialized_min_s": 0.000673916,
+          "materialized_max_s": 0.000717625,
+          "views_min_s": 0.002692375,
+          "views_max_s": 0.002970333,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1342,
+      "views_final_nodes": 1499,
+      "materialized_final_bytes_est": 210800,
+      "views_final_bytes_est": 196944
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001101708,
+          "views_median_s": 0.002007041,
+          "materialized_over_views": 0.5489215217825645,
+          "materialized_min_s": 0.0010615,
+          "materialized_max_s": 0.0011575,
+          "views_min_s": 0.001926958,
+          "views_max_s": 0.002112917,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.459e-06,
+          "views_median_s": 1.0417e-05,
+          "materialized_over_views": 0.9080349428818277,
+          "materialized_min_s": 9.333e-06,
+          "materialized_max_s": 2.2917e-05,
+          "views_min_s": 9.208e-06,
+          "views_max_s": 1.4e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1342,
+      "views_final_nodes": 1499,
+      "materialized_final_bytes_est": 223792,
+      "views_final_bytes_est": 208716
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.026476208,
+          "views_median_s": 0.042182542,
+          "materialized_over_views": 0.6276579538520936,
+          "materialized_min_s": 0.026017542,
+          "materialized_max_s": 0.027371791,
+          "views_min_s": 0.04168975,
+          "views_max_s": 0.042597959,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.016891541,
+          "views_median_s": 0.036767709,
+          "materialized_over_views": 0.45941238819095304,
+          "materialized_min_s": 0.016327667,
+          "materialized_max_s": 0.017207625,
+          "views_min_s": 0.036043958,
+          "views_max_s": 0.037545292,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 9513,
+      "views_final_nodes": 14862,
+      "materialized_final_bytes_est": 1866648,
+      "views_final_bytes_est": 2402248
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.017543875,
+          "views_median_s": 0.024402625,
+          "materialized_over_views": 0.7189339261657302,
+          "materialized_min_s": 0.017436,
+          "materialized_max_s": 0.019136292,
+          "views_min_s": 0.02373525,
+          "views_max_s": 0.025168375,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.625e-06,
+          "views_median_s": 8.459e-06,
+          "materialized_over_views": 1.1378413524057218,
+          "materialized_min_s": 9.459e-06,
+          "materialized_max_s": 2.125e-05,
+          "views_min_s": 8.417e-06,
+          "views_max_s": 2.0375e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 9513,
+      "views_final_nodes": 14862,
+      "materialized_final_bytes_est": 1879640,
+      "views_final_bytes_est": 2414020
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000734791,
+          "views_median_s": 0.0006745,
+          "materialized_over_views": 1.0893862120088955,
+          "materialized_min_s": 0.000703,
+          "materialized_max_s": 0.000893958,
+          "views_min_s": 0.000662042,
+          "views_max_s": 0.000783625,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.0004545,
+          "views_median_s": 0.000532791,
+          "materialized_over_views": 0.853054950252538,
+          "materialized_min_s": 0.000446209,
+          "materialized_max_s": 0.000491625,
+          "views_min_s": 0.000508875,
+          "views_max_s": 0.000555959,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 510,
+      "views_final_nodes": 251,
+      "materialized_final_bytes_est": 65392,
+      "views_final_bytes_est": 30960
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000512875,
+          "views_median_s": 0.000442917,
+          "materialized_over_views": 1.157948328919414,
+          "materialized_min_s": 0.000472542,
+          "materialized_max_s": 0.0005345,
+          "views_min_s": 0.000422375,
+          "views_max_s": 0.00045875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.541e-06,
+          "views_median_s": 8.542e-06,
+          "materialized_over_views": 1.1169515335986888,
+          "materialized_min_s": 9.458e-06,
+          "materialized_max_s": 1.3292e-05,
+          "views_min_s": 8.458e-06,
+          "views_max_s": 1.5708e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 510,
+      "views_final_nodes": 251,
+      "materialized_final_bytes_est": 78384,
+      "views_final_bytes_est": 42732
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010173917,
+          "views_median_s": 0.171856375,
+          "materialized_over_views": 0.059200114048722365,
+          "materialized_min_s": 0.009833292,
+          "materialized_max_s": 0.010439916,
+          "views_min_s": 0.169608542,
+          "views_max_s": 0.173718084,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.005988541,
+          "views_median_s": 0.169002417,
+          "materialized_over_views": 0.03543464706779904,
+          "materialized_min_s": 0.005798458,
+          "materialized_max_s": 0.006080208,
+          "views_min_s": 0.167343375,
+          "views_max_s": 0.171685209,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5273,
+      "views_final_nodes": 8088,
+      "materialized_final_bytes_est": 655096,
+      "views_final_bytes_est": 1096440
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential512",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.007114792,
+          "views_median_s": 0.090077167,
+          "materialized_over_views": 0.07898552138079565,
+          "materialized_min_s": 0.007015292,
+          "materialized_max_s": 0.007479959,
+          "views_min_s": 0.089769041,
+          "views_max_s": 0.091016291,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.5e-06,
+          "views_median_s": 1.025e-05,
+          "materialized_over_views": 0.926829268292683,
+          "materialized_min_s": 9.416e-06,
+          "materialized_max_s": 2.0625e-05,
+          "views_min_s": 8.625e-06,
+          "views_max_s": 1.9667e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 5273,
+      "views_final_nodes": 8088,
+      "materialized_final_bytes_est": 668088,
+      "views_final_bytes_est": 1108212
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001783833,
+          "views_median_s": 0.008237667,
+          "materialized_over_views": 0.21654589825007492,
+          "materialized_min_s": 0.001706375,
+          "materialized_max_s": 0.00188675,
+          "views_min_s": 0.008098792,
+          "views_max_s": 0.008366125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.0013005,
+          "views_median_s": 0.008044083,
+          "materialized_over_views": 0.1616716286990077,
+          "materialized_min_s": 0.001254208,
+          "materialized_max_s": 0.0013495,
+          "views_min_s": 0.007803666,
+          "views_max_s": 0.010981083,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1034,
+      "views_final_nodes": 757,
+      "materialized_final_bytes_est": 182960,
+      "views_final_bytes_est": 99632
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000671958,
+          "views_median_s": 0.001779167,
+          "materialized_over_views": 0.3776812407154584,
+          "materialized_min_s": 0.000639083,
+          "materialized_max_s": 0.000702292,
+          "views_min_s": 0.00170175,
+          "views_max_s": 0.001807084,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.25e-06,
+          "views_median_s": 7.167e-06,
+          "materialized_over_views": 1.1511092507325242,
+          "materialized_min_s": 8.208e-06,
+          "materialized_max_s": 8.791e-06,
+          "views_min_s": 7.042e-06,
+          "views_max_s": 8.208e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1034,
+      "views_final_nodes": 757,
+      "materialized_final_bytes_est": 190352,
+      "views_final_bytes_est": 105708
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.010565083,
+          "views_median_s": 0.05965225,
+          "materialized_over_views": 0.17711122380128158,
+          "materialized_min_s": 0.010467583,
+          "materialized_max_s": 0.011089292,
+          "views_min_s": 0.058715875,
+          "views_max_s": 0.061784292,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.008217041,
+          "views_median_s": 0.057518292,
+          "materialized_over_views": 0.14285961412066964,
+          "materialized_min_s": 0.008154875,
+          "materialized_max_s": 0.008374542,
+          "views_min_s": 0.056990375,
+          "views_max_s": 0.058720125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6490,
+      "views_final_nodes": 4275,
+      "materialized_final_bytes_est": 872808,
+      "views_final_bytes_est": 581160
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003781458,
+          "views_median_s": 0.012289667,
+          "materialized_over_views": 0.30769409781404167,
+          "materialized_min_s": 0.003615875,
+          "materialized_max_s": 0.004012125,
+          "views_min_s": 0.012130125,
+          "views_max_s": 0.0126395,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.292e-06,
+          "views_median_s": 7.167e-06,
+          "materialized_over_views": 1.1569694432817077,
+          "materialized_min_s": 8.208e-06,
+          "materialized_max_s": 1.7917e-05,
+          "views_min_s": 7.125e-06,
+          "views_max_s": 1.45e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6490,
+      "views_final_nodes": 4275,
+      "materialized_final_bytes_est": 880200,
+      "views_final_bytes_est": 587236
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001349666,
+          "views_median_s": 0.002914541,
+          "materialized_over_views": 0.46308012136387855,
+          "materialized_min_s": 0.001311083,
+          "materialized_max_s": 0.001438542,
+          "views_min_s": 0.002790334,
+          "views_max_s": 0.002957875,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000667542,
+          "views_median_s": 0.002645125,
+          "materialized_over_views": 0.2523669013751713,
+          "materialized_min_s": 0.000662375,
+          "materialized_max_s": 0.000701375,
+          "views_min_s": 0.002566708,
+          "views_max_s": 0.002667208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1392,
+      "views_final_nodes": 714,
+      "materialized_final_bytes_est": 138768,
+      "views_final_bytes_est": 62412
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00098175,
+          "views_median_s": 0.001606292,
+          "materialized_over_views": 0.6111902443640383,
+          "materialized_min_s": 0.000936875,
+          "materialized_max_s": 0.001032667,
+          "views_min_s": 0.001530833,
+          "views_max_s": 0.010703208,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.208e-06,
+          "views_median_s": 8.625e-06,
+          "materialized_over_views": 1.0675942028985508,
+          "materialized_min_s": 9.083e-06,
+          "materialized_max_s": 1.0041e-05,
+          "views_min_s": 8.5e-06,
+          "views_max_s": 1.5958e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1392,
+      "views_final_nodes": 714,
+      "materialized_final_bytes_est": 151760,
+      "views_final_bytes_est": 74184
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.006459459,
+          "views_median_s": 0.0182745,
+          "materialized_over_views": 0.3534684396289912,
+          "materialized_min_s": 0.006391792,
+          "materialized_max_s": 0.006750292,
+          "views_min_s": 0.0181855,
+          "views_max_s": 0.018748084,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.003500917,
+          "views_median_s": 0.01651425,
+          "materialized_over_views": 0.21199370240852597,
+          "materialized_min_s": 0.003380833,
+          "materialized_max_s": 0.003804584,
+          "views_min_s": 0.016227625,
+          "views_max_s": 0.016582791,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6713,
+      "views_final_nodes": 3722,
+      "materialized_final_bytes_est": 631352,
+      "views_final_bytes_est": 354008
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "slab",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.00467675,
+          "views_median_s": 0.009826708,
+          "materialized_over_views": 0.475922353650887,
+          "materialized_min_s": 0.004564209,
+          "materialized_max_s": 0.0048215,
+          "views_min_s": 0.009609416,
+          "views_max_s": 0.010027375,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.459e-06,
+          "views_median_s": 8.334e-06,
+          "materialized_over_views": 1.1349892008639308,
+          "materialized_min_s": 9.375e-06,
+          "materialized_max_s": 2.1541e-05,
+          "views_min_s": 8.166e-06,
+          "views_max_s": 1.95e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6713,
+      "views_final_nodes": 3722,
+      "materialized_final_bytes_est": 644344,
+      "views_final_bytes_est": 365780
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001429917,
+          "views_median_s": 0.002813334,
+          "materialized_over_views": 0.5082642160511337,
+          "materialized_min_s": 0.001282,
+          "materialized_max_s": 0.001493833,
+          "views_min_s": 0.0027165,
+          "views_max_s": 0.002885209,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.000691667,
+          "views_median_s": 0.002515416,
+          "materialized_over_views": 0.27497121748450354,
+          "materialized_min_s": 0.00066125,
+          "materialized_max_s": 0.000828917,
+          "views_min_s": 0.002483542,
+          "views_max_s": 0.002695,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1392,
+      "views_final_nodes": 714,
+      "materialized_final_bytes_est": 211600,
+      "views_final_bytes_est": 98284
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 12,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001015833,
+          "views_median_s": 0.001577417,
+          "materialized_over_views": 0.6439850717977554,
+          "materialized_min_s": 0.000953083,
+          "materialized_max_s": 0.0010375,
+          "views_min_s": 0.001492792,
+          "views_max_s": 0.001632416,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.25e-06,
+          "views_median_s": 8.167e-06,
+          "materialized_over_views": 1.1326068323741887,
+          "materialized_min_s": 9.083e-06,
+          "materialized_max_s": 1.05e-05,
+          "views_min_s": 8.125e-06,
+          "views_max_s": 1.15e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 1392,
+      "views_final_nodes": 714,
+      "materialized_final_bytes_est": 224592,
+      "views_final_bytes_est": 110056
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.0066095,
+          "views_median_s": 0.018078541,
+          "materialized_over_views": 0.36559919298797394,
+          "materialized_min_s": 0.006486125,
+          "materialized_max_s": 0.006976041,
+          "views_min_s": 0.01767,
+          "views_max_s": 0.018387917,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.003387875,
+          "views_median_s": 0.015945958,
+          "materialized_over_views": 0.21245979702191614,
+          "materialized_min_s": 0.003335166,
+          "materialized_max_s": 0.003708,
+          "views_min_s": 0.0157945,
+          "views_max_s": 0.016213959,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6713,
+      "views_final_nodes": 3722,
+      "materialized_final_bytes_est": 927032,
+      "views_final_bytes_est": 588520
+    },
+    {
+      "case": {
+        "kind": "relations_free_join",
+        "bits": 18,
+        "layout": "pair-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.004738083,
+          "views_median_s": 0.009598708,
+          "materialized_over_views": 0.493616745086943,
+          "materialized_min_s": 0.004527667,
+          "materialized_max_s": 0.005039458,
+          "views_min_s": 0.009391458,
+          "views_max_s": 0.009926542,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 9.875e-06,
+          "views_median_s": 9.041e-06,
+          "materialized_over_views": 1.0922464329167128,
+          "materialized_min_s": 9.708e-06,
+          "materialized_max_s": 2.2125e-05,
+          "views_min_s": 8.625e-06,
+          "views_max_s": 2.0167e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 6713,
+      "views_final_nodes": 3722,
+      "materialized_final_bytes_est": 940024,
+      "views_final_bytes_est": 600292
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.001354541,
+          "views_median_s": 0.008005625,
+          "materialized_over_views": 0.16919865719416033,
+          "materialized_min_s": 0.001309375,
+          "materialized_max_s": 0.001603875,
+          "views_min_s": 0.007820625,
+          "views_max_s": 0.008128458,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.001056625,
+          "views_median_s": 0.007498333,
+          "materialized_over_views": 0.14091465396375435,
+          "materialized_min_s": 0.001040458,
+          "materialized_max_s": 0.001291291,
+          "views_min_s": 0.007271791,
+          "views_max_s": 0.007639125,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 851,
+      "views_final_nodes": 1018,
+      "materialized_final_bytes_est": 102048,
+      "views_final_bytes_est": 177024
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 12,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.000480542,
+          "views_median_s": 0.001798667,
+          "materialized_over_views": 0.2671656287684157,
+          "materialized_min_s": 0.000455375,
+          "materialized_max_s": 0.000501708,
+          "views_min_s": 0.00177975,
+          "views_max_s": 0.00188525,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.5e-06,
+          "views_median_s": 8.875e-06,
+          "materialized_over_views": 0.9577464788732394,
+          "materialized_min_s": 8.417e-06,
+          "materialized_max_s": 8.917e-06,
+          "views_min_s": 7.041e-06,
+          "views_max_s": 9.625e-06,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 851,
+      "views_final_nodes": 1018,
+      "materialized_final_bytes_est": 109440,
+      "views_final_bytes_est": 183100
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": false,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.006299084,
+          "views_median_s": 0.108687417,
+          "materialized_over_views": 0.05795596375245536,
+          "materialized_min_s": 0.006105167,
+          "materialized_max_s": 0.006720958,
+          "views_min_s": 0.107955209,
+          "views_max_s": 0.109897375,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 0.003772292,
+          "views_median_s": 0.105916584,
+          "materialized_over_views": 0.03561568790775956,
+          "materialized_min_s": 0.0037265,
+          "materialized_max_s": 0.00418675,
+          "views_min_s": 0.105127709,
+          "views_max_s": 0.106151792,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 7382,
+      "views_final_nodes": 9887,
+      "materialized_final_bytes_est": 1087016,
+      "views_final_bytes_est": 1537128
+    },
+    {
+      "case": {
+        "kind": "product_free_join",
+        "bits": 18,
+        "layout": "face-major",
+        "memo": true,
+        "candidate": "essential64",
+        "essential_layout": "enum",
+        "product_mode": "views"
+      },
+      "view_source": "view-initial-sweep.json",
+      "materialized_source": "view-initial-sweep.json",
+      "phases": {
+        "fresh_s": {
+          "materialized_median_s": 0.003034375,
+          "views_median_s": 0.023973666,
+          "materialized_over_views": 0.1265711718850175,
+          "materialized_min_s": 0.0029125,
+          "materialized_max_s": 0.003083916,
+          "views_min_s": 0.022734083,
+          "views_max_s": 0.024336792,
+          "materialized_samples": 5,
+          "views_samples": 5
+        },
+        "warm_s": {
+          "materialized_median_s": 8.584e-06,
+          "views_median_s": 7.333e-06,
+          "materialized_over_views": 1.170598663575617,
+          "materialized_min_s": 8.5e-06,
+          "materialized_max_s": 1.9709e-05,
+          "views_min_s": 7.25e-06,
+          "views_max_s": 1.6125e-05,
+          "materialized_samples": 5,
+          "views_samples": 5
+        }
+      },
+      "materialized_final_nodes": 7382,
+      "views_final_nodes": 9887,
+      "materialized_final_bytes_est": 1094408,
+      "views_final_bytes_est": 1543204
+    }
+  ],
+  "missing_baselines": [],
+  "checker_sha256": "1c62a6b1c8c5d60600feafe5ea74aa5f9e40cbe1b6e548a0dea1e5e5444747f9",
+  "selection": "Latest supplied process per exact case; a later failed job invalidates earlier timings. Resource refusals/timeouts are retained; never mathematical answers."
+}

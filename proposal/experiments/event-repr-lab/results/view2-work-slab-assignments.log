@@ -1,0 +1,27 @@
+{"cutoff":6,"bits":12,"layout":"face-major","fused":false,"pairs":24,"sum":[2013, 207, 834, 834, 3408, 0, 3456, 0, 0, 0],"max":[127, 35, 64, 64, 320, 0, 320, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":12,"layout":"face-major","fused":false,"pairs":24,"sum":[360, 0, 192, 0, 576, 0, 1104, 0, 0, 0],"max":[15, 0, 8, 0, 24, 0, 56, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":12,"layout":"face-major","fused":true,"pairs":24,"sum":[2658, 0, 1290, 0, 7188, 0, 6912, 0, 0, 0],"max":[127, 0, 64, 0, 384, 0, 384, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":12,"layout":"face-major","fused":true,"pairs":24,"sum":[360, 0, 192, 0, 1104, 96, 1632, 0, 0, 0],"max":[15, 0, 8, 0, 48, 8, 72, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":12,"layout":"bit-major","fused":false,"pairs":24,"sum":[1086, 0, 507, 27, 2448, 0, 2448, 0, 0, 0],"max":[67, 0, 32, 2, 192, 0, 192, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":12,"layout":"bit-major","fused":false,"pairs":24,"sum":[360, 0, 192, 0, 768, 0, 1296, 0, 0, 0],"max":[15, 0, 8, 0, 32, 0, 64, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":12,"layout":"bit-major","fused":true,"pairs":24,"sum":[1086, 0, 507, 27, 2448, 288, 2448, 0, 0, 0],"max":[67, 0, 32, 2, 192, 32, 192, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":12,"layout":"bit-major","fused":true,"pairs":24,"sum":[360, 0, 192, 0, 768, 192, 1296, 0, 0, 0],"max":[15, 0, 8, 0, 32, 8, 64, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":12,"layout":"pair-major","fused":false,"pairs":24,"sum":[2373, 0, 1194, 42, 5712, 0, 5760, 0, 0, 0],"max":[127, 0, 64, 4, 384, 0, 384, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":12,"layout":"pair-major","fused":false,"pairs":24,"sum":[360, 0, 192, 0, 768, 0, 1296, 0, 0, 0],"max":[15, 0, 8, 0, 32, 0, 64, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":12,"layout":"pair-major","fused":true,"pairs":24,"sum":[2382, 0, 1194, 42, 5712, 768, 5760, 0, 0, 0],"max":[127, 0, 64, 4, 384, 64, 384, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":12,"layout":"pair-major","fused":true,"pairs":24,"sum":[360, 0, 192, 0, 960, 144, 1488, 0, 0, 0],"max":[15, 0, 8, 0, 40, 8, 72, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":18,"layout":"face-major","fused":false,"pairs":24,"sum":[20490, 5036, 1506, 1506, 0, 0, 0, 0, 0, 0],"max":[1190, 259, 63, 63, 0, 0, 0, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":18,"layout":"face-major","fused":false,"pairs":24,"sum":[23040, 438, 10776, 10776, 70656, 0, 70656, 0, 0, 0],"max":[1023, 146, 512, 512, 4096, 0, 4096, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":18,"layout":"face-major","fused":true,"pairs":24,"sum":[70701, 13347, 10562, 1405, 28040, 0, 37197, 3549, 227136, 0],"max":[4072, 730, 776, 63, 3680, 0, 4416, 299, 19136, 0],"verified":true}
+{"cutoff":9,"bits":18,"layout":"face-major","fused":true,"pairs":24,"sum":[24552, 0, 12288, 0, 110592, 0, 110592, 0, 0, 0],"max":[1023, 0, 512, 0, 4608, 0, 4608, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":18,"layout":"bit-major","fused":false,"pairs":24,"sum":[10488, 72, 4542, 126, 21408, 0, 23424, 0, 0, 0],"max":[583, 5, 260, 6, 1536, 0, 1536, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":18,"layout":"bit-major","fused":false,"pairs":24,"sum":[12360, 0, 6144, 0, 42240, 0, 42240, 0, 0, 0],"max":[515, 0, 256, 0, 2304, 0, 2304, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":18,"layout":"bit-major","fused":true,"pairs":24,"sum":[10524, 96, 4542, 126, 21408, 2112, 23424, 0, 0, 0],"max":[583, 6, 260, 6, 1536, 192, 1536, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":18,"layout":"bit-major","fused":true,"pairs":24,"sum":[12360, 0, 6144, 0, 42240, 5376, 42240, 0, 0, 0],"max":[515, 0, 256, 0, 2304, 256, 2304, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":18,"layout":"pair-major","fused":false,"pairs":24,"sum":[17808, 168, 8451, 339, 40368, 0, 42528, 0, 0, 0],"max":[1077, 14, 520, 22, 3072, 0, 3072, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":18,"layout":"pair-major","fused":false,"pairs":24,"sum":[12648, 0, 6144, 0, 42240, 0, 42240, 0, 0, 0],"max":[527, 0, 256, 0, 2304, 0, 2304, 0, 0, 0],"verified":true}
+{"cutoff":6,"bits":18,"layout":"pair-major","fused":true,"pairs":24,"sum":[18425, 645, 8451, 339, 40368, 4464, 42528, 0, 0, 0],"max":[1091, 53, 520, 22, 3072, 384, 3072, 0, 0, 0],"verified":true}
+{"cutoff":9,"bits":18,"layout":"pair-major","fused":true,"pairs":24,"sum":[12648, 0, 6144, 0, 47616, 4608, 47616, 0, 0, 0],"max":[527, 0, 256, 0, 2304, 256, 2304, 0, 0, 0],"verified":true}
+
+    Finished `release` profile [optimized] target(s) in 0.00s
+     Running `/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/view-target/release/examples/view_work`

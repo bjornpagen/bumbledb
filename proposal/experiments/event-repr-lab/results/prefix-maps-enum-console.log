@@ -1,0 +1,24 @@
+
+running 1 test
+test prefix_maps ... EVENT_LAB {"kind":"prefix_map_verification","candidate":"retraction512","cases":5760,"bit_swap_commutes":true,"passed":true}
+EVENT_LAB {"kind":"prefix_map_verification","candidate":"prefix-small","cases":5760,"bit_swap_commutes":false,"passed":true}
+EVENT_LAB {"kind":"prefix_map_verification","candidate":"prefix64","cases":5760,"bit_swap_commutes":false,"passed":true}
+EVENT_LAB {"kind":"prefix_map_verification","candidate":"prefix512","cases":5760,"bit_swap_commutes":false,"passed":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 18 filtered out; finished in 0.85s
+
+
+   Compiling event-prefix-maps-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/prefix-maps-checker)
+warning: unused import: `view_product::Statistics as ViewProductStatistics`
+ --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/essential_raw.rs:9:9
+  |
+9 | pub use view_product::Statistics as ViewProductStatistics;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `event-prefix-maps-checker` (lib test) generated 1 warning (run `cargo fix --lib -p event-prefix-maps-checker --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.76s
+     Running unittests src/lib.rs (target/debug/build/event-prefix-maps-checker/23c866b371ce6efe/out/event_prefix_maps_checker-23c866b371ce6efe)
+

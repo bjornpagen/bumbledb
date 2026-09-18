@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":false,"build_s":[0.000712625, 0.000750167, 0.000670042, 0.00065275, 0.000657, 0.000652542, 0.000660542, 0.000687833, 0.00077875, 0.000731375, 0.000696],"join_only_s":[3.8e-5, 5.25e-6, 5e-6, 4.959e-6, 4.917e-6, 4.958e-6, 4.916e-6, 4.917e-6, 4.917e-6, 4.916e-6, 4.959e-6],"fresh_s":[0.009361541, 0.009132208, 0.009180667, 0.009215833, 0.009214292, 0.008948209, 0.008924541, 0.008921667, 0.009411125, 0.009363042, 0.00906675],"warm_s":[0.00927625, 0.009320958, 0.009110083, 0.009393041, 0.009237166, 0.009244, 0.009237125, 0.009075416, 0.009278125, 0.009021209, 0.009183708],"input_bytes_est":206376,"final_bytes_est":1134840,"final_nodes":140,"closure_iterations":46,"checksum":7171072,"verified":true}
+EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":true,"build_s":[0.000712625, 0.000750167, 0.000670042, 0.00065275, 0.000657, 0.000652542, 0.000660542, 0.000687833, 0.00077875, 0.000731375, 0.000696],"join_only_s":[3.8e-5, 5.25e-6, 5e-6, 4.959e-6, 4.917e-6, 4.958e-6, 4.916e-6, 4.917e-6, 4.917e-6, 4.916e-6, 4.959e-6],"fresh_s":[0.003151625, 0.002995333, 0.002845208, 0.003016167, 0.002791, 0.002922292, 0.002941666, 0.002802125, 0.002880959, 0.002927709, 0.002972333],"warm_s":[1.0208e-5, 9.792e-6, 9.667e-6, 9.666e-6, 9.625e-6, 1.75e-5, 9.625e-6, 9.625e-6, 1.6708e-5, 9.667e-6, 9.625e-6],"input_bytes_est":206376,"final_bytes_est":1147832,"final_nodes":140,"closure_iterations":46,"checksum":7171072,"verified":true}
+EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":false,"build_s":[0.011941875, 0.01202675, 0.011676083, 0.011857208, 0.011920667, 0.011823041, 0.012006959, 0.01198025, 0.011892791, 0.011776708, 0.01185325],"join_only_s":[1.8e-5, 5.25e-6, 5e-6, 5e-6, 4.958e-6, 5e-6, 4.958e-6, 5.125e-6, 5e-6, 5e-6, 5e-6],"fresh_s":[0.143117042, 0.144296458, 0.141225125, 0.141694, 0.142505042, 0.14176975, 0.14135175, 0.142562541, 0.142398917, 0.143227667, 0.142541542],"warm_s":[0.149307125, 0.1507745, 0.1491435, 0.151545792, 0.147911041, 0.147457916, 0.149553917, 0.148954417, 0.149609625, 0.148642875, 0.147823958],"input_bytes_est":4734920,"final_bytes_est":31041856,"final_nodes":175,"closure_iterations":52,"checksum":215255808,"verified":true}
+EVENT_LAB {"kind":"relations_free_join","candidate":"roaring","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":true,"build_s":[0.011941875, 0.01202675, 0.011676083, 0.011857208, 0.011920667, 0.011823041, 0.012006959, 0.01198025, 0.011892791, 0.011776708, 0.01185325],"join_only_s":[1.8e-5, 5.25e-6, 5e-6, 5e-6, 4.958e-6, 5e-6, 4.958e-6, 5.125e-6, 5e-6, 5e-6, 5e-6],"fresh_s":[0.048807166, 0.0488975, 0.049254458, 0.049342292, 0.048864875, 0.049644375, 0.049934958, 0.04977075, 0.050301, 0.049723833, 0.049999042],"warm_s":[2.2125e-5, 1.0208e-5, 1.0041e-5, 1e-5, 1.0042e-5, 1e-5, 9.958e-6, 1e-5, 1e-5, 1.0083e-5, 9.916e-6],"input_bytes_est":4734920,"final_bytes_est":31054848,"final_nodes":175,"closure_iterations":52,"checksum":215255808,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 4.33s
+
+
+        4.33 real         4.26 user         0.06 sys
+            25608192  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1775  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                1366  involuntary context switches
+         72371580714  instructions retired
+         14399199462  cycles elapsed
+            22987160  peak memory footprint

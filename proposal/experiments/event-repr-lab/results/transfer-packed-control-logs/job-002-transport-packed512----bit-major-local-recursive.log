@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"transfer_free_join","candidate":"packed512","bits":12,"target_layout":"bit-major","target_candidate":"packed512","query_s":[0.000294166, 0.000244875, 0.000226792, 0.000233083, 0.00022675, 0.000229792, 0.000231667, 0.000238417, 0.000237333, 0.000239875, 0.000237042],"encode_s":[3.6458e-5, 2.4042e-5, 2.0584e-5, 2.2041e-5, 1.9917e-5, 2.3792e-5, 2.0625e-5, 2.1792e-5, 2.2209e-5, 2.25e-5, 1.975e-5],"decode_s":[1.95e-5, 1.4709e-5, 1.2875e-5, 1.2458e-5, 1.1834e-5, 1.1875e-5, 1.7e-5, 1.2875e-5, 1.2666e-5, 1.2792e-5, 1.2084e-5],"target_setup_s":[2.1167e-5, 2.0375e-5, 2.075e-5, 1.9916e-5, 1.9834e-5, 1.9917e-5, 1.975e-5, 2.1375e-5, 2.1125e-5, 2.125e-5, 1.9667e-5],"restore_s":[0.000260125, 0.000245083, 0.000230125, 0.000239708, 0.000230583, 0.000230625, 0.000233625, 0.000244375, 0.000261833, 0.0002625, 0.00023025],"packet_bytes":6127,"packet_nodes":107,"canonical_packet_bytes":6127,"canonical_packet_hash":18102733595059858741,"source_bytes_est":86100,"target_bytes_est":88676,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"packed512","bits":12,"target_layout":"face-major","target_candidate":"packed512","query_s":[0.000242208, 0.000235083, 0.000243625, 0.00030625, 0.000239667, 0.000229334, 0.0002385, 0.0002275, 0.000225708, 0.00024975, 0.000232833],"encode_s":[2.1459e-5, 2.1042e-5, 2.3666e-5, 3.0542e-5, 2.15e-5, 2.0292e-5, 2.975e-5, 2.1208e-5, 1.9917e-5, 2.5167e-5, 2.0917e-5],"decode_s":[1.1791e-5, 1.175e-5, 1.2125e-5, 1.3167e-5, 1.2167e-5, 1.1791e-5, 1.175e-5, 1.125e-5, 1.1042e-5, 1.25e-5, 1.1709e-5],"target_setup_s":[9.59e-7, 2.625e-6, 3.083e-6, 4e-6, 2.167e-6, 2.041e-6, 1.584e-6, 1.875e-6, 9.16e-7, 3.334e-6, 1.667e-6],"restore_s":[0.000231083, 0.000232125, 0.0002385, 0.00025625, 0.000236375, 0.000228417, 0.000225334, 0.000222166, 0.000219166, 0.000248459, 0.000229792],"packet_bytes":6127,"packet_nodes":107,"canonical_packet_bytes":3947,"canonical_packet_hash":16811957920672208100,"source_bytes_est":86100,"target_bytes_est":79620,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"packed512","bits":18,"target_layout":"bit-major","target_candidate":"packed512","query_s":[0.000993, 0.000731458, 0.00067925, 0.000762459, 0.000679458, 0.000665125, 0.000648917, 0.000696875, 0.000657542, 0.000689416, 0.000716875],"encode_s":[0.000127042, 0.00011775, 0.000118541, 0.000133625, 0.000115042, 0.000111667, 0.000118583, 0.000115625, 0.000118, 0.0001195, 0.000121792],"decode_s":[6.1125e-5, 5.3125e-5, 5.0459e-5, 6.2791e-5, 5.1666e-5, 4.9291e-5, 4.9125e-5, 5.2208e-5, 5.0792e-5, 5.225e-5, 5.2083e-5],"target_setup_s":[0.001171875, 0.001182625, 0.001139458, 0.001151625, 0.001182167, 0.001142208, 0.001120125, 0.001160292, 0.001165125, 0.001436792, 0.001234542],"restore_s":[0.0008825, 0.000849542, 0.000835959, 0.00081675, 0.000894416, 0.000825625, 0.000864625, 0.000823875, 0.000862958, 0.000856375, 0.000941125],"packet_bytes":25379,"packet_nodes":773,"canonical_packet_bytes":25379,"canonical_packet_hash":1828067518556718950,"source_bytes_est":510028,"target_bytes_est":313508,"roots":104,"rows":128,"verified":true}
+EVENT_LAB {"kind":"transfer_free_join","candidate":"packed512","bits":18,"target_layout":"face-major","target_candidate":"packed512","query_s":[0.000696791, 0.000702333, 0.000672333, 0.000666083, 0.00077425, 0.000671542, 0.000687416, 0.000744833, 0.001019209, 0.000758083, 0.000711417],"encode_s":[0.000114208, 0.000167208, 0.000109333, 0.000110083, 0.000124667, 0.000112625, 0.000179209, 0.000125875, 0.000120875, 0.000129541, 0.000160792],"decode_s":[5.0459e-5, 5.4834e-5, 4.8917e-5, 4.825e-5, 5.2625e-5, 5.1958e-5, 5.5958e-5, 5.2333e-5, 5.2e-5, 5.275e-5, 5.2541e-5],"target_setup_s":[1.1542e-5, 1.45e-5, 1.3791e-5, 1.2959e-5, 1.4041e-5, 1.3334e-5, 1.4292e-5, 1.4291e-5, 1.3625e-5, 1.3875e-5, 1.325e-5],"restore_s":[0.000868209, 0.000881667, 0.000841708, 0.000945625, 0.000880209, 0.000920792, 0.000889875, 0.000876833, 0.000972708, 0.000908792, 0.000849583],"packet_bytes":25379,"packet_nodes":773,"canonical_packet_bytes":24809,"canonical_packet_hash":2723457121914737819,"source_bytes_est":510028,"target_bytes_est":450724,"roots":104,"rows":128,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 9.92s
+
+
+        9.92 real         9.33 user         0.08 sys
+            22921216  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1613  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+               13802  involuntary context switches
+        181177013067  instructions retired
+         30920185743  cycles elapsed
+            20218288  peak memory footprint

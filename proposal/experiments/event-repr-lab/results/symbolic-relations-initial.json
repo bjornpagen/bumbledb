@@ -1,0 +1,926 @@
+{
+  "seed": 20260917,
+  "trials": 3,
+  "timeout_s": 120,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "8f415c5f1b3fb981397f17cbda4e4161cf969909969be9b09da2182f064982de",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "0cfc2f8ccb194264570e69fbacbc011edd073e8bb46855910efa0d8d009e2746",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagonal_checks.rs": "53474a84d5fb5787db243f671b7c0b355842d56e4e7579272f56d43f230d63e8",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/finite.rs": "2f2436d37f8e78439a6e9c36123d1fd5c7223448a038a634011049ccd3ce8bdc",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "9f1d532a30564f1792bb1501828fb9fffb62dd3bd16a6cafa44955e7da94984e",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/owned_bench.rs": "61c2f7f7fca6a466314ea92e867d7cc0d6ed21b10cefefeadd264fd7ea2efa36",
+      "src/packed.rs": "90d1ee2dafde7461acda1867e7b39efeb5db3aa39d6cbba88083dfc07ceefede",
+      "src/relational_core.rs": "60615ef8844b270cd8cb3ac9e15802d8c7821b2b53595fd8ff3d5cb372e387ae",
+      "src/relations.rs": "0edd99420cb63986ace66e258c0002a5d3c4e603845bf666bbf81e4eb8b03921",
+      "src/semantic_checks.rs": "97196154b6620b47ca8f53537f548dc8c80ab958a6f1870603db3d8128bd59a6",
+      "src/symbolic_relations.rs": "ad0737c68f841bda7a06b34c0cc915c79a9d6a643ebd5ee0e1f90658d7c503e6",
+      "src/transfer.rs": "8359b5f084057758eff207c81dde8306bb9a3c93978462d603c342fc57c00e48",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "7e4a02aae2e8a1cb2a49dbc9a3e255f90fa8c5066521014bd4f23204b1dee203"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T23:51:21.777167+00:00",
+    "build_started_utc": "2026-09-17T23:45:27.268311+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native"
+      },
+      "status": "passed",
+      "elapsed_s": 3.4246809482574463,
+      "max_rss_bytes": 47300608,
+      "log": "symbolic-relations-initial-logs/job-000-verify-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-root",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "mdd4-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-anchored",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "block64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense-dispatched",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "sparse",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "roaring",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "runs",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-root",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "mdd4-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-anchored",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed64",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed256",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed512",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed4096",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "block64",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true,
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        19.2109375,
+        12.20849609375,
+        11.6396484375
+      ],
+      "loadavg_end": [
+        22.95751953125,
+        13.10107421875,
+        11.9580078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.01402902603149414,
+      "max_rss_bytes": 6946816,
+      "log": "symbolic-relations-initial-logs/job-001-symbolic-relations-packed512----bit-major-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.5708e-05,
+            1.1958e-05,
+            1.2125e-05
+          ],
+          "program_setup_s": [
+            3.3583e-05,
+            3.0333e-05,
+            2.8083e-05
+          ],
+          "query_s": [
+            0.000274667,
+            0.000170167,
+            0.000163125
+          ],
+          "owned_compute_s": [
+            0.000310625,
+            0.000201583,
+            0.000192167
+          ],
+          "iterations": [
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 857,
+          "final_arena_bytes_est": 67052,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed512",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            2.1959e-05,
+            1.7792e-05,
+            2.0584e-05
+          ],
+          "program_setup_s": [
+            3.7583e-05,
+            3.75e-05,
+            3.4125e-05
+          ],
+          "query_s": [
+            0.000439583,
+            0.000470709,
+            0.000444167
+          ],
+          "owned_compute_s": [
+            0.000478375,
+            0.000509833,
+            0.000479
+          ],
+          "iterations": [
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1661,
+          "final_arena_bytes_est": 274996,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed512",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.5375e-05,
+            2.575e-05,
+            2.4875e-05
+          ],
+          "program_setup_s": [
+            4.2458e-05,
+            3.9791e-05,
+            3.8959e-05
+          ],
+          "query_s": [
+            0.000994125,
+            0.000986833,
+            0.000948667
+          ],
+          "owned_compute_s": [
+            0.001037375,
+            0.0010275,
+            0.000988458
+          ],
+          "iterations": [
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2733,
+          "final_arena_bytes_est": 541332,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        22.95751953125,
+        13.10107421875,
+        11.9580078125
+      ],
+      "loadavg_end": [
+        22.95751953125,
+        13.10107421875,
+        11.9580078125
+      ]
+    }
+  ]
+}

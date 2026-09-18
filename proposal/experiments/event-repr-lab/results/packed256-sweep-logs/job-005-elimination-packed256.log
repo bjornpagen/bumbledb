@@ -1,0 +1,27 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"elimination","candidate":"packed256","bits":12,"worlds":4096,"fresh_s":[6e-6, 4.334e-6, 2.583e-6, 2.459e-6, 5.792e-6, 2.875e-6, 3.041e-6],"nodes":58,"bytes_est":4656,"verified":true}
+EVENT_LAB {"kind":"elimination","candidate":"packed256","bits":18,"worlds":262144,"fresh_s":[3.975e-5, 4.8334e-5, 3.75e-5, 3.5667e-5, 3.8708e-5, 3.5333e-5, 3.3208e-5],"nodes":415,"bytes_est":39912,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.04s
+
+
+        0.04 real         0.04 user         0.00 sys
+             4145152  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 465  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  25  involuntary context switches
+           632533197  instructions retired
+           135304364  cycles elapsed
+             2720080  peak memory footprint

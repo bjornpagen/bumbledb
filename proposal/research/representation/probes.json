@@ -1,0 +1,9 @@
+{
+  "scope": "Isolated candidate layout/instruction probes; no engine or throughput benchmark.",
+  "machine": "arm64",
+  "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)",
+  "layout": "BddRef=4 BddNode=16/alignment16 RegionPair=8 EventKey=16",
+  "clang": "Apple clang version 21.0.0 (clang-2100.3.34.2)",
+  "semantics": "32000 Boolean blocks (4096000 world bits), 2000 steal blocks, complement and TBL pass.",
+  "assembly_checks": "four leaf bodies checked; complement EOR, steal ORR/BIC, predicate TBL; no calls or selected scalar flag/conditional branch instructions"
+}

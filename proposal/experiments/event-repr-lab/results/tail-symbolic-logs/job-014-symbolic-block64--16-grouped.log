@@ -1,0 +1,26 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic","candidate":"block64","pairs":16,"interleaved":false,"worlds":4294967296,"build_s":0.014117375,"count_s":0.000712625,"nodes":76012,"bytes_est":15998604,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 0.01s
+
+
+        0.01 real         0.01 user         0.00 sys
+            20250624  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1581  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                  18  involuntary context switches
+           162775153  instructions retired
+            58610239  cycles elapsed
+            18907520  peak memory footprint

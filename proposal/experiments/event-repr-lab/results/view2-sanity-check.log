@@ -1,0 +1,32 @@
+
+running 9 tests
+test raw::tests::canonical_small_tables_and_branches ... ok
+test raw::tests::matched_kernels_preserve_resident_ids ... ok
+test raw::tests::noncontiguous_sixty_coordinate_table ... ok
+test raw::tests::slabs_collide_grow_clone_and_preserve_raw_ids ... ok
+test raw::view_product::tests::all_small_predicates_maps_and_eliminations_match_exact_ids ... ok
+test raw::view_product::tests::map_identity_is_part_of_the_product ... ok
+test raw::view_product::tests::reordered_branches_retain_pending_pins ... ok
+test raw::view_product::tests::scattered_multiword_maps_and_complements_match_materialization ... FAILED
+test raw::view_product::tests::word_shannon_planes_match_assignments_with_pending_pins ... ok
+
+failures:
+
+---- raw::view_product::tests::scattered_multiword_maps_and_complements_match_materialization stdout ----
+
+thread 'raw::view_product::tests::scattered_multiword_maps_and_complements_match_materialization' (9743356) panicked at src/../../src/view_product.rs:525:25:
+assertion `left == right` failed
+  left: 24374
+ right: 25414
+
+
+failures:
+    raw::view_product::tests::scattered_multiword_maps_and_complements_match_materialization
+
+test result: FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.39s
+
+
+   Compiling event-essential-prototype v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/essential-prototype)
+    Finished `release` profile [optimized] target(s) in 3.38s
+     Running unittests src/lib.rs (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/view-target/release/build/event-essential-prototype/41deefbf948e6929/out/event_essential_prototype-41deefbf948e6929)
+error: test failed, to rerun pass `--lib`

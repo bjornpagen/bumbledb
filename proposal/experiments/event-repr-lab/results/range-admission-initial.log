@@ -1,0 +1,30 @@
+
+     Locking 9 packages to highest Rust 1.99.0-nightly compatible versions
+      Adding rustc-hash v2.1.0 (available: v2.1.3)
+   Compiling autocfg v1.5.1
+   Compiling byteorder v1.5.0
+   Compiling bytemuck v1.25.2
+   Compiling rustc-hash v2.1.0
+   Compiling roaring v0.10.12
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.47
+   Compiling num-bigint v0.4.8
+   Compiling num-rational v0.4.2
+   Compiling event-range-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/range-checker)
+warning: unused import: `view_product::Statistics as ViewProductStatistics`
+ --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/range-native-src/essential_raw.rs:9:9
+  |
+9 | pub use view_product::Statistics as ViewProductStatistics;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0599]: no method named `branch` found for mutable reference `&mut transfer::Builder` in the current scope
+  --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/range-native-src/range_carrier.rs:59:41
+   |
+59 |             if selected>>v&1!=0 {lo=out.branch(v,lo,hi);}
+   |                                         ^^^^^^ method not found in `&mut transfer::Builder`
+
+For more information about this error, try `rustc --explain E0599`.
+warning: `event-range-checker` (lib test) generated 1 warning
+error: could not compile `event-range-checker` (lib test) due to 1 previous error; 1 warning emitted

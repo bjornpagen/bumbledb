@@ -1,0 +1,28 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"packed64","bits":18,"states":64,"identity_mode":"native","input_s":[1.2583e-5, 8.167e-6, 6.667e-6, 5.958e-6, 5.209e-6],"program_setup_s":[1.5167e-5, 8.25e-6, 5.792e-6, 5.459e-6, 6.084e-6],"query_s":[0.00018625, 7.8791e-5, 7.0666e-5, 6.6084e-5, 6.3541e-5],"owned_compute_s":[0.000203959, 8.7791e-5, 7.7166e-5, 7.225e-5, 7.0166e-5],"iterations":[7, 7, 7, 7, 7],"output_counts":[133120, 133120, 262144, 262144, 4096],"output_packet_bytes":751,"final_arena_bytes_est":68512,"new_classes":3,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"packed64","bits":36,"states":4096,"identity_mode":"native","input_s":[1.3791e-5, 1.4042e-5, 1.2667e-5, 1.2375e-5, 1.2e-5],"program_setup_s":[1.2167e-5, 9.792e-6, 9.333e-6, 1.0541e-5, 9.042e-6],"query_s":[0.000323542, 0.000282792, 0.000274791, 0.0002675, 0.000261208],"owned_compute_s":[0.000336542, 0.00029325, 0.000284792, 0.000278625, 0.000270833],"iterations":[13, 13, 13, 13, 13],"output_counts":[34368126976, 34368126976, 68719476736, 68719476736, 16777216],"output_packet_bytes":1555,"final_arena_bytes_est":268264,"new_classes":3,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"packed64","bits":60,"states":1048576,"identity_mode":"native","input_s":[2.2666e-5, 2.3583e-5, 2.2e-5, 2.3209e-5, 2.1917e-5],"program_setup_s":[2.0666e-5, 2.0292e-5, 1.7583e-5, 1.7167e-5, 1.6917e-5],"query_s":[0.000827, 0.000753042, 0.000754417, 0.000732459, 0.000768458],"owned_compute_s":[0.000848333, 0.000774, 0.000772583, 0.000750167, 0.000785958],"iterations":[21, 21, 21, 21, 21],"output_counts":[576461302059237376, 576461302059237376, 1152921504606846976, 1152921504606846976, 1099511627776],"output_packet_bytes":2627,"final_arena_bytes_est":534600,"new_classes":3,"input_storage":null,"final_storage":null,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1366 filtered out; finished in 0.01s
+
+
+        0.01 real         0.00 user         0.00 sys
+             6537216  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 613  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  11  involuntary context switches
+           108686997  instructions retired
+            31535065  cycles elapsed
+             3981672  peak memory footprint

@@ -1,0 +1,11 @@
+DIFFERENCE_PHASE {"phase":"inputs_verified","records":22632,"bytes":1126608}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":0,"records":22632,"bytes":1126608}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":8,"records":504222,"bytes":60801232}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":16,"records":756340,"bytes":100384976}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":24,"records":1016376,"bytes":121602256}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":32,"records":1215795,"bytes":138379472}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":40,"records":1291111,"bytes":200769744}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":48,"records":1291111,"bytes":200769744}
+DIFFERENCE_PHASE {"phase":"group","completed_groups":56,"records":1291111,"bytes":200769744}
+DIFFERENCE_SHAPE {"passed":true,"shape":"coup","basis":"positive","layout":"bit-major","kernel":"cofactors","dimensions":16,"inputs":36,"outputs":64,"input_records":22632,"input_reachable":22631,"input_bytes":1126608,"final_records":1291111,"output_reachable":48319,"live_union":64714,"final_bytes":200769744,"query_apply_misses":3736034,"query_cofactor_misses":185996,"query_projection_misses":0,"checked_world_answers":4194304,"checksum":5691950}
+

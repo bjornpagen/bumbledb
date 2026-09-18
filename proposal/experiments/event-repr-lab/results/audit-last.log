@@ -1,0 +1,109 @@
+{
+  "production_source_hashes_match": true,
+  "source_snapshots_verified": [
+    "build-baseline.json",
+    "build-fastpaths.json",
+    "build-anchored.json",
+    "build-product.json",
+    "build-dispatched.json",
+    "build-packed.json",
+    "build-relations-v1.json",
+    "build-relations.json",
+    "build.json"
+  ],
+  "documents_checked": 40,
+  "missing_local_links": [],
+  "unbalanced_code_fences": [],
+  "run_statuses": {
+    "anchored-smoke.json": {
+      "passed": 17,
+      "resource_cap": 1
+    },
+    "coup-product.json": {
+      "passed": 9
+    },
+    "dense-control.json": {
+      "passed": 11
+    },
+    "dispatched.json": {
+      "passed": 11
+    },
+    "modal-smoke.json": {
+      "passed": 2
+    },
+    "packed-modal-controls.json": {
+      "passed": 12
+    },
+    "packed-verification.json": {
+      "passed": 1
+    },
+    "packed256-sweep.json": {
+      "passed": 18,
+      "resource_cap": 1
+    },
+    "packed64-sweep.json": {
+      "passed": 18,
+      "resource_cap": 1
+    },
+    "relations-dense-join.json": {
+      "passed": 8
+    },
+    "relations-packed-join.json": {
+      "passed": 8
+    },
+    "relations-repeat.json": {
+      "passed": 12
+    },
+    "relations-sweep.json": {
+      "passed": 12
+    },
+    "relations-v2-verification.json": {
+      "passed": 1
+    },
+    "repeat-coup.json": {
+      "passed": 9
+    },
+    "repeat-modal.json": {
+      "passed": 9
+    },
+    "repeat-product.json": {
+      "passed": 9
+    },
+    "repeat-runs.json": {
+      "passed": 9
+    },
+    "repeat-sparse.json": {
+      "passed": 9
+    },
+    "repeat-structured.json": {
+      "passed": 9
+    },
+    "smoke.json": {
+      "passed": 2
+    },
+    "sweep-1.json": {
+      "passed": 67,
+      "resource_cap": 3
+    },
+    "sweep-2.json": {
+      "passed": 81,
+      "resource_cap": 3
+    },
+    "sweep-3.json": {
+      "passed": 97,
+      "resource_cap": 4
+    },
+    "verification.json": {
+      "passed": 1
+    }
+  },
+  "representation_research_sources_verified": [
+    "1404.4089v1",
+    "1710.06500v1",
+    "1512.05813v1",
+    "2004.02502v1",
+    "2312.00793v1"
+  ],
+  "assembly_symbols_verified": 4,
+  "regression_fixes_verified": 1
+}

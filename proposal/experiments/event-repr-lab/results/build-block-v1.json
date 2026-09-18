@@ -1,0 +1,26 @@
+{
+  "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/4eb96717b825fda0/out/bumbledb-4eb96717b825fda0",
+  "binary_sha256": "d0e75b3bc18761de0f73f63671b4313937bffd7ed49224db3ae1afdcfd401de1",
+  "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+  "platform": "macOS-27.0-arm64-arm-64bit",
+  "machine": "arm64",
+  "cpu": "Apple M2 Max",
+  "memory_bytes": 103079215104,
+  "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+  "lab_sources": {
+    "src/blocks.rs": "5f367fabbda846cf0be2637736419fae94fb7f76d2439ae9d40125486866ef46",
+    "src/carrier.rs": "796731feb6e8758207aad632e84fa1a93cee62377085a0a2de7b7dcd027b2faf",
+    "src/diagram.rs": "5d39d1fc2b5395f1b1666dca9c7b754ffcd7d4d4577130f8c4fc01483887be30",
+    "src/finite.rs": "fbfda2a96cf8f6105d592fb8a66c04052db2aacfc6fe470a041ee5e48eb802f3",
+    "src/lib.rs": "39dee18deb8445ee0d1b4123c66b33ede5b40af53e1037c46b028c7a996345e0",
+    "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+    "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+    "src/packed.rs": "214ecb137a144bb60461186efa1fd8e92bfeaa97788d6daa1954c92d2b210066",
+    "src/relational_core.rs": "c757b649a062f3b3eada667f166dc6afe40d4cc7c7c7ffce5adce438a638bbae",
+    "src/relations.rs": "c7f1d128dea0aba99a600f021a4f3b230b53215f23e0c5c101c5a0bb4b4ccebc",
+    "src/semantic_checks.rs": "e1f2b3064a615094fa027b845cb7a0eb76294037c13938d51169114b795cf5f7"
+  },
+  "cargo_lock_sha256": "e6a31bb03b41f4ef4e151edee14284bcdfa447c8b730b240518ae01ea9330913",
+  "built_utc": "2026-09-17T21:14:44.879752+00:00",
+  "build_started_utc": "2026-09-17T21:09:29.131797+00:00"
+}

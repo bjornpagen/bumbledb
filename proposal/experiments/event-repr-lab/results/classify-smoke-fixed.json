@@ -1,0 +1,5625 @@
+{
+  "experiment": "Scoped direct classification versus four Venn cells; same native binary, serial jobs",
+  "seed": 20260925,
+  "trials": 3,
+  "timeout_s": 120,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "71a5eff9bfe195227639a0bef001761ed4c6a2a644ac4596e8a3aa734986e1e8",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "2c7526be132fa8644a8b346f5faff74ef7746366adafd687d410c6297f0e65ef",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagonal_checks.rs": "a45ce14c303b65fc9aacdccb7c16fc4ce9f19874cd62aa1b674faec9da85d169",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/essential.rs": "d7548bcbede48fd76e4362cdea7d7e532daaaa1c4a7a140b9091d4ec5e66828a",
+      "src/essential_raw.rs": "aa746aeaff953fb9846c2a45aa0946c7c199de419ab6bc73c53df3548b5ea01a",
+      "src/essential_words.rs": "3457ad2bc1ac55958e0fbb658128fcd7ffea633e2cdefa7e321de314646cc25a",
+      "src/finite.rs": "1ad66e84ba8488713f2fc8bd514a0d2e1ae8f6b2c4a2499dfa6f6aec21c976ca",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "9cd9950a325f31d7af7dd986400ad6eebc97e69a5939b10268f9409b910a138b",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "280d1e20e660cb00840c40f09a6998c00fdf435258a11a064d0a9cc68f9a8312",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/occupancy.rs": "527f898849c28053e54550a07e18db9f34bd8e280ee937d7447c208076fb3e1b",
+      "src/owned_bench.rs": "61c2f7f7fca6a466314ea92e867d7cc0d6ed21b10cefefeadd264fd7ea2efa36",
+      "src/packed.rs": "5dddb0002c4b0f60eef6a59ae462d950d2a2e3ec60ddc858b91d31e66a75482a",
+      "src/relational_core.rs": "60615ef8844b270cd8cb3ac9e15802d8c7821b2b53595fd8ff3d5cb372e387ae",
+      "src/relations.rs": "0edd99420cb63986ace66e258c0002a5d3c4e603845bf666bbf81e4eb8b03921",
+      "src/semantic_checks.rs": "56976b33e7c956a385d8e40fb9cd2890f9f5899bdec90d14f5207edbbeae726c",
+      "src/signature.rs": "e23b491ac9af760fbbee1cd9b39177607f8ff4a5caa700ca06111eabb6f329e0",
+      "src/signature_bench.rs": "7a05050991ed786de8200467f43e58f8986e020eee095f2639be0784512acc45",
+      "src/symbolic_relations.rs": "ad0737c68f841bda7a06b34c0cc915c79a9d6a643ebd5ee0e1f90658d7c503e6",
+      "src/transfer.rs": "d2fe8ebdf739d1d3e8b49c231c4c0f5df0eaf7985f5201513281d91e6f7bdfe2",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "54b0eba1a4bfa4a24ded2102772a0d50ba85cf9a472fcde02d649e4cacb06f3f"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-18T01:13:15.211078+00:00",
+    "build_started_utc": "2026-09-18T01:05:59.036142+00:00"
+  },
+  "direct_capabilities": [
+    "essential64",
+    "essential512",
+    "packed64",
+    "packed256",
+    "packed512",
+    "packed4096",
+    "dense",
+    "dense-dispatched"
+  ],
+  "runs": [
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "verify": true
+      },
+      "status": "passed",
+      "elapsed_s": 2.1457948684692383,
+      "max_rss_bytes": 41730048,
+      "log": "classify-smoke-fixed-logs/job-000-verify-local-words-identity-native-essential-derived.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-root",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "mdd4-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-anchored",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "block64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "essential64",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "essential64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_symbolic",
+          "candidate": "essential512",
+          "coordinates": 60,
+          "cases": 36,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "essential512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "essential64",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "essential64",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "essential512",
+          "source_packets": 64,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "essential512",
+          "cases": 192,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 121,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043,
+            1265,
+            1365
+          ],
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "dense",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "dense-dispatched",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense-dispatched",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "sparse",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "sparse",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "roaring",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "roaring",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "runs",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "runs",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-root",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-root",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-pair",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "mdd4-pair",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "mdd4-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "bdd-anchored",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-anchored",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed64",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed64",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed256",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed256",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed512",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed512",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "packed4096",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed4096",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "block64",
+          "cases": 7788,
+          "direct": false,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "block64",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "essential64",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "essential64",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "essential64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "essential64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_verification",
+          "candidate": "essential512",
+          "cases": 7788,
+          "direct": true,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "essential512",
+          "support_cases": 1530,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "essential512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "essential512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 11,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 16,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 16,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 11,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.7900390625,
+        10.8212890625,
+        13.91552734375
+      ],
+      "loadavg_end": [
+        6.806640625,
+        10.7578125,
+        13.875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_SCENARIO": "coup_4290",
+        "EVENT_LAB_CLASSIFY": "direct"
+      },
+      "status": "passed",
+      "elapsed_s": 1.867215871810913,
+      "max_rss_bytes": 7176192,
+      "log": "classify-smoke-fixed-logs/job-001-classify-packed512-coup_4290-local-words-identity-native-classify-direct.log",
+      "rows": [
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000226542,
+            0.000155625,
+            0.000168
+          ],
+          "join_only_s": [
+            0.000178541,
+            8.9791e-05,
+            9.5666e-05
+          ],
+          "fresh_s": [
+            0.000372458,
+            0.000274833,
+            0.0002765
+          ],
+          "warm_s": [
+            0.00027613021875,
+            0.0002811920625,
+            0.000281072921875
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.00016425,
+            0.000171834,
+            0.000156417
+          ],
+          "join_only_s": [
+            9.2708e-05,
+            9.4167e-05,
+            8.4792e-05
+          ],
+          "fresh_s": [
+            0.000208542,
+            0.000208041,
+            0.000202834
+          ],
+          "warm_s": [
+            6.035595703125e-05,
+            6.115478515625e-05,
+            6.032291796875e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000156375,
+            0.000157208,
+            0.000154916
+          ],
+          "join_only_s": [
+            8.5875e-05,
+            8.925e-05,
+            8.4875e-05
+          ],
+          "fresh_s": [
+            0.000291916,
+            0.000286292,
+            0.000277917
+          ],
+          "warm_s": [
+            0.000284847,
+            0.000285061859375,
+            0.000288532546875
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000145416,
+            0.000127458,
+            0.000155166
+          ],
+          "join_only_s": [
+            8.1667e-05,
+            7.6666e-05,
+            8.5583e-05
+          ],
+          "fresh_s": [
+            0.000193375,
+            0.000192083,
+            0.000206583
+          ],
+          "warm_s": [
+            6.068570703125e-05,
+            6.173355859375e-05,
+            6.05475234375e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000136542,
+            0.000124583,
+            0.000147084
+          ],
+          "join_only_s": [
+            8.0042e-05,
+            7.8542e-05,
+            8.9625e-05
+          ],
+          "fresh_s": [
+            0.000279959,
+            0.000285583,
+            0.000293459
+          ],
+          "warm_s": [
+            0.0002847076875,
+            0.0003074296875,
+            0.0002999765625
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000144541,
+            0.000155125,
+            0.000146416
+          ],
+          "join_only_s": [
+            8.45e-05,
+            9.0792e-05,
+            9.1541e-05
+          ],
+          "fresh_s": [
+            0.000198584,
+            0.00020875,
+            0.000214208
+          ],
+          "warm_s": [
+            6.591373828125e-05,
+            6.012044140625e-05,
+            5.951887890625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000135084,
+            0.00014075,
+            0.0001345
+          ],
+          "join_only_s": [
+            0.000104542,
+            0.000111875,
+            0.0001035
+          ],
+          "fresh_s": [
+            0.001139,
+            0.00107325,
+            0.00100125
+          ],
+          "warm_s": [
+            0.001027349,
+            0.0010165260625,
+            0.0010237448125
+          ],
+          "warm_loops": 16,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000129042,
+            0.000130958,
+            0.000135083
+          ],
+          "join_only_s": [
+            0.00010675,
+            0.000110708,
+            0.00010775
+          ],
+          "fresh_s": [
+            0.000213625,
+            0.000227791,
+            0.000228042
+          ],
+          "warm_s": [
+            0.0001247662734375,
+            0.000125958984375,
+            0.00012472428125
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000134542,
+            0.000134833,
+            0.000127375
+          ],
+          "join_only_s": [
+            0.000105709,
+            0.000104583,
+            0.000102625
+          ],
+          "fresh_s": [
+            0.001037916,
+            0.001070292,
+            0.001003208
+          ],
+          "warm_s": [
+            0.0010100364375,
+            0.0010230989375,
+            0.0010214453125
+          ],
+          "warm_loops": 16,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000139917,
+            0.000100584,
+            0.0001485
+          ],
+          "join_only_s": [
+            0.000114084,
+            9.6792e-05,
+            0.000111417
+          ],
+          "fresh_s": [
+            0.000208542,
+            0.000204541,
+            0.000231417
+          ],
+          "warm_s": [
+            0.0001252903671875,
+            0.000125237953125,
+            0.0001249270859375
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000129792,
+            0.000105667,
+            9.7292e-05
+          ],
+          "join_only_s": [
+            0.000119083,
+            9.6416e-05,
+            9.5792e-05
+          ],
+          "fresh_s": [
+            0.0010275,
+            0.000999792,
+            0.001057625
+          ],
+          "warm_s": [
+            0.001016864625,
+            0.001021474,
+            0.00101064325
+          ],
+          "warm_loops": 16,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 719,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 86008,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000115125,
+            0.000126084,
+            0.000118208
+          ],
+          "join_only_s": [
+            9.8167e-05,
+            9.95e-05,
+            9.9292e-05
+          ],
+          "fresh_s": [
+            0.000309334,
+            0.000212958,
+            0.000207
+          ],
+          "warm_s": [
+            0.00012458040625,
+            0.0001256943359375,
+            0.000125259109375
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.806640625,
+        10.7578125,
+        13.875
+      ],
+      "loadavg_end": [
+        6.806640625,
+        10.7578125,
+        13.875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_SCENARIO": "coup_4290",
+        "EVENT_LAB_CLASSIFY": "direct"
+      },
+      "status": "passed",
+      "elapsed_s": 1.598783016204834,
+      "max_rss_bytes": 6930432,
+      "log": "classify-smoke-fixed-logs/job-002-classify-dense-dispatched-coup_4290-words-identity-native-classify-direct.log",
+      "rows": [
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.00036825,
+            0.000161709,
+            0.000162333
+          ],
+          "join_only_s": [
+            0.000144208,
+            8.5375e-05,
+            9.3291e-05
+          ],
+          "fresh_s": [
+            0.000151458,
+            8.4208e-05,
+            8.0959e-05
+          ],
+          "warm_s": [
+            8.094303125e-05,
+            8.18404921875e-05,
+            0.000159828125
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000193208,
+            0.000156041,
+            0.000174459
+          ],
+          "join_only_s": [
+            9.1958e-05,
+            8.5583e-05,
+            8.9917e-05
+          ],
+          "fresh_s": [
+            9.5541e-05,
+            8.8542e-05,
+            8.9084e-05
+          ],
+          "warm_s": [
+            5.97618828125e-05,
+            6.038492578125e-05,
+            6.070784375e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.00016125,
+            0.000175916,
+            0.00015575
+          ],
+          "join_only_s": [
+            8.5583e-05,
+            0.000111333,
+            8.8583e-05
+          ],
+          "fresh_s": [
+            8.45e-05,
+            0.000116208,
+            8.5292e-05
+          ],
+          "warm_s": [
+            8.2646484375e-05,
+            8.40748671875e-05,
+            8.3451171875e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000163167,
+            0.000158833,
+            0.000164333
+          ],
+          "join_only_s": [
+            0.00010425,
+            8.3e-05,
+            9.8333e-05
+          ],
+          "fresh_s": [
+            8.6458e-05,
+            8.5584e-05,
+            8.7917e-05
+          ],
+          "warm_s": [
+            6.010709765625e-05,
+            5.962939453125e-05,
+            6.21556015625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000173375,
+            0.000151,
+            0.000142458
+          ],
+          "join_only_s": [
+            9.8084e-05,
+            8.3334e-05,
+            8.4417e-05
+          ],
+          "fresh_s": [
+            8.7e-05,
+            8.1875e-05,
+            8.3292e-05
+          ],
+          "warm_s": [
+            8.2861e-05,
+            8.40589140625e-05,
+            8.7975265625e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000152916,
+            0.00015775,
+            0.000172292
+          ],
+          "join_only_s": [
+            8.7459e-05,
+            8.4042e-05,
+            9.575e-05
+          ],
+          "fresh_s": [
+            9.1709e-05,
+            8.6042e-05,
+            9.2458e-05
+          ],
+          "warm_s": [
+            6.244010546875e-05,
+            5.983463671875e-05,
+            6.01080703125e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000127667,
+            0.000117916,
+            0.000145875
+          ],
+          "join_only_s": [
+            0.000106959,
+            0.000104834,
+            0.000111042
+          ],
+          "fresh_s": [
+            0.000238459,
+            0.000198542,
+            0.000211125
+          ],
+          "warm_s": [
+            0.00020825521875,
+            0.000210206375,
+            0.00021367709375
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000112333,
+            0.000120833,
+            0.000150833
+          ],
+          "join_only_s": [
+            9.9e-05,
+            0.000104958,
+            0.000115416
+          ],
+          "fresh_s": [
+            0.000139625,
+            0.000149875,
+            0.000151
+          ],
+          "warm_s": [
+            0.000124237953125,
+            0.0001259938125,
+            0.0001241949921875
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000143375,
+            0.000144625,
+            0.000134709
+          ],
+          "join_only_s": [
+            0.000107208,
+            0.00010125,
+            0.000111833
+          ],
+          "fresh_s": [
+            0.000207792,
+            0.00019575,
+            0.000224916
+          ],
+          "warm_s": [
+            0.0002176451875,
+            0.000213903640625,
+            0.000210776046875
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000125333,
+            0.000184958,
+            0.000130416
+          ],
+          "join_only_s": [
+            0.000105458,
+            0.000124583,
+            0.000100083
+          ],
+          "fresh_s": [
+            0.000136375,
+            0.000141083,
+            0.000140917
+          ],
+          "warm_s": [
+            0.0001219322890625,
+            0.000119592125,
+            0.000121851890625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000135083,
+            0.000170459,
+            0.000119375
+          ],
+          "join_only_s": [
+            0.000104042,
+            0.000111666,
+            9.85e-05
+          ],
+          "fresh_s": [
+            0.000202625,
+            0.000208917,
+            0.000202166
+          ],
+          "warm_s": [
+            0.000212669265625,
+            0.000211158203125,
+            0.0002111360625
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 37,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 23620,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000121416,
+            0.000128166,
+            0.000148167
+          ],
+          "join_only_s": [
+            0.000100792,
+            0.000106375,
+            0.000103458
+          ],
+          "fresh_s": [
+            0.000143042,
+            0.000170542,
+            0.000139208
+          ],
+          "warm_s": [
+            0.0001257734375,
+            0.0001225869140625,
+            0.000121176109375
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.806640625,
+        10.7578125,
+        13.875
+      ],
+      "loadavg_end": [
+        6.806640625,
+        10.7578125,
+        13.875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_SCENARIO": "coup_4290",
+        "EVENT_LAB_CLASSIFY": "cells"
+      },
+      "status": "passed",
+      "elapsed_s": 1.643655776977539,
+      "max_rss_bytes": 21512192,
+      "log": "classify-smoke-fixed-logs/job-003-classify-packed512-coup_4290-local-words-identity-native-classify-cells.log",
+      "rows": [
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 25522,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 5040216,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000249625,
+            0.000177833,
+            0.00016525
+          ],
+          "join_only_s": [
+            0.000108667,
+            8.675e-05,
+            9.0916e-05
+          ],
+          "fresh_s": [
+            0.002250416,
+            0.00209425,
+            0.002196792
+          ],
+          "warm_s": [
+            9.02568359375e-05,
+            8.82884140625e-05,
+            9.06780546875e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 25522,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 5040216,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000189208,
+            0.000160625,
+            0.000158416
+          ],
+          "join_only_s": [
+            9.7125e-05,
+            8.4959e-05,
+            8.6042e-05
+          ],
+          "fresh_s": [
+            0.001979792,
+            0.001895208,
+            0.002007583
+          ],
+          "warm_s": [
+            5.94357109375e-05,
+            5.913427734375e-05,
+            5.9872234375e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 25522,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 5040216,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000164791,
+            0.000158167,
+            0.000161792
+          ],
+          "join_only_s": [
+            8.5917e-05,
+            8.9708e-05,
+            8.4375e-05
+          ],
+          "fresh_s": [
+            0.00201075,
+            0.002074791,
+            0.001943125
+          ],
+          "warm_s": [
+            8.99944609375e-05,
+            8.851496875e-05,
+            8.91526640625e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 25522,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 5040216,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.00015475,
+            0.000157958,
+            0.000151958
+          ],
+          "join_only_s": [
+            8.7333e-05,
+            9.0792e-05,
+            8.7459e-05
+          ],
+          "fresh_s": [
+            0.002028959,
+            0.001899292,
+            0.001880875
+          ],
+          "warm_s": [
+            6.0493e-05,
+            6.026530078125e-05,
+            6.043603515625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 25522,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 5040216,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.00017175,
+            0.000136209,
+            0.000135666
+          ],
+          "join_only_s": [
+            9.2291e-05,
+            7.9584e-05,
+            8.1833e-05
+          ],
+          "fresh_s": [
+            0.0019205,
+            0.001833291,
+            0.002115875
+          ],
+          "warm_s": [
+            9.08098984375e-05,
+            8.88561171875e-05,
+            8.900325e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 719,
+          "final_nodes": 25522,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 5040216,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000149959,
+            0.000151208,
+            0.00015975
+          ],
+          "join_only_s": [
+            8.375e-05,
+            8.5e-05,
+            9.0959e-05
+          ],
+          "fresh_s": [
+            0.001870959,
+            0.001847458,
+            0.001956041
+          ],
+          "warm_s": [
+            6.0432453125e-05,
+            5.98533515625e-05,
+            6.0177734375e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 16173,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 2520152,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000129334,
+            0.000129958,
+            0.000128375
+          ],
+          "join_only_s": [
+            9.8583e-05,
+            9.9792e-05,
+            0.000105041
+          ],
+          "fresh_s": [
+            0.001252,
+            0.001230542,
+            0.001249792
+          ],
+          "warm_s": [
+            0.0002214798125,
+            0.000216008453125,
+            0.00021468425
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 16173,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 2520152,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000139834,
+            0.000120875,
+            0.00014175
+          ],
+          "join_only_s": [
+            0.000100542,
+            0.000102334,
+            0.00010975
+          ],
+          "fresh_s": [
+            0.001165958,
+            0.001161208,
+            0.001207
+          ],
+          "warm_s": [
+            0.0001223431015625,
+            0.000120829421875,
+            0.000119978515625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 16173,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 2520152,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000118833,
+            0.000120333,
+            0.000116167
+          ],
+          "join_only_s": [
+            0.000108166,
+            0.000107625,
+            9.9084e-05
+          ],
+          "fresh_s": [
+            0.001533042,
+            0.001503458,
+            0.001211
+          ],
+          "warm_s": [
+            0.000218220703125,
+            0.00021217578125,
+            0.00021652734375
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 16173,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 2520152,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000106708,
+            0.000136292,
+            0.00012575
+          ],
+          "join_only_s": [
+            9.5375e-05,
+            0.000109292,
+            0.000101125
+          ],
+          "fresh_s": [
+            0.00110075,
+            0.0012275,
+            0.0011655
+          ],
+          "warm_s": [
+            0.0001210891875,
+            0.0001209462890625,
+            0.000121334640625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 16173,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 2520152,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000120459,
+            0.000105833,
+            0.000146292
+          ],
+          "join_only_s": [
+            0.000104292,
+            9.7875e-05,
+            0.000104
+          ],
+          "fresh_s": [
+            0.001231416,
+            0.001200875,
+            0.001291167
+          ],
+          "warm_s": [
+            0.000213068359375,
+            0.000212633453125,
+            0.000210653640625
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "packed512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 719,
+          "final_nodes": 16173,
+          "input_bytes_est": 86008,
+          "final_bytes_est": 2520152,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000127042,
+            0.000129625,
+            0.000128542
+          ],
+          "join_only_s": [
+            0.0001045,
+            9.2375e-05,
+            9.8667e-05
+          ],
+          "fresh_s": [
+            0.001167,
+            0.001155,
+            0.001165542
+          ],
+          "warm_s": [
+            0.000122681640625,
+            0.000121353515625,
+            0.000121589515625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "packed_map": "local",
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.806640625,
+        10.7578125,
+        13.875
+      ],
+      "loadavg_end": [
+        6.50146484375,
+        10.62890625,
+        13.81103515625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "coup_4290",
+        "EVENT_LAB_CLASSIFY": "cells"
+      },
+      "status": "passed",
+      "elapsed_s": 2.1843230724334717,
+      "max_rss_bytes": 23756800,
+      "log": "classify-smoke-fixed-logs/job-004-classify-essential512-coup_4290-words-identity-native-classify-cells-essential-derived.log",
+      "rows": [
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 25522,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 5668392,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000206375,
+            0.000184583,
+            0.000137167
+          ],
+          "join_only_s": [
+            0.000131291,
+            9.175e-05,
+            8.0709e-05
+          ],
+          "fresh_s": [
+            0.018382375,
+            0.016586875,
+            0.015939167
+          ],
+          "warm_s": [
+            9.80084609375e-05,
+            9.7517578125e-05,
+            9.7782875e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 25522,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 5668392,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000130292,
+            0.000168541,
+            0.000143459
+          ],
+          "join_only_s": [
+            7.7792e-05,
+            0.00010275,
+            8.2792e-05
+          ],
+          "fresh_s": [
+            0.017951584,
+            0.016420833,
+            0.016004334
+          ],
+          "warm_s": [
+            6.06796875e-05,
+            6.017594140625e-05,
+            6.11357421875e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 25522,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 5668392,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000168833,
+            0.000159542,
+            0.00015725
+          ],
+          "join_only_s": [
+            9.7416e-05,
+            9.2833e-05,
+            9.2959e-05
+          ],
+          "fresh_s": [
+            0.0168765,
+            0.016486208,
+            0.016575959
+          ],
+          "warm_s": [
+            9.7638671875e-05,
+            9.9974609375e-05,
+            9.93779296875e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 25522,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 5668392,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000129166,
+            0.000141125,
+            0.00012675
+          ],
+          "join_only_s": [
+            8.0292e-05,
+            8.1125e-05,
+            8.3625e-05
+          ],
+          "fresh_s": [
+            0.016950833,
+            0.017002792,
+            0.017824333
+          ],
+          "warm_s": [
+            6.092448046875e-05,
+            5.979931640625e-05,
+            6.07119140625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 25522,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 5668392,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000167459,
+            0.000144,
+            0.000137375
+          ],
+          "join_only_s": [
+            9.3125e-05,
+            9.2208e-05,
+            8.2708e-05
+          ],
+          "fresh_s": [
+            0.016190209,
+            0.015595583,
+            0.015447041
+          ],
+          "warm_s": [
+            9.81998671875e-05,
+            9.80530546875e-05,
+            9.85716171875e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 25522,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 5668392,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000128541,
+            0.000131541,
+            0.000127958
+          ],
+          "join_only_s": [
+            7.9166e-05,
+            8.15e-05,
+            8.3e-05
+          ],
+          "fresh_s": [
+            0.017441167,
+            0.016925083,
+            0.0165515
+          ],
+          "warm_s": [
+            6.131136328125e-05,
+            6.11416015625e-05,
+            6.061083984375e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 16173,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 3586008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000108083,
+            0.000146875,
+            0.000126208
+          ],
+          "join_only_s": [
+            9.9834e-05,
+            0.000107166,
+            0.000102209
+          ],
+          "fresh_s": [
+            0.010413084,
+            0.010320875,
+            0.009980375
+          ],
+          "warm_s": [
+            0.000239276046875,
+            0.0002419641875,
+            0.0002398639375
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 16173,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 3586008,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000111125,
+            0.00013425,
+            0.000101334
+          ],
+          "join_only_s": [
+            0.000103875,
+            0.000102833,
+            8.7625e-05
+          ],
+          "fresh_s": [
+            0.01010925,
+            0.011048042,
+            0.010352958
+          ],
+          "warm_s": [
+            0.0001215530625,
+            0.0001223346328125,
+            0.000124236328125
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 16173,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 3586008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000125417,
+            0.00012425,
+            0.000122458
+          ],
+          "join_only_s": [
+            0.000101916,
+            0.00010925,
+            0.000101958
+          ],
+          "fresh_s": [
+            0.0100545,
+            0.010354416,
+            0.010907667
+          ],
+          "warm_s": [
+            0.000248505859375,
+            0.000248497390625,
+            0.000241283203125
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 16173,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 3586008,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000141041,
+            0.000127,
+            0.00012925
+          ],
+          "join_only_s": [
+            0.000110708,
+            0.000103958,
+            0.000102375
+          ],
+          "fresh_s": [
+            0.010606917,
+            0.010075208,
+            0.010561042
+          ],
+          "warm_s": [
+            0.0001238896484375,
+            0.00012281021875,
+            0.0001232008515625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 16173,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 3586008,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000129958,
+            0.000123041,
+            0.00013325
+          ],
+          "join_only_s": [
+            9.2208e-05,
+            0.000102125,
+            9.8e-05
+          ],
+          "fresh_s": [
+            0.010841583,
+            0.010104292,
+            0.011414667
+          ],
+          "warm_s": [
+            0.000241193359375,
+            0.000241267578125,
+            0.0002407643125
+          ],
+          "warm_loops": 64,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 16173,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 3586008,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000116834,
+            0.000143042,
+            0.000132375
+          ],
+          "join_only_s": [
+            9.8417e-05,
+            0.000109542,
+            0.00011025
+          ],
+          "fresh_s": [
+            0.009909166,
+            0.010565375,
+            0.01032225
+          ],
+          "warm_s": [
+            0.0001234609375,
+            0.000123101890625,
+            0.0001235244140625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.50146484375,
+        10.62890625,
+        13.81103515625
+      ],
+      "loadavg_end": [
+        6.50146484375,
+        10.62890625,
+        13.81103515625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "essential512",
+        "EVENT_LAB_SCENARIO": "coup_4290",
+        "EVENT_LAB_CLASSIFY": "direct"
+      },
+      "status": "passed",
+      "elapsed_s": 3.8179569244384766,
+      "max_rss_bytes": 7634944,
+      "log": "classify-smoke-fixed-logs/job-005-classify-essential512-coup_4290-words-identity-native-classify-direct-essential-derived.log",
+      "rows": [
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.00022025,
+            0.000154084,
+            0.000169083
+          ],
+          "join_only_s": [
+            0.000107917,
+            8.6e-05,
+            9.9e-05
+          ],
+          "fresh_s": [
+            0.016949584,
+            0.01687075,
+            0.017156
+          ],
+          "warm_s": [
+            0.016913625,
+            0.017122417,
+            0.016868
+          ],
+          "warm_loops": 1,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.00014725,
+            0.000162,
+            0.000158083
+          ],
+          "join_only_s": [
+            8.3375e-05,
+            8.9875e-05,
+            8.7041e-05
+          ],
+          "fresh_s": [
+            0.009730291,
+            0.011966375,
+            0.013111042
+          ],
+          "warm_s": [
+            9.156087109375e-05,
+            0.00011194303125,
+            9.73209609375e-05
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000354459,
+            0.000398667,
+            0.000152584
+          ],
+          "join_only_s": [
+            0.000260583,
+            0.000236875,
+            9.2334e-05
+          ],
+          "fresh_s": [
+            0.036806917,
+            0.039308959,
+            0.039741541
+          ],
+          "warm_s": [
+            0.023237875,
+            0.035777917,
+            0.029072583
+          ],
+          "warm_loops": 1,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000587292,
+            0.000153584,
+            0.000150542
+          ],
+          "join_only_s": [
+            0.00017425,
+            8.5084e-05,
+            8.6583e-05
+          ],
+          "fresh_s": [
+            0.012119,
+            0.009823083,
+            0.009911083
+          ],
+          "warm_s": [
+            6.22615546875e-05,
+            6.1927734375e-05,
+            6.180550390625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000156708,
+            0.0001625,
+            0.000220541
+          ],
+          "join_only_s": [
+            8.5916e-05,
+            9.2542e-05,
+            9.4417e-05
+          ],
+          "fresh_s": [
+            0.017039458,
+            0.017638917,
+            0.017614459
+          ],
+          "warm_s": [
+            0.017425334,
+            0.017659791,
+            0.017230625
+          ],
+          "warm_loops": 1,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000147584,
+            0.000153167,
+            0.00015175
+          ],
+          "join_only_s": [
+            8.55e-05,
+            9.0333e-05,
+            8.3208e-05
+          ],
+          "fresh_s": [
+            0.009554083,
+            0.009812292,
+            0.009668666
+          ],
+          "warm_s": [
+            6.258121875e-05,
+            5.985693359375e-05,
+            5.93048515625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000122125,
+            0.000132292,
+            0.0001235
+          ],
+          "join_only_s": [
+            0.000108583,
+            0.000102209,
+            0.0001005
+          ],
+          "fresh_s": [
+            0.07659975,
+            0.079708042,
+            0.078045917
+          ],
+          "warm_s": [
+            0.079316166,
+            0.077872125,
+            0.079850959
+          ],
+          "warm_loops": 1,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "included",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000138125,
+            0.000128417,
+            0.000125958
+          ],
+          "join_only_s": [
+            9.8958e-05,
+            0.000104291,
+            0.000105958
+          ],
+          "fresh_s": [
+            0.006633708,
+            0.006789625,
+            0.006558833
+          ],
+          "warm_s": [
+            0.000126237625,
+            0.00012827571875,
+            0.0001279417265625
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000130375,
+            0.000130625,
+            0.000127834
+          ],
+          "join_only_s": [
+            0.000101084,
+            0.000109666,
+            0.000101208
+          ],
+          "fresh_s": [
+            0.078550417,
+            0.078711125,
+            0.076710166
+          ],
+          "warm_s": [
+            0.0785335,
+            0.078667958,
+            0.076921458
+          ],
+          "warm_loops": 1,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000126041,
+            0.000131,
+            0.00013
+          ],
+          "join_only_s": [
+            0.00010375,
+            0.000101875,
+            0.000105416
+          ],
+          "fresh_s": [
+            0.006501625,
+            0.006588208,
+            0.006469292
+          ],
+          "warm_s": [
+            0.0001251292265625,
+            0.000128657875,
+            0.0001299938125
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000124666,
+            0.000131167,
+            0.000133875
+          ],
+          "join_only_s": [
+            0.000102042,
+            0.000108875,
+            0.000110333
+          ],
+          "fresh_s": [
+            0.078336834,
+            0.078720875,
+            0.081780916
+          ],
+          "warm_s": [
+            0.079725542,
+            0.081722833,
+            0.086796291
+          ],
+          "warm_loops": 1,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "essential512",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "direct",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 717,
+          "final_nodes": 717,
+          "input_bytes_est": 111000,
+          "final_bytes_est": 111000,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000135334,
+            0.00012825,
+            0.000136833
+          ],
+          "join_only_s": [
+            0.000106625,
+            0.00010625,
+            9.8291e-05
+          ],
+          "fresh_s": [
+            0.006509583,
+            0.006449083,
+            0.00650675
+          ],
+          "warm_s": [
+            0.000125607421875,
+            0.0001261259765625,
+            0.0001259436796875
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.50146484375,
+        10.62890625,
+        13.81103515625
+      ],
+      "loadavg_end": [
+        6.541015625,
+        10.568359375,
+        13.77099609375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_ESSENTIAL_KERNEL": "derived",
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_LANE": "classify",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_SCENARIO": "coup_4290",
+        "EVENT_LAB_CLASSIFY": "cells"
+      },
+      "status": "passed",
+      "elapsed_s": 1.7249329090118408,
+      "max_rss_bytes": 8699904,
+      "log": "classify-smoke-fixed-logs/job-006-classify-dense-dispatched-coup_4290-words-identity-native-classify-cells.log",
+      "rows": [
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 2002,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 1233736,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000228,
+            0.000166917,
+            0.000164666
+          ],
+          "join_only_s": [
+            0.000128084,
+            8.7625e-05,
+            9.1833e-05
+          ],
+          "fresh_s": [
+            0.000589209,
+            0.000482458,
+            0.000480917
+          ],
+          "warm_s": [
+            0.00048865625,
+            0.00047381509375,
+            0.000478638
+          ],
+          "warm_loops": 32,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 43,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 2002,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 1233736,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000158875,
+            0.00016875,
+            0.000163125
+          ],
+          "join_only_s": [
+            9.275e-05,
+            0.000112583,
+            9.3584e-05
+          ],
+          "fresh_s": [
+            0.000282708,
+            0.000309041,
+            0.000292459
+          ],
+          "warm_s": [
+            6.07635078125e-05,
+            6.198958203125e-05,
+            6.14923515625e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 2002,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 1233736,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000155459,
+            0.000150083,
+            0.000159042
+          ],
+          "join_only_s": [
+            8.6958e-05,
+            8.7833e-05,
+            8.675e-05
+          ],
+          "fresh_s": [
+            0.000473375,
+            0.000466084,
+            0.000473292
+          ],
+          "warm_s": [
+            0.00047871484375,
+            0.00047098046875,
+            0.000485571625
+          ],
+          "warm_loops": 32,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 36,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 2002,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 1233736,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.000181375,
+            0.000154916,
+            0.000154708
+          ],
+          "join_only_s": [
+            9.3417e-05,
+            9.1458e-05,
+            8.6292e-05
+          ],
+          "fresh_s": [
+            0.000285084,
+            0.000290791,
+            0.000282583
+          ],
+          "warm_s": [
+            6.202799609375e-05,
+            6.043408203125e-05,
+            6.212630078125e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 2002,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 1233736,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000170042,
+            0.000147958,
+            0.000145667
+          ],
+          "join_only_s": [
+            9.4375e-05,
+            8.5792e-05,
+            8.3542e-05
+          ],
+          "fresh_s": [
+            0.000491916,
+            0.000463041,
+            0.000513917
+          ],
+          "warm_s": [
+            0.00047842578125,
+            0.00048341015625,
+            0.0004774830625
+          ],
+          "warm_loops": 32,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "triangle",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 1024,
+          "accepted": 988,
+          "histogram": [
+            0,
+            0,
+            0,
+            12,
+            0,
+            12,
+            0,
+            12,
+            0,
+            0,
+            12,
+            19,
+            16,
+            20,
+            16,
+            905
+          ],
+          "input_nodes": 37,
+          "final_nodes": 2002,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 1233736,
+          "signature_cache_bytes_est": 22400,
+          "signature_cache_entries": 524,
+          "native_setup_s": [
+            0.00014975,
+            0.00017525,
+            0.000179208
+          ],
+          "join_only_s": [
+            8.5125e-05,
+            9.2917e-05,
+            8.6541e-05
+          ],
+          "fresh_s": [
+            0.000279666,
+            0.000275042,
+            0.000285333
+          ],
+          "warm_s": [
+            6.105696484375e-05,
+            6.1666015625e-05,
+            6.131070703125e-05
+          ],
+          "warm_loops": 256,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 1240,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 757912,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000143333,
+            0.000127375,
+            0.000122833
+          ],
+          "join_only_s": [
+            0.000112292,
+            0.000107875,
+            9.925e-05
+          ],
+          "fresh_s": [
+            0.001754292,
+            0.001716375,
+            0.0016475
+          ],
+          "warm_s": [
+            0.001743020875,
+            0.001757140625,
+            0.00177306775
+          ],
+          "warm_loops": 8,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "included",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 196,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 1240,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 757912,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000123458,
+            0.000141583,
+            0.000133458
+          ],
+          "join_only_s": [
+            0.000101584,
+            0.000119542,
+            0.000102375
+          ],
+          "fresh_s": [
+            0.000267542,
+            0.000265625,
+            0.000261333
+          ],
+          "warm_s": [
+            0.0001231324921875,
+            0.000125409828125,
+            0.0001234443359375
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 1240,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 757912,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000135792,
+            0.000131458,
+            0.0001195
+          ],
+          "join_only_s": [
+            0.0001015,
+            0.000109291,
+            0.000100208
+          ],
+          "fresh_s": [
+            0.001683958,
+            0.001694584,
+            0.001696708
+          ],
+          "warm_s": [
+            0.001743296875,
+            0.001732703125,
+            0.001756942625
+          ],
+          "warm_loops": 8,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "disjoint",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 104,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 1240,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 757912,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.00012725,
+            0.000135042,
+            0.000124833
+          ],
+          "join_only_s": [
+            0.000105042,
+            0.000103792,
+            0.000101417
+          ],
+          "fresh_s": [
+            0.000264375,
+            0.000249625,
+            0.00025125
+          ],
+          "warm_s": [
+            0.000121284828125,
+            0.0001221165390625,
+            0.000125918296875
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": false,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 1240,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 757912,
+          "signature_cache_bytes_est": 0,
+          "signature_cache_entries": 0,
+          "native_setup_s": [
+            0.000126417,
+            0.000104917,
+            0.0001345
+          ],
+          "join_only_s": [
+            0.000104875,
+            9.8458e-05,
+            0.000105791
+          ],
+          "fresh_s": [
+            0.001758667,
+            0.001727875,
+            0.001734208
+          ],
+          "warm_s": [
+            0.001722317625,
+            0.001753984375,
+            0.0017293855
+          ],
+          "warm_loops": 8,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "signature_free_join",
+          "candidate": "dense-dispatched",
+          "scenario": "coup_4290",
+          "shape": "clover",
+          "classifier": "cells",
+          "predicate": "overlap",
+          "memo": true,
+          "rows": 4096,
+          "accepted": 3992,
+          "histogram": [
+            0,
+            0,
+            0,
+            48,
+            0,
+            48,
+            0,
+            8,
+            0,
+            0,
+            48,
+            100,
+            64,
+            232,
+            36,
+            3512
+          ],
+          "input_nodes": 37,
+          "final_nodes": 1240,
+          "input_bytes_est": 23620,
+          "final_bytes_est": 757912,
+          "signature_cache_bytes_est": 11200,
+          "signature_cache_entries": 321,
+          "native_setup_s": [
+            0.000141708,
+            0.000122084,
+            0.000132292
+          ],
+          "join_only_s": [
+            0.000111167,
+            0.000100292,
+            0.000107333
+          ],
+          "fresh_s": [
+            0.000328292,
+            0.0002535,
+            0.000285458
+          ],
+          "warm_s": [
+            0.00012435775,
+            0.000122578125,
+            0.000124158203125
+          ],
+          "warm_loops": 128,
+          "verified": true,
+          "essential_kernel": "derived",
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        6.541015625,
+        10.568359375,
+        13.77099609375
+      ],
+      "loadavg_end": [
+        6.541015625,
+        10.568359375,
+        13.77099609375
+      ]
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling bumbledb-event v1.3.1 (/Users/bjorn/Documents/bumbledb/crates/bumbledb-event)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.78s
+     Running unittests src/lib.rs (target/debug/build/bumbledb-event/3adaa52a191f9f30/out/bumbledb_event-3adaa52a191f9f30)
+
+running 15 tests
+test tests::cancellation_capacity_and_constructor_rejections_are_explicit ... ok
+test tests::codec_rejects_truncation_corruption_noncanonical_graphs_and_versions ... ok
+test tests::format_one_constant_golden_and_resource_refusals ... ok
+test tests::owners_are_checked_before_constants_and_results_keep_them_alive ... ok
+test tests::all_interner_fingerprints_can_collide_without_changing_identity ... ok
+test tests::registry_aligns_fact_values_without_trusting_unregistered_keys ... ok
+test tests::direct_ite_on_every_three_argument_four_world_function ... ok
+test tests::concurrent_interning_keeps_one_canonical_identity ... ok
+test tests::symbolic_splits_and_essential_reduction_across_table_boundary ... ok
+test tests::canonical_codec_ignores_allocation_order_working_order_and_decoder_anchor ... ok
+test tests::cardinality_constructs_regions_including_duplicate_and_empty_inputs ... ok
+test tests::opposite_direction_alignment_preserves_symbolic_values_without_deadlock ... ok
+test tests::all_truth_functions_on_every_four_world_support ... ok
+test tests::dense_oracle_for_symbolic_completed_functions_in_adversarial_orders ... ok
+test tests::projection_uses_legal_fibres_and_counts_do_not_count_aliases ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.29s
+
+   Doc-tests bumbledb_event
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

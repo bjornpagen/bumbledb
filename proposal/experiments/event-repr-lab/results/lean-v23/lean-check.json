@@ -1,0 +1,559 @@
+{
+  "passed": true,
+  "toolchain": "leanprover/lean4:v4.32.0",
+  "lean_version": "Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)",
+  "lean_binary": "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "source_hashes": {
+    "lean/Differential.lean": "71c7d81b0c85ed79dea81155492203c1c8d62448b6c2bc6ca5e9faedd547c0ae",
+    "lean/EventStorage.lean": "7bfc5d49a2041eea269d5e0140ab4c0cb741e43deca53d7f5513f069c8224007",
+    "lean/FusedProjection.lean": "8b19c4d12c637447bdb5706675b2e255a294ab77fc4e26107fa54833497ded90",
+    "lean/LocalCompletion.lean": "8791435d0c1cc57a9a35e9c24ab6d0bf0ce250c11725cca4ec933fb8a780cd87",
+    "lean/ProjectionGate.lean": "fa871804a6e62fa7e5b2571e342ab694dc46a4a024d71fe8736365673cc81a70",
+    "lean/DirectConditional.lean": "a70409ffe40c1d006140fc8b04c091f83da130846104baab31fe19c60578b1f8",
+    "lean/InformationReadout.lean": "749b7cae85c88fa3b79ee48784d646ee817f9b1d606275a2c2c617ad78642c5d",
+    "lean/FaceCounting.lean": "100cff6a296b19892ba655f8e23bb3ef142a424ede8bdcb022f59b5b02e753f5",
+    "lean/PrefixRetraction.lean": "7ddfc9b019ed6c4ee64d9df8a6acb4e3ff9f2da90bcea439e95d13aa7cb22a1a",
+    "lean/Retraction.lean": "9c38bf69c27c16f75f0acffe89b100669e68d354e2d47ae192224d7ebac8cfea",
+    "lean/FiniteAdmission.lean": "3c8cef8b26be612ff7188e92341e60efc85f305010a4e878bbaf68523a533e76",
+    "lean/EventSignatures.lean": "3d4544bd6616fdcfc1d2ac63f70c1a02dab99b6dc1b682a4b9e54c26d9e98542",
+    "lean/EssentialCoordinates.lean": "1b8cd049ead5d35326e4315a3e967f05b13fcb8960167a237d46287ab703618d",
+    "lean/SupportedDependence.lean": "f2ac657e713c0353ec27068123b6f9ff0192fa446fd80237720e4d6bf8cee82e",
+    "lean/ScopedProduct.lean": "90f8019ba3f1584b7bd215765113fcc9ad67fec3c55939b16ae2fa5ea047ced5",
+    "lean/LegalRelations.lean": "ae526506db739be5678a347df23e5cd52c70bd06087eab4d38741718284d2dcf",
+    "lean/Anchored.lean": "c1465ad33466821b164c4e66098673a947c6ea0627c348a41efb79d6cda2c8d8",
+    "lean/ReadoutMaps.lean": "18790ec4c7ae4a7deb82587b7684db8cc3c3f42f2f23e9fc36c6eaf29f1a06aa",
+    "lean/BaseChange.lean": "0610c96f77665b4bcc674ec1354eae8369eb13fa6ae159038c9bc25b558f3e10",
+    "lean/ViewProduct.lean": "d765669f67f2db84e283acf8f77d010560e30b1a39b2e280449704a288ee91fa",
+    "lean/lean-toolchain": "2773c517aa90b66ea8a2c52bddddf84393157797f8341be0df45294fff7fd32e"
+  },
+  "log": "lean-check.log",
+  "files": [
+    {
+      "file": "Differential.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "Differential.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "Differential.decomposition": [],
+        "Differential.unique_coefficients": [],
+        "Differential.complement_preserves_difference": [],
+        "Differential.xor_coefficients": [],
+        "Differential.product_coefficients": [],
+        "Differential.exists_root": [],
+        "Differential.forall_root": [],
+        "Differential.coefficient_projection_obstruction": [],
+        "Differential.cofactor_population": [],
+        "Differential.tree_roundtrip": [
+          "propext"
+        ],
+        "Differential.tree_injective": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "EventStorage.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "EventStorage.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "EventStorage.coverage_empty_row": [],
+        "EventStorage.conflict_empty_row": [],
+        "EventStorage.complete_key_nonempty": [],
+        "EventStorage.empty_key_counterexample": [],
+        "EventStorage.lift_empty": [],
+        "EventStorage.projection_empty": [],
+        "EventStorage.universal_empty": [],
+        "EventStorage.empty_source_no_target": [],
+        "EventStorage.dropping_empty_changes_complement": [],
+        "EventStorage.nonempty_owner_distinguishes_constants": []
+      },
+      "passed": true
+    },
+    {
+      "file": "FusedProjection.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "FusedProjection.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "FusedProjection.hidden_split": [],
+        "FusedProjection.observed_split": [],
+        "FusedProjection.graph_substitution": [],
+        "FusedProjection.absent_hidden_bit": [],
+        "FusedProjection.contract_union": [],
+        "FusedProjection.complement_memo_obstruction": [],
+        "FusedProjection.separate_witness_obstruction": [],
+        "FusedProjection.target_abstraction_obstruction": []
+      },
+      "passed": true
+    },
+    {
+      "file": "LocalCompletion.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "LocalCompletion.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "LocalCompletion.separately_invariant": [],
+        "LocalCompletion.existential_preserves_invariance": [],
+        "LocalCompletion.universal_preserves_invariance": [],
+        "LocalCompletion.local_completion_exact": [],
+        "LocalCompletion.resolved_environment_invariance": [],
+        "LocalCompletion.indexed_local_completion_exact": [],
+        "LocalCompletion.retained_gate_obstruction": [],
+        "LocalCompletion.coupled_decoder_obstruction": []
+      },
+      "passed": true
+    },
+    {
+      "file": "ProjectionGate.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "ProjectionGate.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "ProjectionGate.elimination_iff_coverage": [],
+        "ProjectionGate.product_gate_elimination": [],
+        "ProjectionGate.completed_product_gate": [],
+        "ProjectionGate.coupled_support_counterexample": [],
+        "ProjectionGate.hidden_environment_counterexample": [],
+        "ProjectionGate.observable_gate_elimination": []
+      },
+      "passed": true
+    },
+    {
+      "file": "DirectConditional.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "DirectConditional.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "DirectConditional.simultaneous_substitution": [
+          "propext"
+        ],
+        "DirectConditional.substitution_composes": [
+          "propext"
+        ],
+        "DirectConditional.identity_substitution": [
+          "propext"
+        ],
+        "DirectConditional.conditional_polarities": [],
+        "DirectConditional.shannon_conditional": [],
+        "DirectConditional.sequential_is_not_simultaneous": []
+      },
+      "passed": true
+    },
+    {
+      "file": "InformationReadout.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "InformationReadout.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "InformationReadout.sandwich": [],
+        "InformationReadout.complement_duality": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "InformationReadout.possible_stable": [],
+        "InformationReadout.guaranteed_stable": [],
+        "InformationReadout.possible_fixed_iff_dependency": [],
+        "InformationReadout.guaranteed_fixed_iff_dependency": [],
+        "InformationReadout.best_observable_bounds": [],
+        "InformationReadout.possible_group_union": [],
+        "InformationReadout.guaranteed_group_intersection": [],
+        "InformationReadout.possible_meet_iff_dependency": [],
+        "InformationReadout.guaranteed_join_iff_dependency": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "InformationReadout.observation_order_iff_fd": [],
+        "InformationReadout.coarser_absorbs_finer": [],
+        "InformationReadout.grouping_counterexamples": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "FaceCounting.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "FaceCounting.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "FaceCounting.omitted_factor_count": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FaceCounting.indexed_factor_count": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FaceCounting.raw_fibre_replacement": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FaceCounting.coupled_support_counterexample": []
+      },
+      "passed": true
+    },
+    {
+      "file": "PrefixRetraction.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "PrefixRetraction.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "PrefixRetraction.feasible_iff": [
+          "propext"
+        ],
+        "PrefixRetraction.repair_lands": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.repair_fixes": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.prefix_preserved": [],
+        "PrefixRetraction.repair_covers_prefix_fibre": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.prefix_exists": [
+          "propext",
+          "Quot.sound"
+        ],
+        "PrefixRetraction.prefix_dependency_reflected": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "Retraction.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "Retraction.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "Retraction.exact_identity": [],
+        "Retraction.boolean_homomorphism": [],
+        "Retraction.complement_homomorphism": [],
+        "Retraction.normalization_idempotent": [
+          "propext"
+        ],
+        "Retraction.normalized_iff_fibre_dependency": [],
+        "Retraction.possibility_reflected": [],
+        "Retraction.commuting_substitution": [
+          "propext"
+        ],
+        "Retraction.fixed_point_obstruction": [],
+        "Retraction.no_commuting_decoder_for_legal_pair": [],
+        "Retraction.whole_face_exists": [],
+        "Retraction.whole_face_forall": [],
+        "Retraction.face_dependency_reflected": [],
+        "Retraction.composition_preserved": [],
+        "Retraction.decoded_identity_right": [],
+        "Retraction.partial_projection_counterexample": [],
+        "Retraction.alias_count_counterexample": [],
+        "Retraction.encoded_unit_is_not_raw_equality": []
+      },
+      "passed": true
+    },
+    {
+      "file": "FiniteAdmission.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "FiniteAdmission.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "FiniteAdmission.finite_admission_iff": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteAdmission.cardinality_alone_is_insufficient": []
+      },
+      "passed": true
+    },
+    {
+      "file": "EventSignatures.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "EventSignatures.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "EventSignatures.possible_apply_iff": [],
+        "EventSignatures.full_apply_iff": [],
+        "EventSignatures.signature_nonempty": [],
+        "EventSignatures.swap": [],
+        "EventSignatures.complement_left": [
+          "propext"
+        ],
+        "EventSignatures.complement_right": [
+          "propext"
+        ],
+        "EventSignatures.signature_iff_all_binary_tests": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EventSignatures.composition_distinguishes_same_signature": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EventSignatures.no_signature_factorization": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "EssentialCoordinates.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "EssentialCoordinates.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "EssentialCoordinates.essential_sufficient": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.essential_minimum": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.support_iff_contains_essential": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.complement_essential": [
+          "propext"
+        ],
+        "EssentialCoordinates.canonical_projection": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.cofactor_characterization": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.quantified_coordinate_inessential": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.cofactor_essential_subset": [
+          "propext",
+          "Quot.sound"
+        ],
+        "EssentialCoordinates.cofactor_can_remove_other_dependence": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "SupportedDependence.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "SupportedDependence.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "SupportedDependence.product_support_rectangular": [
+          "propext"
+        ],
+        "SupportedDependence.intersection_when_rectangular": [
+          "propext"
+        ],
+        "SupportedDependence.copied_has_incomparable_dependencies": [],
+        "SupportedDependence.no_least_supported_dependency": []
+      },
+      "passed": true
+    },
+    {
+      "file": "ScopedProduct.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "ScopedProduct.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "ScopedProduct.guarded_equals_staged": [
+          "Quot.sound"
+        ],
+        "ScopedProduct.full_support_specialization": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ScopedProduct.support_certificates_remove_gates": [],
+        "ScopedProduct.output_support_is_necessary": [],
+        "ScopedProduct.witness_support_is_necessary": []
+      },
+      "passed": true
+    },
+    {
+      "file": "LegalRelations.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "LegalRelations.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "LegalRelations.composition_associative": [],
+        "LegalRelations.identity_left": [],
+        "LegalRelations.identity_right": [],
+        "LegalRelations.residual_adjunction": [],
+        "LegalRelations.staged_is_lifted_composition": [],
+        "LegalRelations.exists_fixed_iff_cylindrical": [],
+        "LegalRelations.readout_fixed_iff_dependency": [],
+        "LegalRelations.full_fixed_does_not_test_support": [],
+        "LegalRelations.lifted_events_compose": [],
+        "LegalRelations.ambient_support_does_not_certify_role": [
+          "propext",
+          "Quot.sound"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "Anchored.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "Anchored.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "Anchored.root_excludes_anchor": [
+          "propext"
+        ],
+        "Anchored.root_excludes_outside": [
+          "propext"
+        ],
+        "Anchored.decode_root": [
+          "propext"
+        ],
+        "Anchored.complement_same_root": [
+          "propext"
+        ],
+        "Anchored.complement_flips_polarity": [
+          "propext"
+        ],
+        "Anchored.exact_identity": [
+          "propext"
+        ],
+        "Anchored.adjusted_zero": [
+          "propext"
+        ],
+        "Anchored.binary_apply_root": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "ReadoutMaps.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "ReadoutMaps.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "ReadoutMaps.possibility_iff_exact_support_image": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "ReadoutMaps.occupancy_preserved": [],
+        "ReadoutMaps.equality_reflected": [],
+        "ReadoutMaps.relative_complement_preserved": [
+          "propext",
+          "Quot.sound"
+        ],
+        "ReadoutMaps.fixing_coordinate_can_remove_possibility": [
+          "propext"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "file": "BaseChange.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "BaseChange.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "BaseChange.relational_certificate_iff": [],
+        "BaseChange.automatic_inclusion": [],
+        "BaseChange.exact_iff_complete_fibres": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "BaseChange.universal_base_change": [],
+        "BaseChange.nonvacuous_base_change": [],
+        "BaseChange.copied_bit_counterexample": [],
+        "BaseChange.complete_fibres_need_not_have_unique_lifts": []
+      },
+      "passed": true
+    },
+    {
+      "file": "ViewProduct.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "ViewProduct.lean"
+      ],
+      "exit_code": 0,
+      "checked_axioms": {
+        "ViewProduct.contraction_through_image": [],
+        "ViewProduct.contraction_exact_iff_image": [
+          "propext",
+          "Classical.choice",
+          "Quot.sound"
+        ],
+        "ViewProduct.product_is_composition": [],
+        "ViewProduct.separate_surjectivity_is_insufficient": [
+          "propext"
+        ],
+        "ViewProduct.same_roots_different_maps": [
+          "propext"
+        ],
+        "ViewProduct.output_bijection": [],
+        "ViewProduct.joint_reindex_with_section": [],
+        "ViewProduct.shannon_merge": [
+          "propext"
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "verifier_sha256": "baac6e8a10fd303bf245bf69496b45a6a4d3325b89ef3a3318cdf99a275821dc",
+  "boundary": "Kernel-checked denotational theorems. Rust correspondence, arena canonicality and machine code are not formally verified."
+}

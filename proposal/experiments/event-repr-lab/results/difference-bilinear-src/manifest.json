@@ -1,0 +1,9 @@
+{
+  "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+  "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+  "difference-prototype/src/lib.rs": "89604e0095434a5d7f481a6af1d02eb3d14f562e57c76868209a6488b41ef331",
+  "difference-prototype/src/main.rs": "b3a9838b7211315587e389be99d9a46002463410e5da86e86fcbab84e39289d6",
+  "difference-prototype/src/tests.rs": "ce77c5571a8d15babd9f53deb3146ddf4c7db97838b46619fed66a4cb410b70d",
+  "difference_shapes.py": "2e53fe0b4d8a2666ba7eaf252d3b7690937f0faa4bad0721b280f2fbad4bd9c8",
+  "difference_check.py": "2bd42469f4637a576c902105a51697ebfcdea36ce28a5d7fdd7aff529b1e0fa5"
+}

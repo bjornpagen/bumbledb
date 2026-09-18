@@ -1,0 +1,874 @@
+{
+  "seed": 20260917,
+  "trials": 5,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "cdd79d95bdcbf6ec15cc366593b17f7e77e1b9f8dcd16bec608c1a164b0e1e16",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "40d62e0fdb0e23b985dc23db3b93129c91938f6e1d16f1691f758b01cd7f1183",
+      "src/carrier.rs": "2e92fd77c0220bbcc3b49d78062eee260b8390e39a7fac3bcae2bebf5bd6303d",
+      "src/diagram.rs": "bbea0bc4f70d0caa43e2028ef666a7c9c634e852bf4f324ca0e7a2ab1dd5b9e8",
+      "src/finite.rs": "fe922ac357dd1c2625d1e40d2928bbf86ec7d252147936442b1eb5536a9bd0b9",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "b0638b300eb8efcfdd333e7072a55fabeee967f7df5a72ec1395798989be53e9",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/packed.rs": "ee063385f883837a7248322fb10dcd2d4101a9c68309c949be758b9e7a160202",
+      "src/relational_core.rs": "c757b649a062f3b3eada667f166dc6afe40d4cc7c7c7ffce5adce438a638bbae",
+      "src/relations.rs": "bc01ce5a4d99cc1427f6c2c02bd83640b40f9ac6123d78f879e7ee09c94e5868",
+      "src/semantic_checks.rs": "803f3b2665a1cdce436f8a16b93a2f692bb5d370d1670d66104bffc092e3996e"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T22:04:44.253732+00:00",
+    "build_started_utc": "2026-09-17T21:59:51.661406+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.7217011451721191,
+      "max_rss_bytes": 29868032,
+      "log": "observation-law-initial-logs/job-000-verify-local.log",
+      "rows": [
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        4.62646484375,
+        8.74951171875,
+        12.83642578125
+      ],
+      "loadavg_end": [
+        4.62646484375,
+        8.74951171875,
+        12.83642578125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "laws",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 6.543641090393066,
+      "max_rss_bytes": 15990784,
+      "log": "observation-law-initial-logs/job-001-laws-packed512----bit-major-local.log",
+      "rows": [
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 1,
+          "coefficient_bins": 13,
+          "memo": false,
+          "build_s": [
+            0.000816125,
+            0.000620042,
+            0.001067292,
+            0.000651208,
+            0.000616042
+          ],
+          "join_only_s": [
+            0.000100833,
+            5.709e-06,
+            5.375e-06,
+            5.25e-06,
+            5.25e-06
+          ],
+          "fresh_s": [
+            0.001083708,
+            0.000897958,
+            0.000938667,
+            0.000876875,
+            0.000837125
+          ],
+          "warm_s": [
+            0.00084175,
+            0.000806,
+            0.000794666,
+            0.000804833,
+            0.000791459
+          ],
+          "algebra_s": [
+            0.000983209,
+            0.000826833,
+            0.000861458,
+            0.000805875,
+            0.000772875
+          ],
+          "contraction_s": [
+            5.3125e-05,
+            3.7583e-05,
+            4.2791e-05,
+            3.7416e-05,
+            3.3583e-05
+          ],
+          "evaluation_s": [
+            3.5333e-05,
+            3.3125e-05,
+            3.4208e-05,
+            3.3125e-05,
+            3.0625e-05
+          ],
+          "input_bytes_est": 13476,
+          "final_bytes_est": 73364,
+          "observation_plan_bytes_est": 1904,
+          "law_bytes_est": 1034,
+          "closure_iterations": 46,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 1024,
+          "examples_beta": [
+            "4/7",
+            "4/7",
+            "4/7",
+            "1",
+            "0"
+          ],
+          "examples_mean": [
+            "13/25",
+            "13/25",
+            "13/25",
+            "1",
+            "0"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 1,
+          "coefficient_bins": 13,
+          "memo": true,
+          "build_s": [
+            0.000816125,
+            0.000620042,
+            0.001067292,
+            0.000651208,
+            0.000616042
+          ],
+          "join_only_s": [
+            0.000100833,
+            5.709e-06,
+            5.375e-06,
+            5.25e-06,
+            5.25e-06
+          ],
+          "fresh_s": [
+            0.000298917,
+            0.000351125,
+            0.000296042,
+            0.000313,
+            0.000363125
+          ],
+          "warm_s": [
+            8.1e-05,
+            7.1917e-05,
+            7.1791e-05,
+            7.1667e-05,
+            7.1375e-05
+          ],
+          "algebra_s": [
+            0.000235959,
+            0.000271834,
+            0.000231417,
+            0.000244333,
+            0.00028475
+          ],
+          "contraction_s": [
+            3.2875e-05,
+            4.2791e-05,
+            3.4125e-05,
+            3.6625e-05,
+            3.8917e-05
+          ],
+          "evaluation_s": [
+            2.9791e-05,
+            3.6375e-05,
+            3.0375e-05,
+            3.1875e-05,
+            3.9167e-05
+          ],
+          "input_bytes_est": 13476,
+          "final_bytes_est": 86356,
+          "observation_plan_bytes_est": 1904,
+          "law_bytes_est": 1034,
+          "closure_iterations": 46,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 1024,
+          "examples_beta": [
+            "4/7",
+            "4/7",
+            "4/7",
+            "1",
+            "0"
+          ],
+          "examples_mean": [
+            "13/25",
+            "13/25",
+            "13/25",
+            "1",
+            "0"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 2,
+          "coefficient_bins": 49,
+          "memo": false,
+          "build_s": [
+            0.000590375,
+            0.000584875,
+            0.000601083,
+            0.000584167,
+            0.000575625
+          ],
+          "join_only_s": [
+            1.6334e-05,
+            5.375e-06,
+            5.167e-06,
+            5.083e-06,
+            5.083e-06
+          ],
+          "fresh_s": [
+            0.000920833,
+            0.000884042,
+            0.000886417,
+            0.000909667,
+            0.000902209
+          ],
+          "warm_s": [
+            0.000941792,
+            0.000862542,
+            0.000918584,
+            0.00088875,
+            0.000909917
+          ],
+          "algebra_s": [
+            0.000812,
+            0.000777333,
+            0.000776417,
+            0.000804542,
+            0.000795917
+          ],
+          "contraction_s": [
+            5.9042e-05,
+            5.0458e-05,
+            5.5625e-05,
+            5.175e-05,
+            5.4417e-05
+          ],
+          "evaluation_s": [
+            4.9708e-05,
+            5.6125e-05,
+            5.4208e-05,
+            5.3334e-05,
+            5.1708e-05
+          ],
+          "input_bytes_est": 13476,
+          "final_bytes_est": 73364,
+          "observation_plan_bytes_est": 3072,
+          "law_bytes_est": 3855,
+          "closure_iterations": 46,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 1024,
+          "examples_beta": [
+            "4/7",
+            "4/7",
+            "4/7",
+            "1",
+            "0"
+          ],
+          "examples_mean": [
+            "1/2",
+            "1/2",
+            "1/2",
+            "1",
+            "0"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 2,
+          "coefficient_bins": 49,
+          "memo": true,
+          "build_s": [
+            0.000590375,
+            0.000584875,
+            0.000601083,
+            0.000584167,
+            0.000575625
+          ],
+          "join_only_s": [
+            1.6334e-05,
+            5.375e-06,
+            5.167e-06,
+            5.083e-06,
+            5.083e-06
+          ],
+          "fresh_s": [
+            0.000351292,
+            0.000377042,
+            0.000325083,
+            0.000348458,
+            0.000409875
+          ],
+          "warm_s": [
+            0.000128875,
+            0.00011075,
+            0.000110584,
+            0.000123292,
+            0.00011575
+          ],
+          "algebra_s": [
+            0.000245292,
+            0.000260917,
+            0.000224708,
+            0.000243042,
+            0.00027325
+          ],
+          "contraction_s": [
+            5.6667e-05,
+            6.2416e-05,
+            5.1583e-05,
+            5.4584e-05,
+            6.9375e-05
+          ],
+          "evaluation_s": [
+            4.925e-05,
+            5.35e-05,
+            4.875e-05,
+            5.075e-05,
+            6.7041e-05
+          ],
+          "input_bytes_est": 13476,
+          "final_bytes_est": 86356,
+          "observation_plan_bytes_est": 3072,
+          "law_bytes_est": 3855,
+          "closure_iterations": 46,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 1024,
+          "examples_beta": [
+            "4/7",
+            "4/7",
+            "4/7",
+            "1",
+            "0"
+          ],
+          "examples_mean": [
+            "1/2",
+            "1/2",
+            "1/2",
+            "1",
+            "0"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 1,
+          "coefficient_bins": 19,
+          "memo": false,
+          "build_s": [
+            0.035593167,
+            0.032476917,
+            0.031883625,
+            0.034128375,
+            0.032944792
+          ],
+          "join_only_s": [
+            1.7792e-05,
+            5.417e-06,
+            5.125e-06,
+            5.083e-06,
+            5.083e-06
+          ],
+          "fresh_s": [
+            0.001806875,
+            0.001707,
+            0.0017265,
+            0.0017685,
+            0.001670542
+          ],
+          "warm_s": [
+            0.00151675,
+            0.001408541,
+            0.001466458,
+            0.001483375,
+            0.001381458
+          ],
+          "algebra_s": [
+            0.001559916,
+            0.001474291,
+            0.001452333,
+            0.00152975,
+            0.001439875
+          ],
+          "contraction_s": [
+            0.000191958,
+            0.000176958,
+            0.000217958,
+            0.000180958,
+            0.000175417
+          ],
+          "evaluation_s": [
+            5.475e-05,
+            5.5458e-05,
+            5.575e-05,
+            5.7334e-05,
+            5.5042e-05
+          ],
+          "input_bytes_est": 71620,
+          "final_bytes_est": 497548,
+          "observation_plan_bytes_est": 2896,
+          "law_bytes_est": 1578,
+          "closure_iterations": 52,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 65536,
+          "examples_beta": [
+            "46/231",
+            "46/231",
+            "761/3003",
+            "23/42",
+            "8/21"
+          ],
+          "examples_mean": [
+            "2197/15625",
+            "2197/15625",
+            "474641/1953125",
+            "71/125",
+            "241/625"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 1,
+          "coefficient_bins": 19,
+          "memo": true,
+          "build_s": [
+            0.035593167,
+            0.032476917,
+            0.031883625,
+            0.034128375,
+            0.032944792
+          ],
+          "join_only_s": [
+            1.7792e-05,
+            5.417e-06,
+            5.125e-06,
+            5.083e-06,
+            5.083e-06
+          ],
+          "fresh_s": [
+            0.000891041,
+            0.000953125,
+            0.001081709,
+            0.000966875,
+            0.001046208
+          ],
+          "warm_s": [
+            0.000263459,
+            0.000230084,
+            0.000268292,
+            0.000253041,
+            0.00022325
+          ],
+          "algebra_s": [
+            0.000671541,
+            0.000713375,
+            0.000821375,
+            0.000733167,
+            0.000812917
+          ],
+          "contraction_s": [
+            0.000167083,
+            0.000185333,
+            0.000191666,
+            0.000176667,
+            0.000176792
+          ],
+          "evaluation_s": [
+            5.2292e-05,
+            5.4208e-05,
+            6.8375e-05,
+            5.6792e-05,
+            5.6333e-05
+          ],
+          "input_bytes_est": 71620,
+          "final_bytes_est": 510540,
+          "observation_plan_bytes_est": 2896,
+          "law_bytes_est": 1578,
+          "closure_iterations": 52,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 65536,
+          "examples_beta": [
+            "46/231",
+            "46/231",
+            "761/3003",
+            "23/42",
+            "8/21"
+          ],
+          "examples_mean": [
+            "2197/15625",
+            "2197/15625",
+            "474641/1953125",
+            "71/125",
+            "241/625"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 2,
+          "coefficient_bins": 100,
+          "memo": false,
+          "build_s": [
+            0.032394833,
+            0.032446625,
+            0.032849584,
+            0.032359458,
+            0.032840417
+          ],
+          "join_only_s": [
+            1.9625e-05,
+            5.583e-06,
+            5.417e-06,
+            5.375e-06,
+            5.333e-06
+          ],
+          "fresh_s": [
+            0.00203125,
+            0.0020585,
+            0.002092958,
+            0.001999125,
+            0.002078041
+          ],
+          "warm_s": [
+            0.001760792,
+            0.001756625,
+            0.001844958,
+            0.001900334,
+            0.00171625
+          ],
+          "algebra_s": [
+            0.00148175,
+            0.001451084,
+            0.001511917,
+            0.001458,
+            0.001494708
+          ],
+          "contraction_s": [
+            0.000432541,
+            0.000485625,
+            0.000442583,
+            0.000422333,
+            0.000461041
+          ],
+          "evaluation_s": [
+            0.000116584,
+            0.000121625,
+            0.000137833,
+            0.000118625,
+            0.000122166
+          ],
+          "input_bytes_est": 71620,
+          "final_bytes_est": 497548,
+          "observation_plan_bytes_est": 4064,
+          "law_bytes_est": 8164,
+          "closure_iterations": 52,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 65536,
+          "examples_beta": [
+            "4/21",
+            "4/21",
+            "75/308",
+            "1/2",
+            "31/98"
+          ],
+          "examples_mean": [
+            "13/100",
+            "13/100",
+            "829/4000",
+            "1/2",
+            "17/50"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        },
+        {
+          "kind": "law_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "parameter_groups": 2,
+          "coefficient_bins": 100,
+          "memo": true,
+          "build_s": [
+            0.032394833,
+            0.032446625,
+            0.032849584,
+            0.032359458,
+            0.032840417
+          ],
+          "join_only_s": [
+            1.9625e-05,
+            5.583e-06,
+            5.417e-06,
+            5.375e-06,
+            5.333e-06
+          ],
+          "fresh_s": [
+            0.00121425,
+            0.001329167,
+            0.001253417,
+            0.001261541,
+            0.001237667
+          ],
+          "warm_s": [
+            0.000580167,
+            0.000555083,
+            0.000533417,
+            0.000537417,
+            0.000544833
+          ],
+          "algebra_s": [
+            0.000692084,
+            0.000781667,
+            0.000718917,
+            0.000711833,
+            0.000709666
+          ],
+          "contraction_s": [
+            0.000406959,
+            0.000428083,
+            0.000415667,
+            0.000430041,
+            0.000409792
+          ],
+          "evaluation_s": [
+            0.000115,
+            0.00011925,
+            0.000118666,
+            0.000119291,
+            0.000117916
+          ],
+          "input_bytes_est": 71620,
+          "final_bytes_est": 510540,
+          "observation_plan_bytes_est": 4064,
+          "law_bytes_est": 8164,
+          "closure_iterations": 52,
+          "observations": 240,
+          "undefined_observations": 80,
+          "evidence_admissible_worlds": 65536,
+          "examples_beta": [
+            "4/21",
+            "4/21",
+            "75/308",
+            "1/2",
+            "31/98"
+          ],
+          "examples_mean": [
+            "13/100",
+            "13/100",
+            "829/4000",
+            "1/2",
+            "17/50"
+          ],
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        4.62646484375,
+        8.74951171875,
+        12.83642578125
+      ],
+      "loadavg_end": [
+        4.65625,
+        8.68701171875,
+        12.7900390625
+      ]
+    }
+  ]
+}

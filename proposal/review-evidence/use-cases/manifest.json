@@ -1,0 +1,26 @@
+[
+  {
+    "url": "https://docs.typesafe.ai/primitives.md",
+    "path": "proposal/review-evidence/use-cases/primitives.md",
+    "bytes": 24727,
+    "sha256": "6cbe8960e23863cf2a1c8c6892d2fa4a0c0b42c9a4f034b6cec0727f2ec8c728"
+  },
+  {
+    "url": "https://docs.typesafe.ai/primitives/choice.md",
+    "path": "proposal/review-evidence/use-cases/primitives-choice.md",
+    "bytes": 26662,
+    "sha256": "5ba42269e9a07ac5b1220ee6b6c69f060f57b6a7ff619cfedcb916acfb6c92c5"
+  },
+  {
+    "url": "https://docs.typesafe.ai/primitives/score.md",
+    "path": "proposal/review-evidence/use-cases/primitives-score.md",
+    "bytes": 31889,
+    "sha256": "653ca2a688bf6613bf4c1621046a22c66e672a90cf40992c1fe218a8e96768c4"
+  },
+  {
+    "url": "https://docs.typesafe.ai/api.md",
+    "path": "proposal/review-evidence/use-cases/api.md",
+    "bytes": 10262,
+    "sha256": "5b9aee330404378bfe9520924fadb447d14b840f082fc8b9511e340ed7baa4c8"
+  }
+]

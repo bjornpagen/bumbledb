@@ -1,0 +1,174 @@
+FusedProjection.lean
+'FusedProjection.hidden_split' does not depend on any axioms
+'FusedProjection.observed_split' does not depend on any axioms
+'FusedProjection.graph_substitution' does not depend on any axioms
+'FusedProjection.absent_hidden_bit' does not depend on any axioms
+'FusedProjection.contract_union' does not depend on any axioms
+'FusedProjection.complement_memo_obstruction' does not depend on any axioms
+'FusedProjection.separate_witness_obstruction' does not depend on any axioms
+'FusedProjection.target_abstraction_obstruction' does not depend on any axioms
+
+LocalCompletion.lean
+'LocalCompletion.separately_invariant' does not depend on any axioms
+'LocalCompletion.existential_preserves_invariance' does not depend on any axioms
+'LocalCompletion.universal_preserves_invariance' does not depend on any axioms
+'LocalCompletion.local_completion_exact' does not depend on any axioms
+'LocalCompletion.resolved_environment_invariance' does not depend on any axioms
+'LocalCompletion.indexed_local_completion_exact' does not depend on any axioms
+'LocalCompletion.retained_gate_obstruction' does not depend on any axioms
+'LocalCompletion.coupled_decoder_obstruction' does not depend on any axioms
+
+ProjectionGate.lean
+'ProjectionGate.elimination_iff_coverage' does not depend on any axioms
+'ProjectionGate.product_gate_elimination' does not depend on any axioms
+'ProjectionGate.completed_product_gate' does not depend on any axioms
+'ProjectionGate.coupled_support_counterexample' does not depend on any axioms
+'ProjectionGate.hidden_environment_counterexample' does not depend on any axioms
+'ProjectionGate.observable_gate_elimination' does not depend on any axioms
+
+DirectConditional.lean
+'DirectConditional.simultaneous_substitution' depends on axioms: [propext]
+'DirectConditional.substitution_composes' depends on axioms: [propext]
+'DirectConditional.identity_substitution' depends on axioms: [propext]
+'DirectConditional.conditional_polarities' does not depend on any axioms
+'DirectConditional.shannon_conditional' does not depend on any axioms
+'DirectConditional.sequential_is_not_simultaneous' does not depend on any axioms
+
+InformationReadout.lean
+'InformationReadout.sandwich' does not depend on any axioms
+'InformationReadout.complement_duality' depends on axioms: [propext, Classical.choice, Quot.sound]
+'InformationReadout.possible_stable' does not depend on any axioms
+'InformationReadout.guaranteed_stable' does not depend on any axioms
+'InformationReadout.possible_fixed_iff_dependency' does not depend on any axioms
+'InformationReadout.guaranteed_fixed_iff_dependency' does not depend on any axioms
+'InformationReadout.best_observable_bounds' does not depend on any axioms
+'InformationReadout.possible_group_union' does not depend on any axioms
+'InformationReadout.guaranteed_group_intersection' does not depend on any axioms
+'InformationReadout.possible_meet_iff_dependency' does not depend on any axioms
+'InformationReadout.guaranteed_join_iff_dependency' depends on axioms: [propext, Classical.choice, Quot.sound]
+'InformationReadout.observation_order_iff_fd' does not depend on any axioms
+'InformationReadout.coarser_absorbs_finer' does not depend on any axioms
+'InformationReadout.grouping_counterexamples' depends on axioms: [propext]
+
+FaceCounting.lean
+'FaceCounting.omitted_factor_count' depends on axioms: [propext, Quot.sound]
+'FaceCounting.indexed_factor_count' depends on axioms: [propext, Quot.sound]
+'FaceCounting.raw_fibre_replacement' depends on axioms: [propext, Quot.sound]
+'FaceCounting.coupled_support_counterexample' does not depend on any axioms
+
+PrefixRetraction.lean
+'PrefixRetraction.feasible_iff' depends on axioms: [propext]
+'PrefixRetraction.repair_lands' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.repair_fixes' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.prefix_preserved' does not depend on any axioms
+'PrefixRetraction.repair_covers_prefix_fibre' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.prefix_exists' depends on axioms: [propext, Quot.sound]
+'PrefixRetraction.prefix_dependency_reflected' depends on axioms: [propext, Quot.sound]
+
+Retraction.lean
+'Retraction.exact_identity' does not depend on any axioms
+'Retraction.boolean_homomorphism' does not depend on any axioms
+'Retraction.complement_homomorphism' does not depend on any axioms
+'Retraction.normalization_idempotent' depends on axioms: [propext]
+'Retraction.normalized_iff_fibre_dependency' does not depend on any axioms
+'Retraction.possibility_reflected' does not depend on any axioms
+'Retraction.commuting_substitution' depends on axioms: [propext]
+'Retraction.fixed_point_obstruction' does not depend on any axioms
+'Retraction.no_commuting_decoder_for_legal_pair' does not depend on any axioms
+'Retraction.whole_face_exists' does not depend on any axioms
+'Retraction.whole_face_forall' does not depend on any axioms
+'Retraction.face_dependency_reflected' does not depend on any axioms
+'Retraction.composition_preserved' does not depend on any axioms
+'Retraction.decoded_identity_right' does not depend on any axioms
+'Retraction.partial_projection_counterexample' does not depend on any axioms
+'Retraction.alias_count_counterexample' does not depend on any axioms
+'Retraction.encoded_unit_is_not_raw_equality' does not depend on any axioms
+
+FiniteAdmission.lean
+'FiniteAdmission.finite_admission_iff' depends on axioms: [propext, Quot.sound]
+'FiniteAdmission.cardinality_alone_is_insufficient' does not depend on any axioms
+
+EventSignatures.lean
+'EventSignatures.possible_apply_iff' does not depend on any axioms
+'EventSignatures.full_apply_iff' does not depend on any axioms
+'EventSignatures.signature_nonempty' does not depend on any axioms
+'EventSignatures.swap' does not depend on any axioms
+'EventSignatures.complement_left' depends on axioms: [propext]
+'EventSignatures.complement_right' depends on axioms: [propext]
+'EventSignatures.signature_iff_all_binary_tests' depends on axioms: [propext, Quot.sound]
+'EventSignatures.composition_distinguishes_same_signature' depends on axioms: [propext, Quot.sound]
+'EventSignatures.no_signature_factorization' depends on axioms: [propext, Quot.sound]
+
+EssentialCoordinates.lean
+'EssentialCoordinates.cofactor_essential_subset' depends on axioms: [propext, Quot.sound]
+'EssentialCoordinates.cofactor_can_remove_other_dependence' depends on axioms: [propext]
+'EssentialCoordinates.essential_sufficient' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EssentialCoordinates.cofactor_characterization' depends on axioms: [propext, Quot.sound]
+'EssentialCoordinates.quantified_coordinate_inessential' depends on axioms: [propext, Quot.sound]
+'EssentialCoordinates.essential_minimum' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EssentialCoordinates.support_iff_contains_essential' depends on axioms: [propext, Classical.choice, Quot.sound]
+'EssentialCoordinates.complement_essential' depends on axioms: [propext]
+'EssentialCoordinates.canonical_projection' depends on axioms: [propext, Classical.choice, Quot.sound]
+
+SupportedDependence.lean
+'SupportedDependence.product_support_rectangular' depends on axioms: [propext]
+'SupportedDependence.intersection_when_rectangular' depends on axioms: [propext]
+'SupportedDependence.copied_has_incomparable_dependencies' does not depend on any axioms
+'SupportedDependence.no_least_supported_dependency' does not depend on any axioms
+
+ScopedProduct.lean
+'ScopedProduct.guarded_equals_staged' depends on axioms: [Quot.sound]
+'ScopedProduct.full_support_specialization' depends on axioms: [propext, Quot.sound]
+'ScopedProduct.support_certificates_remove_gates' does not depend on any axioms
+'ScopedProduct.output_support_is_necessary' does not depend on any axioms
+'ScopedProduct.witness_support_is_necessary' does not depend on any axioms
+
+LegalRelations.lean
+'LegalRelations.composition_associative' does not depend on any axioms
+'LegalRelations.identity_left' does not depend on any axioms
+'LegalRelations.identity_right' does not depend on any axioms
+'LegalRelations.residual_adjunction' does not depend on any axioms
+'LegalRelations.staged_is_lifted_composition' does not depend on any axioms
+'LegalRelations.exists_fixed_iff_cylindrical' does not depend on any axioms
+'LegalRelations.readout_fixed_iff_dependency' does not depend on any axioms
+'LegalRelations.full_fixed_does_not_test_support' does not depend on any axioms
+'LegalRelations.lifted_events_compose' does not depend on any axioms
+'LegalRelations.ambient_support_does_not_certify_role' depends on axioms: [propext, Quot.sound]
+
+Anchored.lean
+'Anchored.root_excludes_anchor' depends on axioms: [propext]
+'Anchored.root_excludes_outside' depends on axioms: [propext]
+'Anchored.decode_root' depends on axioms: [propext]
+'Anchored.complement_same_root' depends on axioms: [propext]
+'Anchored.complement_flips_polarity' depends on axioms: [propext]
+'Anchored.exact_identity' depends on axioms: [propext]
+'Anchored.adjusted_zero' depends on axioms: [propext]
+'Anchored.binary_apply_root' depends on axioms: [propext]
+
+ReadoutMaps.lean
+'ReadoutMaps.possibility_iff_exact_support_image' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ReadoutMaps.occupancy_preserved' does not depend on any axioms
+'ReadoutMaps.equality_reflected' does not depend on any axioms
+'ReadoutMaps.relative_complement_preserved' depends on axioms: [propext, Quot.sound]
+'ReadoutMaps.fixing_coordinate_can_remove_possibility' depends on axioms: [propext]
+
+BaseChange.lean
+'BaseChange.automatic_inclusion' does not depend on any axioms
+'BaseChange.relational_certificate_iff' does not depend on any axioms
+'BaseChange.exact_iff_complete_fibres' depends on axioms: [propext, Classical.choice, Quot.sound]
+'BaseChange.universal_base_change' does not depend on any axioms
+'BaseChange.nonvacuous_base_change' does not depend on any axioms
+'BaseChange.copied_bit_counterexample' does not depend on any axioms
+'BaseChange.complete_fibres_need_not_have_unique_lifts' does not depend on any axioms
+
+ViewProduct.lean
+'ViewProduct.output_bijection' does not depend on any axioms
+'ViewProduct.joint_reindex_with_section' does not depend on any axioms
+'ViewProduct.shannon_merge' depends on axioms: [propext]
+'ViewProduct.contraction_through_image' does not depend on any axioms
+'ViewProduct.contraction_exact_iff_image' depends on axioms: [propext, Classical.choice, Quot.sound]
+'ViewProduct.product_is_composition' does not depend on any axioms
+'ViewProduct.separate_surjectivity_is_insufficient' depends on axioms: [propext]
+'ViewProduct.same_roots_different_maps' depends on axioms: [propext]
+
+Lean proof check: passed

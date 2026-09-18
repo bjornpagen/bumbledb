@@ -1,0 +1,6030 @@
+{
+  "seed": 20260917,
+  "trials": 7,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "227e8c1dd9429ec76164f74e1cff605cd4b0d0c98cbdbb858808def819f2a9d9",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "223783ce05cd0a6755ec05cf91cdaef303b473ae6db86a208232dc48c0346cd4",
+      "src/carrier.rs": "01120642e06ea00d15c06ab7838a0cbb8199d7ee01376953a65e4aecf46bb096",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagram.rs": "2bc9f674b850fb69304f814aeba00d39ea56e3b7e54ffa43d7d20e2871bea7c3",
+      "src/finite.rs": "404048365f303c278bb966821ae35c68308da6751c01ef3edc3a1d3d7e10af86",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "ee97de14428c4757da3a199688580c41c703578ed4d7895391934fbdbad25177",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/packed.rs": "b29f8fee984cd134cd24772b135f380d87da55b1610e555ec451b10228fa8d6d",
+      "src/relational_core.rs": "c757b649a062f3b3eada667f166dc6afe40d4cc7c7c7ffce5adce438a638bbae",
+      "src/relations.rs": "65b5f3652a76dee22cad0022067a855ca4e1464b89aafa14196ccfafcd419db9",
+      "src/semantic_checks.rs": "cd55b2559349e30fbf8760762a37def4b4bb977b5cbe3995443b80a9c0241222",
+      "src/transfer.rs": "3c45c54c88d3fb32afb89d3db20c2d73d77cb65588c8e6b64a7b253df7a6a360",
+      "src/transfer_bench.rs": "cf2f34288df0c616d5f773965a1ed86b1a591440f0d1350dc238cfd2f9d9be74",
+      "src/transfer_checks.rs": "4ae1e7ea83f94a121123feedee8aa04b38f227f0988b1454e95e98a402a34211"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T22:55:26.160119+00:00",
+    "build_started_utc": "2026-09-17T22:49:26.955831+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct"
+      },
+      "status": "passed",
+      "elapsed_s": 1.2038159370422363,
+      "max_rss_bytes": 33964032,
+      "log": "transfer-direct-sweep-logs/job-000-verify-local-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        35.24755859375,
+        21.2158203125,
+        17.978515625
+      ],
+      "loadavg_end": [
+        35.24755859375,
+        21.2158203125,
+        17.978515625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "dense",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 3.893773078918457,
+      "max_rss_bytes": 43499520,
+      "log": "transfer-direct-sweep-logs/job-001-transport-dense----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "dense",
+          "query_s": [
+            0.000179417,
+            7.6292e-05,
+            7.6209e-05,
+            7.5375e-05,
+            7.4041e-05,
+            7.4e-05,
+            7.7125e-05
+          ],
+          "encode_s": [
+            2.9834e-05,
+            2.5916e-05,
+            2.4709e-05,
+            2.6167e-05,
+            2.3791e-05,
+            2.4667e-05,
+            2.4917e-05
+          ],
+          "decode_s": [
+            2.0333e-05,
+            1.6875e-05,
+            1.4333e-05,
+            1.425e-05,
+            1.3875e-05,
+            1.3833e-05,
+            1.4292e-05
+          ],
+          "target_setup_s": [
+            1.959e-06,
+            2.125e-06,
+            5.83e-07,
+            5.84e-07,
+            4.58e-07,
+            5e-07,
+            4.58e-07
+          ],
+          "restore_s": [
+            3.6084e-05,
+            2.8e-05,
+            2.5833e-05,
+            2.5709e-05,
+            2.6083e-05,
+            2.5041e-05,
+            2.525e-05
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 20872,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "dense",
+          "query_s": [
+            7.8833e-05,
+            7.6917e-05,
+            7.575e-05,
+            7.4292e-05,
+            7.25e-05,
+            7.2708e-05,
+            7.2542e-05
+          ],
+          "encode_s": [
+            2.4958e-05,
+            2.3458e-05,
+            2.3375e-05,
+            2.5583e-05,
+            2.3208e-05,
+            2.325e-05,
+            2.3166e-05
+          ],
+          "decode_s": [
+            1.6541e-05,
+            1.35e-05,
+            1.3375e-05,
+            1.3458e-05,
+            1.3333e-05,
+            1.3334e-05,
+            1.3583e-05
+          ],
+          "target_setup_s": [
+            1.75e-06,
+            5e-07,
+            4.17e-07,
+            3.75e-07,
+            3.75e-07,
+            3.75e-07,
+            3.75e-07
+          ],
+          "restore_s": [
+            2.5916e-05,
+            2.4459e-05,
+            2.4042e-05,
+            2.3959e-05,
+            2.4791e-05,
+            2.4042e-05,
+            2.4334e-05
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 20872,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            7.8291e-05,
+            8.4333e-05,
+            8.5458e-05,
+            8.3708e-05,
+            8.4875e-05,
+            8.2042e-05,
+            8.05e-05
+          ],
+          "encode_s": [
+            2.7e-05,
+            2.6041e-05,
+            2.7917e-05,
+            2.6458e-05,
+            2.6125e-05,
+            2.6958e-05,
+            2.5292e-05
+          ],
+          "decode_s": [
+            1.3875e-05,
+            1.4209e-05,
+            1.95e-05,
+            1.425e-05,
+            1.4083e-05,
+            1.3833e-05,
+            1.3792e-05
+          ],
+          "target_setup_s": [
+            1.9083e-05,
+            1.9625e-05,
+            2.0666e-05,
+            1.9583e-05,
+            1.8875e-05,
+            1.8958e-05,
+            1.8625e-05
+          ],
+          "restore_s": [
+            0.000689458,
+            0.000681375,
+            0.000720167,
+            0.000685916,
+            0.000750167,
+            0.000733292,
+            0.000706333
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "dense",
+          "query_s": [
+            0.003643709,
+            0.003646375,
+            0.003444833,
+            0.003512959,
+            0.003426167,
+            0.003421167,
+            0.003596709
+          ],
+          "encode_s": [
+            0.001133792,
+            0.001070333,
+            0.000936375,
+            0.00093075,
+            0.000917416,
+            0.00106025,
+            0.001003417
+          ],
+          "decode_s": [
+            0.000362667,
+            0.000317833,
+            0.000313917,
+            0.000317,
+            0.000309458,
+            0.000434333,
+            0.000322959
+          ],
+          "target_setup_s": [
+            1.8916e-05,
+            8.833e-06,
+            8.291e-06,
+            5.958e-06,
+            5.875e-06,
+            8.667e-06,
+            6.542e-06
+          ],
+          "restore_s": [
+            0.001196291,
+            0.001052125,
+            0.001080459,
+            0.001027375,
+            0.001061916,
+            0.001214042,
+            0.0010485
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 1477216,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "dense",
+          "query_s": [
+            0.003487333,
+            0.003479334,
+            0.003486917,
+            0.003735917,
+            0.003336666,
+            0.003314333,
+            0.003590542
+          ],
+          "encode_s": [
+            0.000990459,
+            0.000918,
+            0.000970125,
+            0.000937958,
+            0.000923167,
+            0.000922625,
+            0.00102225
+          ],
+          "decode_s": [
+            0.000326334,
+            0.000310708,
+            0.000449167,
+            0.000316625,
+            0.0003135,
+            0.000309042,
+            0.000322125
+          ],
+          "target_setup_s": [
+            6.375e-06,
+            8.167e-06,
+            7.375e-06,
+            6.333e-06,
+            5.458e-06,
+            5.458e-06,
+            6.25e-06
+          ],
+          "restore_s": [
+            0.001094292,
+            0.001020166,
+            0.001077959,
+            0.001019042,
+            0.001036042,
+            0.001035375,
+            0.001047041
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 1477216,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.003449209,
+            0.003466083,
+            0.003659125,
+            0.003481917,
+            0.003564333,
+            0.003347125,
+            0.003348375
+          ],
+          "encode_s": [
+            0.000951375,
+            0.000942709,
+            0.001035709,
+            0.000943166,
+            0.000956708,
+            0.000983042,
+            0.000951083
+          ],
+          "decode_s": [
+            0.000313834,
+            0.000312792,
+            0.000316,
+            0.000314375,
+            0.000319125,
+            0.000335291,
+            0.000334041
+          ],
+          "target_setup_s": [
+            0.001129375,
+            0.001130375,
+            0.001125792,
+            0.001260542,
+            0.001166125,
+            0.001268167,
+            0.001233459
+          ],
+          "restore_s": [
+            0.049506291,
+            0.04919625,
+            0.049491416,
+            0.05103625,
+            0.049169958,
+            0.050135459,
+            0.0494125
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 79524,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        35.24755859375,
+        21.2158203125,
+        17.978515625
+      ],
+      "loadavg_end": [
+        32.7451171875,
+        20.9296875,
+        17.896484375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 3.862401008605957,
+      "max_rss_bytes": 43433984,
+      "log": "transfer-direct-sweep-logs/job-002-transport-dense-dispatched----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.00014125,
+            5.4084e-05,
+            5.3125e-05,
+            5.2042e-05,
+            5.2709e-05,
+            5.1708e-05,
+            5.1666e-05
+          ],
+          "encode_s": [
+            2.875e-05,
+            2.6541e-05,
+            2.425e-05,
+            2.4583e-05,
+            2.4292e-05,
+            2.3458e-05,
+            2.3334e-05
+          ],
+          "decode_s": [
+            2.2666e-05,
+            1.5333e-05,
+            1.3834e-05,
+            1.3875e-05,
+            1.3625e-05,
+            1.3417e-05,
+            1.3709e-05
+          ],
+          "target_setup_s": [
+            2.041e-06,
+            6.25e-07,
+            5e-07,
+            5.42e-07,
+            4.58e-07,
+            4.59e-07,
+            5e-07
+          ],
+          "restore_s": [
+            3.1167e-05,
+            2.5e-05,
+            2.2083e-05,
+            2.2875e-05,
+            2.3667e-05,
+            2.1542e-05,
+            2.1083e-05
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 20872,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            6.3959e-05,
+            6.1417e-05,
+            5.5917e-05,
+            5.2791e-05,
+            5.2041e-05,
+            5.2042e-05,
+            5.1584e-05
+          ],
+          "encode_s": [
+            2.5042e-05,
+            2.5833e-05,
+            2.3625e-05,
+            2.3292e-05,
+            2.3e-05,
+            2.3083e-05,
+            2.3e-05
+          ],
+          "decode_s": [
+            1.3917e-05,
+            1.4167e-05,
+            1.3542e-05,
+            1.3292e-05,
+            1.3334e-05,
+            1.3416e-05,
+            1.3667e-05
+          ],
+          "target_setup_s": [
+            5.42e-07,
+            7.08e-07,
+            5e-07,
+            4.17e-07,
+            3.75e-07,
+            4.17e-07,
+            3.75e-07
+          ],
+          "restore_s": [
+            2.1833e-05,
+            2.3166e-05,
+            2.175e-05,
+            2.1416e-05,
+            2.1e-05,
+            2.1041e-05,
+            2.0959e-05
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 20872,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            5.6583e-05,
+            5.425e-05,
+            5.7625e-05,
+            5.4375e-05,
+            5.3375e-05,
+            6.0625e-05,
+            5.6416e-05
+          ],
+          "encode_s": [
+            2.6542e-05,
+            2.3708e-05,
+            2.4542e-05,
+            2.4292e-05,
+            2.4167e-05,
+            2.5e-05,
+            2.4958e-05
+          ],
+          "decode_s": [
+            1.3416e-05,
+            1.3625e-05,
+            1.4e-05,
+            1.3625e-05,
+            1.3459e-05,
+            1.3875e-05,
+            1.3541e-05
+          ],
+          "target_setup_s": [
+            1.875e-05,
+            1.8584e-05,
+            1.8834e-05,
+            1.8208e-05,
+            1.8166e-05,
+            1.8833e-05,
+            1.8458e-05
+          ],
+          "restore_s": [
+            0.000684917,
+            0.000734917,
+            0.000714625,
+            0.000703875,
+            0.000674167,
+            0.000677625,
+            0.000681125
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 95480,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.002557625,
+            0.002725084,
+            0.00237025,
+            0.002330292,
+            0.002362583,
+            0.002293542,
+            0.002579708
+          ],
+          "encode_s": [
+            0.001184333,
+            0.0011455,
+            0.000956,
+            0.00092825,
+            0.000972458,
+            0.000956708,
+            0.00101175
+          ],
+          "decode_s": [
+            0.000325666,
+            0.000325,
+            0.00031225,
+            0.000327625,
+            0.000308541,
+            0.000330042,
+            0.00032575
+          ],
+          "target_setup_s": [
+            1.2667e-05,
+            1.2875e-05,
+            6.5e-06,
+            5.833e-06,
+            5.792e-06,
+            5.584e-06,
+            1.2333e-05
+          ],
+          "restore_s": [
+            0.0011685,
+            0.000875792,
+            0.00094075,
+            0.000866667,
+            0.00090175,
+            0.000861084,
+            0.000879375
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 1477216,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "dense-dispatched",
+          "query_s": [
+            0.00234675,
+            0.002479875,
+            0.002505083,
+            0.002618667,
+            0.002375875,
+            0.00231175,
+            0.00241525
+          ],
+          "encode_s": [
+            0.001003083,
+            0.000971,
+            0.000946917,
+            0.001088416,
+            0.000938458,
+            0.000970083,
+            0.000943083
+          ],
+          "decode_s": [
+            0.000370375,
+            0.000312292,
+            0.000330584,
+            0.000364791,
+            0.000330542,
+            0.000317167,
+            0.000326042
+          ],
+          "target_setup_s": [
+            1.5167e-05,
+            6.375e-06,
+            6.417e-06,
+            7.459e-06,
+            6.667e-06,
+            5.583e-06,
+            7.875e-06
+          ],
+          "restore_s": [
+            0.000998125,
+            0.000955834,
+            0.000874625,
+            0.000881833,
+            0.00086575,
+            0.000920167,
+            0.000907333
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 1477216,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.0023735,
+            0.002300584,
+            0.002325334,
+            0.002366041,
+            0.002549916,
+            0.002292666,
+            0.002376541
+          ],
+          "encode_s": [
+            0.000972583,
+            0.00091825,
+            0.000975083,
+            0.000938667,
+            0.001179084,
+            0.000918291,
+            0.001129125
+          ],
+          "decode_s": [
+            0.000320125,
+            0.000399334,
+            0.000318334,
+            0.000310458,
+            0.000335875,
+            0.000337916,
+            0.000375875
+          ],
+          "target_setup_s": [
+            0.001137334,
+            0.0011715,
+            0.001131,
+            0.00113175,
+            0.001272083,
+            0.001124833,
+            0.001145334
+          ],
+          "restore_s": [
+            0.05000875,
+            0.048923,
+            0.049577667,
+            0.04936925,
+            0.049243667,
+            0.048859875,
+            0.049706459
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 5823648,
+          "target_bytes_est": 79524,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        32.7451171875,
+        20.9296875,
+        17.896484375
+      ],
+      "loadavg_end": [
+        30.44287109375,
+        20.6484375,
+        17.81494140625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "sparse",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 8.894016981124878,
+      "max_rss_bytes": 224002048,
+      "log": "transfer-direct-sweep-logs/job-003-transport-sparse----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "sparse",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "sparse",
+          "query_s": [
+            0.002656667,
+            0.002544,
+            0.002809708,
+            0.00247275,
+            0.002652167,
+            0.0025845,
+            0.002466583
+          ],
+          "encode_s": [
+            0.000304208,
+            0.00029775,
+            0.000293917,
+            0.000307917,
+            0.000316583,
+            0.00033675,
+            0.000290209
+          ],
+          "decode_s": [
+            2.4042e-05,
+            1.5917e-05,
+            1.5292e-05,
+            1.4625e-05,
+            1.425e-05,
+            1.5042e-05,
+            1.4667e-05
+          ],
+          "target_setup_s": [
+            6.083e-06,
+            5.334e-06,
+            4.959e-06,
+            4.291e-06,
+            4.125e-06,
+            4.834e-06,
+            4.209e-06
+          ],
+          "restore_s": [
+            0.000539041,
+            0.00049675,
+            0.000494209,
+            0.000569125,
+            0.0005125,
+            0.000502334,
+            0.000484875
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 1146040,
+          "target_bytes_est": 250376,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "sparse",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "sparse",
+          "query_s": [
+            0.002492208,
+            0.002496041,
+            0.002691,
+            0.002732917,
+            0.002408792,
+            0.002646542,
+            0.002577542
+          ],
+          "encode_s": [
+            0.000314,
+            0.00030175,
+            0.000294292,
+            0.000289083,
+            0.000288875,
+            0.00031425,
+            0.000318125
+          ],
+          "decode_s": [
+            1.4084e-05,
+            1.4292e-05,
+            1.4791e-05,
+            1.4e-05,
+            1.475e-05,
+            1.4708e-05,
+            1.4375e-05
+          ],
+          "target_setup_s": [
+            4.375e-06,
+            4.042e-06,
+            4.166e-06,
+            4e-06,
+            4.459e-06,
+            4.75e-06,
+            4.625e-06
+          ],
+          "restore_s": [
+            0.000522916,
+            0.0004845,
+            0.000503667,
+            0.00051375,
+            0.000507875,
+            0.000553833,
+            0.000512041
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 1146040,
+          "target_bytes_est": 250376,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "sparse",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.002598833,
+            0.002660708,
+            0.00243,
+            0.002571125,
+            0.002855875,
+            0.002792375,
+            0.002600792
+          ],
+          "encode_s": [
+            0.000298708,
+            0.00031975,
+            0.000288875,
+            0.000311083,
+            0.000301125,
+            0.0003065,
+            0.000299958
+          ],
+          "decode_s": [
+            1.425e-05,
+            1.4166e-05,
+            1.3917e-05,
+            1.4916e-05,
+            1.4834e-05,
+            1.4416e-05,
+            1.8042e-05
+          ],
+          "target_setup_s": [
+            2.1875e-05,
+            1.9166e-05,
+            1.8334e-05,
+            2.6792e-05,
+            1.9375e-05,
+            2.5583e-05,
+            1.8875e-05
+          ],
+          "restore_s": [
+            0.000693417,
+            0.000713917,
+            0.000722042,
+            0.000729,
+            0.000757542,
+            0.000716958,
+            0.000681042
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 1146040,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "sparse",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "sparse",
+          "query_s": [
+            0.108504834,
+            0.106518417,
+            0.10546525,
+            0.104212041,
+            0.10321325,
+            0.105112875,
+            0.103081375
+          ],
+          "encode_s": [
+            0.014102167,
+            0.014424333,
+            0.013932042,
+            0.014169709,
+            0.013952541,
+            0.013913459,
+            0.014161416
+          ],
+          "decode_s": [
+            0.0003835,
+            0.000377209,
+            0.000414042,
+            0.000321666,
+            0.000327625,
+            0.000360916,
+            0.000338666
+          ],
+          "target_setup_s": [
+            0.000210625,
+            0.000201125,
+            0.000239041,
+            0.000205792,
+            0.000202541,
+            0.000209209,
+            0.000237666
+          ],
+          "restore_s": [
+            0.030177625,
+            0.03003125,
+            0.029589375,
+            0.029586625,
+            0.030839833,
+            0.02960575,
+            0.029668708
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 45581984,
+          "target_bytes_est": 11974496,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "sparse",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "sparse",
+          "query_s": [
+            0.103024583,
+            0.104858417,
+            0.103537125,
+            0.10360175,
+            0.104039834,
+            0.105861,
+            0.106144041
+          ],
+          "encode_s": [
+            0.014137083,
+            0.014160125,
+            0.014244208,
+            0.014602625,
+            0.01395375,
+            0.014275416,
+            0.014420334
+          ],
+          "decode_s": [
+            0.000366417,
+            0.000324667,
+            0.000383209,
+            0.000373916,
+            0.000322208,
+            0.000356708,
+            0.000372917
+          ],
+          "target_setup_s": [
+            0.000217208,
+            0.000193125,
+            0.000207333,
+            0.000205459,
+            0.000202458,
+            0.000198458,
+            0.000209209
+          ],
+          "restore_s": [
+            0.029634,
+            0.029304625,
+            0.029583583,
+            0.029629875,
+            0.029591542,
+            0.029842792,
+            0.032151042
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 45581984,
+          "target_bytes_est": 11974496,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "sparse",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.105350125,
+            0.103574208,
+            0.102910208,
+            0.104921208,
+            0.105021167,
+            0.103501417,
+            0.104942125
+          ],
+          "encode_s": [
+            0.014204583,
+            0.013955,
+            0.014065041,
+            0.014189292,
+            0.014523875,
+            0.01396175,
+            0.0144485
+          ],
+          "decode_s": [
+            0.000381791,
+            0.000326083,
+            0.000433291,
+            0.00032025,
+            0.000338292,
+            0.000315333,
+            0.000382334
+          ],
+          "target_setup_s": [
+            0.001232583,
+            0.001124709,
+            0.001127167,
+            0.001126,
+            0.0012455,
+            0.001123791,
+            0.001195583
+          ],
+          "restore_s": [
+            0.050018167,
+            0.049757834,
+            0.050289125,
+            0.049723417,
+            0.049911833,
+            0.0490775,
+            0.049487916
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 45581984,
+          "target_bytes_est": 79524,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        30.44287109375,
+        20.6484375,
+        17.81494140625
+      ],
+      "loadavg_end": [
+        26.076171875,
+        20.0341796875,
+        17.6298828125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 6.359292268753052,
+      "max_rss_bytes": 28229632,
+      "log": "transfer-direct-sweep-logs/job-004-transport-bdd-anchored----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "bdd-anchored",
+          "query_s": [
+            0.000460625,
+            0.000322917,
+            0.000318125,
+            0.000309167,
+            0.000309917,
+            0.00031575,
+            0.0003175
+          ],
+          "encode_s": [
+            4.7875e-05,
+            4.5083e-05,
+            4.025e-05,
+            3.9916e-05,
+            4.0542e-05,
+            4.2917e-05,
+            4.0833e-05
+          ],
+          "decode_s": [
+            1.4042e-05,
+            1.0917e-05,
+            9.125e-06,
+            9e-06,
+            9.166e-06,
+            9.459e-06,
+            9.333e-06
+          ],
+          "target_setup_s": [
+            1.6958e-05,
+            1.6084e-05,
+            1.5458e-05,
+            1.5416e-05,
+            1.5458e-05,
+            1.5917e-05,
+            1.5958e-05
+          ],
+          "restore_s": [
+            5.4458e-05,
+            4.6542e-05,
+            4.55e-05,
+            4.3917e-05,
+            4.8167e-05,
+            5.7666e-05,
+            4.4667e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 3871,
+          "canonical_packet_hash": 11696682399718970126,
+          "source_bytes_est": 186048,
+          "target_bytes_est": 33472,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "bdd-anchored",
+          "query_s": [
+            0.000329583,
+            0.000430333,
+            0.000332542,
+            0.000327584,
+            0.000342458,
+            0.000338416,
+            0.000343458
+          ],
+          "encode_s": [
+            3.95e-05,
+            5.95e-05,
+            4.0084e-05,
+            3.9292e-05,
+            4.35e-05,
+            4.2709e-05,
+            3.9125e-05
+          ],
+          "decode_s": [
+            9.583e-06,
+            1.625e-05,
+            8.959e-06,
+            8.791e-06,
+            9.625e-06,
+            9.958e-06,
+            9.292e-06
+          ],
+          "target_setup_s": [
+            1.5375e-05,
+            2.0541e-05,
+            1.5709e-05,
+            1.5541e-05,
+            1.6375e-05,
+            1.8125e-05,
+            2.625e-05
+          ],
+          "restore_s": [
+            7.2375e-05,
+            9.3833e-05,
+            7.3709e-05,
+            7.1167e-05,
+            7.6666e-05,
+            0.0001065,
+            8.4e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 4207,
+          "canonical_packet_hash": 4077879817936070223,
+          "source_bytes_est": 186048,
+          "target_bytes_est": 66752,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000331208,
+            0.000315583,
+            0.000307542,
+            0.000301625,
+            0.000295708,
+            0.00036525,
+            0.000352875
+          ],
+          "encode_s": [
+            3.9792e-05,
+            3.95e-05,
+            3.9084e-05,
+            3.8e-05,
+            4.1334e-05,
+            5.0083e-05,
+            6.8666e-05
+          ],
+          "decode_s": [
+            9e-06,
+            8.959e-06,
+            8.834e-06,
+            8.625e-06,
+            8.625e-06,
+            1.8542e-05,
+            9.583e-06
+          ],
+          "target_setup_s": [
+            2.2708e-05,
+            1.8791e-05,
+            1.8958e-05,
+            1.8041e-05,
+            1.8125e-05,
+            3.7125e-05,
+            2.2541e-05
+          ],
+          "restore_s": [
+            6.4791e-05,
+            4.975e-05,
+            4.9708e-05,
+            4.7167e-05,
+            4.6208e-05,
+            6.7583e-05,
+            6.3584e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 186048,
+          "target_bytes_est": 88676,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "bdd-anchored",
+          "query_s": [
+            0.001144209,
+            0.001028875,
+            0.00109675,
+            0.001017083,
+            0.00100125,
+            0.001034792,
+            0.001145208
+          ],
+          "encode_s": [
+            0.000157042,
+            0.000156542,
+            0.0001525,
+            0.000151333,
+            0.000152542,
+            0.00016675,
+            0.000176083
+          ],
+          "decode_s": [
+            3.8458e-05,
+            3.1458e-05,
+            3.1125e-05,
+            3.1583e-05,
+            3.125e-05,
+            3.1791e-05,
+            3.2291e-05
+          ],
+          "target_setup_s": [
+            0.000943166,
+            0.000991625,
+            0.00096175,
+            0.000942167,
+            0.000936292,
+            0.000961833,
+            0.000947875
+          ],
+          "restore_s": [
+            0.000224292,
+            0.000196833,
+            0.000193167,
+            0.000190625,
+            0.000188541,
+            0.000196875,
+            0.000207959
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 14373,
+          "canonical_packet_hash": 3204928329773445389,
+          "source_bytes_est": 693456,
+          "target_bytes_est": 233712,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "bdd-anchored",
+          "query_s": [
+            0.001101459,
+            0.001030209,
+            0.001048459,
+            0.001082292,
+            0.001037042,
+            0.001016375,
+            0.001137959
+          ],
+          "encode_s": [
+            0.00015175,
+            0.000151875,
+            0.000161375,
+            0.000159959,
+            0.000155542,
+            0.000152333,
+            0.00018
+          ],
+          "decode_s": [
+            3.3709e-05,
+            3.8542e-05,
+            3.1958e-05,
+            3.15e-05,
+            3.1833e-05,
+            3.1292e-05,
+            3.2167e-05
+          ],
+          "target_setup_s": [
+            0.000941041,
+            0.001067375,
+            0.001065833,
+            0.001032875,
+            0.000949167,
+            0.000942792,
+            0.000939417
+          ],
+          "restore_s": [
+            0.000422208,
+            0.000444875,
+            0.000443708,
+            0.000444458,
+            0.000429334,
+            0.00045425,
+            0.000432958
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 20225,
+          "canonical_packet_hash": 12247503892234950608,
+          "source_bytes_est": 693456,
+          "target_bytes_est": 532720,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001083792,
+            0.001101417,
+            0.001151792,
+            0.001165667,
+            0.001092375,
+            0.001104625,
+            0.00104
+          ],
+          "encode_s": [
+            0.000154834,
+            0.000187041,
+            0.000186625,
+            0.000170541,
+            0.000157292,
+            0.000160084,
+            0.000152083
+          ],
+          "decode_s": [
+            3.4209e-05,
+            4.0875e-05,
+            3.125e-05,
+            3.2208e-05,
+            3.1375e-05,
+            3.8833e-05,
+            3.1209e-05
+          ],
+          "target_setup_s": [
+            0.001173416,
+            0.001177083,
+            0.001122833,
+            0.001162458,
+            0.001126458,
+            0.001172,
+            0.001132042
+          ],
+          "restore_s": [
+            0.000221291,
+            0.00020575,
+            0.000197875,
+            0.000208334,
+            0.000198625,
+            0.000223042,
+            0.000207583
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 693456,
+          "target_bytes_est": 313508,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        26.076171875,
+        20.0341796875,
+        17.6298828125
+      ],
+      "loadavg_end": [
+        24.30810546875,
+        19.767578125,
+        17.5498046875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 5.698434591293335,
+      "max_rss_bytes": 27951104,
+      "log": "transfer-direct-sweep-logs/job-005-transport-mdd4-pair----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "mdd4-pair",
+          "query_s": [
+            0.000520208,
+            0.000357125,
+            0.000359333,
+            0.000425125,
+            0.0003475,
+            0.000343625,
+            0.000330542
+          ],
+          "encode_s": [
+            4.4375e-05,
+            3.3917e-05,
+            3.9167e-05,
+            4.0167e-05,
+            3.4458e-05,
+            3.45e-05,
+            3.375e-05
+          ],
+          "decode_s": [
+            1.3916e-05,
+            8.542e-06,
+            9.333e-06,
+            9.584e-06,
+            8.708e-06,
+            8.625e-06,
+            8.625e-06
+          ],
+          "target_setup_s": [
+            1.2875e-05,
+            1.1208e-05,
+            1.1875e-05,
+            1.1333e-05,
+            1.1167e-05,
+            1.1125e-05,
+            1.1084e-05
+          ],
+          "restore_s": [
+            8.4458e-05,
+            7.1833e-05,
+            7.1708e-05,
+            7.0458e-05,
+            6.7583e-05,
+            6.625e-05,
+            6.5541e-05
+          ],
+          "packet_bytes": 5391,
+          "packet_nodes": 185,
+          "canonical_packet_bytes": 5391,
+          "canonical_packet_hash": 10061305242769686186,
+          "source_bytes_est": 191344,
+          "target_bytes_est": 63536,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "mdd4-pair",
+          "query_s": [
+            0.000416917,
+            0.000374917,
+            0.000369542,
+            0.000358292,
+            0.000377459,
+            0.000354291,
+            0.000360917
+          ],
+          "encode_s": [
+            4.3417e-05,
+            3.6e-05,
+            3.4459e-05,
+            3.3791e-05,
+            4.0959e-05,
+            3.5208e-05,
+            3.5333e-05
+          ],
+          "decode_s": [
+            1.0042e-05,
+            9.25e-06,
+            8.375e-06,
+            8.292e-06,
+            9.416e-06,
+            8.375e-06,
+            8.708e-06
+          ],
+          "target_setup_s": [
+            1.575e-05,
+            1.1167e-05,
+            1.1167e-05,
+            1.1125e-05,
+            1.1917e-05,
+            1.1e-05,
+            1.1375e-05
+          ],
+          "restore_s": [
+            0.00012125,
+            9.2041e-05,
+            8.7666e-05,
+            8.6917e-05,
+            9.3125e-05,
+            8.7125e-05,
+            8.525e-05
+          ],
+          "packet_bytes": 5391,
+          "packet_nodes": 185,
+          "canonical_packet_bytes": 4117,
+          "canonical_packet_hash": 8297035016314208656,
+          "source_bytes_est": 191344,
+          "target_bytes_est": 112176,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000372459,
+            0.000349542,
+            0.000398,
+            0.000355792,
+            0.000393042,
+            0.000346125,
+            0.000330416
+          ],
+          "encode_s": [
+            3.5958e-05,
+            4.0959e-05,
+            4.0791e-05,
+            3.8458e-05,
+            3.9625e-05,
+            4.1667e-05,
+            3.5958e-05
+          ],
+          "decode_s": [
+            1.1666e-05,
+            1.0667e-05,
+            9.292e-06,
+            8.417e-06,
+            8.833e-06,
+            8.083e-06,
+            7.959e-06
+          ],
+          "target_setup_s": [
+            2.1083e-05,
+            3.45e-05,
+            2.0416e-05,
+            2.0375e-05,
+            1.9083e-05,
+            2.275e-05,
+            1.8667e-05
+          ],
+          "restore_s": [
+            6.85e-05,
+            7.2916e-05,
+            6.9708e-05,
+            7.1958e-05,
+            6.4208e-05,
+            7.2125e-05,
+            6.7875e-05
+          ],
+          "packet_bytes": 5391,
+          "packet_nodes": 185,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 191344,
+          "target_bytes_est": 88676,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "mdd4-pair",
+          "query_s": [
+            0.001171791,
+            0.00122775,
+            0.00112675,
+            0.001170958,
+            0.001152791,
+            0.001221375,
+            0.001216042
+          ],
+          "encode_s": [
+            0.000126917,
+            0.000141583,
+            0.00013175,
+            0.00013375,
+            0.000178792,
+            0.000133917,
+            0.000190958
+          ],
+          "decode_s": [
+            3.1083e-05,
+            3.2709e-05,
+            2.775e-05,
+            2.85e-05,
+            3.0125e-05,
+            2.8292e-05,
+            3.275e-05
+          ],
+          "target_setup_s": [
+            0.000692333,
+            0.000685167,
+            0.000656625,
+            0.0006855,
+            0.000708459,
+            0.00067275,
+            0.000682375
+          ],
+          "restore_s": [
+            0.000327583,
+            0.000320541,
+            0.000290083,
+            0.000295125,
+            0.000332708,
+            0.000295292,
+            0.000293709
+          ],
+          "packet_bytes": 20075,
+          "packet_nodes": 747,
+          "canonical_packet_bytes": 20075,
+          "canonical_packet_hash": 14409057464809177328,
+          "source_bytes_est": 858024,
+          "target_bytes_est": 426056,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "mdd4-pair",
+          "query_s": [
+            0.001254791,
+            0.001151125,
+            0.001197334,
+            0.001123042,
+            0.001154125,
+            0.001144292,
+            0.001189209
+          ],
+          "encode_s": [
+            0.000142292,
+            0.000135584,
+            0.000159209,
+            0.000137291,
+            0.00015275,
+            0.000137125,
+            0.000173792
+          ],
+          "decode_s": [
+            3.5417e-05,
+            2.775e-05,
+            3.1583e-05,
+            2.85e-05,
+            2.8333e-05,
+            2.8e-05,
+            3.2709e-05
+          ],
+          "target_setup_s": [
+            0.000664625,
+            0.000664,
+            0.000703666,
+            0.000695167,
+            0.000657,
+            0.000720542,
+            0.000701458
+          ],
+          "restore_s": [
+            0.0004605,
+            0.000470583,
+            0.000478417,
+            0.000441708,
+            0.000466041,
+            0.000495792,
+            0.000447833
+          ],
+          "packet_bytes": 20075,
+          "packet_nodes": 747,
+          "canonical_packet_bytes": 19217,
+          "canonical_packet_hash": 8066436093154571252,
+          "source_bytes_est": 858024,
+          "target_bytes_est": 491592,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001138209,
+            0.001162667,
+            0.001175417,
+            0.001135666,
+            0.001157875,
+            0.001140666,
+            0.001183333
+          ],
+          "encode_s": [
+            0.000133417,
+            0.000164208,
+            0.000130833,
+            0.000135042,
+            0.000136792,
+            0.000133542,
+            0.000138667
+          ],
+          "decode_s": [
+            2.7833e-05,
+            3.0291e-05,
+            2.8375e-05,
+            2.8125e-05,
+            2.8708e-05,
+            2.8042e-05,
+            3.3041e-05
+          ],
+          "target_setup_s": [
+            0.001134125,
+            0.001159208,
+            0.00114075,
+            0.001134458,
+            0.001183292,
+            0.001180666,
+            0.001235917
+          ],
+          "restore_s": [
+            0.000224792,
+            0.000226875,
+            0.000239916,
+            0.000220625,
+            0.000242666,
+            0.000221792,
+            0.000241166
+          ],
+          "packet_bytes": 20075,
+          "packet_nodes": 747,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 858024,
+          "target_bytes_est": 313508,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        24.30810546875,
+        19.767578125,
+        17.5498046875
+      ],
+      "loadavg_end": [
+        23.482421875,
+        19.67138671875,
+        17.52880859375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 5.917091131210327,
+      "max_rss_bytes": 22282240,
+      "log": "transfer-direct-sweep-logs/job-006-transport-packed512----bit-major-local-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed512",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000284417,
+            0.000225083,
+            0.0002345,
+            0.000228292,
+            0.000234667,
+            0.000222334,
+            0.00022
+          ],
+          "encode_s": [
+            2.9792e-05,
+            2.0584e-05,
+            2.0292e-05,
+            2.2375e-05,
+            2.5125e-05,
+            1.9583e-05,
+            1.9083e-05
+          ],
+          "decode_s": [
+            1.7708e-05,
+            1.3459e-05,
+            1.225e-05,
+            1.2291e-05,
+            1.1833e-05,
+            1.1833e-05,
+            1.125e-05
+          ],
+          "target_setup_s": [
+            2.125e-05,
+            1.9667e-05,
+            1.9209e-05,
+            2.025e-05,
+            2.4291e-05,
+            2.0042e-05,
+            1.8375e-05
+          ],
+          "restore_s": [
+            0.000159417,
+            0.000149,
+            0.00015325,
+            0.000149625,
+            0.000152,
+            0.000146041,
+            0.000143916
+          ],
+          "packet_bytes": 6127,
+          "packet_nodes": 107,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 86100,
+          "target_bytes_est": 23268,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed512",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000224333,
+            0.0002265,
+            0.000221709,
+            0.000235583,
+            0.000223291,
+            0.000232583,
+            0.000226459
+          ],
+          "encode_s": [
+            2.125e-05,
+            2.025e-05,
+            1.8875e-05,
+            2.6e-05,
+            2.0875e-05,
+            2.0708e-05,
+            1.95e-05
+          ],
+          "decode_s": [
+            1.125e-05,
+            1.1083e-05,
+            1.1e-05,
+            1.1667e-05,
+            1.1333e-05,
+            1.15e-05,
+            1.1042e-05
+          ],
+          "target_setup_s": [
+            8.33e-07,
+            3.584e-06,
+            8.75e-07,
+            2.375e-06,
+            2.167e-06,
+            1.583e-06,
+            1.041e-06
+          ],
+          "restore_s": [
+            0.00025975,
+            0.000234458,
+            0.000225166,
+            0.000258708,
+            0.000232041,
+            0.000235208,
+            0.000226042
+          ],
+          "packet_bytes": 6127,
+          "packet_nodes": 107,
+          "canonical_packet_bytes": 3947,
+          "canonical_packet_hash": 16811957920672208100,
+          "source_bytes_est": 86100,
+          "target_bytes_est": 79620,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000735458,
+            0.000667916,
+            0.000661708,
+            0.000662041,
+            0.000692,
+            0.000694875,
+            0.000658875
+          ],
+          "encode_s": [
+            0.000107709,
+            0.000113333,
+            0.0001145,
+            0.000117583,
+            0.00011275,
+            0.000113,
+            0.000122917
+          ],
+          "decode_s": [
+            6e-05,
+            4.9375e-05,
+            4.9167e-05,
+            5.0583e-05,
+            4.9083e-05,
+            4.9166e-05,
+            4.9583e-05
+          ],
+          "target_setup_s": [
+            0.001184875,
+            0.001120292,
+            0.001124333,
+            0.0011275,
+            0.001168375,
+            0.001201917,
+            0.001145083
+          ],
+          "restore_s": [
+            0.000568833,
+            0.000537125,
+            0.000534917,
+            0.000541708,
+            0.00056025,
+            0.000537792,
+            0.000602875
+          ],
+          "packet_bytes": 25379,
+          "packet_nodes": 773,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 510028,
+          "target_bytes_est": 167588,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000739209,
+            0.000674542,
+            0.000740167,
+            0.00069825,
+            0.000666167,
+            0.000773,
+            0.000697584
+          ],
+          "encode_s": [
+            0.000119583,
+            0.000113083,
+            0.000145208,
+            0.000120584,
+            0.000110209,
+            0.000115958,
+            0.000126166
+          ],
+          "decode_s": [
+            5.0334e-05,
+            4.9125e-05,
+            4.9416e-05,
+            4.9209e-05,
+            4.9166e-05,
+            4.9042e-05,
+            4.9042e-05
+          ],
+          "target_setup_s": [
+            1.4541e-05,
+            1.3291e-05,
+            1.5875e-05,
+            1.3042e-05,
+            1.2959e-05,
+            1.2791e-05,
+            1.3167e-05
+          ],
+          "restore_s": [
+            0.00089225,
+            0.000909083,
+            0.00087825,
+            0.000960041,
+            0.000892125,
+            0.000873,
+            0.000908875
+          ],
+          "packet_bytes": 25379,
+          "packet_nodes": 773,
+          "canonical_packet_bytes": 24809,
+          "canonical_packet_hash": 2723457121914737819,
+          "source_bytes_est": 510028,
+          "target_bytes_est": 450724,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        23.482421875,
+        19.67138671875,
+        17.52880859375
+      ],
+      "loadavg_end": [
+        21.841796875,
+        19.39453125,
+        17.443359375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 10.73897409439087,
+      "max_rss_bytes": 27754496,
+      "log": "transfer-direct-sweep-logs/job-007-transport-block64----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "block64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "block64",
+          "query_s": [
+            0.000293125,
+            0.00021925,
+            0.0002245,
+            0.000230333,
+            0.000219875,
+            0.000214458,
+            0.000205333
+          ],
+          "encode_s": [
+            3.8833e-05,
+            3.6125e-05,
+            3.1666e-05,
+            3.1666e-05,
+            3.1875e-05,
+            3.0541e-05,
+            2.7666e-05
+          ],
+          "decode_s": [
+            1.925e-05,
+            1.625e-05,
+            1.9083e-05,
+            1.5792e-05,
+            1.5708e-05,
+            3.275e-05,
+            1.6542e-05
+          ],
+          "target_setup_s": [
+            1.9209e-05,
+            1.8667e-05,
+            1.8e-05,
+            1.825e-05,
+            1.8166e-05,
+            2.3167e-05,
+            1.8042e-05
+          ],
+          "restore_s": [
+            0.000162416,
+            0.000153958,
+            0.000145958,
+            0.000153042,
+            0.000152833,
+            0.000189334,
+            0.000161209
+          ],
+          "packet_bytes": 11553,
+          "packet_nodes": 82,
+          "canonical_packet_bytes": 11553,
+          "canonical_packet_hash": 305237893217458157,
+          "source_bytes_est": 56716,
+          "target_bytes_est": 52668,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "block64",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "block64",
+          "query_s": [
+            0.000234208,
+            0.000232792,
+            0.000218083,
+            0.000227958,
+            0.000224,
+            0.00021825,
+            0.000224375
+          ],
+          "encode_s": [
+            3.6666e-05,
+            3.15e-05,
+            3.0833e-05,
+            3.2291e-05,
+            3.3959e-05,
+            3.0875e-05,
+            3.2541e-05
+          ],
+          "decode_s": [
+            2.025e-05,
+            1.5375e-05,
+            2.1291e-05,
+            1.5584e-05,
+            1.75e-05,
+            1.5125e-05,
+            1.5792e-05
+          ],
+          "target_setup_s": [
+            1.542e-06,
+            2.791e-06,
+            1.375e-06,
+            1.541e-06,
+            1.667e-06,
+            1.458e-06,
+            1.708e-06
+          ],
+          "restore_s": [
+            0.000144208,
+            0.000141042,
+            0.000131375,
+            0.000133458,
+            0.000134125,
+            0.000141917,
+            0.000131542
+          ],
+          "packet_bytes": 11553,
+          "packet_nodes": 82,
+          "canonical_packet_bytes": 9875,
+          "canonical_packet_hash": 13706261729038098115,
+          "source_bytes_est": 56716,
+          "target_bytes_est": 54204,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "block64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000230125,
+            0.000224083,
+            0.000214875,
+            0.000253333,
+            0.000218167,
+            0.000211291,
+            0.000213541
+          ],
+          "encode_s": [
+            3.2083e-05,
+            3.225e-05,
+            3.0792e-05,
+            3.2209e-05,
+            3.0167e-05,
+            2.95e-05,
+            3.8083e-05
+          ],
+          "decode_s": [
+            1.5333e-05,
+            1.5666e-05,
+            1.4916e-05,
+            1.5125e-05,
+            1.4958e-05,
+            1.4958e-05,
+            1.5083e-05
+          ],
+          "target_setup_s": [
+            2.0167e-05,
+            1.9375e-05,
+            1.8416e-05,
+            2.6333e-05,
+            1.8416e-05,
+            1.8417e-05,
+            2e-05
+          ],
+          "restore_s": [
+            0.000201125,
+            0.000200917,
+            0.000209958,
+            0.000215708,
+            0.000194166,
+            0.000191708,
+            0.000203333
+          ],
+          "packet_bytes": 11553,
+          "packet_nodes": 82,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 56716,
+          "target_bytes_est": 72292,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "block64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "block64",
+          "query_s": [
+            0.001125292,
+            0.001051958,
+            0.001058417,
+            0.0011485,
+            0.001016042,
+            0.001018541,
+            0.001044
+          ],
+          "encode_s": [
+            0.000129709,
+            0.000148291,
+            0.000141458,
+            0.000185709,
+            0.000127375,
+            0.00012925,
+            0.000131958
+          ],
+          "decode_s": [
+            6.6e-05,
+            6.0375e-05,
+            6.3916e-05,
+            0.000100666,
+            6.0375e-05,
+            6.2875e-05,
+            6.075e-05
+          ],
+          "target_setup_s": [
+            0.001142458,
+            0.001229291,
+            0.001098375,
+            0.001163125,
+            0.0010885,
+            0.001104,
+            0.001145833
+          ],
+          "restore_s": [
+            0.000691875,
+            0.00074775,
+            0.000631709,
+            0.000713041,
+            0.000670417,
+            0.000669333,
+            0.0006885
+          ],
+          "packet_bytes": 53443,
+          "packet_nodes": 247,
+          "canonical_packet_bytes": 53443,
+          "canonical_packet_hash": 5408875353925629884,
+          "source_bytes_est": 220336,
+          "target_bytes_est": 300520,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "block64",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "block64",
+          "query_s": [
+            0.001109667,
+            0.001111375,
+            0.001060208,
+            0.001081917,
+            0.001066916,
+            0.001076833,
+            0.001041917
+          ],
+          "encode_s": [
+            0.000131167,
+            0.000147292,
+            0.00013275,
+            0.00013175,
+            0.000145833,
+            0.000140375,
+            0.000133583
+          ],
+          "decode_s": [
+            6.0375e-05,
+            6.3959e-05,
+            6.1875e-05,
+            6.4208e-05,
+            6.9417e-05,
+            6.4542e-05,
+            6.8958e-05
+          ],
+          "target_setup_s": [
+            4.9459e-05,
+            5.0792e-05,
+            4.9833e-05,
+            5e-05,
+            5.0084e-05,
+            5.2542e-05,
+            5.1542e-05
+          ],
+          "restore_s": [
+            0.00076025,
+            0.00077225,
+            0.000740792,
+            0.000743,
+            0.000817458,
+            0.000761292,
+            0.000740542
+          ],
+          "packet_bytes": 53443,
+          "packet_nodes": 247,
+          "canonical_packet_bytes": 17439,
+          "canonical_packet_hash": 1335153889291681650,
+          "source_bytes_est": 220336,
+          "target_bytes_est": 492776,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "block64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001066708,
+            0.001146,
+            0.001068416,
+            0.001067375,
+            0.001100458,
+            0.001125208,
+            0.001112
+          ],
+          "encode_s": [
+            0.000131542,
+            0.000132042,
+            0.000136458,
+            0.000135541,
+            0.000135708,
+            0.000135125,
+            0.000145792
+          ],
+          "decode_s": [
+            6.0125e-05,
+            6.1959e-05,
+            6.275e-05,
+            6.6375e-05,
+            6.0875e-05,
+            6.15e-05,
+            6.7125e-05
+          ],
+          "target_setup_s": [
+            0.001119208,
+            0.0011575,
+            0.001131667,
+            0.001189667,
+            0.00112375,
+            0.001119667,
+            0.001177
+          ],
+          "restore_s": [
+            0.000547625,
+            0.00057675,
+            0.000544875,
+            0.000587166,
+            0.0005775,
+            0.00054625,
+            0.000567833
+          ],
+          "packet_bytes": 53443,
+          "packet_nodes": 247,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 220336,
+          "target_bytes_est": 270500,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        21.841796875,
+        19.39453125,
+        17.443359375
+      ],
+      "loadavg_end": [
+        19.00537109375,
+        18.8701171875,
+        17.27978515625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 8.862236022949219,
+      "max_rss_bytes": 28459008,
+      "log": "transfer-direct-sweep-logs/job-008-transport-packed64----bit-major-local-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed64",
+          "query_s": [
+            0.000282167,
+            0.000180833,
+            0.000197708,
+            0.000184041,
+            0.000184166,
+            0.000180209,
+            0.000173042
+          ],
+          "encode_s": [
+            3.7125e-05,
+            3.5667e-05,
+            3.1417e-05,
+            3.0459e-05,
+            3.0291e-05,
+            2.9333e-05,
+            2.8666e-05
+          ],
+          "decode_s": [
+            1.6833e-05,
+            1.1583e-05,
+            1.8042e-05,
+            1.1417e-05,
+            1.125e-05,
+            1.075e-05,
+            1.0625e-05
+          ],
+          "target_setup_s": [
+            2.1542e-05,
+            1.65e-05,
+            1.6459e-05,
+            1.8917e-05,
+            1.9542e-05,
+            1.5333e-05,
+            1.5042e-05
+          ],
+          "restore_s": [
+            6.95e-05,
+            6.2e-05,
+            6.3291e-05,
+            6.5709e-05,
+            6.6625e-05,
+            5.8458e-05,
+            5.7541e-05
+          ],
+          "packet_bytes": 4445,
+          "packet_nodes": 206,
+          "canonical_packet_bytes": 4445,
+          "canonical_packet_hash": 4130299897669958894,
+          "source_bytes_est": 146440,
+          "target_bytes_est": 35224,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed64",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "packed64",
+          "query_s": [
+            0.000187,
+            0.000188459,
+            0.000171459,
+            0.000185,
+            0.000173333,
+            0.0001855,
+            0.000199333
+          ],
+          "encode_s": [
+            3e-05,
+            2.9375e-05,
+            2.8417e-05,
+            2.9583e-05,
+            2.8375e-05,
+            2.9584e-05,
+            3.0167e-05
+          ],
+          "decode_s": [
+            1.0875e-05,
+            1.0375e-05,
+            1.025e-05,
+            1.0458e-05,
+            1.025e-05,
+            1.0375e-05,
+            1.05e-05
+          ],
+          "target_setup_s": [
+            1.292e-06,
+            1.333e-06,
+            1.083e-06,
+            3.916e-06,
+            1.167e-06,
+            1.75e-06,
+            1.667e-06
+          ],
+          "restore_s": [
+            8.825e-05,
+            8.0458e-05,
+            7.6375e-05,
+            8.3208e-05,
+            8.0334e-05,
+            8.3958e-05,
+            8.3291e-05
+          ],
+          "packet_bytes": 4445,
+          "packet_nodes": 206,
+          "canonical_packet_bytes": 3679,
+          "canonical_packet_hash": 14982425056810421484,
+          "source_bytes_est": 146440,
+          "target_bytes_est": 47704,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed64",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000194833,
+            0.000176875,
+            0.000172042,
+            0.00016925,
+            0.000178125,
+            0.000175916,
+            0.000168916
+          ],
+          "encode_s": [
+            3.0375e-05,
+            2.8708e-05,
+            2.8209e-05,
+            2.8125e-05,
+            2.8916e-05,
+            3.1875e-05,
+            2.8083e-05
+          ],
+          "decode_s": [
+            1.0834e-05,
+            1.0208e-05,
+            1.0084e-05,
+            1.0167e-05,
+            1.025e-05,
+            1.0417e-05,
+            1.0292e-05
+          ],
+          "target_setup_s": [
+            1.8792e-05,
+            1.8583e-05,
+            1.8209e-05,
+            1.8125e-05,
+            1.825e-05,
+            1.8417e-05,
+            1.8125e-05
+          ],
+          "restore_s": [
+            0.000183375,
+            0.0001725,
+            0.0001675,
+            0.00016475,
+            0.000164792,
+            0.000187041,
+            0.00016375
+          ],
+          "packet_bytes": 4445,
+          "packet_nodes": 206,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 146440,
+          "target_bytes_est": 72292,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed64",
+          "query_s": [
+            0.0008425,
+            0.000730083,
+            0.000789,
+            0.00071575,
+            0.000831125,
+            0.00069375,
+            0.000761167
+          ],
+          "encode_s": [
+            0.000139375,
+            0.000147875,
+            0.000172125,
+            0.000141709,
+            0.000193,
+            0.000134333,
+            0.000144292
+          ],
+          "decode_s": [
+            4.05e-05,
+            3.975e-05,
+            4.1084e-05,
+            3.525e-05,
+            3.5792e-05,
+            3.5083e-05,
+            3.6667e-05
+          ],
+          "target_setup_s": [
+            0.000909458,
+            0.000986667,
+            0.000949291,
+            0.0009065,
+            0.000952542,
+            0.000913,
+            0.000894625
+          ],
+          "restore_s": [
+            0.000185292,
+            0.00020075,
+            0.000202958,
+            0.000183208,
+            0.000210916,
+            0.000194375,
+            0.000192
+          ],
+          "packet_bytes": 15341,
+          "packet_nodes": 952,
+          "canonical_packet_bytes": 15341,
+          "canonical_packet_hash": 16722401118741470882,
+          "source_bytes_est": 538816,
+          "target_bytes_est": 136984,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed64",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "packed64",
+          "query_s": [
+            0.000771875,
+            0.000731917,
+            0.001109125,
+            0.000724875,
+            0.000754959,
+            0.00075825,
+            0.000745542
+          ],
+          "encode_s": [
+            0.000138208,
+            0.000169042,
+            0.000161208,
+            0.000139875,
+            0.000146625,
+            0.000142125,
+            0.000144334
+          ],
+          "decode_s": [
+            3.7333e-05,
+            3.5625e-05,
+            8.7917e-05,
+            3.5291e-05,
+            4.025e-05,
+            4.0334e-05,
+            3.55e-05
+          ],
+          "target_setup_s": [
+            3.6084e-05,
+            3.6209e-05,
+            3.7459e-05,
+            3.5375e-05,
+            3.5916e-05,
+            3.7125e-05,
+            3.5584e-05
+          ],
+          "restore_s": [
+            0.000500833,
+            0.000472333,
+            0.000477375,
+            0.000444583,
+            0.000452208,
+            0.000465792,
+            0.000447459
+          ],
+          "packet_bytes": 15341,
+          "packet_nodes": 952,
+          "canonical_packet_bytes": 21671,
+          "canonical_packet_hash": 9339409060282614674,
+          "source_bytes_est": 538816,
+          "target_bytes_est": 558232,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed64",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000779167,
+            0.000747917,
+            0.001258166,
+            0.0007555,
+            0.000755166,
+            0.000811166,
+            0.000741708
+          ],
+          "encode_s": [
+            0.00013725,
+            0.000142875,
+            0.0001575,
+            0.000143584,
+            0.000146791,
+            0.000172542,
+            0.000137875
+          ],
+          "decode_s": [
+            3.6167e-05,
+            3.7084e-05,
+            4.1125e-05,
+            3.5625e-05,
+            3.5917e-05,
+            4.2208e-05,
+            3.5875e-05
+          ],
+          "target_setup_s": [
+            0.001140042,
+            0.00115375,
+            0.001170208,
+            0.001154792,
+            0.001166125,
+            0.00117575,
+            0.0011215
+          ],
+          "restore_s": [
+            0.00035775,
+            0.0003675,
+            0.00036975,
+            0.000388208,
+            0.000359833,
+            0.000376166,
+            0.000344417
+          ],
+          "packet_bytes": 15341,
+          "packet_nodes": 952,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 538816,
+          "target_bytes_est": 270500,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        19.00537109375,
+        18.8701171875,
+        17.27978515625
+      ],
+      "loadavg_end": [
+        17.23291015625,
+        18.4951171875,
+        17.1650390625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "roaring",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 7.340713977813721,
+      "max_rss_bytes": 45514752,
+      "log": "transfer-direct-sweep-logs/job-009-transport-roaring----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "roaring",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "roaring",
+          "query_s": [
+            0.003094375,
+            0.002977625,
+            0.002945334,
+            0.003069041,
+            0.003325208,
+            0.002823458,
+            0.00285125
+          ],
+          "encode_s": [
+            0.000338,
+            0.000334333,
+            0.000332541,
+            0.000346042,
+            0.000337875,
+            0.000318833,
+            0.000317917
+          ],
+          "decode_s": [
+            2.1083e-05,
+            1.9e-05,
+            1.6083e-05,
+            1.6833e-05,
+            1.6625e-05,
+            1.5416e-05,
+            1.4958e-05
+          ],
+          "target_setup_s": [
+            4.0458e-05,
+            4.0833e-05,
+            4e-05,
+            4.4375e-05,
+            4.275e-05,
+            3.8125e-05,
+            3.9e-05
+          ],
+          "restore_s": [
+            0.000646375,
+            0.00064425,
+            0.000633208,
+            0.000652167,
+            0.000700084,
+            0.000602541,
+            0.00060425
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 1147832,
+          "target_bytes_est": 250792,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "roaring",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "roaring",
+          "query_s": [
+            0.003026208,
+            0.003023166,
+            0.003036666,
+            0.002980833,
+            0.002882375,
+            0.00285325,
+            0.00284975
+          ],
+          "encode_s": [
+            0.000340959,
+            0.000331917,
+            0.000325834,
+            0.000367792,
+            0.000329459,
+            0.000315667,
+            0.000315292
+          ],
+          "decode_s": [
+            1.5792e-05,
+            1.475e-05,
+            1.475e-05,
+            3.4167e-05,
+            3.8375e-05,
+            1.4125e-05,
+            1.425e-05
+          ],
+          "target_setup_s": [
+            4.5334e-05,
+            3.8833e-05,
+            3.9208e-05,
+            4.1791e-05,
+            4.3875e-05,
+            3.8083e-05,
+            3.8041e-05
+          ],
+          "restore_s": [
+            0.000622208,
+            0.000602042,
+            0.000613959,
+            0.000634042,
+            0.000666708,
+            0.000602541,
+            0.000600042
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 1147832,
+          "target_bytes_est": 250792,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "roaring",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.003152333,
+            0.00308325,
+            0.002962042,
+            0.002865291,
+            0.003018042,
+            0.00298075,
+            0.003049
+          ],
+          "encode_s": [
+            0.000341333,
+            0.000376292,
+            0.000313542,
+            0.000344166,
+            0.000331833,
+            0.000325584,
+            0.000330334
+          ],
+          "decode_s": [
+            1.6125e-05,
+            1.9166e-05,
+            1.3916e-05,
+            1.4041e-05,
+            1.4542e-05,
+            1.3625e-05,
+            1.4541e-05
+          ],
+          "target_setup_s": [
+            2.575e-05,
+            2.0291e-05,
+            1.8708e-05,
+            1.85e-05,
+            1.85e-05,
+            2.1292e-05,
+            2.35e-05
+          ],
+          "restore_s": [
+            0.000770583,
+            0.000716042,
+            0.000710375,
+            0.000773042,
+            0.000753792,
+            0.000734917,
+            0.000725667
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 1147832,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "roaring",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "roaring",
+          "query_s": [
+            0.052586583,
+            0.052555625,
+            0.053886334,
+            0.053182292,
+            0.052834417,
+            0.052199917,
+            0.052653292
+          ],
+          "encode_s": [
+            0.019456792,
+            0.019588833,
+            0.019166416,
+            0.019353542,
+            0.019085833,
+            0.018826292,
+            0.018689208
+          ],
+          "decode_s": [
+            0.000401166,
+            0.0003415,
+            0.0003485,
+            0.000325625,
+            0.000344375,
+            0.000328583,
+            0.000336
+          ],
+          "target_setup_s": [
+            0.001057959,
+            0.000908958,
+            0.000901042,
+            0.000936042,
+            0.000923375,
+            0.000917125,
+            0.000916708
+          ],
+          "restore_s": [
+            0.014414625,
+            0.0145155,
+            0.013977041,
+            0.014589541,
+            0.014122917,
+            0.013998375,
+            0.013976167
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 31054848,
+          "target_bytes_est": 9440224,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "roaring",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "roaring",
+          "query_s": [
+            0.052262875,
+            0.052764334,
+            0.059897834,
+            0.05284075,
+            0.053755583,
+            0.073346959,
+            0.053040084
+          ],
+          "encode_s": [
+            0.0190755,
+            0.019288458,
+            0.019317584,
+            0.018864209,
+            0.03553775,
+            0.024293333,
+            0.019460334
+          ],
+          "decode_s": [
+            0.000346375,
+            0.000341417,
+            0.000349,
+            0.000329459,
+            0.000741541,
+            0.00346625,
+            0.000374209
+          ],
+          "target_setup_s": [
+            0.000945708,
+            0.0009465,
+            0.000933166,
+            0.00092525,
+            0.002247125,
+            0.003512542,
+            0.001273875
+          ],
+          "restore_s": [
+            0.015515875,
+            0.014824292,
+            0.013910125,
+            0.014205417,
+            0.031019667,
+            0.02020325,
+            0.021860625
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 31054848,
+          "target_bytes_est": 9440224,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "roaring",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.053315083,
+            0.053716041,
+            0.052023291,
+            0.051493666,
+            0.052574708,
+            0.052366083,
+            0.05193275
+          ],
+          "encode_s": [
+            0.019794542,
+            0.01888475,
+            0.018943416,
+            0.019123583,
+            0.018950541,
+            0.019048666,
+            0.018820042
+          ],
+          "decode_s": [
+            0.000358291,
+            0.000319083,
+            0.000322875,
+            0.000410125,
+            0.0003365,
+            0.000320542,
+            0.000318042
+          ],
+          "target_setup_s": [
+            0.001143875,
+            0.001158459,
+            0.001133958,
+            0.001164458,
+            0.001171083,
+            0.001163625,
+            0.001183916
+          ],
+          "restore_s": [
+            0.051631875,
+            0.050779875,
+            0.049992958,
+            0.049866291,
+            0.051866083,
+            0.050092625,
+            0.050920167
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 31054848,
+          "target_bytes_est": 79524,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        17.23291015625,
+        18.4951171875,
+        17.1650390625
+      ],
+      "loadavg_end": [
+        15.3388671875,
+        18.0498046875,
+        17.0224609375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 6.342404842376709,
+      "max_rss_bytes": 28246016,
+      "log": "transfer-direct-sweep-logs/job-010-transport-bdd-pair----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-pair",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "bdd-pair",
+          "query_s": [
+            0.000430084,
+            0.000341208,
+            0.00036325,
+            0.000346166,
+            0.000322958,
+            0.000323375,
+            0.000318417
+          ],
+          "encode_s": [
+            4.825e-05,
+            4.3916e-05,
+            4.8542e-05,
+            4.7125e-05,
+            4.3625e-05,
+            5.7458e-05,
+            4.1208e-05
+          ],
+          "decode_s": [
+            1.5125e-05,
+            9.625e-06,
+            1.0209e-05,
+            9.541e-06,
+            9.333e-06,
+            9.666e-06,
+            9.5e-06
+          ],
+          "target_setup_s": [
+            1.7333e-05,
+            1.6208e-05,
+            1.675e-05,
+            1.6458e-05,
+            1.6125e-05,
+            1.8292e-05,
+            1.6167e-05
+          ],
+          "restore_s": [
+            6.4958e-05,
+            6.3333e-05,
+            5.9083e-05,
+            5.3833e-05,
+            5.5125e-05,
+            6.7959e-05,
+            5.5709e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 3871,
+          "canonical_packet_hash": 11696682399718970126,
+          "source_bytes_est": 189472,
+          "target_bytes_est": 48224,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-pair",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "bdd-pair",
+          "query_s": [
+            0.0003465,
+            0.000345333,
+            0.000336708,
+            0.000332584,
+            0.000331791,
+            0.000329708,
+            0.000322
+          ],
+          "encode_s": [
+            4.2167e-05,
+            4.3417e-05,
+            4.1291e-05,
+            4.0584e-05,
+            4.0834e-05,
+            4.0916e-05,
+            3.8875e-05
+          ],
+          "decode_s": [
+            9.917e-06,
+            9.291e-06,
+            9.167e-06,
+            9.042e-06,
+            9.208e-06,
+            9.167e-06,
+            8.75e-06
+          ],
+          "target_setup_s": [
+            1.6292e-05,
+            1.6458e-05,
+            1.6042e-05,
+            1.5959e-05,
+            1.5875e-05,
+            1.6667e-05,
+            1.5375e-05
+          ],
+          "restore_s": [
+            9.425e-05,
+            8.3958e-05,
+            8.325e-05,
+            8.0416e-05,
+            9.675e-05,
+            8.0208e-05,
+            7.7208e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 4207,
+          "canonical_packet_hash": 4077879817936070223,
+          "source_bytes_est": 189472,
+          "target_bytes_est": 81504,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-pair",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000327458,
+            0.000362542,
+            0.000358625,
+            0.000337667,
+            0.000308167,
+            0.000310125,
+            0.0003905
+          ],
+          "encode_s": [
+            7.0708e-05,
+            4.275e-05,
+            4.9708e-05,
+            4.5417e-05,
+            4.0959e-05,
+            3.8959e-05,
+            4.8833e-05
+          ],
+          "decode_s": [
+            1.1042e-05,
+            9.5e-06,
+            9.5e-06,
+            9.292e-06,
+            9.208e-06,
+            8.666e-06,
+            1.6291e-05
+          ],
+          "target_setup_s": [
+            2.8375e-05,
+            2.0208e-05,
+            2.0541e-05,
+            2.025e-05,
+            1.8666e-05,
+            1.8375e-05,
+            2.4417e-05
+          ],
+          "restore_s": [
+            9.3625e-05,
+            5.4417e-05,
+            7.875e-05,
+            5.6292e-05,
+            5.4833e-05,
+            5.0708e-05,
+            7.0417e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 189472,
+          "target_bytes_est": 88676,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-pair",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "bdd-pair",
+          "query_s": [
+            0.001162416,
+            0.001113541,
+            0.001042375,
+            0.001001917,
+            0.001098417,
+            0.001053959,
+            0.001059625
+          ],
+          "encode_s": [
+            0.000198292,
+            0.000180875,
+            0.000183875,
+            0.000155833,
+            0.000174167,
+            0.000168417,
+            0.000159167
+          ],
+          "decode_s": [
+            4.7875e-05,
+            3.5e-05,
+            3.6959e-05,
+            3.1458e-05,
+            3.6042e-05,
+            3.4792e-05,
+            3.15e-05
+          ],
+          "target_setup_s": [
+            0.000983375,
+            0.001009708,
+            0.001020833,
+            0.000960292,
+            0.001049417,
+            0.000994833,
+            0.000972375
+          ],
+          "restore_s": [
+            0.000275625,
+            0.000245875,
+            0.000280333,
+            0.000257458,
+            0.000262333,
+            0.000245958,
+            0.000276291
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 14373,
+          "canonical_packet_hash": 3204928329773445389,
+          "source_bytes_est": 700400,
+          "target_bytes_est": 336016,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-pair",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "bdd-pair",
+          "query_s": [
+            0.001262583,
+            0.001025166,
+            0.001092875,
+            0.001128625,
+            0.001122042,
+            0.0010815,
+            0.001155333
+          ],
+          "encode_s": [
+            0.00018075,
+            0.000151958,
+            0.000169625,
+            0.0001495,
+            0.000176209,
+            0.000152416,
+            0.000193459
+          ],
+          "decode_s": [
+            3.1917e-05,
+            3.1166e-05,
+            3.5125e-05,
+            3.1125e-05,
+            3.4416e-05,
+            3.1375e-05,
+            3.5667e-05
+          ],
+          "target_setup_s": [
+            0.001008,
+            0.000979708,
+            0.001027792,
+            0.000947083,
+            0.0010335,
+            0.0009435,
+            0.001019667
+          ],
+          "restore_s": [
+            0.00049875,
+            0.0004745,
+            0.000451834,
+            0.000445625,
+            0.000554458,
+            0.000570709,
+            0.000480833
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 20225,
+          "canonical_packet_hash": 12247503892234950608,
+          "source_bytes_est": 700400,
+          "target_bytes_est": 635024,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-pair",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001183125,
+            0.001128875,
+            0.001041792,
+            0.001156084,
+            0.001047208,
+            0.00104725,
+            0.001081333
+          ],
+          "encode_s": [
+            0.000204,
+            0.000167584,
+            0.000155417,
+            0.000157375,
+            0.000152375,
+            0.000152458,
+            0.000158917
+          ],
+          "decode_s": [
+            3.5875e-05,
+            3.225e-05,
+            3.15e-05,
+            3.1458e-05,
+            3.1375e-05,
+            3.1542e-05,
+            3.7917e-05
+          ],
+          "target_setup_s": [
+            0.001255334,
+            0.001227584,
+            0.001119542,
+            0.001130334,
+            0.0011275,
+            0.001243458,
+            0.00122775
+          ],
+          "restore_s": [
+            0.000220875,
+            0.000192958,
+            0.000191084,
+            0.000196709,
+            0.000199417,
+            0.000184792,
+            0.000235333
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 700400,
+          "target_bytes_est": 313508,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        15.3388671875,
+        18.0498046875,
+        17.0224609375
+      ],
+      "loadavg_end": [
+        14.4306640625,
+        17.81640625,
+        16.94580078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 11.94211483001709,
+      "max_rss_bytes": 28721152,
+      "log": "transfer-direct-sweep-logs/job-011-transport-packed256----bit-major-local-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed256",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed256",
+          "query_s": [
+            0.000398042,
+            0.000321167,
+            0.000294125,
+            0.000306333,
+            0.000303667,
+            0.000303708,
+            0.000309625
+          ],
+          "encode_s": [
+            2.475e-05,
+            2.7125e-05,
+            1.9625e-05,
+            2.0333e-05,
+            2.9875e-05,
+            1.8834e-05,
+            2.1042e-05
+          ],
+          "decode_s": [
+            1.2333e-05,
+            1.0292e-05,
+            8.208e-06,
+            8.458e-06,
+            8.583e-06,
+            8e-06,
+            9.083e-06
+          ],
+          "target_setup_s": [
+            2.0375e-05,
+            1.95e-05,
+            1.875e-05,
+            1.8916e-05,
+            1.9667e-05,
+            1.9125e-05,
+            2.05e-05
+          ],
+          "restore_s": [
+            0.000100667,
+            9.6875e-05,
+            9.1583e-05,
+            9.2792e-05,
+            8.9584e-05,
+            9.6e-05,
+            9.5875e-05
+          ],
+          "packet_bytes": 4471,
+          "packet_nodes": 107,
+          "canonical_packet_bytes": 4471,
+          "canonical_packet_hash": 11747652016453862053,
+          "source_bytes_est": 144080,
+          "target_bytes_est": 19424,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed256",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "packed256",
+          "query_s": [
+            0.00033525,
+            0.000304583,
+            0.000300041,
+            0.000397541,
+            0.000302291,
+            0.000324416,
+            0.000290625
+          ],
+          "encode_s": [
+            2.1042e-05,
+            2.025e-05,
+            2.3292e-05,
+            2.0584e-05,
+            1.7958e-05,
+            2.2875e-05,
+            1.7542e-05
+          ],
+          "decode_s": [
+            8.291e-06,
+            7.666e-06,
+            7.542e-06,
+            7.5e-06,
+            7.167e-06,
+            8.75e-06,
+            7.458e-06
+          ],
+          "target_setup_s": [
+            5.584e-06,
+            1.75e-06,
+            1.416e-06,
+            2.916e-06,
+            1e-06,
+            2.958e-06,
+            1.083e-06
+          ],
+          "restore_s": [
+            0.000138167,
+            0.000137917,
+            0.000136,
+            0.000133,
+            0.000142416,
+            0.0001685,
+            0.000122917
+          ],
+          "packet_bytes": 4471,
+          "packet_nodes": 107,
+          "canonical_packet_bytes": 2759,
+          "canonical_packet_hash": 11246299788466518040,
+          "source_bytes_est": 144080,
+          "target_bytes_est": 48896,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed256",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000293167,
+            0.000289125,
+            0.000284167,
+            0.000279417,
+            0.000299333,
+            0.000337792,
+            0.000293375
+          ],
+          "encode_s": [
+            1.8375e-05,
+            1.8875e-05,
+            1.8375e-05,
+            1.8208e-05,
+            1.8875e-05,
+            2.1125e-05,
+            1.9541e-05
+          ],
+          "decode_s": [
+            7.708e-06,
+            7.875e-06,
+            7.292e-06,
+            7.166e-06,
+            7.75e-06,
+            8.291e-06,
+            7.792e-06
+          ],
+          "target_setup_s": [
+            1.8459e-05,
+            1.8875e-05,
+            1.8708e-05,
+            1.85e-05,
+            1.9666e-05,
+            2.0333e-05,
+            1.95e-05
+          ],
+          "restore_s": [
+            0.00014625,
+            0.000142625,
+            0.000142,
+            0.000140667,
+            0.000144875,
+            0.000146833,
+            0.000145333
+          ],
+          "packet_bytes": 4471,
+          "packet_nodes": 107,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 144080,
+          "target_bytes_est": 23268,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed256",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed256",
+          "query_s": [
+            0.001394083,
+            0.001326666,
+            0.001246583,
+            0.001261542,
+            0.00121575,
+            0.001342167,
+            0.001232291
+          ],
+          "encode_s": [
+            0.000128125,
+            0.000116416,
+            0.00011675,
+            0.000123,
+            0.000110667,
+            0.000165708,
+            0.000117167
+          ],
+          "decode_s": [
+            4.3791e-05,
+            3.6042e-05,
+            4.075e-05,
+            4.075e-05,
+            3.6542e-05,
+            3.8334e-05,
+            3.7375e-05
+          ],
+          "target_setup_s": [
+            0.00111225,
+            0.001055667,
+            0.001147041,
+            0.0011,
+            0.001080916,
+            0.001095958,
+            0.001069666
+          ],
+          "restore_s": [
+            0.000358916,
+            0.000334208,
+            0.000484333,
+            0.000347,
+            0.000336667,
+            0.000358833,
+            0.000342958
+          ],
+          "packet_bytes": 19691,
+          "packet_nodes": 773,
+          "canonical_packet_bytes": 19691,
+          "canonical_packet_hash": 10147364123215861427,
+          "source_bytes_est": 638664,
+          "target_bytes_est": 152224,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed256",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "packed256",
+          "query_s": [
+            0.001324125,
+            0.001374417,
+            0.001396542,
+            0.001238208,
+            0.001244292,
+            0.001229083,
+            0.001296333
+          ],
+          "encode_s": [
+            0.000116042,
+            0.000132167,
+            0.000128459,
+            0.000114667,
+            0.00010925,
+            0.000108625,
+            0.000113417
+          ],
+          "decode_s": [
+            3.8917e-05,
+            3.9709e-05,
+            3.9333e-05,
+            3.6e-05,
+            3.6125e-05,
+            3.6333e-05,
+            3.6833e-05
+          ],
+          "target_setup_s": [
+            1.6834e-05,
+            1.9667e-05,
+            1.8583e-05,
+            1.7791e-05,
+            1.6917e-05,
+            2.35e-05,
+            1.7542e-05
+          ],
+          "restore_s": [
+            0.000675583,
+            0.000674291,
+            0.000672834,
+            0.000635667,
+            0.000638583,
+            0.0006625,
+            0.000641375
+          ],
+          "packet_bytes": 19691,
+          "packet_nodes": 773,
+          "canonical_packet_bytes": 28641,
+          "canonical_packet_hash": 3523366634813046836,
+          "source_bytes_est": 638664,
+          "target_bytes_est": 503968,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed256",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001267792,
+            0.0012725,
+            0.001301667,
+            0.001304583,
+            0.00130225,
+            0.001321583,
+            0.001297708
+          ],
+          "encode_s": [
+            0.000111625,
+            0.000111416,
+            0.000117791,
+            0.000124666,
+            0.000117667,
+            0.000118958,
+            0.000116959
+          ],
+          "decode_s": [
+            4.4959e-05,
+            3.7084e-05,
+            3.8167e-05,
+            3.8625e-05,
+            3.875e-05,
+            3.85e-05,
+            3.8291e-05
+          ],
+          "target_setup_s": [
+            0.001138583,
+            0.001233584,
+            0.001172083,
+            0.001171125,
+            0.001170042,
+            0.002222375,
+            0.001197584
+          ],
+          "restore_s": [
+            0.000584667,
+            0.0005855,
+            0.00055675,
+            0.000548375,
+            0.000551709,
+            0.00133,
+            0.00055775
+          ],
+          "packet_bytes": 19691,
+          "packet_nodes": 773,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 638664,
+          "target_bytes_est": 167588,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        14.4306640625,
+        17.81640625,
+        16.94580078125
+      ],
+      "loadavg_end": [
+        16.86572265625,
+        18.2060546875,
+        17.0927734375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 6.707273960113525,
+      "max_rss_bytes": 27541504,
+      "log": "transfer-direct-sweep-logs/job-012-transport-bdd-root----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-root",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "bdd-root",
+          "query_s": [
+            0.000424875,
+            0.00033325,
+            0.000319958,
+            0.000313416,
+            0.000611625,
+            0.000341625,
+            0.000314959
+          ],
+          "encode_s": [
+            4.7583e-05,
+            4.3958e-05,
+            4.275e-05,
+            4.1167e-05,
+            5.5917e-05,
+            4.7166e-05,
+            4.1041e-05
+          ],
+          "decode_s": [
+            1.65e-05,
+            1.3792e-05,
+            9.667e-06,
+            9.167e-06,
+            1.1375e-05,
+            9.917e-06,
+            9.417e-06
+          ],
+          "target_setup_s": [
+            1.7541e-05,
+            1.6584e-05,
+            1.6042e-05,
+            1.5792e-05,
+            1.7208e-05,
+            1.6375e-05,
+            1.6e-05
+          ],
+          "restore_s": [
+            5.575e-05,
+            4.8584e-05,
+            4.5208e-05,
+            4.3e-05,
+            5.8833e-05,
+            4.7e-05,
+            4.3791e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 3871,
+          "canonical_packet_hash": 11696682399718970126,
+          "source_bytes_est": 186032,
+          "target_bytes_est": 33456,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-root",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "bdd-root",
+          "query_s": [
+            0.000376375,
+            0.000353334,
+            0.000406792,
+            0.000409375,
+            0.000724458,
+            0.00034625,
+            0.000335209
+          ],
+          "encode_s": [
+            4.3708e-05,
+            4.6709e-05,
+            4.3417e-05,
+            4.4166e-05,
+            0.000107541,
+            4.2708e-05,
+            4.1458e-05
+          ],
+          "decode_s": [
+            1.0334e-05,
+            1e-05,
+            9.875e-06,
+            1e-05,
+            2.525e-05,
+            9.667e-06,
+            9.167e-06
+          ],
+          "target_setup_s": [
+            1.6667e-05,
+            1.6583e-05,
+            1.6459e-05,
+            1.6375e-05,
+            7.1292e-05,
+            1.6708e-05,
+            1.6083e-05
+          ],
+          "restore_s": [
+            0.00013225,
+            7.3084e-05,
+            7.2084e-05,
+            7.1667e-05,
+            0.000143667,
+            7.1875e-05,
+            6.8791e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 4207,
+          "canonical_packet_hash": 4077879817936070223,
+          "source_bytes_est": 186032,
+          "target_bytes_est": 66736,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-root",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.000377708,
+            0.000354292,
+            0.000347292,
+            0.000324666,
+            0.001905,
+            0.000373166,
+            0.000354791
+          ],
+          "encode_s": [
+            4.4792e-05,
+            4.4666e-05,
+            4.2958e-05,
+            4.3833e-05,
+            0.000111875,
+            4.5459e-05,
+            4.3833e-05
+          ],
+          "decode_s": [
+            1e-05,
+            9.958e-06,
+            9.375e-06,
+            9.667e-06,
+            1.1e-05,
+            1.0541e-05,
+            1.0333e-05
+          ],
+          "target_setup_s": [
+            2.1333e-05,
+            2.1167e-05,
+            2.0583e-05,
+            2.0458e-05,
+            2.1667e-05,
+            2.1417e-05,
+            2.5917e-05
+          ],
+          "restore_s": [
+            6.8375e-05,
+            5.9167e-05,
+            5.6834e-05,
+            5.6958e-05,
+            6.3083e-05,
+            6.1041e-05,
+            5.9333e-05
+          ],
+          "packet_bytes": 3871,
+          "packet_nodes": 235,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 186032,
+          "target_bytes_est": 88676,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-root",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "bdd-root",
+          "query_s": [
+            0.001135292,
+            0.001078584,
+            0.001648208,
+            0.001068958,
+            0.001085417,
+            0.001046375,
+            0.002418209
+          ],
+          "encode_s": [
+            0.000175291,
+            0.000171583,
+            0.000199042,
+            0.000165041,
+            0.000165083,
+            0.000161834,
+            0.000179584
+          ],
+          "decode_s": [
+            3.6209e-05,
+            3.4042e-05,
+            3.5167e-05,
+            3.6958e-05,
+            3.3292e-05,
+            3.3209e-05,
+            3.4875e-05
+          ],
+          "target_setup_s": [
+            0.000985167,
+            0.000983917,
+            0.00101,
+            0.000993875,
+            0.00098025,
+            0.000983041,
+            0.000983
+          ],
+          "restore_s": [
+            0.000212542,
+            0.000196667,
+            0.000201042,
+            0.000200125,
+            0.000201458,
+            0.000195959,
+            0.000200708
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 14373,
+          "canonical_packet_hash": 3204928329773445389,
+          "source_bytes_est": 693440,
+          "target_bytes_est": 233696,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-root",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "bdd-root",
+          "query_s": [
+            0.001074208,
+            0.001037791,
+            0.001058333,
+            0.001040041,
+            0.001113875,
+            0.001153333,
+            0.00113725
+          ],
+          "encode_s": [
+            0.000156875,
+            0.00015775,
+            0.000155875,
+            0.000168833,
+            0.000174709,
+            0.000174,
+            0.000152375
+          ],
+          "decode_s": [
+            3.2583e-05,
+            3.2667e-05,
+            3.1709e-05,
+            3.2667e-05,
+            3.8959e-05,
+            3.3708e-05,
+            3.1709e-05
+          ],
+          "target_setup_s": [
+            0.000958834,
+            0.000952458,
+            0.001007709,
+            0.000958208,
+            0.00101375,
+            0.00095525,
+            0.000962708
+          ],
+          "restore_s": [
+            0.000431917,
+            0.000431125,
+            0.000449666,
+            0.000406417,
+            0.000432334,
+            0.0003945,
+            0.000427916
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 20225,
+          "canonical_packet_hash": 12247503892234950608,
+          "source_bytes_est": 693440,
+          "target_bytes_est": 532704,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "bdd-root",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001148875,
+            0.001042625,
+            0.001139583,
+            0.001046375,
+            0.001053875,
+            0.001079417,
+            0.001057583
+          ],
+          "encode_s": [
+            0.000161625,
+            0.000169292,
+            0.000165625,
+            0.000165875,
+            0.000151208,
+            0.000153833,
+            0.000168166
+          ],
+          "decode_s": [
+            3.2041e-05,
+            3.1791e-05,
+            3.1917e-05,
+            3.6375e-05,
+            3.15e-05,
+            3.2083e-05,
+            3.1625e-05
+          ],
+          "target_setup_s": [
+            0.001170584,
+            0.001155,
+            0.001165166,
+            0.001135333,
+            0.001145209,
+            0.001150334,
+            0.001146625
+          ],
+          "restore_s": [
+            0.000206,
+            0.000203959,
+            0.00019875,
+            0.000190916,
+            0.00020075,
+            0.000192584,
+            0.000214416
+          ],
+          "packet_bytes": 14373,
+          "packet_nodes": 980,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 693440,
+          "target_bytes_est": 313508,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        16.86572265625,
+        18.2060546875,
+        17.0927734375
+      ],
+      "loadavg_end": [
+        15.9921875,
+        17.982421875,
+        17.0263671875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 9.993266820907593,
+      "max_rss_bytes": 45793280,
+      "log": "transfer-direct-sweep-logs/job-013-transport-packed4096----bit-major-local-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed4096",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed4096",
+          "query_s": [
+            0.001787416,
+            0.001690125,
+            0.001696375,
+            0.001710792,
+            0.001706916,
+            0.001737875,
+            0.001762334
+          ],
+          "encode_s": [
+            2.5875e-05,
+            2.0459e-05,
+            3.0166e-05,
+            2e-05,
+            3.1875e-05,
+            2.4083e-05,
+            2.9709e-05
+          ],
+          "decode_s": [
+            1.9833e-05,
+            1.5e-05,
+            1.5042e-05,
+            1.4667e-05,
+            1.55e-05,
+            1.5917e-05,
+            1.5292e-05
+          ],
+          "target_setup_s": [
+            3.225e-05,
+            2.8667e-05,
+            3.1583e-05,
+            2.7334e-05,
+            3.3625e-05,
+            3.1916e-05,
+            2.95e-05
+          ],
+          "restore_s": [
+            0.000795708,
+            0.000746584,
+            0.000777625,
+            0.000724167,
+            0.000749834,
+            0.000794917,
+            0.000762375
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 8622629660032811156,
+          "source_bytes_est": 152928,
+          "target_bytes_est": 62448,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed4096",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "packed4096",
+          "query_s": [
+            0.001690875,
+            0.001885375,
+            0.001819,
+            0.001658375,
+            0.0020375,
+            0.001773333,
+            0.002584042
+          ],
+          "encode_s": [
+            2.0625e-05,
+            2.6125e-05,
+            2.0083e-05,
+            1.8834e-05,
+            6.1667e-05,
+            2.5166e-05,
+            5.4e-05
+          ],
+          "decode_s": [
+            1.4792e-05,
+            1.5834e-05,
+            1.45e-05,
+            1.45e-05,
+            1.575e-05,
+            1.5792e-05,
+            4.7792e-05
+          ],
+          "target_setup_s": [
+            4.25e-06,
+            3.583e-06,
+            2.833e-06,
+            3.208e-06,
+            3.542e-06,
+            4.167e-06,
+            7.834e-06
+          ],
+          "restore_s": [
+            0.000802417,
+            0.000842709,
+            0.000798583,
+            0.000782417,
+            0.000822167,
+            0.000840083,
+            0.002129667
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 13488365474548755030,
+          "source_bytes_est": 152928,
+          "target_bytes_est": 62448,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed4096",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.002614792,
+            0.002418417,
+            0.00261425,
+            0.00268225,
+            0.002477708,
+            0.00254875,
+            0.00268625
+          ],
+          "encode_s": [
+            5.6667e-05,
+            3.2542e-05,
+            5.4125e-05,
+            5.2542e-05,
+            6.125e-05,
+            4.3416e-05,
+            5.0625e-05
+          ],
+          "decode_s": [
+            3.8791e-05,
+            1.6083e-05,
+            3.9042e-05,
+            3.8542e-05,
+            3.8375e-05,
+            3.8667e-05,
+            3.9208e-05
+          ],
+          "target_setup_s": [
+            8.4875e-05,
+            2.3125e-05,
+            5.6292e-05,
+            5.5667e-05,
+            5.6125e-05,
+            6.1125e-05,
+            5.4667e-05
+          ],
+          "restore_s": [
+            0.001907125,
+            0.000802542,
+            0.001523292,
+            0.001860709,
+            0.001881417,
+            0.002030917,
+            0.001903542
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 152928,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed4096",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed4096",
+          "query_s": [
+            0.003012625,
+            0.002962167,
+            0.003052542,
+            0.002961334,
+            0.002738334,
+            0.002760959,
+            0.003067584
+          ],
+          "encode_s": [
+            0.000119083,
+            0.000118125,
+            0.000120875,
+            0.000121375,
+            0.000108584,
+            0.000100084,
+            0.000129583
+          ],
+          "decode_s": [
+            6.575e-05,
+            6.7792e-05,
+            7.8e-05,
+            7.3083e-05,
+            6.3e-05,
+            6.75e-05,
+            7.6958e-05
+          ],
+          "target_setup_s": [
+            0.00146175,
+            0.0022155,
+            0.001436958,
+            0.001460583,
+            0.001448542,
+            0.001444125,
+            0.00153875
+          ],
+          "restore_s": [
+            0.0032125,
+            0.003706667,
+            0.003319875,
+            0.003071958,
+            0.003323625,
+            0.003194125,
+            0.003082209
+          ],
+          "packet_bytes": 81889,
+          "packet_nodes": 440,
+          "canonical_packet_bytes": 81889,
+          "canonical_packet_hash": 4129212437140413564,
+          "source_bytes_est": 902104,
+          "target_bytes_est": 316080,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed4096",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "packed4096",
+          "query_s": [
+            0.002964708,
+            0.00287475,
+            0.002862083,
+            0.002938709,
+            0.002789875,
+            0.003016,
+            0.002839875
+          ],
+          "encode_s": [
+            0.000115208,
+            0.000103459,
+            0.000107375,
+            0.000148167,
+            0.000107875,
+            0.000150208,
+            0.000130292
+          ],
+          "decode_s": [
+            6.5167e-05,
+            7.0459e-05,
+            6.75e-05,
+            7.775e-05,
+            6.2792e-05,
+            7.15e-05,
+            6.3541e-05
+          ],
+          "target_setup_s": [
+            2.1583e-05,
+            2.7e-05,
+            1.05e-05,
+            1.3583e-05,
+            1.2084e-05,
+            1.4292e-05,
+            1.7416e-05
+          ],
+          "restore_s": [
+            0.004771166,
+            0.004527334,
+            0.004757459,
+            0.0043925,
+            0.004598458,
+            0.004422334,
+            0.004459042
+          ],
+          "packet_bytes": 81889,
+          "packet_nodes": 440,
+          "canonical_packet_bytes": 24257,
+          "canonical_packet_hash": 10435333728887476987,
+          "source_bytes_est": 902104,
+          "target_bytes_est": 3027408,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "packed4096",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.002786334,
+            0.00299725,
+            0.00296875,
+            0.002866583,
+            0.002917208,
+            0.003047125,
+            0.002795667
+          ],
+          "encode_s": [
+            0.000101833,
+            0.000145916,
+            0.000132125,
+            0.000109375,
+            0.000116667,
+            0.000103625,
+            9.875e-05
+          ],
+          "decode_s": [
+            7.525e-05,
+            6.85e-05,
+            6.3834e-05,
+            6.6208e-05,
+            7.3041e-05,
+            6.325e-05,
+            6.2791e-05
+          ],
+          "target_setup_s": [
+            0.001149166,
+            0.00122225,
+            0.00118375,
+            0.001158791,
+            0.001131875,
+            0.001231834,
+            0.001160875
+          ],
+          "restore_s": [
+            0.00404325,
+            0.003826833,
+            0.003715542,
+            0.003804875,
+            0.0036685,
+            0.003657459,
+            0.003963125
+          ],
+          "packet_bytes": 81889,
+          "packet_nodes": 440,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 902104,
+          "target_bytes_est": 313508,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "packed_map": "local",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        15.9921875,
+        17.982421875,
+        17.0263671875
+      ],
+      "loadavg_end": [
+        14.154296875,
+        17.52197265625,
+        16.87353515625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "transport",
+        "EVENT_LAB_CANDIDATE": "runs",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "direct",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 5.768125057220459,
+      "max_rss_bytes": 63930368,
+      "log": "transfer-direct-sweep-logs/job-014-transport-runs----bit-major-direct.log",
+      "rows": [
+        {
+          "kind": "transfer_free_join",
+          "candidate": "runs",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "runs",
+          "query_s": [
+            0.001267541,
+            0.001245708,
+            0.001202875,
+            0.001307833,
+            0.001157833,
+            0.001194625,
+            0.001261209
+          ],
+          "encode_s": [
+            0.000309875,
+            0.0003,
+            0.000299,
+            0.000316791,
+            0.000294875,
+            0.0003515,
+            0.000285916
+          ],
+          "decode_s": [
+            2.3333e-05,
+            1.7542e-05,
+            1.5958e-05,
+            1.4833e-05,
+            1.4291e-05,
+            2.0792e-05,
+            1.425e-05
+          ],
+          "target_setup_s": [
+            7e-06,
+            6.792e-06,
+            5.709e-06,
+            6.791e-06,
+            5.583e-06,
+            6.041e-06,
+            5.542e-06
+          ],
+          "restore_s": [
+            0.000243958,
+            0.000241791,
+            0.000224,
+            0.000223,
+            0.000220417,
+            0.000251834,
+            0.00022175
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 430504,
+          "target_bytes_est": 100776,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "runs",
+          "bits": 12,
+          "target_layout": "face-major",
+          "target_candidate": "runs",
+          "query_s": [
+            0.001320709,
+            0.001168666,
+            0.001182333,
+            0.001222375,
+            0.001176708,
+            0.001180208,
+            0.001153209
+          ],
+          "encode_s": [
+            0.000308209,
+            0.000288291,
+            0.000309958,
+            0.000298917,
+            0.000287333,
+            0.000329875,
+            0.000303584
+          ],
+          "decode_s": [
+            1.375e-05,
+            1.3875e-05,
+            1.6375e-05,
+            1.4125e-05,
+            1.375e-05,
+            2.15e-05,
+            1.3708e-05
+          ],
+          "target_setup_s": [
+            5.5e-06,
+            5.375e-06,
+            5.583e-06,
+            5.5e-06,
+            5.333e-06,
+            5.291e-06,
+            5.291e-06
+          ],
+          "restore_s": [
+            0.000231584,
+            0.000220667,
+            0.000266208,
+            0.000221541,
+            0.000243166,
+            0.000241833,
+            0.000223917
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 19127,
+          "canonical_packet_hash": 15749230808650704846,
+          "source_bytes_est": 430504,
+          "target_bytes_est": 100776,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "runs",
+          "bits": 12,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.001211916,
+            0.001200583,
+            0.001336708,
+            0.001228208,
+            0.001163292,
+            0.001241458,
+            0.001221
+          ],
+          "encode_s": [
+            0.000291458,
+            0.000292,
+            0.000327417,
+            0.000288666,
+            0.000286666,
+            0.000303792,
+            0.000294833
+          ],
+          "decode_s": [
+            1.4291e-05,
+            1.4041e-05,
+            1.8208e-05,
+            1.4541e-05,
+            1.3667e-05,
+            1.7584e-05,
+            1.4083e-05
+          ],
+          "target_setup_s": [
+            1.85e-05,
+            1.8875e-05,
+            2.3167e-05,
+            1.9666e-05,
+            1.8375e-05,
+            2.2333e-05,
+            2.2041e-05
+          ],
+          "restore_s": [
+            0.000681625,
+            0.000674,
+            0.00074575,
+            0.000729792,
+            0.000696916,
+            0.000718,
+            0.0006795
+          ],
+          "packet_bytes": 19127,
+          "packet_nodes": 33,
+          "canonical_packet_bytes": 6127,
+          "canonical_packet_hash": 18102733595059858741,
+          "source_bytes_est": 430504,
+          "target_bytes_est": 13284,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "runs",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "runs",
+          "query_s": [
+            0.033737333,
+            0.034020791,
+            0.033841958,
+            0.034186084,
+            0.034546708,
+            0.033872125,
+            0.034470959
+          ],
+          "encode_s": [
+            0.011095041,
+            0.010837125,
+            0.012190417,
+            0.012183625,
+            0.010953459,
+            0.011431333,
+            0.011252041
+          ],
+          "decode_s": [
+            0.000409542,
+            0.000344791,
+            0.000329666,
+            0.00036625,
+            0.000364583,
+            0.000331166,
+            0.000335959
+          ],
+          "target_setup_s": [
+            0.0003275,
+            0.0003545,
+            0.000335167,
+            0.000322292,
+            0.000371083,
+            0.00033025,
+            0.000330291
+          ],
+          "restore_s": [
+            0.010523584,
+            0.010824541,
+            0.010646041,
+            0.010762959,
+            0.010973625,
+            0.010608708,
+            0.010821792
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 8314664,
+          "target_bytes_est": 2828416,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "runs",
+          "bits": 18,
+          "target_layout": "face-major",
+          "target_candidate": "runs",
+          "query_s": [
+            0.032963625,
+            0.03381275,
+            0.033881166,
+            0.034560834,
+            0.033807292,
+            0.033358209,
+            0.03413425
+          ],
+          "encode_s": [
+            0.010475,
+            0.011983,
+            0.010511833,
+            0.011143208,
+            0.011540458,
+            0.010996875,
+            0.011082917
+          ],
+          "decode_s": [
+            0.000330792,
+            0.000364709,
+            0.000347334,
+            0.000388083,
+            0.000339416,
+            0.000338958,
+            0.000361625
+          ],
+          "target_setup_s": [
+            0.000320959,
+            0.000330917,
+            0.000338333,
+            0.000352958,
+            0.000435834,
+            0.000313791,
+            0.00032875
+          ],
+          "restore_s": [
+            0.010588459,
+            0.01060875,
+            0.010857708,
+            0.010644834,
+            0.010614958,
+            0.010367583,
+            0.010790583
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 1380017,
+          "canonical_packet_hash": 15420007701385136724,
+          "source_bytes_est": 8314664,
+          "target_bytes_est": 2828416,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        },
+        {
+          "kind": "transfer_free_join",
+          "candidate": "runs",
+          "bits": 18,
+          "target_layout": "bit-major",
+          "target_candidate": "packed512",
+          "query_s": [
+            0.033973333,
+            0.034023667,
+            0.034238375,
+            0.034212375,
+            0.033938083,
+            0.033994334,
+            0.033671
+          ],
+          "encode_s": [
+            0.011109917,
+            0.011472167,
+            0.011182083,
+            0.011406792,
+            0.011183625,
+            0.01059625,
+            0.010502042
+          ],
+          "decode_s": [
+            0.000350042,
+            0.000352125,
+            0.0003525,
+            0.000383625,
+            0.000333459,
+            0.000350875,
+            0.000385833
+          ],
+          "target_setup_s": [
+            0.001206917,
+            0.001249958,
+            0.001222,
+            0.001250042,
+            0.0011245,
+            0.001124375,
+            0.001233917
+          ],
+          "restore_s": [
+            0.049933084,
+            0.050137666,
+            0.049683667,
+            0.050244208,
+            0.049865375,
+            0.050257125,
+            0.051131416
+          ],
+          "packet_bytes": 1380017,
+          "packet_nodes": 42,
+          "canonical_packet_bytes": 25379,
+          "canonical_packet_hash": 1828067518556718950,
+          "source_bytes_est": 8314664,
+          "target_bytes_est": 79524,
+          "roots": 104,
+          "rows": 128,
+          "verified": true,
+          "layout": "bit-major",
+          "transfer_import": "direct"
+        }
+      ],
+      "loadavg_start": [
+        14.154296875,
+        17.52197265625,
+        16.87353515625
+      ],
+      "loadavg_end": [
+        13.1806640625,
+        17.26416015625,
+        16.7861328125
+      ]
+    }
+  ]
+}

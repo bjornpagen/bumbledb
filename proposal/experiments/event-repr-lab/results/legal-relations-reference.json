@@ -1,0 +1,119 @@
+{
+  "passed": true,
+  "cases": {
+    "domain_sets": 16,
+    "relation_pairs": 2193,
+    "associativity": 25249,
+    "residual_adjunction": 25249,
+    "role_checks": 2825,
+    "coupled_readout_checks": 19683
+  },
+  "seed": 20260918,
+  "counterexample": {
+    "support": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        1
+      ],
+      [
+        1,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        1
+      ],
+      [
+        1,
+        1,
+        0
+      ],
+      [
+        1,
+        1,
+        1
+      ]
+    ],
+    "event": [
+      [
+        0,
+        0,
+        1
+      ],
+      [
+        0,
+        1,
+        1
+      ],
+      [
+        1,
+        0,
+        1
+      ],
+      [
+        1,
+        1,
+        1
+      ]
+    ],
+    "right_identity": [
+      [
+        0,
+        1,
+        0
+      ],
+      [
+        0,
+        1,
+        1
+      ],
+      [
+        1,
+        1,
+        0
+      ],
+      [
+        1,
+        1,
+        1
+      ]
+    ],
+    "witness": [
+      0,
+      1,
+      0
+    ]
+  },
+  "full_fixed_nonproduct_support": [
+    [
+      0,
+      0,
+      0
+    ],
+    [
+      1,
+      1,
+      1
+    ]
+  ],
+  "checker_sha256": "f2f60b89047d55b66e924af611fab3d5e936c3b63bffb914568e28996bc9599e",
+  "boundary": "Independent finite sets and matrix laws; all subsets of four presentation codes as legal domains. Exhaustive relation triples/events for domains of size at most two, selected samples for larger domains. General readout/dependency equivalence checks all supported predicates on all supports of three bits and three readouts. Does not test native Rust admission or environment-indexed execution."
+}

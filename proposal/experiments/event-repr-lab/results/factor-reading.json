@@ -1,0 +1,12 @@
+{
+  "files": {
+    "proposal/research/event-algebra/abo-khamis-ngo-rudra-2016-faq.txt": "1e183a13708bdc09eed2f0866bed448b246ac19ef8e26191c5ab189e2ee8ed1d"
+  },
+  "sections": [
+    "1.2, definition of FAQ and the common semiring requirement",
+    "5.1.2, variable elimination by factoring out functions independent of the eliminated variable",
+    "5.2.1, indicator projections retain restrictions that can still annihilate a result"
+  ],
+  "conclusion": "The cardinality specialization uses distributivity over natural-number sum/product and a certified legal product. Environment-dependent domain cardinalities remain functions of the retained environment. A shared parameter or correlated law is not covered by this certificate.",
+  "boundary": "The immutable partial-support roots and decoder/FD integration are laboratory choices. This is not an implementation of the full InsideOut algorithm or its complexity guarantees."
+}

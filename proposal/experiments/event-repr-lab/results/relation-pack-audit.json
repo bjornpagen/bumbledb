@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "binary_sha256": "95cdaea2516b011254167a978468a4e22bc9e223f7c67632a39a5d01a4fa2fa7",
+  "phase_rows": {
+    "correctness": 54,
+    "smoke": 48,
+    "comparison": 384
+  },
+  "native_correctness_runs": 11904,
+  "separator_cases": 12288,
+  "matched_schedule_pairs": 192,
+  "repeated_schedule_pairs": 32,
+  "additional_axiom_free_reports": 6,
+  "checker_sha256": "5a9b861faebed9ef8d183fd5ed75d0dfea5eb3962fcfd6c8860ce286dca004f1",
+  "boundary": "Two-branch native typed relation programs on checked legal products with shared environments. A conservative normalized-IR checker validates a proposed separator; it does not search for optimal partitions. Six separate denotational Lean reports, not Rust refinement."
+}

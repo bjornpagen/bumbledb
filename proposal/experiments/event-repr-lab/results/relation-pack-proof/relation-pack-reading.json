@@ -1,0 +1,16 @@
+{
+  "files": {
+    "proposal/research/event-algebra/abo-khamis-ngo-rudra-2016-faq.txt": "1e183a13708bdc09eed2f0866bed448b246ac19ef8e26191c5ab189e2ee8ed1d",
+    "proposal/papers/abo-khamis-ngo-rudra-2016-faq.pdf": "e084e3cc57f11f4808bc9b38f8fd05b1974ceedbd572ed7dc86b2d58bc829dc0",
+    "proposal/research/event-algebra/desharnais-moeller-struth-2003-kleene-algebra-domain.txt": "003e522467c336251f71e96099f68b07b4cb05e546bf289e089120754f32c50f",
+    "proposal/papers/desharnais-moeller-struth-2003-kleene-algebra-domain.pdf": "41f7446d51d79fa7d93acc6294efea3ba30f8729a9d52fb0b964f7637ac4f643",
+    "proposal/research/event-algebra/wang-willsey-suciu-2023-free-join.txt": "b3b10d5379fc49844e3e8476ccc33843111a5eec42eb52ccb4e97d02e23bcf79",
+    "proposal/papers/wang-willsey-suciu-2023-free-join.pdf": "ff7683faf2a11214dd6259d4d38d12a0bee300de4ade3f85424f3fec69ed0f45"
+  },
+  "reading_scope": [
+    "FAQ v7 sections 1.2 and 5.1.2: scopes, commutativity requirement and folding by variable elimination.",
+    "Kleene algebra with domain v1 sections 2.1, 2.3, 2.4: ordered relation multiplication and concrete model.",
+    "Free Join section 4.4: trie union/product factorization, compressed output and its separate performance role."
+  ],
+  "boundary": "Scalar separator checker is conservative; relational operations retain order and shared environments. No generic cost model or production aggregate planner is derived from these sources."
+}

@@ -1,0 +1,24 @@
+
+running 2 tests
+test tests::all_small_functions ... DIFFERENCE_CHECK {"passed":true,"orders":6,"basis_schedules":4,"kernels":2,"functions_per_manager":256,"binary_cases":50331648,"projection_cases":98304,"map_cases":356352,"completed_projection_cases":98304}
+ok
+test tests::symbolic_width_and_quantifier_obstruction ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling event-difference-prototype v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/difference-prototype)
+    Finished `release` profile [optimized] target(s) in 0.44s
+     Running unittests src/lib.rs (target/release/build/event-difference-prototype/0454974cdac8d07e/out/event_difference_prototype-0454974cdac8d07e)
+     Running unittests src/main.rs (target/release/build/event-difference-prototype/cda66e7ce74cd29a/out/event_difference_prototype-cda66e7ce74cd29a)
+   Doc-tests event_difference_prototype

@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "cases": 393304,
+  "scope": "All one/two-state relations and goals; all four-state relations with empty/full/singleton goals; larger chain cases. Finite semantic check, not a performance measurement.",
+  "checker_sha256": "20c91911577861f46665399476f662bdc8f6cffd1c5f75b9ddc66839f075b6bb",
+  "paper": "2212.03684v1",
+  "paper_sha256": "99108bc42737f92d3d7668669b772f87eb30f469432e8325f58ece0ca057c66c"
+}

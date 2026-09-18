@@ -1,0 +1,18 @@
+{
+  "passed": true,
+  "source": "join-factorization/RelationPack.lean",
+  "source_sha256": "4fb58f3f0fe394f86a931bfee628e7fba103de90c0fe5bf1e764ac62972035a8",
+  "theorems": {
+    "composition": [],
+    "residual_union": [],
+    "residual_intersection": [],
+    "separate_witness_counterexample": []
+  },
+  "log": "relation-pack-lean.log",
+  "command": [
+    "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+    "join-factorization/RelationPack.lean"
+  ],
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "boundary": "Typed relational denotations and row-index aggregation. No native relational Pack planner implemented; presence and support contracts remain required."
+}

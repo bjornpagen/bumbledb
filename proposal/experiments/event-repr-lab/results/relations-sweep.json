@@ -1,0 +1,2615 @@
+{
+  "seed": 20260917,
+  "trials": 7,
+  "timeout_s": 60,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/4eb96717b825fda0/out/bumbledb-4eb96717b825fda0",
+    "binary_sha256": "b0b3158b4875c55a40b7fe58eb7ce5afc3f896d465be2ac1c1f02dab7a88dad9",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/carrier.rs": "215a69982a3bc931d988032891c2e3286c0114b4ec1f254fb8d05715769c00a2",
+      "src/diagram.rs": "2873fcd2a12759a64664711b947af075ee73d9aa3f44eda597dd771bd1aaebb7",
+      "src/finite.rs": "fbfda2a96cf8f6105d592fb8a66c04052db2aacfc6fe470a041ee5e48eb802f3",
+      "src/lib.rs": "959297a9aa3a1d34426742aff957e790c5d2ebc3618a076081fef3b4c9923d53",
+      "src/modal.rs": "5d51acab5d98d33747e069b50885e0a9926d2429975aedf69b5276554ede2986",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/packed.rs": "f2af40f92bca03ff0ccf409edc5a6b05598387ae5371e05590a103e6b4743bf2",
+      "src/relations.rs": "fa8d469afb4ecd5182f106a00a56e84039e5eb09dfb1811ef4b4b58ccd4831ad"
+    },
+    "cargo_lock_sha256": "e6a31bb03b41f4ef4e151edee14284bcdfa447c8b730b240518ae01ea9330913",
+    "built_utc": "2026-09-17T20:44:44.003115+00:00",
+    "build_started_utc": "2026-09-17T20:40:38.480706+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true
+      },
+      "status": "passed",
+      "elapsed_s": 0.20302677154541016,
+      "max_rss_bytes": 23232512,
+      "log": "relations-sweep-logs/job-000-verify.log",
+      "rows": [
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 6,
+          "passed": true
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 11,
+          "extra_packed_orders": 2,
+          "passed": true
+        }
+      ],
+      "loadavg_start": [
+        3.36669921875,
+        4.97607421875,
+        7.205078125
+      ],
+      "loadavg_end": [
+        3.36669921875,
+        4.97607421875,
+        7.205078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "runs"
+      },
+      "status": "passed",
+      "elapsed_s": 1.8189220428466797,
+      "max_rss_bytes": 40108032,
+      "log": "relations-sweep-logs/job-001-relations-runs.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "runs",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000187292,
+            0.000163792,
+            0.000163542,
+            0.00016125,
+            0.000170875,
+            0.000167792,
+            0.000156458
+          ],
+          "join_only_s": [
+            8.4791e-05,
+            5.334e-06,
+            4.958e-06,
+            4.916e-06,
+            4.917e-06,
+            5e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.003854166,
+            0.003804167,
+            0.003960375,
+            0.003882875,
+            0.003922375,
+            0.003776,
+            0.003819167
+          ],
+          "warm_s": [
+            0.00371275,
+            0.003666292,
+            0.003922625,
+            0.003772583,
+            0.003834875,
+            0.003850708,
+            0.003716
+          ],
+          "input_bytes_est": 54920,
+          "final_bytes_est": 417512,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "runs",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000187292,
+            0.000163792,
+            0.000163542,
+            0.00016125,
+            0.000170875,
+            0.000167792,
+            0.000156458
+          ],
+          "join_only_s": [
+            8.4791e-05,
+            5.334e-06,
+            4.958e-06,
+            4.916e-06,
+            4.917e-06,
+            5e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.001252667,
+            0.001225709,
+            0.001269208,
+            0.001334791,
+            0.001198417,
+            0.001185708,
+            0.001175584
+          ],
+          "warm_s": [
+            1.2584e-05,
+            1.2167e-05,
+            1.2084e-05,
+            1.2042e-05,
+            1.2083e-05,
+            1.2042e-05,
+            1.2041e-05
+          ],
+          "input_bytes_est": 54920,
+          "final_bytes_est": 430504,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "runs",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.007265416,
+            0.00722575,
+            0.007085417,
+            0.007037667,
+            0.007025792,
+            0.007005584,
+            0.007209833
+          ],
+          "join_only_s": [
+            2.2125e-05,
+            5.25e-06,
+            5.042e-06,
+            4.917e-06,
+            4.958e-06,
+            5.042e-06,
+            4.958e-06
+          ],
+          "fresh_s": [
+            0.093579875,
+            0.093443542,
+            0.093109375,
+            0.091946583,
+            0.092572917,
+            0.092422375,
+            0.093206125
+          ],
+          "warm_s": [
+            0.093580667,
+            0.09471625,
+            0.09398275,
+            0.093392292,
+            0.09337075,
+            0.091880792,
+            0.09197775
+          ],
+          "input_bytes_est": 1123560,
+          "final_bytes_est": 8301672,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "runs",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.007265416,
+            0.00722575,
+            0.007085417,
+            0.007037667,
+            0.007025792,
+            0.007005584,
+            0.007209833
+          ],
+          "join_only_s": [
+            2.2125e-05,
+            5.25e-06,
+            5.042e-06,
+            4.917e-06,
+            4.958e-06,
+            5.042e-06,
+            4.958e-06
+          ],
+          "fresh_s": [
+            0.033298333,
+            0.034358833,
+            0.033748125,
+            0.034105333,
+            0.033831041,
+            0.033427083,
+            0.033549292
+          ],
+          "warm_s": [
+            7.5e-05,
+            6.8208e-05,
+            6.725e-05,
+            6.7125e-05,
+            6.6833e-05,
+            6.6875e-05,
+            6.675e-05
+          ],
+          "input_bytes_est": 1123560,
+          "final_bytes_est": 8314664,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        3.36669921875,
+        4.97607421875,
+        7.205078125
+      ],
+      "loadavg_end": [
+        3.36669921875,
+        4.97607421875,
+        7.205078125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored"
+      },
+      "status": "passed",
+      "elapsed_s": 2.4002480506896973,
+      "max_rss_bytes": 15679488,
+      "log": "relations-sweep-logs/job-002-relations-bdd-anchored.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000631041,
+            0.000615917,
+            0.0006095,
+            0.000630166,
+            0.000645792,
+            0.000621375,
+            0.000597
+          ],
+          "join_only_s": [
+            5.1666e-05,
+            5.25e-06,
+            5.084e-06,
+            4.959e-06,
+            4.917e-06,
+            4.917e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.000683667,
+            0.000603125,
+            0.000557875,
+            0.000568084,
+            0.00054375,
+            0.000647583,
+            0.000572916
+          ],
+          "warm_s": [
+            0.000376875,
+            0.000364875,
+            0.000363375,
+            0.000364125,
+            0.00036175,
+            0.00036,
+            0.000382875
+          ],
+          "input_bytes_est": 22816,
+          "final_bytes_est": 235168,
+          "final_nodes": 1886,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000631041,
+            0.000615917,
+            0.0006095,
+            0.000630166,
+            0.000645792,
+            0.000621375,
+            0.000597
+          ],
+          "join_only_s": [
+            5.1666e-05,
+            5.25e-06,
+            5.084e-06,
+            4.959e-06,
+            4.917e-06,
+            4.917e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.000399875,
+            0.00037175,
+            0.000363834,
+            0.000364667,
+            0.000358959,
+            0.000353833,
+            0.000382125
+          ],
+          "warm_s": [
+            1.65e-05,
+            1.5e-05,
+            1.4875e-05,
+            1.475e-05,
+            1.4833e-05,
+            1.4875e-05,
+            1.4875e-05
+          ],
+          "input_bytes_est": 22816,
+          "final_bytes_est": 248160,
+          "final_nodes": 1886,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.032120541,
+            0.03244575,
+            0.032403584,
+            0.032147083,
+            0.031974333,
+            0.032123416,
+            0.033375708
+          ],
+          "join_only_s": [
+            2.275e-05,
+            5.25e-06,
+            4.958e-06,
+            5.042e-06,
+            4.959e-06,
+            4.958e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.004805333,
+            0.004626084,
+            0.004930083,
+            0.004479541,
+            0.004890417,
+            0.0045975,
+            0.004959917
+          ],
+          "warm_s": [
+            0.003752333,
+            0.004121167,
+            0.003397791,
+            0.003387917,
+            0.003753542,
+            0.003388916,
+            0.003599708
+          ],
+          "input_bytes_est": 90496,
+          "final_bytes_est": 1464448,
+          "final_nodes": 11102,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.032120541,
+            0.03244575,
+            0.032403584,
+            0.032147083,
+            0.031974333,
+            0.032123416,
+            0.033375708
+          ],
+          "join_only_s": [
+            2.275e-05,
+            5.25e-06,
+            4.958e-06,
+            5.042e-06,
+            4.959e-06,
+            4.958e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.002962166,
+            0.002853042,
+            0.002895292,
+            0.003076333,
+            0.003162167,
+            0.002907709,
+            0.002944083
+          ],
+          "warm_s": [
+            8.875e-05,
+            5.9042e-05,
+            5.6875e-05,
+            5.6917e-05,
+            5.7084e-05,
+            5.6584e-05,
+            5.7e-05
+          ],
+          "input_bytes_est": 90496,
+          "final_bytes_est": 1477440,
+          "final_nodes": 11102,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        3.36669921875,
+        4.97607421875,
+        7.205078125
+      ],
+      "loadavg_end": [
+        3.4970703125,
+        4.97607421875,
+        7.19189453125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "dense-dispatched"
+      },
+      "status": "passed",
+      "elapsed_s": 0.18250703811645508,
+      "max_rss_bytes": 23199744,
+      "log": "relations-sweep-logs/job-003-relations-dense-dispatched.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            3.3375e-05,
+            1.9167e-05,
+            1.7291e-05,
+            1.7e-05,
+            1.7083e-05,
+            1.775e-05,
+            1.6792e-05
+          ],
+          "join_only_s": [
+            4.6416e-05,
+            5.583e-06,
+            5.292e-06,
+            5.083e-06,
+            5.208e-06,
+            5.084e-06,
+            5.125e-06
+          ],
+          "fresh_s": [
+            0.000175833,
+            0.000153458,
+            0.000145167,
+            0.000145167,
+            0.000144458,
+            0.000145542,
+            0.000148917
+          ],
+          "warm_s": [
+            0.000142917,
+            0.000142375,
+            0.000142375,
+            0.00014225,
+            0.000142208,
+            0.000143833,
+            0.000142125
+          ],
+          "input_bytes_est": 15976,
+          "final_bytes_est": 82488,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            3.3375e-05,
+            1.9167e-05,
+            1.7291e-05,
+            1.7e-05,
+            1.7083e-05,
+            1.775e-05,
+            1.6792e-05
+          ],
+          "join_only_s": [
+            4.6416e-05,
+            5.583e-06,
+            5.292e-06,
+            5.083e-06,
+            5.208e-06,
+            5.084e-06,
+            5.125e-06
+          ],
+          "fresh_s": [
+            6.6666e-05,
+            6.1708e-05,
+            5.7625e-05,
+            5.9792e-05,
+            5.4625e-05,
+            5.4708e-05,
+            5.4667e-05
+          ],
+          "warm_s": [
+            1.1167e-05,
+            1.0708e-05,
+            1.0667e-05,
+            1.0584e-05,
+            1.0584e-05,
+            1.0583e-05,
+            1.0583e-05
+          ],
+          "input_bytes_est": 15976,
+          "final_bytes_est": 95480,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000929041,
+            0.000933958,
+            0.0008755,
+            0.000929792,
+            0.000845917,
+            0.000843542,
+            0.0008695
+          ],
+          "join_only_s": [
+            2.0083e-05,
+            5.583e-06,
+            5.375e-06,
+            5.375e-06,
+            5.209e-06,
+            5.208e-06,
+            5.25e-06
+          ],
+          "fresh_s": [
+            0.007354583,
+            0.007339416,
+            0.007020375,
+            0.0070435,
+            0.007159583,
+            0.006939083,
+            0.007015416
+          ],
+          "warm_s": [
+            0.014005083,
+            0.007626834,
+            0.007178667,
+            0.007465292,
+            0.007137792,
+            0.007129833,
+            0.007087958
+          ],
+          "input_bytes_est": 919240,
+          "final_bytes_est": 5810656,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense-dispatched",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000929041,
+            0.000933958,
+            0.0008755,
+            0.000929792,
+            0.000845917,
+            0.000843542,
+            0.0008695
+          ],
+          "join_only_s": [
+            2.0083e-05,
+            5.583e-06,
+            5.375e-06,
+            5.375e-06,
+            5.209e-06,
+            5.208e-06,
+            5.25e-06
+          ],
+          "fresh_s": [
+            0.002347541,
+            0.002424834,
+            0.002442292,
+            0.002443209,
+            0.002421291,
+            0.0024405,
+            0.0024515
+          ],
+          "warm_s": [
+            6.1041e-05,
+            5.3e-05,
+            5.2125e-05,
+            5.1583e-05,
+            5.1458e-05,
+            5.1208e-05,
+            5.1333e-05
+          ],
+          "input_bytes_est": 919240,
+          "final_bytes_est": 5823648,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        3.4970703125,
+        4.97607421875,
+        7.19189453125
+      ],
+      "loadavg_end": [
+        3.4970703125,
+        4.97607421875,
+        7.19189453125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "roaring"
+      },
+      "status": "passed",
+      "elapsed_s": 2.890346050262451,
+      "max_rss_bytes": 25608192,
+      "log": "relations-sweep-logs/job-004-relations-roaring.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "roaring",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000733208,
+            0.00069475,
+            0.000686292,
+            0.000681542,
+            0.000677375,
+            0.000676083,
+            0.000678334
+          ],
+          "join_only_s": [
+            5.3583e-05,
+            5.458e-06,
+            5.209e-06,
+            5.167e-06,
+            5.166e-06,
+            5.25e-06,
+            5.167e-06
+          ],
+          "fresh_s": [
+            0.009274875,
+            0.008954042,
+            0.00914275,
+            0.009095292,
+            0.008964208,
+            0.009192541,
+            0.011488167
+          ],
+          "warm_s": [
+            0.021088125,
+            0.011107458,
+            0.010267291,
+            0.00934975,
+            0.009182042,
+            0.011858458,
+            0.010729875
+          ],
+          "input_bytes_est": 206376,
+          "final_bytes_est": 1134840,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "roaring",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000733208,
+            0.00069475,
+            0.000686292,
+            0.000681542,
+            0.000677375,
+            0.000676083,
+            0.000678334
+          ],
+          "join_only_s": [
+            5.3583e-05,
+            5.458e-06,
+            5.209e-06,
+            5.167e-06,
+            5.166e-06,
+            5.25e-06,
+            5.167e-06
+          ],
+          "fresh_s": [
+            0.009661541,
+            0.003069834,
+            0.006631459,
+            0.002951583,
+            0.003903,
+            0.00293475,
+            0.003019459
+          ],
+          "warm_s": [
+            1.6041e-05,
+            1.0417e-05,
+            1.0209e-05,
+            1.0167e-05,
+            1.0125e-05,
+            1.0167e-05,
+            1.0125e-05
+          ],
+          "input_bytes_est": 206376,
+          "final_bytes_est": 1147832,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "roaring",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.012032292,
+            0.012424041,
+            0.011854583,
+            0.012031583,
+            0.012315834,
+            0.012345542,
+            0.012021
+          ],
+          "join_only_s": [
+            1.9458e-05,
+            5.542e-06,
+            5.125e-06,
+            5.25e-06,
+            5.167e-06,
+            5.25e-06,
+            5.125e-06
+          ],
+          "fresh_s": [
+            0.146432459,
+            0.191018542,
+            0.142832833,
+            0.143261167,
+            0.190433333,
+            0.142312334,
+            0.142074459
+          ],
+          "warm_s": [
+            0.147711583,
+            0.147367666,
+            0.146032,
+            0.144677708,
+            0.144697625,
+            0.143860042,
+            0.146304042
+          ],
+          "input_bytes_est": 4734920,
+          "final_bytes_est": 31041856,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "roaring",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.012032292,
+            0.012424041,
+            0.011854583,
+            0.012031583,
+            0.012315834,
+            0.012345542,
+            0.012021
+          ],
+          "join_only_s": [
+            1.9458e-05,
+            5.542e-06,
+            5.125e-06,
+            5.25e-06,
+            5.167e-06,
+            5.25e-06,
+            5.125e-06
+          ],
+          "fresh_s": [
+            0.049794459,
+            0.049527709,
+            0.048855292,
+            0.049358125,
+            0.049198917,
+            0.048739459,
+            0.048800208
+          ],
+          "warm_s": [
+            2.8166e-05,
+            1.0375e-05,
+            1.0125e-05,
+            1.0125e-05,
+            1.0042e-05,
+            1.0042e-05,
+            1.0042e-05
+          ],
+          "input_bytes_est": 4734920,
+          "final_bytes_est": 31054848,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        3.4970703125,
+        4.97607421875,
+        7.19189453125
+      ],
+      "loadavg_end": [
+        3.4970703125,
+        4.97607421875,
+        7.19189453125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "packed64"
+      },
+      "status": "passed",
+      "elapsed_s": 3.6325149536132812,
+      "max_rss_bytes": 15269888,
+      "log": "relations-sweep-logs/job-005-relations-packed64.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed64",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            5.4459e-05,
+            3.8542e-05,
+            3.65e-05,
+            3.6125e-05,
+            3.5042e-05,
+            3.6333e-05,
+            3.6541e-05
+          ],
+          "join_only_s": [
+            3.9125e-05,
+            5.166e-06,
+            4.917e-06,
+            4.959e-06,
+            4.916e-06,
+            4.959e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.000494042,
+            0.000419667,
+            0.000394125,
+            0.000434333,
+            0.000404708,
+            0.000489042,
+            0.000414458
+          ],
+          "warm_s": [
+            0.000308292,
+            0.000308708,
+            0.000381291,
+            0.000352625,
+            0.000316917,
+            0.000312791,
+            0.000311
+          ],
+          "input_bytes_est": 9608,
+          "final_bytes_est": 150472,
+          "final_nodes": 1535,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed64",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            5.4459e-05,
+            3.8542e-05,
+            3.65e-05,
+            3.6125e-05,
+            3.5042e-05,
+            3.6333e-05,
+            3.6541e-05
+          ],
+          "join_only_s": [
+            3.9125e-05,
+            5.166e-06,
+            4.917e-06,
+            4.959e-06,
+            4.916e-06,
+            4.959e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.0002645,
+            0.000255125,
+            0.000224334,
+            0.000265583,
+            0.0002405,
+            0.000273042,
+            0.000288208
+          ],
+          "warm_s": [
+            1.7708e-05,
+            1.4834e-05,
+            1.4792e-05,
+            1.45e-05,
+            1.4584e-05,
+            1.4583e-05,
+            1.4542e-05
+          ],
+          "input_bytes_est": 9608,
+          "final_bytes_est": 163464,
+          "final_nodes": 1535,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed64",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001951084,
+            0.00194675,
+            0.001914708,
+            0.001911417,
+            0.001939875,
+            0.002033917,
+            0.001918333
+          ],
+          "join_only_s": [
+            1.6625e-05,
+            5.166e-06,
+            5e-06,
+            4.916e-06,
+            4.917e-06,
+            4.958e-06,
+            4.916e-06
+          ],
+          "fresh_s": [
+            0.003990917,
+            0.004131917,
+            0.0042245,
+            0.004165459,
+            0.004075,
+            0.00400025,
+            0.004028
+          ],
+          "warm_s": [
+            0.003519708,
+            0.003245167,
+            0.003345417,
+            0.003677166,
+            0.003310583,
+            0.003202083,
+            0.003445833
+          ],
+          "input_bytes_est": 52864,
+          "final_bytes_est": 1077760,
+          "final_nodes": 10080,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed64",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001951084,
+            0.00194675,
+            0.001914708,
+            0.001911417,
+            0.001939875,
+            0.002033917,
+            0.001918333
+          ],
+          "join_only_s": [
+            1.6625e-05,
+            5.166e-06,
+            5e-06,
+            4.916e-06,
+            4.917e-06,
+            4.958e-06,
+            4.916e-06
+          ],
+          "fresh_s": [
+            0.002333625,
+            0.002279041,
+            0.002401208,
+            0.002672583,
+            0.002313833,
+            0.002244084,
+            0.002296667
+          ],
+          "warm_s": [
+            6.7292e-05,
+            4.7292e-05,
+            4.6375e-05,
+            4.6667e-05,
+            4.6041e-05,
+            4.6208e-05,
+            4.5959e-05
+          ],
+          "input_bytes_est": 52864,
+          "final_bytes_est": 1090752,
+          "final_nodes": 10080,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        3.4970703125,
+        4.97607421875,
+        7.19189453125
+      ],
+      "loadavg_end": [
+        4.177734375,
+        5.09228515625,
+        7.2197265625
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "packed256"
+      },
+      "status": "passed",
+      "elapsed_s": 3.914523124694824,
+      "max_rss_bytes": 13729792,
+      "log": "relations-sweep-logs/job-006-relations-packed256.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed256",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            4.0667e-05,
+            2.9541e-05,
+            2.9584e-05,
+            2.875e-05,
+            2.975e-05,
+            2.8708e-05,
+            2.7667e-05
+          ],
+          "join_only_s": [
+            4.3333e-05,
+            5.208e-06,
+            5e-06,
+            4.958e-06,
+            4.916e-06,
+            4.959e-06,
+            4.958e-06
+          ],
+          "fresh_s": [
+            0.000865,
+            0.000915792,
+            0.000774542,
+            0.000823084,
+            0.000844959,
+            0.00077225,
+            0.000759917
+          ],
+          "warm_s": [
+            0.000779375,
+            0.000717542,
+            0.000684791,
+            0.000725833,
+            0.000725333,
+            0.000682584,
+            0.000687084
+          ],
+          "input_bytes_est": 5296,
+          "final_bytes_est": 166160,
+          "final_nodes": 1321,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed256",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            4.0667e-05,
+            2.9541e-05,
+            2.9584e-05,
+            2.875e-05,
+            2.975e-05,
+            2.8708e-05,
+            2.7667e-05
+          ],
+          "join_only_s": [
+            4.3333e-05,
+            5.208e-06,
+            5e-06,
+            4.958e-06,
+            4.916e-06,
+            4.959e-06,
+            4.958e-06
+          ],
+          "fresh_s": [
+            0.000308791,
+            0.000298834,
+            0.000317834,
+            0.000305375,
+            0.000417917,
+            0.000323042,
+            0.000343375
+          ],
+          "warm_s": [
+            1.45e-05,
+            1.3292e-05,
+            1.3209e-05,
+            1.3125e-05,
+            1.3125e-05,
+            1.3167e-05,
+            1.3125e-05
+          ],
+          "input_bytes_est": 5296,
+          "final_bytes_est": 179152,
+          "final_nodes": 1321,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed256",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.0013355,
+            0.001358125,
+            0.001452667,
+            0.001430625,
+            0.001393209,
+            0.001339959,
+            0.00137375
+          ],
+          "join_only_s": [
+            1.575e-05,
+            6.541e-06,
+            5.417e-06,
+            5.041e-06,
+            6.625e-06,
+            6.291e-06,
+            6.333e-06
+          ],
+          "fresh_s": [
+            0.004095334,
+            0.00451325,
+            0.004536125,
+            0.004277458,
+            0.004170125,
+            0.004197208,
+            0.004207875
+          ],
+          "warm_s": [
+            0.003812208,
+            0.003687667,
+            0.003641875,
+            0.003767,
+            0.003547959,
+            0.003872666,
+            0.003986083
+          ],
+          "input_bytes_est": 60808,
+          "final_bytes_est": 974472,
+          "final_nodes": 8839,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "packed256",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.0013355,
+            0.001358125,
+            0.001452667,
+            0.001430625,
+            0.001393209,
+            0.001339959,
+            0.00137375
+          ],
+          "join_only_s": [
+            1.575e-05,
+            6.541e-06,
+            5.417e-06,
+            5.041e-06,
+            6.625e-06,
+            6.291e-06,
+            6.333e-06
+          ],
+          "fresh_s": [
+            0.002012083,
+            0.002149333,
+            0.002154917,
+            0.002123792,
+            0.002059833,
+            0.002022083,
+            0.002240791
+          ],
+          "warm_s": [
+            6.075e-05,
+            3.8083e-05,
+            3.8291e-05,
+            4.2e-05,
+            4.2958e-05,
+            3.9e-05,
+            3.8833e-05
+          ],
+          "input_bytes_est": 60808,
+          "final_bytes_est": 987464,
+          "final_nodes": 8839,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        4.177734375,
+        5.09228515625,
+        7.2197265625
+      ],
+      "loadavg_end": [
+        4.5634765625,
+        5.15673828125,
+        7.22998046875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "bdd-root"
+      },
+      "status": "passed",
+      "elapsed_s": 2.26389479637146,
+      "max_rss_bytes": 17612800,
+      "log": "relations-sweep-logs/job-007-relations-bdd-root.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-root",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000621791,
+            0.00060075,
+            0.00060875,
+            0.000593625,
+            0.000596333,
+            0.000596917,
+            0.000593
+          ],
+          "join_only_s": [
+            4.0458e-05,
+            5.208e-06,
+            5e-06,
+            4.875e-06,
+            5e-06,
+            4.958e-06,
+            4.833e-06
+          ],
+          "fresh_s": [
+            0.000673584,
+            0.000578209,
+            0.000555917,
+            0.000549166,
+            0.000602,
+            0.000719167,
+            0.000660833
+          ],
+          "warm_s": [
+            0.000387333,
+            0.00045275,
+            0.000410125,
+            0.000394792,
+            0.000375,
+            0.000367542,
+            0.000360625
+          ],
+          "input_bytes_est": 22800,
+          "final_bytes_est": 235152,
+          "final_nodes": 1886,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-root",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000621791,
+            0.00060075,
+            0.00060875,
+            0.000593625,
+            0.000596333,
+            0.000596917,
+            0.000593
+          ],
+          "join_only_s": [
+            4.0458e-05,
+            5.208e-06,
+            5e-06,
+            4.875e-06,
+            5e-06,
+            4.958e-06,
+            4.833e-06
+          ],
+          "fresh_s": [
+            0.000400666,
+            0.0004275,
+            0.000376083,
+            0.000525042,
+            0.000403708,
+            0.0004075,
+            0.000396459
+          ],
+          "warm_s": [
+            1.575e-05,
+            1.4875e-05,
+            1.4667e-05,
+            1.4541e-05,
+            1.4708e-05,
+            1.4791e-05,
+            1.4792e-05
+          ],
+          "input_bytes_est": 22800,
+          "final_bytes_est": 248144,
+          "final_nodes": 1886,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-root",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.032610792,
+            0.032393959,
+            0.032451834,
+            0.032918625,
+            0.032093834,
+            0.031923417,
+            0.03146325
+          ],
+          "join_only_s": [
+            1.8875e-05,
+            5.167e-06,
+            4.958e-06,
+            4.916e-06,
+            4.917e-06,
+            4.916e-06,
+            4.875e-06
+          ],
+          "fresh_s": [
+            0.00479225,
+            0.004910792,
+            0.004489917,
+            0.004858083,
+            0.004744458,
+            0.004573584,
+            0.004637459
+          ],
+          "warm_s": [
+            0.003697667,
+            0.003420417,
+            0.003467584,
+            0.003420709,
+            0.003451875,
+            0.0034455,
+            0.00332575
+          ],
+          "input_bytes_est": 90480,
+          "final_bytes_est": 1464432,
+          "final_nodes": 11102,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-root",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.032610792,
+            0.032393959,
+            0.032451834,
+            0.032918625,
+            0.032093834,
+            0.031923417,
+            0.03146325
+          ],
+          "join_only_s": [
+            1.8875e-05,
+            5.167e-06,
+            4.958e-06,
+            4.916e-06,
+            4.917e-06,
+            4.916e-06,
+            4.875e-06
+          ],
+          "fresh_s": [
+            0.002901542,
+            0.002770125,
+            0.003105459,
+            0.002965167,
+            0.002808833,
+            0.002898209,
+            0.002827542
+          ],
+          "warm_s": [
+            8.1541e-05,
+            5.675e-05,
+            5.5583e-05,
+            5.5083e-05,
+            5.5166e-05,
+            5.5125e-05,
+            5.4458e-05
+          ],
+          "input_bytes_est": 90480,
+          "final_bytes_est": 1477424,
+          "final_nodes": 11102,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        4.5634765625,
+        5.15673828125,
+        7.22998046875
+      ],
+      "loadavg_end": [
+        4.5634765625,
+        5.15673828125,
+        7.22998046875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "bdd-pair"
+      },
+      "status": "passed",
+      "elapsed_s": 2.290862798690796,
+      "max_rss_bytes": 17825792,
+      "log": "relations-sweep-logs/job-008-relations-bdd-pair.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-pair",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000672583,
+            0.000611375,
+            0.000604583,
+            0.000595833,
+            0.000593458,
+            0.000595208,
+            0.000595417
+          ],
+          "join_only_s": [
+            3.7917e-05,
+            5.25e-06,
+            4.958e-06,
+            4.916e-06,
+            4.958e-06,
+            4.916e-06,
+            4.833e-06
+          ],
+          "fresh_s": [
+            0.000691833,
+            0.000586083,
+            0.000558041,
+            0.000549458,
+            0.00056175,
+            0.000585333,
+            0.000553959
+          ],
+          "warm_s": [
+            0.000386666,
+            0.000369333,
+            0.000385292,
+            0.000362125,
+            0.000359417,
+            0.000365375,
+            0.000359042
+          ],
+          "input_bytes_est": 23648,
+          "final_bytes_est": 238592,
+          "final_nodes": 1886,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-pair",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000672583,
+            0.000611375,
+            0.000604583,
+            0.000595833,
+            0.000593458,
+            0.000595208,
+            0.000595417
+          ],
+          "join_only_s": [
+            3.7917e-05,
+            5.25e-06,
+            4.958e-06,
+            4.916e-06,
+            4.958e-06,
+            4.916e-06,
+            4.833e-06
+          ],
+          "fresh_s": [
+            0.000372291,
+            0.000384542,
+            0.000353084,
+            0.000478917,
+            0.000489875,
+            0.000474334,
+            0.000400667
+          ],
+          "warm_s": [
+            1.7334e-05,
+            2.925e-05,
+            1.7334e-05,
+            2.3167e-05,
+            1.6542e-05,
+            1.575e-05,
+            1.5458e-05
+          ],
+          "input_bytes_est": 23648,
+          "final_bytes_est": 251584,
+          "final_nodes": 1886,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-pair",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.033614833,
+            0.032637167,
+            0.032426583,
+            0.032615084,
+            0.032523167,
+            0.032832916,
+            0.032390959
+          ],
+          "join_only_s": [
+            1.9958e-05,
+            5.417e-06,
+            5.167e-06,
+            5.125e-06,
+            5.167e-06,
+            5.167e-06,
+            5.167e-06
+          ],
+          "fresh_s": [
+            0.0046375,
+            0.004664084,
+            0.00455775,
+            0.004777,
+            0.004661625,
+            0.004566458,
+            0.004723083
+          ],
+          "warm_s": [
+            0.004095083,
+            0.003471958,
+            0.003731917,
+            0.003454625,
+            0.003396333,
+            0.003534458,
+            0.003355167
+          ],
+          "input_bytes_est": 91328,
+          "final_bytes_est": 1471392,
+          "final_nodes": 11102,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "bdd-pair",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.033614833,
+            0.032637167,
+            0.032426583,
+            0.032615084,
+            0.032523167,
+            0.032832916,
+            0.032390959
+          ],
+          "join_only_s": [
+            1.9958e-05,
+            5.417e-06,
+            5.167e-06,
+            5.125e-06,
+            5.167e-06,
+            5.167e-06,
+            5.167e-06
+          ],
+          "fresh_s": [
+            0.00296025,
+            0.002834792,
+            0.002830708,
+            0.002834667,
+            0.002850167,
+            0.002864208,
+            0.003054959
+          ],
+          "warm_s": [
+            8.8458e-05,
+            5.6416e-05,
+            5.4167e-05,
+            7.5875e-05,
+            5.7583e-05,
+            5.4334e-05,
+            5.3667e-05
+          ],
+          "input_bytes_est": 91328,
+          "final_bytes_est": 1484384,
+          "final_nodes": 11102,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        4.5634765625,
+        5.15673828125,
+        7.22998046875
+      ],
+      "loadavg_end": [
+        4.51806640625,
+        5.13720703125,
+        7.2109375
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "sparse"
+      },
+      "status": "passed",
+      "elapsed_s": 5.465585947036743,
+      "max_rss_bytes": 181174272,
+      "log": "relations-sweep-logs/job-009-relations-sparse.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "sparse",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000521791,
+            0.000460458,
+            0.000441083,
+            0.000447083,
+            0.000441208,
+            0.000443333,
+            0.000433375
+          ],
+          "join_only_s": [
+            5.2833e-05,
+            5.208e-06,
+            4.958e-06,
+            4.917e-06,
+            4.875e-06,
+            4.916e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.008604334,
+            0.00889575,
+            0.008439083,
+            0.008651167,
+            0.008513458,
+            0.008440625,
+            0.008499834
+          ],
+          "warm_s": [
+            0.00846275,
+            0.008374958,
+            0.008310333,
+            0.008349541,
+            0.008344125,
+            0.008721833,
+            0.008413791
+          ],
+          "input_bytes_est": 205544,
+          "final_bytes_est": 1133048,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "sparse",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000521791,
+            0.000460458,
+            0.000441083,
+            0.000447083,
+            0.000441208,
+            0.000443333,
+            0.000433375
+          ],
+          "join_only_s": [
+            5.2833e-05,
+            5.208e-06,
+            4.958e-06,
+            4.917e-06,
+            4.875e-06,
+            4.916e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.002549833,
+            0.002646041,
+            0.002559917,
+            0.002542083,
+            0.002512459,
+            0.002431083,
+            0.002444667
+          ],
+          "warm_s": [
+            1.0459e-05,
+            9.75e-06,
+            9.625e-06,
+            9.583e-06,
+            9.5e-06,
+            9.541e-06,
+            1.4167e-05
+          ],
+          "input_bytes_est": 205544,
+          "final_bytes_est": 1146040,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "sparse",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.021324792,
+            0.021302666,
+            0.0218805,
+            0.020624583,
+            0.020743333,
+            0.021082667,
+            0.020891583
+          ],
+          "join_only_s": [
+            1.8542e-05,
+            5.208e-06,
+            5.083e-06,
+            5e-06,
+            4.958e-06,
+            4.959e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.292764583,
+            0.297267083,
+            0.294077959,
+            0.3157995,
+            0.321524708,
+            0.308557125,
+            0.30195
+          ],
+          "warm_s": [
+            0.303033666,
+            0.304230583,
+            0.293270084,
+            0.315607917,
+            0.299090417,
+            0.29700325,
+            0.291676458
+          ],
+          "input_bytes_est": 6592968,
+          "final_bytes_est": 45568992,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "sparse",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.021324792,
+            0.021302666,
+            0.0218805,
+            0.020624583,
+            0.020743333,
+            0.021082667,
+            0.020891583
+          ],
+          "join_only_s": [
+            1.8542e-05,
+            5.208e-06,
+            5.083e-06,
+            5e-06,
+            4.958e-06,
+            4.959e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.105042208,
+            0.106706541,
+            0.105459209,
+            0.1072125,
+            0.105488125,
+            0.105782625,
+            0.102181667
+          ],
+          "warm_s": [
+            2.1541e-05,
+            1.0208e-05,
+            9.958e-06,
+            9.917e-06,
+            9.875e-06,
+            9.958e-06,
+            9.875e-06
+          ],
+          "input_bytes_est": 6592968,
+          "final_bytes_est": 45581984,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        4.51806640625,
+        5.13720703125,
+        7.2109375
+      ],
+      "loadavg_end": [
+        4.63671875,
+        5.1513671875,
+        7.20361328125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "dense"
+      },
+      "status": "passed",
+      "elapsed_s": 0.22197389602661133,
+      "max_rss_bytes": 23216128,
+      "log": "relations-sweep-logs/job-010-relations-dense.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            3.3708e-05,
+            2.1334e-05,
+            1.9875e-05,
+            1.8708e-05,
+            1.9375e-05,
+            1.8667e-05,
+            1.8917e-05
+          ],
+          "join_only_s": [
+            2.7708e-05,
+            5.166e-06,
+            4.917e-06,
+            4.959e-06,
+            4.958e-06,
+            5.084e-06,
+            5e-06
+          ],
+          "fresh_s": [
+            0.000237458,
+            0.000213958,
+            0.00020775,
+            0.000207,
+            0.000204667,
+            0.000203833,
+            0.000206833
+          ],
+          "warm_s": [
+            0.000202708,
+            0.000201708,
+            0.000201708,
+            0.000213625,
+            0.000209291,
+            0.00020175,
+            0.000201833
+          ],
+          "input_bytes_est": 15976,
+          "final_bytes_est": 82488,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            3.3708e-05,
+            2.1334e-05,
+            1.9875e-05,
+            1.8708e-05,
+            1.9375e-05,
+            1.8667e-05,
+            1.8917e-05
+          ],
+          "join_only_s": [
+            2.7708e-05,
+            5.166e-06,
+            4.917e-06,
+            4.959e-06,
+            4.958e-06,
+            5.084e-06,
+            5e-06
+          ],
+          "fresh_s": [
+            8.4375e-05,
+            7.5916e-05,
+            7.7459e-05,
+            7.4792e-05,
+            7.3292e-05,
+            7.35e-05,
+            7.3458e-05
+          ],
+          "warm_s": [
+            1.0708e-05,
+            1.0292e-05,
+            1.0166e-05,
+            1.0208e-05,
+            1.0208e-05,
+            1.0292e-05,
+            1.025e-05
+          ],
+          "input_bytes_est": 15976,
+          "final_bytes_est": 95480,
+          "final_nodes": 140,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.001070125,
+            0.001081083,
+            0.000994667,
+            0.000971167,
+            0.001004333,
+            0.000992583,
+            0.000966208
+          ],
+          "join_only_s": [
+            1.6041e-05,
+            5.25e-06,
+            5.042e-06,
+            4.958e-06,
+            5.041e-06,
+            4.958e-06,
+            4.958e-06
+          ],
+          "fresh_s": [
+            0.009903791,
+            0.01001825,
+            0.009728666,
+            0.009631291,
+            0.010346625,
+            0.010087333,
+            0.009912875
+          ],
+          "warm_s": [
+            0.009924875,
+            0.010044125,
+            0.010140542,
+            0.010080916,
+            0.009871291,
+            0.010202875,
+            0.010049666
+          ],
+          "input_bytes_est": 919240,
+          "final_bytes_est": 5810656,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "dense",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.001070125,
+            0.001081083,
+            0.000994667,
+            0.000971167,
+            0.001004333,
+            0.000992583,
+            0.000966208
+          ],
+          "join_only_s": [
+            1.6041e-05,
+            5.25e-06,
+            5.042e-06,
+            4.958e-06,
+            5.041e-06,
+            4.958e-06,
+            4.958e-06
+          ],
+          "fresh_s": [
+            0.003459541,
+            0.003476375,
+            0.003363833,
+            0.003579833,
+            0.003377125,
+            0.003493291,
+            0.003362417
+          ],
+          "warm_s": [
+            5.2e-05,
+            4.8958e-05,
+            4.8458e-05,
+            4.8583e-05,
+            6.1125e-05,
+            4.8958e-05,
+            4.8625e-05
+          ],
+          "input_bytes_est": 919240,
+          "final_bytes_est": 5823648,
+          "final_nodes": 175,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        4.63671875,
+        5.1513671875,
+        7.20361328125
+      ],
+      "loadavg_end": [
+        4.63671875,
+        5.1513671875,
+        7.20361328125
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "relations",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair"
+      },
+      "status": "passed",
+      "elapsed_s": 1.256821870803833,
+      "max_rss_bytes": 16777216,
+      "log": "relations-sweep-logs/job-011-relations-mdd4-pair.log",
+      "rows": [
+        {
+          "kind": "relations_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.000410291,
+            0.000388042,
+            0.000373042,
+            0.000369959,
+            0.000367875,
+            0.000377708,
+            0.000370167
+          ],
+          "join_only_s": [
+            4.5125e-05,
+            5.292e-06,
+            5.042e-06,
+            4.959e-06,
+            4.917e-06,
+            4.917e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.000681791,
+            0.000617375,
+            0.000606875,
+            0.000629583,
+            0.00056,
+            0.000653208,
+            0.000586917
+          ],
+          "warm_s": [
+            0.000401541,
+            0.000412917,
+            0.000402208,
+            0.000382458,
+            0.000379458,
+            0.000389833,
+            0.000392458
+          ],
+          "input_bytes_est": 20064,
+          "final_bytes_est": 248448,
+          "final_nodes": 1551,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 12,
+          "worlds": 4096,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.000410291,
+            0.000388042,
+            0.000373042,
+            0.000369959,
+            0.000367875,
+            0.000377708,
+            0.000370167
+          ],
+          "join_only_s": [
+            4.5125e-05,
+            5.292e-06,
+            5.042e-06,
+            4.959e-06,
+            4.917e-06,
+            4.917e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.000405917,
+            0.000371,
+            0.000350709,
+            0.000352667,
+            0.000356792,
+            0.000342417,
+            0.000342542
+          ],
+          "warm_s": [
+            1.3833e-05,
+            1.3375e-05,
+            1.3416e-05,
+            1.3292e-05,
+            1.3209e-05,
+            1.3375e-05,
+            1.3375e-05
+          ],
+          "input_bytes_est": 20064,
+          "final_bytes_est": 261440,
+          "final_nodes": 1551,
+          "closure_iterations": 46,
+          "checksum": 7171072,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": false,
+          "build_s": [
+            0.021262667,
+            0.021163625,
+            0.020779875,
+            0.021525583,
+            0.021677667,
+            0.021132458,
+            0.021198958
+          ],
+          "join_only_s": [
+            2.2584e-05,
+            5.208e-06,
+            5.083e-06,
+            5e-06,
+            5e-06,
+            4.959e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.004995333,
+            0.004880958,
+            0.004975459,
+            0.004899958,
+            0.004746583,
+            0.005177541,
+            0.004966917
+          ],
+          "warm_s": [
+            0.00411775,
+            0.00387725,
+            0.004172542,
+            0.003697458,
+            0.003605,
+            0.003932166,
+            0.003806042
+          ],
+          "input_bytes_est": 76992,
+          "final_bytes_est": 1356448,
+          "final_nodes": 8974,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        },
+        {
+          "kind": "relations_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 18,
+          "worlds": 262144,
+          "rows": 128,
+          "groups": 16,
+          "memo": true,
+          "build_s": [
+            0.021262667,
+            0.021163625,
+            0.020779875,
+            0.021525583,
+            0.021677667,
+            0.021132458,
+            0.021198958
+          ],
+          "join_only_s": [
+            2.2584e-05,
+            5.208e-06,
+            5.083e-06,
+            5e-06,
+            5e-06,
+            4.959e-06,
+            4.917e-06
+          ],
+          "fresh_s": [
+            0.002994417,
+            0.002944625,
+            0.002948583,
+            0.00292875,
+            0.002876125,
+            0.003004625,
+            0.002803292
+          ],
+          "warm_s": [
+            6.4666e-05,
+            4.45e-05,
+            5.1875e-05,
+            4.25e-05,
+            4.2208e-05,
+            4.225e-05,
+            4.2292e-05
+          ],
+          "input_bytes_est": 76992,
+          "final_bytes_est": 1369440,
+          "final_nodes": 8974,
+          "closure_iterations": 52,
+          "checksum": 215255808,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        4.63671875,
+        5.1513671875,
+        7.20361328125
+      ],
+      "loadavg_end": [
+        4.63671875,
+        5.1513671875,
+        7.20361328125
+      ]
+    }
+  ]
+}

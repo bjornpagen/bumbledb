@@ -1,0 +1,82 @@
+
+running 1 test
+test event_repr_lab::semantics ... EVENT_LAB {"kind":"separator_verification","cases":12288,"passed":true}
+EVENT_LAB {"kind":"relation_pack_verification","candidate":"dense","native_runs":1984,"passed":true}
+EVENT_LAB {"kind":"relation_pack_verification","candidate":"packed512","native_runs":1984,"passed":true}
+EVENT_LAB {"kind":"relation_pack_verification","candidate":"essential512","native_runs":1984,"passed":true}
+EVENT_LAB {"kind":"relation_pack_verification","candidate":"retraction512","native_runs":1984,"passed":true}
+EVENT_LAB {"kind":"relation_pack_verification","candidate":"range-shannon","native_runs":1984,"passed":true}
+EVENT_LAB {"kind":"relation_pack_verification","candidate":"range-group","native_runs":1984,"passed":true}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"range-shannon","admission_cases":765,"relation_pairs":1728,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"range-shannon","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"range-shannon","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"range-shannon","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"range-shannon","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_symbolic_verification","candidate":"range-shannon","coordinates":61,"population":2305816621041581928,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"range-shannon","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"range-shannon","source_packets":68,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed512","source_packets":68,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"range-shannon","cases":192,"passed":true}
+RANGE_ADMISSION {"passed":true,"candidate":"range-shannon","coefficient_cases":30,"symbolic_dimensions":61}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"range-step","admission_cases":765,"relation_pairs":1728,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"range-step","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"range-step","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"range-step","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"range-step","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_symbolic_verification","candidate":"range-step","coordinates":61,"population":2305816621041581928,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"range-step","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"range-step","source_packets":68,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed512","source_packets":68,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"range-step","cases":192,"passed":true}
+RANGE_ADMISSION {"passed":true,"candidate":"range-step","coefficient_cases":30,"symbolic_dimensions":61}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"range-group","admission_cases":765,"relation_pairs":1728,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"range-group","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"range-group","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"range-group","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"range-group","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_symbolic_verification","candidate":"range-group","coordinates":61,"population":2305816621041581928,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"range-group","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"range-group","source_packets":68,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed512","source_packets":68,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"range-group","cases":192,"passed":true}
+RANGE_ADMISSION {"passed":true,"candidate":"range-group","coefficient_cases":30,"symbolic_dimensions":61}
+EVENT_LAB {"kind":"factorized_pack_verification","candidate":"dense","native_runs":896,"passed":true}
+EVENT_LAB {"kind":"factorized_pack_verification","candidate":"packed512","native_runs":896,"passed":true}
+EVENT_LAB {"kind":"factorized_pack_verification","candidate":"essential512","native_runs":896,"passed":true}
+EVENT_LAB {"kind":"factorized_pack_verification","candidate":"retraction512","native_runs":896,"passed":true}
+EVENT_LAB {"kind":"factorized_pack_verification","candidate":"range-shannon","native_runs":896,"passed":true}
+EVENT_LAB {"kind":"factorized_pack_verification","candidate":"range-group","native_runs":896,"passed":true}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"packed512","admission_cases":765,"relation_pairs":1728,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"packed512","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"legal_relation_verification","candidate":"dense","admission_cases":765,"relation_pairs":1728,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"dense","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"dense","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"dependency_native_bridge","cases":5062,"sound_native_citations":20644,"passed":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1379 filtered out; finished in 3.10s
+
+
+        3.44 real         3.01 user         0.04 sys
+            51986432  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                3387  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   1  voluntary context switches
+                 499  involuntary context switches
+         37985349977  instructions retired
+         10081224867  cycles elapsed
+            45990320  peak memory footprint

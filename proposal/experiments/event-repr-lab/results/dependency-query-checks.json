@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "checker_sha256": "54df7a49451036e5d4e35d4a0ff53d40f19f3c13f00946dec5ed09c799eeca01",
+  "incidence_functionality_cases": 4096,
+  "containment_gap_cases": 65536,
+  "lost_context_counterexample": {
+    "true_conflict_worlds": [
+      1
+    ],
+    "naive_worlds": [
+      0,
+      1
+    ]
+  },
+  "scope": "Independent finite query derivation, not a native query-planner implementation or benchmark"
+}

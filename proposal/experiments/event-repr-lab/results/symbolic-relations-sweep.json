@@ -1,0 +1,2715 @@
+{
+  "seed": 20260917,
+  "trials": 7,
+  "timeout_s": 120,
+  "build_metadata": {
+    "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/engine/target/release/build/bumbledb/e9559f2bb6afbcd7/out/bumbledb-e9559f2bb6afbcd7",
+    "binary_sha256": "8f415c5f1b3fb981397f17cbda4e4161cf969909969be9b09da2182f064982de",
+    "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)\nbinary: rustc\ncommit-hash: d453bdd8f092d099bc336f0bda4163f809ad18e0\ncommit-date: 2026-08-14\nhost: aarch64-apple-darwin\nrelease: 1.99.0-nightly\nLLVM version: 23.1.0\n",
+    "platform": "macOS-27.0-arm64-arm-64bit",
+    "machine": "arm64",
+    "cpu": "Apple M2 Max",
+    "memory_bytes": 103079215104,
+    "profile": "release, opt-level=3, fat LTO, codegen-units=1, no allocation-counter instrumentation",
+    "lab_sources": {
+      "src/blocks.rs": "fabfbf72b215c356f1ee7cea9229cbeda11ad2262f9e2d0e277db0333c5a58ed",
+      "src/carrier.rs": "0cfc2f8ccb194264570e69fbacbc011edd073e8bb46855910efa0d8d009e2746",
+      "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+      "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+      "src/diagonal_checks.rs": "53474a84d5fb5787db243f671b7c0b355842d56e4e7579272f56d43f230d63e8",
+      "src/diagram.rs": "9b6c949b71f72c2c1d8b75a7b755b89fb2e109c9e66de899b65a63f9b904f52d",
+      "src/finite.rs": "2f2436d37f8e78439a6e9c36123d1fd5c7223448a038a634011049ccd3ce8bdc",
+      "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+      "src/lib.rs": "9f1d532a30564f1792bb1501828fb9fffb62dd3bd16a6cafa44955e7da94984e",
+      "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+      "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+      "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+      "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+      "src/owned_bench.rs": "61c2f7f7fca6a466314ea92e867d7cc0d6ed21b10cefefeadd264fd7ea2efa36",
+      "src/packed.rs": "90d1ee2dafde7461acda1867e7b39efeb5db3aa39d6cbba88083dfc07ceefede",
+      "src/relational_core.rs": "60615ef8844b270cd8cb3ac9e15802d8c7821b2b53595fd8ff3d5cb372e387ae",
+      "src/relations.rs": "0edd99420cb63986ace66e258c0002a5d3c4e603845bf666bbf81e4eb8b03921",
+      "src/semantic_checks.rs": "97196154b6620b47ca8f53537f548dc8c80ab958a6f1870603db3d8128bd59a6",
+      "src/symbolic_relations.rs": "ad0737c68f841bda7a06b34c0cc915c79a9d6a643ebd5ee0e1f90658d7c503e6",
+      "src/transfer.rs": "8359b5f084057758eff207c81dde8306bb9a3c93978462d603c342fc57c00e48",
+      "src/transfer_bench.rs": "7444c2da6670e8c594d682277e04ec112a122a9e69fd83217a2648000b745c29",
+      "src/transfer_checks.rs": "7e4a02aae2e8a1cb2a49dbc9a3e255f90fa8c5066521014bd4f23204b1dee203"
+    },
+    "cargo_lock_sha256": "be5e509efe88b4ece280d1afdf99b17daec10f83156717e9c799f3c480586294",
+    "built_utc": "2026-09-17T23:51:21.777167+00:00",
+    "build_started_utc": "2026-09-17T23:45:27.268311+00:00"
+  },
+  "runs": [
+    {
+      "job": {
+        "verify": true,
+        "EVENT_LAB_PACKED_MAP": "local",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native"
+      },
+      "status": "passed",
+      "elapsed_s": 1.242750883102417,
+      "max_rss_bytes": 43417600,
+      "log": "symbolic-relations-sweep-logs/job-000-verify-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-root",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "mdd4-pair",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "bdd-anchored",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed256",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed512",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "packed4096",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "symbolic_relation_verification",
+          "candidate": "block64",
+          "coordinates": 60,
+          "identity_worlds": 1099511627776,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "dense-dispatched",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "dense-dispatched",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "sparse",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "sparse",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "roaring",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "roaring",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "runs",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "runs",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-root",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-root",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-pair",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-pair",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "mdd4-pair",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "mdd4-pair",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "bdd-anchored",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "bdd-anchored",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed64",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed64",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed256",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed256",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed512",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed512",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "packed4096",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "packed4096",
+          "cases": 192,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_finite",
+          "target": "block64",
+          "source_packets": 56,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_table_paths",
+          "candidate": "block64",
+          "cases": 192,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_support_maps",
+          "cases": 3825,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed64",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed256",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed512",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_wide_tables",
+          "candidate": "packed4096",
+          "cases": 24,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "transfer_symbolic",
+          "bits": 40,
+          "source_target_pairs": 81,
+          "packet_bytes": [
+            1343,
+            1343,
+            1037,
+            1343,
+            1265,
+            1255,
+            1365,
+            1667,
+            2043
+          ],
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "dense-dispatched",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "dense-dispatched",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "dense-dispatched",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "sparse",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "sparse",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "sparse",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "roaring",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "roaring",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "roaring",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "runs",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "runs",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "runs",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-root",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-root",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-root",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "mdd4-pair",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "mdd4-pair",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "mdd4-pair",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "bdd-anchored",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "bdd-anchored",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "bdd-anchored",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed64",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed256",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed256",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed256",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed512",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed512",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed512",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "packed4096",
+          "support_cases": 1530,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "packed4096",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "packed4096",
+          "boolean_cases": 61440,
+          "passed": true,
+          "packed_map": "local",
+          "identity_mode": "native"
+        },
+        {
+          "kind": "diagonal_verification",
+          "candidate": "block64",
+          "support_cases": 1530,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_contract",
+          "candidate": "block64",
+          "cases": 5062,
+          "summary_triples": 4096,
+          "updates": 512,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "verification",
+          "candidate": "block64",
+          "boolean_cases": 61440,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "high_coordinate_verification",
+          "bits": 40,
+          "candidates": 9,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "coordinate_boundary_verification",
+          "candidates": 14,
+          "extra_orders_per_candidate": 2,
+          "face_layouts_per_candidate": 3,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "observation_verification",
+          "candidates": 14,
+          "parameter_groups": [
+            1,
+            2,
+            3
+          ],
+          "high_coordinate_candidates": 9,
+          "passed": true,
+          "identity_mode": "native"
+        },
+        {
+          "kind": "dependency_native_bridge",
+          "cases": 5062,
+          "sound_native_citations": 20644,
+          "passed": true,
+          "identity_mode": "native"
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "bdd-pair",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.017333984375,
+      "max_rss_bytes": 6619136,
+      "log": "symbolic-relations-sweep-logs/job-001-symbolic-relations-bdd-pair----bit-major-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-pair",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.4292e-05,
+            1.3166e-05,
+            1e-05,
+            9.625e-06,
+            7.791e-06,
+            8.125e-06,
+            6.833e-06
+          ],
+          "program_setup_s": [
+            8.209e-06,
+            5.5e-06,
+            3.75e-06,
+            4.25e-06,
+            3.084e-06,
+            2.875e-06,
+            2.708e-06
+          ],
+          "query_s": [
+            0.000177459,
+            8.9833e-05,
+            7.7875e-05,
+            7.4875e-05,
+            6.85e-05,
+            6.7375e-05,
+            6.3875e-05
+          ],
+          "owned_compute_s": [
+            0.000188042,
+            9.6125e-05,
+            8.2333e-05,
+            7.9625e-05,
+            7.2083e-05,
+            7.0666e-05,
+            6.6958e-05
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 789,
+          "final_arena_bytes_est": 70416,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-pair",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.6875e-05,
+            1.6041e-05,
+            1.5292e-05,
+            1.5667e-05,
+            1.7208e-05,
+            1.4625e-05,
+            1.4667e-05
+          ],
+          "program_setup_s": [
+            9.083e-06,
+            7.167e-06,
+            6.625e-06,
+            6.458e-06,
+            6.417e-06,
+            6.375e-06,
+            6.25e-06
+          ],
+          "query_s": [
+            0.000327792,
+            0.000301041,
+            0.000291375,
+            0.000289083,
+            0.000285125,
+            0.000280541,
+            0.000282958
+          ],
+          "owned_compute_s": [
+            0.000337542,
+            0.000308709,
+            0.000298458,
+            0.000296167,
+            0.000292042,
+            0.000287417,
+            0.000289709
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1593,
+          "final_arena_bytes_est": 273952,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-pair",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.9542e-05,
+            3.6459e-05,
+            2.9292e-05,
+            3.1625e-05,
+            2.8208e-05,
+            2.9083e-05,
+            2.8167e-05
+          ],
+          "program_setup_s": [
+            1.4e-05,
+            1.4041e-05,
+            1.4e-05,
+            2.0166e-05,
+            1.2875e-05,
+            1.325e-05,
+            1.275e-05
+          ],
+          "query_s": [
+            0.000916,
+            0.000806917,
+            0.000824125,
+            0.000838792,
+            0.000816,
+            0.000779834,
+            0.0008015
+          ],
+          "owned_compute_s": [
+            0.000930916,
+            0.000821666,
+            0.000838792,
+            0.000859708,
+            0.000829458,
+            0.000793625,
+            0.000814833
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2665,
+          "final_arena_bytes_est": 545760,
+          "new_classes": 3,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "bdd-root",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.01732611656188965,
+      "max_rss_bytes": 7307264,
+      "log": "symbolic-relations-sweep-logs/job-002-symbolic-relations-bdd-root----bit-major-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-root",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.2166e-05,
+            9.666e-06,
+            7.708e-06,
+            1.0167e-05,
+            6.292e-06,
+            7.083e-06,
+            6.167e-06
+          ],
+          "program_setup_s": [
+            7.666e-06,
+            5.625e-06,
+            4.041e-06,
+            2.917e-06,
+            2.625e-06,
+            2.458e-06,
+            2.375e-06
+          ],
+          "query_s": [
+            0.0001305,
+            8.1833e-05,
+            7.2667e-05,
+            6.7791e-05,
+            6.6542e-05,
+            6.5167e-05,
+            6.35e-05
+          ],
+          "owned_compute_s": [
+            0.000140125,
+            8.8333e-05,
+            7.7375e-05,
+            7.1208e-05,
+            6.95e-05,
+            6.8084e-05,
+            6.6333e-05
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 789,
+          "final_arena_bytes_est": 66784,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-root",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.5042e-05,
+            1.5292e-05,
+            1.4125e-05,
+            1.3709e-05,
+            1.7792e-05,
+            1.3833e-05,
+            1.3666e-05
+          ],
+          "program_setup_s": [
+            9.625e-06,
+            6.834e-06,
+            6.208e-06,
+            6.042e-06,
+            9e-06,
+            6.208e-06,
+            6.208e-06
+          ],
+          "query_s": [
+            0.000332125,
+            0.0002975,
+            0.000288,
+            0.000319041,
+            0.000308,
+            0.000293084,
+            0.000285458
+          ],
+          "owned_compute_s": [
+            0.0003425,
+            0.000304917,
+            0.00029475,
+            0.000326083,
+            0.000317708,
+            0.000299834,
+            0.000292209
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1593,
+          "final_arena_bytes_est": 266608,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-root",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.6959e-05,
+            2.6459e-05,
+            2.7834e-05,
+            2.6167e-05,
+            2.5667e-05,
+            3.1292e-05,
+            3.5542e-05
+          ],
+          "program_setup_s": [
+            1.3625e-05,
+            1.2833e-05,
+            1.2208e-05,
+            1.4458e-05,
+            1.2583e-05,
+            2.2125e-05,
+            1.4375e-05
+          ],
+          "query_s": [
+            0.00090475,
+            0.000871667,
+            0.000846917,
+            0.000819625,
+            0.000926333,
+            0.000903375,
+            0.000924917
+          ],
+          "owned_compute_s": [
+            0.000919,
+            0.000885209,
+            0.000859792,
+            0.000835041,
+            0.000940917,
+            0.000926583,
+            0.000940625
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2665,
+          "final_arena_bytes_est": 533040,
+          "new_classes": 3,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "packed64",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.016291141510009766,
+      "max_rss_bytes": 6864896,
+      "log": "symbolic-relations-sweep-logs/job-003-symbolic-relations-packed64----bit-major-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed64",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.2375e-05,
+            8.417e-06,
+            8.292e-06,
+            9.25e-06,
+            8.875e-06,
+            7.083e-06,
+            6e-06
+          ],
+          "program_setup_s": [
+            1.1791e-05,
+            8.208e-06,
+            6.625e-06,
+            1.7333e-05,
+            7.791e-06,
+            5.667e-06,
+            5.125e-06
+          ],
+          "query_s": [
+            0.000179333,
+            8.0834e-05,
+            9.3292e-05,
+            9.8416e-05,
+            7.45e-05,
+            6.8208e-05,
+            6.5834e-05
+          ],
+          "owned_compute_s": [
+            0.00019325,
+            8.9708e-05,
+            0.000100959,
+            0.000116916,
+            8.2958e-05,
+            7.4333e-05,
+            7.1416e-05
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 751,
+          "final_arena_bytes_est": 68512,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed64",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.3958e-05,
+            1.3667e-05,
+            1.3041e-05,
+            1.2708e-05,
+            1.2667e-05,
+            1.2875e-05,
+            1.2166e-05
+          ],
+          "program_setup_s": [
+            1.1959e-05,
+            1.1375e-05,
+            9.458e-06,
+            9.333e-06,
+            9.083e-06,
+            9.417e-06,
+            8.875e-06
+          ],
+          "query_s": [
+            0.000326958,
+            0.000280125,
+            0.000277917,
+            0.000271125,
+            0.000283167,
+            0.000280042,
+            0.000269833
+          ],
+          "owned_compute_s": [
+            0.000339666,
+            0.000292208,
+            0.000288042,
+            0.000280958,
+            0.000292875,
+            0.000290041,
+            0.00027925
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1555,
+          "final_arena_bytes_est": 268264,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed64",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.2708e-05,
+            2.4875e-05,
+            2.275e-05,
+            2.1667e-05,
+            2.225e-05,
+            2.1875e-05,
+            2.2167e-05
+          ],
+          "program_setup_s": [
+            2.0542e-05,
+            1.9125e-05,
+            1.8292e-05,
+            2.0167e-05,
+            1.7542e-05,
+            1.7e-05,
+            1.7792e-05
+          ],
+          "query_s": [
+            0.000828917,
+            0.000761875,
+            0.000743041,
+            0.000732125,
+            0.000733167,
+            0.000727792,
+            0.000730875
+          ],
+          "owned_compute_s": [
+            0.000850167,
+            0.000781667,
+            0.000762,
+            0.000753209,
+            0.00075125,
+            0.000745375,
+            0.000749208
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2627,
+          "final_arena_bytes_est": 534600,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "block64",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.024003982543945312,
+      "max_rss_bytes": 6193152,
+      "log": "symbolic-relations-sweep-logs/job-004-symbolic-relations-block64----bit-major-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "block64",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.3417e-05,
+            1.1333e-05,
+            8.709e-06,
+            9.75e-06,
+            7.584e-06,
+            6.875e-06,
+            6.5e-06
+          ],
+          "program_setup_s": [
+            1.65e-05,
+            7.917e-06,
+            6.25e-06,
+            7e-06,
+            5.416e-06,
+            5.042e-06,
+            4.958e-06
+          ],
+          "query_s": [
+            0.000185083,
+            0.000108708,
+            0.000100583,
+            9.8708e-05,
+            9.5792e-05,
+            9.5041e-05,
+            9.3583e-05
+          ],
+          "owned_compute_s": [
+            0.000204333,
+            0.000117709,
+            0.000107584,
+            0.000106417,
+            0.000101792,
+            0.000100666,
+            9.9e-05
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 2051,
+          "final_arena_bytes_est": 17704,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "block64",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.625e-05,
+            1.7667e-05,
+            1.6167e-05,
+            1.5666e-05,
+            1.4875e-05,
+            1.4792e-05,
+            1.45e-05
+          ],
+          "program_setup_s": [
+            1.3167e-05,
+            1.35e-05,
+            1.2292e-05,
+            1.0916e-05,
+            1e-05,
+            1e-05,
+            9.833e-06
+          ],
+          "query_s": [
+            0.000542291,
+            0.000540792,
+            0.000525917,
+            0.000504542,
+            0.000511208,
+            0.0005,
+            0.000499958
+          ],
+          "owned_compute_s": [
+            0.000556166,
+            0.000554792,
+            0.000538709,
+            0.000515916,
+            0.000521583,
+            0.000510334,
+            0.000510166
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 4805,
+          "final_arena_bytes_est": 42972,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "block64",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.7792e-05,
+            2.9375e-05,
+            2.8625e-05,
+            2.8208e-05,
+            2.7709e-05,
+            2.8375e-05,
+            2.775e-05
+          ],
+          "program_setup_s": [
+            1.9541e-05,
+            1.9125e-05,
+            1.8458e-05,
+            1.85e-05,
+            1.8e-05,
+            1.8542e-05,
+            1.8334e-05
+          ],
+          "query_s": [
+            0.001586834,
+            0.001626458,
+            0.001561792,
+            0.001572,
+            0.001580459,
+            0.001591667,
+            0.001691541
+          ],
+          "owned_compute_s": [
+            0.001606958,
+            0.001646208,
+            0.001580834,
+            0.001591,
+            0.001598958,
+            0.001610667,
+            0.001711125
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 8477,
+          "final_arena_bytes_est": 148972,
+          "new_classes": 3,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "packed512",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.018732070922851562,
+      "max_rss_bytes": 6864896,
+      "log": "symbolic-relations-sweep-logs/job-005-symbolic-relations-packed512----bit-major-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed512",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.4416e-05,
+            1.2375e-05,
+            9.583e-06,
+            8.792e-06,
+            8.083e-06,
+            7.667e-06,
+            7.666e-06
+          ],
+          "program_setup_s": [
+            3.3708e-05,
+            2.6334e-05,
+            2.525e-05,
+            2.5959e-05,
+            2.425e-05,
+            2.4375e-05,
+            2.4375e-05
+          ],
+          "query_s": [
+            0.000192083,
+            0.00014775,
+            0.000131917,
+            0.000128709,
+            0.000124125,
+            0.000123792,
+            0.000122541
+          ],
+          "owned_compute_s": [
+            0.000227833,
+            0.000174917,
+            0.000157833,
+            0.000155167,
+            0.000148834,
+            0.000148583,
+            0.000147292
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 857,
+          "final_arena_bytes_est": 67052,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed512",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.5875e-05,
+            1.4833e-05,
+            1.6541e-05,
+            1.4333e-05,
+            1.4e-05,
+            1.3833e-05,
+            1.4e-05
+          ],
+          "program_setup_s": [
+            3.4625e-05,
+            3.0416e-05,
+            3.0291e-05,
+            2.9792e-05,
+            2.9292e-05,
+            2.9042e-05,
+            2.9084e-05
+          ],
+          "query_s": [
+            0.000429666,
+            0.000406417,
+            0.000377125,
+            0.000368333,
+            0.000366166,
+            0.000373042,
+            0.000363292
+          ],
+          "owned_compute_s": [
+            0.000465042,
+            0.000437416,
+            0.000407917,
+            0.000398542,
+            0.000395875,
+            0.0004025,
+            0.000392833
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1661,
+          "final_arena_bytes_est": 274996,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed512",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.2958e-05,
+            2.5417e-05,
+            2.5792e-05,
+            2.6e-05,
+            2.4417e-05,
+            2.6458e-05,
+            2.275e-05
+          ],
+          "program_setup_s": [
+            4.0417e-05,
+            3.8292e-05,
+            3.9334e-05,
+            4.0292e-05,
+            3.7625e-05,
+            4.3292e-05,
+            3.6083e-05
+          ],
+          "query_s": [
+            0.000967584,
+            0.000923,
+            0.000996,
+            0.000936292,
+            0.000900958,
+            0.000920042,
+            0.000898333
+          ],
+          "owned_compute_s": [
+            0.001008708,
+            0.000962041,
+            0.001036042,
+            0.000977125,
+            0.000939209,
+            0.000963917,
+            0.000935084
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2733,
+          "final_arena_bytes_est": 541332,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "mdd4-pair",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.01721787452697754,
+      "max_rss_bytes": 7077888,
+      "log": "symbolic-relations-sweep-logs/job-006-symbolic-relations-mdd4-pair----bit-major-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.775e-05,
+            1.3458e-05,
+            1.1375e-05,
+            1.0125e-05,
+            8.125e-06,
+            7.709e-06,
+            7.25e-06
+          ],
+          "program_setup_s": [
+            1.15e-05,
+            6.375e-06,
+            4.583e-06,
+            4.042e-06,
+            3.625e-06,
+            3.291e-06,
+            3.25e-06
+          ],
+          "query_s": [
+            0.000164459,
+            9.9042e-05,
+            8.625e-05,
+            8.2e-05,
+            7.7917e-05,
+            7.5959e-05,
+            7.4208e-05
+          ],
+          "owned_compute_s": [
+            0.000177916,
+            0.000106291,
+            9.1542e-05,
+            8.6667e-05,
+            8.2e-05,
+            7.9834e-05,
+            7.7917e-05
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 1037,
+          "final_arena_bytes_est": 101064,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.7708e-05,
+            1.8084e-05,
+            1.7208e-05,
+            1.5875e-05,
+            1.6375e-05,
+            1.6041e-05,
+            1.6875e-05
+          ],
+          "program_setup_s": [
+            1.1916e-05,
+            9.167e-06,
+            8.791e-06,
+            8.125e-06,
+            8.083e-06,
+            8.208e-06,
+            8.458e-06
+          ],
+          "query_s": [
+            0.000348417,
+            0.000320791,
+            0.000305208,
+            0.0003035,
+            0.000308042,
+            0.000308417,
+            0.000322875
+          ],
+          "owned_compute_s": [
+            0.000361833,
+            0.000330667,
+            0.000314583,
+            0.000312166,
+            0.000316583,
+            0.000317166,
+            0.000331917
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 2033,
+          "final_arena_bytes_est": 396688,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "mdd4-pair",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            3.0375e-05,
+            3.4125e-05,
+            3.0041e-05,
+            2.8333e-05,
+            3.1e-05,
+            2.775e-05,
+            2.8917e-05
+          ],
+          "program_setup_s": [
+            1.8792e-05,
+            1.65e-05,
+            1.5166e-05,
+            1.5e-05,
+            2.1e-05,
+            1.4875e-05,
+            1.4834e-05
+          ],
+          "query_s": [
+            0.000982167,
+            0.000878209,
+            0.000860125,
+            0.000866375,
+            0.000901375,
+            0.000854,
+            0.000951334
+          ],
+          "owned_compute_s": [
+            0.001001833,
+            0.000895458,
+            0.000875917,
+            0.000882042,
+            0.000923041,
+            0.000869417,
+            0.000967083
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 3361,
+          "final_arena_bytes_est": 791280,
+          "new_classes": 3,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "bdd-anchored",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.017078638076782227,
+      "max_rss_bytes": 6569984,
+      "log": "symbolic-relations-sweep-logs/job-007-symbolic-relations-bdd-anchored----bit-major-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.2375e-05,
+            9.5e-06,
+            6.958e-06,
+            8.542e-06,
+            5.833e-06,
+            6.834e-06,
+            6.291e-06
+          ],
+          "program_setup_s": [
+            9.167e-06,
+            4.875e-06,
+            4.292e-06,
+            3.958e-06,
+            3.542e-06,
+            3.334e-06,
+            3.209e-06
+          ],
+          "query_s": [
+            0.000148416,
+            8.7709e-05,
+            7.4916e-05,
+            7.0792e-05,
+            6.9459e-05,
+            6.9416e-05,
+            6.8083e-05
+          ],
+          "owned_compute_s": [
+            0.000159834,
+            9.3375e-05,
+            7.9792e-05,
+            7.5208e-05,
+            7.3458e-05,
+            7.3125e-05,
+            7.1666e-05
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 789,
+          "final_arena_bytes_est": 66800,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.2875e-05,
+            1.3583e-05,
+            1.2667e-05,
+            1.1958e-05,
+            1.1333e-05,
+            1.1667e-05,
+            1.0959e-05
+          ],
+          "program_setup_s": [
+            8.959e-06,
+            7.792e-06,
+            7.708e-06,
+            7.5e-06,
+            7.167e-06,
+            7.375e-06,
+            7e-06
+          ],
+          "query_s": [
+            0.000327459,
+            0.000306208,
+            0.000301458,
+            0.000294875,
+            0.000283458,
+            0.000283083,
+            0.000278333
+          ],
+          "owned_compute_s": [
+            0.000337041,
+            0.000314583,
+            0.000309834,
+            0.000302916,
+            0.000291166,
+            0.000290917,
+            0.000285792
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1593,
+          "final_arena_bytes_est": 266624,
+          "new_classes": 3,
+          "verified": true
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "bdd-anchored",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            1.975e-05,
+            2.5375e-05,
+            2.1334e-05,
+            2.3375e-05,
+            1.9875e-05,
+            2.2042e-05,
+            1.9542e-05
+          ],
+          "program_setup_s": [
+            1.6916e-05,
+            1.6875e-05,
+            1.6167e-05,
+            1.5625e-05,
+            1.5125e-05,
+            1.5667e-05,
+            1.5291e-05
+          ],
+          "query_s": [
+            0.000877125,
+            0.000814125,
+            0.000803333,
+            0.000823208,
+            0.000804834,
+            0.000797333,
+            0.000802542
+          ],
+          "owned_compute_s": [
+            0.000894708,
+            0.000831584,
+            0.000820084,
+            0.000839458,
+            0.000820625,
+            0.000813625,
+            0.000818417
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2665,
+          "final_arena_bytes_est": 533056,
+          "new_classes": 3,
+          "verified": true
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "packed256",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.019275903701782227,
+      "max_rss_bytes": 6733824,
+      "log": "symbolic-relations-sweep-logs/job-008-symbolic-relations-packed256----bit-major-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed256",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            1.2292e-05,
+            1.3833e-05,
+            8.875e-06,
+            8.625e-06,
+            7.709e-06,
+            6.5e-06,
+            6.125e-06
+          ],
+          "program_setup_s": [
+            2.1041e-05,
+            1.5166e-05,
+            1.4917e-05,
+            1.4167e-05,
+            1.2583e-05,
+            1.2334e-05,
+            1.2125e-05
+          ],
+          "query_s": [
+            0.000230084,
+            0.000160708,
+            0.000151458,
+            0.000141625,
+            0.000135917,
+            0.000132166,
+            0.000130666
+          ],
+          "owned_compute_s": [
+            0.000253458,
+            0.000176791,
+            0.000167208,
+            0.000156416,
+            0.000149042,
+            0.000144959,
+            0.00014325
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 749,
+          "final_arena_bytes_est": 77416,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed256",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            1.4667e-05,
+            1.6208e-05,
+            1.3542e-05,
+            1.3583e-05,
+            1.2833e-05,
+            1.2708e-05,
+            1.2375e-05
+          ],
+          "program_setup_s": [
+            2.1042e-05,
+            1.9917e-05,
+            1.8041e-05,
+            1.8833e-05,
+            1.7833e-05,
+            1.7791e-05,
+            1.7708e-05
+          ],
+          "query_s": [
+            0.000469708,
+            0.000420875,
+            0.000415958,
+            0.000407167,
+            0.00039925,
+            0.000396708,
+            0.00040875
+          ],
+          "owned_compute_s": [
+            0.000491375,
+            0.000441375,
+            0.000434583,
+            0.0004265,
+            0.0004175,
+            0.000414916,
+            0.000426917
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 1553,
+          "final_arena_bytes_est": 285360,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed256",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            2.2458e-05,
+            2.4167e-05,
+            2.3709e-05,
+            3.2459e-05,
+            2.5959e-05,
+            2.4083e-05,
+            2.3292e-05
+          ],
+          "program_setup_s": [
+            2.7875e-05,
+            2.5709e-05,
+            2.5875e-05,
+            3.1667e-05,
+            2.8667e-05,
+            2.5708e-05,
+            2.5041e-05
+          ],
+          "query_s": [
+            0.001038375,
+            0.000994666,
+            0.000990542,
+            0.001079917,
+            0.00100475,
+            0.000979791,
+            0.001036792
+          ],
+          "owned_compute_s": [
+            0.001066958,
+            0.001021041,
+            0.001017,
+            0.001112584,
+            0.001034167,
+            0.001006125,
+            0.001062542
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 2625,
+          "final_arena_bytes_est": 551696,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    },
+    {
+      "job": {
+        "EVENT_LAB_LANE": "symbolic-relations",
+        "EVENT_LAB_CANDIDATE": "packed4096",
+        "EVENT_LAB_LAYOUT": "bit-major",
+        "EVENT_LAB_TRANSFER_IMPORT": "words",
+        "EVENT_LAB_IDENTITY": "native",
+        "EVENT_LAB_PACKED_MAP": "local"
+      },
+      "status": "passed",
+      "elapsed_s": 0.05409574508666992,
+      "max_rss_bytes": 7340032,
+      "log": "symbolic-relations-sweep-logs/job-009-symbolic-relations-packed4096----bit-major-local-words-identity-native.log",
+      "rows": [
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed4096",
+          "bits": 18,
+          "states": 64,
+          "identity_mode": "native",
+          "input_s": [
+            5.275e-05,
+            4.525e-05,
+            4.3583e-05,
+            4.4084e-05,
+            4.3458e-05,
+            4.1584e-05,
+            4.2459e-05
+          ],
+          "program_setup_s": [
+            0.000247667,
+            0.000261292,
+            0.000246583,
+            0.00025125,
+            0.000250666,
+            0.0002385,
+            0.00024675
+          ],
+          "query_s": [
+            0.000889791,
+            0.000869666,
+            0.000896042,
+            0.000868583,
+            0.000869459,
+            0.000874292,
+            0.000872542
+          ],
+          "owned_compute_s": [
+            0.001139417,
+            0.00113175,
+            0.001143375,
+            0.001120375,
+            0.001120667,
+            0.001113167,
+            0.001119667
+          ],
+          "iterations": [
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7
+          ],
+          "output_counts": [
+            133120,
+            133120,
+            262144,
+            262144,
+            4096
+          ],
+          "output_packet_bytes": 2139,
+          "final_arena_bytes_est": 158072,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed4096",
+          "bits": 36,
+          "states": 4096,
+          "identity_mode": "native",
+          "input_s": [
+            5.1875e-05,
+            5.0833e-05,
+            7.3208e-05,
+            5.3166e-05,
+            5.1541e-05,
+            4.9958e-05,
+            4.8709e-05
+          ],
+          "program_setup_s": [
+            0.000248375,
+            0.000245125,
+            0.000263166,
+            0.00024975,
+            0.000249167,
+            0.000249959,
+            0.000246708
+          ],
+          "query_s": [
+            0.001710541,
+            0.001792583,
+            0.00173975,
+            0.001704792,
+            0.001692541,
+            0.001684375,
+            0.001767042
+          ],
+          "owned_compute_s": [
+            0.001959667,
+            0.002040209,
+            0.002004333,
+            0.001955583,
+            0.001942459,
+            0.001935,
+            0.002015084
+          ],
+          "iterations": [
+            13,
+            13,
+            13,
+            13,
+            13,
+            13,
+            13
+          ],
+          "output_counts": [
+            34368126976,
+            34368126976,
+            68719476736,
+            68719476736,
+            16777216
+          ],
+          "output_packet_bytes": 2943,
+          "final_arena_bytes_est": 391104,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        },
+        {
+          "kind": "symbolic_relation_free_join",
+          "candidate": "packed4096",
+          "bits": 60,
+          "states": 1048576,
+          "identity_mode": "native",
+          "input_s": [
+            6.2125e-05,
+            5.9917e-05,
+            5.8833e-05,
+            5.85e-05,
+            5.7417e-05,
+            6.2625e-05,
+            5.9791e-05
+          ],
+          "program_setup_s": [
+            0.000264875,
+            0.000252375,
+            0.000251958,
+            0.000252,
+            0.000285042,
+            0.0002545,
+            0.000251708
+          ],
+          "query_s": [
+            0.0030315,
+            0.003001667,
+            0.002935,
+            0.002936542,
+            0.003161291,
+            0.002938958,
+            0.003125667
+          ],
+          "owned_compute_s": [
+            0.003297333,
+            0.003254875,
+            0.00318775,
+            0.003189209,
+            0.003447375,
+            0.003194083,
+            0.003378834
+          ],
+          "iterations": [
+            21,
+            21,
+            21,
+            21,
+            21,
+            21,
+            21
+          ],
+          "output_counts": [
+            576461302059237376,
+            576461302059237376,
+            1152921504606846976,
+            1152921504606846976,
+            1099511627776
+          ],
+          "output_packet_bytes": 4015,
+          "final_arena_bytes_est": 657440,
+          "new_classes": 3,
+          "verified": true,
+          "packed_map": "local"
+        }
+      ],
+      "loadavg_start": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ],
+      "loadavg_end": [
+        18.837890625,
+        12.6708984375,
+        11.82421875
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"owned_free_join","candidate":"packed512","target_candidate":"packed512","bits":12,"target_layout":"bit-major","target_setup_s":[2.5e-6],"restore_inputs_s":[0.000215084],"program_setup_s":[3.5042e-5],"query_s":[0.000271417],"owned_compute_s":[0.000309542],"novel_publication_classes":[10],"input_roots":24,"output_roots":80,"input_packet_bytes":2709,"output_packet_bytes":1645,"final_arena_bytes_est":156772,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed512","target_candidate":"packed512","bits":12,"target_layout":"face-major","target_setup_s":[7.5e-7],"restore_inputs_s":[1.4459e-5],"program_setup_s":[3.2583e-5],"query_s":[0.000552625],"owned_compute_s":[0.000586791],"novel_publication_classes":[10],"input_roots":24,"output_roots":80,"input_packet_bytes":2709,"output_packet_bytes":1403,"final_arena_bytes_est":274532,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed512","target_candidate":"packed512","bits":18,"target_layout":"bit-major","target_setup_s":[7.375e-6],"restore_inputs_s":[0.001038333],"program_setup_s":[4.1125e-5],"query_s":[0.000768666],"owned_compute_s":[0.000811834],"novel_publication_classes":[18],"input_roots":24,"output_roots":80,"input_packet_bytes":16161,"output_packet_bytes":5221,"final_arena_bytes_est":1339556,"input_storage":null,"final_storage":null,"verified":true}
+EVENT_LAB {"kind":"owned_free_join","candidate":"packed512","target_candidate":"packed512","bits":18,"target_layout":"face-major","target_setup_s":[1.125e-6],"restore_inputs_s":[8.6292e-5],"program_setup_s":[4.1708e-5],"query_s":[0.002433792],"owned_compute_s":[0.002478084],"novel_publication_classes":[18],"input_roots":24,"output_roots":80,"input_packet_bytes":16161,"output_packet_bytes":8987,"final_arena_bytes_est":1122468,"input_storage":null,"final_storage":null,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1378 filtered out; finished in 1.59s
+
+
+        1.59 real         1.55 user         0.03 sys
+            14680064  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                1110  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 160  involuntary context switches
+         31106360597  instructions retired
+          5354280949  cycles elapsed
+            11895192  peak memory footprint

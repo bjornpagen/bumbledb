@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"product_free_join","candidate":"essential512","product_mode":"views","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":false,"build_s":[9.4667e-5],"join_only_s":[2.8458e-5],"fresh_s":[0.000963375],"warm_s":[0.000676709],"input_bytes_est":5631,"final_bytes_est":67296,"input_nodes":40,"final_nodes":389,"input_storage":{"layout":"enum","record_bytes":1280,"table_bytes":1280,"interner_bytes":2296,"metadata_bytes":416,"cache_bytes":119,"records":40,"tables":39,"logical_words":80,"total_bytes_est":5391},"final_storage":{"layout":"enum","record_bytes":20480,"table_bytes":15376,"interner_bytes":18368,"metadata_bytes":5216,"cache_bytes":7616,"records":389,"tables":388,"logical_words":961,"total_bytes_est":67056},"checksum":464640,"verified":true}
+EVENT_LAB {"kind":"product_free_join","candidate":"essential512","product_mode":"views","bits":12,"worlds":4096,"rows":128,"groups":16,"memo":true,"build_s":[9.4667e-5],"join_only_s":[2.8458e-5],"fresh_s":[0.000293167],"warm_s":[7.166e-6],"input_bytes_est":5631,"final_bytes_est":73372,"input_nodes":40,"final_nodes":389,"input_storage":{"layout":"enum","record_bytes":1280,"table_bytes":1280,"interner_bytes":2296,"metadata_bytes":416,"cache_bytes":119,"records":40,"tables":39,"logical_words":80,"total_bytes_est":5391},"final_storage":{"layout":"enum","record_bytes":20480,"table_bytes":15376,"interner_bytes":18368,"metadata_bytes":5216,"cache_bytes":7616,"records":389,"tables":388,"logical_words":961,"total_bytes_est":67056},"checksum":464640,"verified":true}
+EVENT_LAB {"kind":"product_free_join","candidate":"essential512","product_mode":"views","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":false,"build_s":[0.001349167],"join_only_s":[1.6166e-5],"fresh_s":[0.01970925],"warm_s":[0.015821083],"input_bytes_est":45330,"final_bytes_est":1082504,"input_nodes":250,"final_nodes":6007,"input_storage":{"layout":"enum","record_bytes":8000,"table_bytes":15744,"interner_bytes":18368,"metadata_bytes":2144,"cache_bytes":714,"records":250,"tables":150,"logical_words":984,"total_bytes_est":44970},"final_storage":{"layout":"enum","record_bytes":256000,"table_bytes":285328,"interner_bytes":293888,"metadata_bytes":64144,"cache_bytes":182784,"records":6007,"tables":3054,"logical_words":17833,"total_bytes_est":1082144},"checksum":14852224,"verified":true}
+EVENT_LAB {"kind":"product_free_join","candidate":"essential512","product_mode":"views","bits":18,"worlds":262144,"rows":128,"groups":16,"memo":true,"build_s":[0.001349167],"join_only_s":[1.6166e-5],"fresh_s":[0.00651175],"warm_s":[1.7209e-5],"input_bytes_est":45330,"final_bytes_est":1088580,"input_nodes":250,"final_nodes":6007,"input_storage":{"layout":"enum","record_bytes":8000,"table_bytes":15744,"interner_bytes":18368,"metadata_bytes":2144,"cache_bytes":714,"records":250,"tables":150,"logical_words":984,"total_bytes_est":44970},"final_storage":{"layout":"enum","record_bytes":256000,"table_bytes":285328,"interner_bytes":293888,"metadata_bytes":64144,"cache_bytes":182784,"records":6007,"tables":3054,"logical_words":17833,"total_bytes_est":1082144},"checksum":14852224,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1378 filtered out; finished in 0.27s
+
+
+        0.27 real         0.26 user         0.00 sys
+            12124160  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 953  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 105  involuntary context switches
+          4552065285  instructions retired
+           916219689  cycles elapsed
+             9273752  peak memory footprint

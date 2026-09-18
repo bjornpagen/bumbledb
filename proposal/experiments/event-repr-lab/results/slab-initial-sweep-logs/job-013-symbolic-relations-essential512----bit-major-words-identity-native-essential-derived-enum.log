@@ -1,0 +1,28 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential512","bits":18,"states":64,"identity_mode":"native","input_s":[4.7542e-5, 3.3792e-5, 3.2625e-5, 3.1e-5, 8.3334e-5],"program_setup_s":[2.0292e-5, 1.2167e-5, 1.1333e-5, 1.1083e-5, 2.4667e-5],"query_s":[0.000391209, 0.000324125, 0.000314959, 0.000921125, 0.0003475],"owned_compute_s":[0.000414792, 0.000337125, 0.000327, 0.000934042, 0.000373334],"iterations":[7, 7, 7, 7, 7],"output_counts":[133120, 133120, 262144, 262144, 4096],"output_packet_bytes":811,"final_arena_bytes_est":66304,"new_classes":3,"input_storage":{"layout":"enum","record_bytes":2048,"table_bytes":1152,"interner_bytes":2296,"metadata_bytes":656,"cache_bytes":1190,"records":49,"tables":40,"logical_words":72,"total_bytes_est":7342},"final_storage":{"layout":"enum","record_bytes":16384,"table_bytes":15888,"interner_bytes":18368,"metadata_bytes":4240,"cache_bytes":11424,"records":447,"tables":249,"logical_words":993,"total_bytes_est":66304},"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential512","bits":36,"states":4096,"identity_mode":"native","input_s":[7.9417e-5, 8.4792e-5, 8.0792e-5, 8.6959e-5, 8.5292e-5],"program_setup_s":[2.3875e-5, 2.3042e-5, 2.2125e-5, 2.3167e-5, 2.3625e-5],"query_s":[0.001345042, 0.001279792, 0.001305208, 0.001384375, 0.00146675],"owned_compute_s":[0.001369791, 0.001303542, 0.001328, 0.001408209, 0.001491083],"iterations":[13, 13, 13, 13, 13],"output_counts":[34368126976, 34368126976, 68719476736, 68719476736, 16777216],"output_packet_bytes":1641,"final_arena_bytes_est":397552,"new_classes":3,"input_storage":{"layout":"enum","record_bytes":4096,"table_bytes":2208,"interner_bytes":9184,"metadata_bytes":1312,"cache_bytes":4760,"records":127,"tables":63,"logical_words":138,"total_bytes_est":21560},"final_storage":{"layout":"enum","record_bytes":131072,"table_bytes":17936,"interner_bytes":146944,"metadata_bytes":33056,"cache_bytes":68544,"records":2199,"tables":294,"logical_words":1121,"total_bytes_est":397552},"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential512","bits":60,"states":1048576,"identity_mode":"native","input_s":[0.00013475, 0.000151584, 0.000139, 0.000140458, 0.000139375],"program_setup_s":[3.825e-5, 3.7042e-5, 3.7167e-5, 4.7584e-5, 3.8208e-5],"query_s":[0.004055458, 0.004114792, 0.003963625, 0.004082917, 0.004056667],"owned_compute_s":[0.004094917, 0.004152834, 0.004001417, 0.004131541, 0.004097458],"iterations":[21, 21, 21, 21, 21],"output_counts":[576461302059237376, 576461302059237376, 1152921504606846976, 1152921504606846976, 1099511627776],"output_packet_bytes":2713,"final_arena_bytes_est":769968,"new_classes":3,"input_storage":{"layout":"enum","record_bytes":8192,"table_bytes":2464,"interner_bytes":18368,"metadata_bytes":2528,"cache_bytes":9520,"records":231,"tables":79,"logical_words":154,"total_bytes_est":41072},"final_storage":{"layout":"enum","record_bytes":262144,"table_bytes":18448,"interner_bytes":293888,"metadata_bytes":66016,"cache_bytes":129472,"records":6163,"tables":326,"logical_words":1153,"total_bytes_est":769968},"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1366 filtered out; finished in 0.03s
+
+
+        0.03 real         0.03 user         0.00 sys
+             8060928  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 706  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                  61  involuntary context switches
+           513364476  instructions retired
+           117575437  cycles elapsed
+             5439872  peak memory footprint

@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "binary_sha256": "4927d198009f1fcee35b64be2aaf26bc4b8f8c65174e985776768118f67091b7",
+  "phase_rows": {
+    "correctness": 47,
+    "smoke": 24,
+    "comparison": 144
+  },
+  "native_correctness_runs": 5376,
+  "matched_schedule_pairs": 72,
+  "crossover_schedule_pairs": 24,
+  "additional_axiom_free_reports": 12,
+  "checker_sha256": "621250683c4d766386c0ff508b4e2916bb8b4c8e8cb61eeef88cbd842cdd8c7a",
+  "boundary": "Constructed Cartesian clover; native branch scans and summary join. Participating validation has unordered fault-set semantics. Twelve separate Lean denotational reports, not Rust verification. Central 195-report suite unchanged."
+}

@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--release"
+  ],
+  "cwd": "essential-prototype",
+  "scope": "Standalone raw Boolean canonical form; not a scoped Event carrier or a performance comparison.",
+  "profile": "standalone release; no native engine, no timing measurement",
+  "rustc": "rustc 1.99.0-nightly (d453bdd8f 2026-08-14)",
+  "source_hashes": {
+    "essential-prototype/Cargo.toml": "ea290898691ea83cbfe6d8ac46fa740783e1a539d7efe218653a3237f74fb467",
+    "essential-prototype/Cargo.lock": "c26a41d37479e294096d806883c7add983f75134139df9c27275c2a5db0efaa8",
+    "essential-prototype/src/lib.rs": "1939eab994c1eb1821278904bf6d372b833cb5a9568d5f983554d81b7cd3137a"
+  },
+  "log": "essential-rust-check.log"
+}

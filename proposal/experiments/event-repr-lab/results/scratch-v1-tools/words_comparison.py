@@ -1,0 +1,124 @@
+"""Keep classifier algorithm, physical layout and exact result contract distinct."""
+from pathlib import Path
+import argparse, hashlib, json, statistics
+from prepare import LAB
+
+KEYS = ['scenario','shape','predicate','memo','candidate','essential_layout','classifier','occupancy_kernel']
+
+def load_rows(inputs, kernels=('scalar','words')):
+    rows,processes,builds = {},[],set()
+    for name in inputs:
+        data = json.loads((LAB/'results'/name).read_text())
+        builds.add(data['build_metadata']['binary_sha256'])
+        for run in data['runs']:
+            processes.append(dict(file=name,job=run['job'],status=run['status'],log=run['log'],
+                                  max_rss_bytes=run['max_rss_bytes']))
+            for row in run['rows']:
+                if row.get('kind') != 'signature_free_join': continue
+                assert run['status'] == 'passed' and row['verified']
+                assert row['occupancy_kernel'] in kernels
+                for key,env in [('occupancy_kernel','EVENT_LAB_OCCUPANCY_KERNEL'),
+                                ('essential_layout','EVENT_LAB_ESSENTIAL_LAYOUT'),
+                                ('classifier','EVENT_LAB_CLASSIFY')]:
+                    assert row[key] == run['job'][env]
+                assert row['essential_kernel'] == 'derived'
+                assert row['histogram'][0] == 0 and sum(row['histogram']) == row['rows']
+                assert 0 < row['accepted'] < row['rows']
+                if row['scenario'] == 'ordered_65536': assert row['histogram'][15] == 0
+                for field in ['input_storage','final_storage']:
+                    s = row[field]
+                    if s is not None:
+                        assert s['layout'] == row['essential_layout']
+                        assert s['total_bytes_est'] == sum(s[k] for k in
+                            ['record_bytes','table_bytes','interner_bytes','metadata_bytes','cache_bytes'])
+                if row['classifier'] == 'direct':
+                    assert row['input_nodes'] == row['final_nodes']
+                    assert row['input_bytes_est'] == row['final_bytes_est']
+                    assert row['input_storage'] == row['final_storage']
+                key = tuple(row[k] for k in KEYS)
+                rows[key] = (row,name)
+    assert len(builds) == 1, 'Use one executable per comparison.'
+    # All modes, carriers and layouts must answer the same exact query.
+    answers = {}
+    for row,_ in rows.values():
+        logical = tuple(row[k] for k in KEYS[:4])
+        answer = (row['rows'],row['accepted'],row['histogram'])
+        assert answers.setdefault(logical,answer) == answer
+    return rows,processes,next(iter(builds))
+
+def collect(inputs):
+    rows,processes,binary = load_rows(inputs)
+    pairs = []
+    for key,(word,source) in rows.items():
+        if word['occupancy_kernel'] != 'words' or word['classifier'] != 'direct': continue
+        scalar,scalar_source = rows[key[:-1]+('scalar',)]
+        for field in ['input_storage','final_storage','input_nodes','final_nodes',
+                      'input_bytes_est','final_bytes_est','signature_cache_entries','signature_cache_bytes_est']:
+            assert word[field] == scalar[field],(key,field)
+        phases = {phase:dict(
+            scalar_median_s=statistics.median(scalar[phase]),word_median_s=statistics.median(word[phase]),
+            scalar_over_words=statistics.median(scalar[phase])/statistics.median(word[phase]),
+            scalar_min_s=min(scalar[phase]),scalar_max_s=max(scalar[phase]),
+            word_min_s=min(word[phase]),word_max_s=max(word[phase]),
+            scalar_samples=len(scalar[phase]),word_samples=len(word[phase]))
+            for phase in ['fresh_s','warm_s','join_only_s']}
+        pairs.append(dict(case=dict(zip(KEYS,key)),scalar_source=scalar_source,word_source=source,
+                          phases=phases,carrier_bytes_est=word['final_bytes_est'],
+                          carrier_nodes=word['final_nodes'],signature_cache_entries=word['signature_cache_entries']))
+    return rows,processes,binary,pairs
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('inputs',nargs='+')
+    ap.add_argument('--output',default='WORD-CLASSIFIER-MEASUREMENTS.md')
+    ap.add_argument('--record',default='word-classifier-comparison.json')
+    args = ap.parse_args()
+    rows,processes,binary,pairs = collect(args.inputs)
+    result = dict(passed=True,inputs=args.inputs,binary_sha256=binary,cases=len(rows),
+                  matched_kernel_cases=len(pairs),processes=processes,pairs=pairs,
+                  checker_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                  rule='Latest supplied process per exact case, never fastest selection. Exact histogram and survivors match every carrier/mode.')
+    (LAB/'results'/args.record).write_text(json.dumps(result,indent=2)+'\n')
+    lines = ['# Borrowed word classification through Free Join','',
+        'Generated by `words_comparison.py`. One executable; latest supplied process',
+        'per exact case. Times are milliseconds; KB means 1,000 bytes.',
+        'Every query returns the complete signature histogram and survivor counts.',
+        'The shared scope lock, input validation, native join, classification and',
+        'keep-table filtering are timed. Construction, cloning, publication, native',
+        'setup, checking and release are outside the query timer.',
+        'Direct scalar and word modes preserve the identical resident arena.',
+        'The word mode borrows matching tables and allocates temporary vectors for',
+        'pinned cofactors or missing axes. Retained memory excludes this scratch and',
+        'the traversal memo. Pair cache bytes are reported separately. No bounded',
+        'stack scratch or planner-pushed Event residual is implied.',
+        'Ordered cuts and complements forbid signature 15, so complete occupancy',
+        'cannot terminate by saturating to all four cells. Structural pruning,',
+        'trivial-input rules and exact memo reuse still apply.',
+        'See [implementation and limitations](WORD-CLASSIFIER.md).','',
+        f'Executable SHA-256: `{binary}`.','']
+    groups = sorted({tuple(r[k] for k in KEYS[:4]) for r,_ in rows.values()})
+    for scenario,shape,predicate,memo in groups:
+        selected = [r for r,_ in rows.values() if tuple(r[k] for k in KEYS[:4]) == (scenario,shape,predicate,memo)]
+        sample = selected[0]
+        lines += [f'## {scenario}, {shape}, {predicate}, pair memo {"on" if memo else "off"}','',
+                  f'{sample["accepted"]:,} / {sample["rows"]:,} bindings survive; {sample["histogram"][15]:,} have signature 15.','',
+                  '| Carrier / layout | Algorithm | Join only | Fresh | Fresh min–max | Warm | Input KB | Added resident KB | Pair cache KB | Samples |',
+                  '| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |']
+        for r in sorted(selected,key=lambda r:(r['candidate'],r['essential_layout'],r['classifier'],r['occupancy_kernel'])):
+            label = r['candidate']+('/'+r['essential_layout'] if r['candidate'].startswith('essential') else '')
+            algorithm = r['classifier']+('/'+r['occupancy_kernel'] if r['classifier']=='direct' and r['candidate'].startswith('essential') else '')
+            cells = [label,algorithm,f'{statistics.median(r["join_only_s"])*1000:.3f}',
+                     f'{statistics.median(r["fresh_s"])*1000:.3f}',
+                     f'{min(r["fresh_s"])*1000:.3f}–{max(r["fresh_s"])*1000:.3f}',
+                     f'{statistics.median(r["warm_s"])*1000:.3f}',
+                     f'{r["input_bytes_est"]/1000:.1f}',f'{(r["final_bytes_est"]-r["input_bytes_est"])/1000:.1f}',
+                     f'{r["signature_cache_bytes_est"]/1000:.1f}',str(len(r['fresh_s']))]
+            lines.append('| '+' | '.join(cells)+' |')
+        lines.append('')
+    lines += ['## Evidence','',f'{len(rows)} cases, {len(pairs)} matched kernel pairs, {len(processes)} serial processes.','']
+    lines += [f'- [Raw samples and process logs](results/{name}).' for name in args.inputs]
+    lines.append('')
+    (LAB/args.output).write_text('\n'.join(lines))
+    print(f'Wrote {args.output}: {len(rows)} cases; {len(pairs)} scalar/word pairs.')
+
+if __name__ == '__main__': main()

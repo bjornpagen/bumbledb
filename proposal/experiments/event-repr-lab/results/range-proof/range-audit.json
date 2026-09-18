@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "structural_processes": 64,
+  "unchanged_plain_controls": 12,
+  "matched_kernel_pairs": 32,
+  "exhaustive_checks": {
+    "passed": true,
+    "binary": 25165824,
+    "projection": 49152,
+    "maps": 178176,
+    "completed_projection": 49152,
+    "orders": 6,
+    "modes": 2,
+    "kernels": 2
+  },
+  "sparse_checks": [
+    {
+      "passed": true,
+      "combinations": 115200,
+      "projections": 61440,
+      "cofactors": 3840
+    }
+  ],
+  "lean_reports": 10,
+  "axiom_free_reports": 7,
+  "checker_sha256": "ea8c9fd4b4305c7291d0fa15bba18c89ca27c1ad0b5a38ab0838e3042d061f0f",
+  "boundary": "Raw structure, algebra and collection checks. Native carrier admission and Free Join comparison remain required."
+}

@@ -1,0 +1,157 @@
+{
+  "passed": false,
+  "started_utc": "2026-09-18T18:04:57.415121+00:00",
+  "lean_binary": "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "lean_version": "Lean (version 4.32.0, arm64-apple-darwin24.6.0, commit 8c9756b28d64dab099da31a4c09229a9e6a2ef35, Release)",
+  "checker_sha256": "01ae4e022dabb3fd57ea1a9b4eb892e6ee917e1424e702166bd12ad679f9e79c",
+  "source_sha256": {
+    "semantics/FiniteMeasure.lean": "fe08a5b4523e09e0b27c9c048e0d0fdab4e360436e28abed4a47787090b8c377",
+    "semantics/ModalContract.lean": "099edfc4e756d56fd9d75d41d347fb36de2e0871e3f1a1e09229acefcae2b4c9"
+  },
+  "files": [
+    {
+      "source": "semantics/FiniteMeasure.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean"
+      ],
+      "exit_code": 1,
+      "log": "00-FiniteMeasure.log",
+      "expected": [
+        "FiniteMeasure.sum_congr",
+        "FiniteMeasure.sum_add",
+        "FiniteMeasure.sum_mul",
+        "FiniteMeasure.sum_zero",
+        "FiniteMeasure.sum_map",
+        "FiniteMeasure.key_and_coverage",
+        "FiniteMeasure.sum_swap",
+        "FiniteMeasure.complement_mass",
+        "FiniteMeasure.conditional_complement",
+        "FiniteMeasure.intersection_bound",
+        "FiniteMeasure.partial_partition_mass",
+        "FiniteMeasure.partition_mass",
+        "FiniteMeasure.schema_partition_mass",
+        "FiniteMeasure.repeated_evidence",
+        "FiniteMeasure.zero_evidence",
+        "FiniteMeasure.positive_evidence",
+        "FiniteMeasure.zero_mass_can_be_possible",
+        "FiniteMeasure.full_mass_need_not_be_full"
+      ],
+      "axioms": {
+        "FiniteMeasure.sum_congr": [
+          "propext"
+        ],
+        "FiniteMeasure.sum_add": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.sum_mul": [
+          "propext"
+        ],
+        "FiniteMeasure.sum_zero": [],
+        "FiniteMeasure.sum_map": [
+          "propext"
+        ],
+        "FiniteMeasure.key_and_coverage": [
+          "propext",
+          "sorryAx"
+        ],
+        "FiniteMeasure.sum_swap": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.complement_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.conditional_complement": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.intersection_bound": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.partial_partition_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.partition_mass": [
+          "propext",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.schema_partition_mass": [
+          "propext",
+          "sorryAx",
+          "Quot.sound"
+        ],
+        "FiniteMeasure.repeated_evidence": [
+          "Quot.sound"
+        ],
+        "FiniteMeasure.zero_evidence": [
+          "propext"
+        ],
+        "FiniteMeasure.positive_evidence": [
+          "propext"
+        ],
+        "FiniteMeasure.zero_mass_can_be_possible": [
+          "propext"
+        ],
+        "FiniteMeasure.full_mass_need_not_be_full": [
+          "propext"
+        ]
+      },
+      "passed": false
+    },
+    {
+      "source": "semantics/ModalContract.lean",
+      "command": [
+        "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+        "/Users/bjorn/Documents/bumbledb/proposal/semantics/ModalContract.lean"
+      ],
+      "exit_code": 0,
+      "log": "01-ModalContract.log",
+      "expected": [
+        "ModalContract.may_composition",
+        "ModalContract.all_composition",
+        "ModalContract.must_composition_exact",
+        "ModalContract.dead_end_distinction",
+        "ModalContract.must_composition_counterexample",
+        "ModalContract.left_adjunction",
+        "ModalContract.right_adjunction",
+        "ModalContract.permission_exact",
+        "ModalContract.permission_sound",
+        "ModalContract.permission_greatest",
+        "ModalContract.uniform_action_counterexample",
+        "ModalContract.star_transitive",
+        "ModalContract.star_least",
+        "ModalContract.star_may_unfold",
+        "ModalContract.star_all_unfold"
+      ],
+      "axioms": {
+        "ModalContract.may_composition": [],
+        "ModalContract.all_composition": [],
+        "ModalContract.must_composition_exact": [],
+        "ModalContract.dead_end_distinction": [],
+        "ModalContract.must_composition_counterexample": [],
+        "ModalContract.left_adjunction": [],
+        "ModalContract.right_adjunction": [],
+        "ModalContract.permission_exact": [],
+        "ModalContract.permission_sound": [],
+        "ModalContract.permission_greatest": [],
+        "ModalContract.uniform_action_counterexample": [],
+        "ModalContract.star_transitive": [],
+        "ModalContract.star_least": [],
+        "ModalContract.star_may_unfold": [],
+        "ModalContract.star_all_unfold": []
+      },
+      "passed": true
+    }
+  ],
+  "scope": "new-contract-only",
+  "boundary": "Denotational semantics with explicit premises. Not Rust refinement, solver correctness, canonical wire proof or native planner correctness.",
+  "reports": 33,
+  "axiom_free": 16,
+  "finished_utc": "2026-09-18T18:04:58.179482+00:00"
+}

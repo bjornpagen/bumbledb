@@ -1,0 +1,29 @@
+{
+  "passed": true,
+  "cases": {
+    "decoders": 5,
+    "events": 130,
+    "boolean": 54080,
+    "projections": 858,
+    "maps": 780,
+    "compositions": 2000
+  },
+  "counterexamples": {
+    "alias_population": [
+      2,
+      1
+    ],
+    "partial_projection": [
+      2,
+      3
+    ],
+    "preserving_noncommuting": {
+      "support": [
+        1,
+        2
+      ],
+      "witness": 0
+    }
+  },
+  "checker_sha256": "bc56e9743092b6ab9ed23afa11fdfc1c4fb9452803188f994d246c7318f8e801"
+}

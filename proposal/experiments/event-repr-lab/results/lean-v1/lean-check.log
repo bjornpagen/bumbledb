@@ -1,0 +1,20 @@
+EventSignatures.lean
+'EventSignatures.possible_apply_iff' does not depend on any axioms
+'EventSignatures.full_apply_iff' does not depend on any axioms
+'EventSignatures.signature_nonempty' does not depend on any axioms
+'EventSignatures.swap' does not depend on any axioms
+'EventSignatures.complement_left' depends on axioms: [propext]
+'EventSignatures.complement_right' depends on axioms: [propext]
+'EventSignatures.signature_iff_all_binary_tests' depends on axioms: [propext, Quot.sound]
+'EventSignatures.composition_distinguishes_same_signature' depends on axioms: [propext, Quot.sound]
+'EventSignatures.no_signature_factorization' depends on axioms: [propext, Quot.sound]
+
+Anchored.lean
+'Anchored.root_excludes_anchor' depends on axioms: [propext]
+'Anchored.root_excludes_outside' depends on axioms: [propext]
+'Anchored.decode_root' depends on axioms: [propext]
+'Anchored.complement_same_root' depends on axioms: [propext]
+'Anchored.complement_flips_polarity' depends on axioms: [propext]
+'Anchored.exact_identity' depends on axioms: [propext]
+'Anchored.adjusted_zero' depends on axioms: [propext]
+'Anchored.binary_apply_root' depends on axioms: [propext]

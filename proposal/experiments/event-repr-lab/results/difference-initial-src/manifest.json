@@ -1,0 +1,9 @@
+{
+  "difference_shapes.py": "b2d9e2cf91dc926baad696b0c39325b2ce40518da4448758fc2e2ee0236e170a",
+  "difference_check.py": "2bd42469f4637a576c902105a51697ebfcdea36ce28a5d7fdd7aff529b1e0fa5",
+  "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+  "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+  "difference-prototype/src/lib.rs": "8f2483e688c873191d573f14faa05bcc9bc7366e1de3b9dd21af97ca8a79fb3b",
+  "difference-prototype/src/main.rs": "58a72e3ce31b67937636d4ce012f95718becd0770b923a7958019c9cc77a6f5b",
+  "difference-prototype/src/tests.rs": "f6e9f0b746c294a8dafab7bad930e110be334db83946d905ef345cb3af235128"
+}

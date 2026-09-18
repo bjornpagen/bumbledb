@@ -1,0 +1,29 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"overlap_4096","shape":"triangle","memo":false,"worlds":4096,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":9,"final_nodes":164,"input_bytes_est":6272,"final_bytes_est":95480,"colt_bytes":163104,"build_s":[1.5584e-5, 6.25e-6, 6.125e-6, 6.208e-6, 5.958e-6, 5.958e-6, 6.667e-6],"native_setup_s":0.000208667,"native_first_join_s":0.000109084,"join_only_s":[4.9834e-5, 5.075e-5, 4.6667e-5, 4.6125e-5, 4.6125e-5, 4.6042e-5, 4.5875e-5],"fresh_s":[0.000685916, 0.000713542, 0.000673417, 0.000672, 0.000670083, 0.000670125, 0.000676834],"warm_s":[0.0006782643125, 0.0006823763125, 0.00069076690625, 0.00069085415625, 0.0006817265625, 0.0007878580625, 0.00107632940625],"warm_loops":32,"checksum":6418664,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"overlap_4096","shape":"triangle","memo":true,"worlds":4096,"rows":1024,"groups":64,"plan_nodes":3,"input_nodes":9,"final_nodes":164,"input_bytes_est":6272,"final_bytes_est":113400,"colt_bytes":163104,"build_s":[1.5584e-5, 6.25e-6, 6.125e-6, 6.208e-6, 5.958e-6, 5.958e-6, 6.667e-6],"native_setup_s":0.000208667,"native_first_join_s":0.000109084,"join_only_s":[4.9834e-5, 5.075e-5, 4.6667e-5, 4.6125e-5, 4.6125e-5, 4.6042e-5, 4.5875e-5],"fresh_s":[0.000140916, 0.000133209, 0.000130417, 0.00012875, 0.000129084, 0.000128875, 0.000127584],"warm_s":[0.00012834456640625, 0.000105015296875, 9.305598828125e-5, 9.18779296875e-5, 8.518115234375e-5, 8.552392578125e-5, 0.00015664290234375],"warm_loops":256,"checksum":6418664,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"overlap_4096","shape":"clover","memo":false,"worlds":4096,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":9,"final_nodes":517,"input_bytes_est":6272,"final_bytes_est":301968,"colt_bytes":41104,"build_s":[1.2e-5, 0.000175958, 8.5e-6, 9.917e-6, 6.584e-6, 6.125e-6, 6.042e-6],"native_setup_s":0.000145542,"native_first_join_s":0.000115375,"join_only_s":[7.6e-5, 7.3417e-5, 7.3208e-5, 7.3125e-5, 7.3166e-5, 7.325e-5, 7.3208e-5],"fresh_s":[0.002539125, 0.00253975, 0.002528666, 0.00252525, 0.002524667, 0.002522292, 0.0027045],"warm_s":[0.002487302125, 0.0025390390625, 0.0025433073125, 0.002503979125, 0.002513234375, 0.002534927125, 0.002502927125],"warm_loops":16,"checksum":6868992,"verified":true}
+EVENT_LAB {"kind":"free_join","candidate":"dense","scenario":"overlap_4096","shape":"clover","memo":true,"worlds":4096,"rows":4096,"groups":64,"plan_nodes":3,"input_nodes":9,"final_nodes":517,"input_bytes_est":6272,"final_bytes_est":337808,"colt_bytes":41104,"build_s":[1.2e-5, 0.000175958, 8.5e-6, 9.917e-6, 6.584e-6, 6.125e-6, 6.042e-6],"native_setup_s":0.000145542,"native_first_join_s":0.000115375,"join_only_s":[7.6e-5, 7.3417e-5, 7.3208e-5, 7.3125e-5, 7.3166e-5, 7.325e-5, 7.3208e-5],"fresh_s":[0.00037775, 0.000320083, 0.000323667, 0.000310833, 0.00029275, 0.000303375, 0.000338042],"warm_s":[0.00014967919921875, 0.00015064697265625, 0.0001813662109375, 0.00016834684375, 0.00016750113671875, 0.00015157551953125, 0.00014991341015625],"warm_loops":256,"checksum":6868992,"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1360 filtered out; finished in 1.21s
+
+
+        1.21 real         1.14 user         0.01 sys
+             6619136  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 616  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                 727  involuntary context switches
+         18498664900  instructions retired
+          3754311835  cycles elapsed
+             4129152  peak memory footprint

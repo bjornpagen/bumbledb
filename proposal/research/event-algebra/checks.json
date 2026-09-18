@@ -1,0 +1,39 @@
+{
+  "scope": "Finite reference semantics only; no native engine or TypeSafe calls.",
+  "groups_passed": [
+    "ite_against_world_predicates",
+    "cardinality_partition_against_counts",
+    "may_must_adjunctions_and_refinement",
+    "evidence_relative_nonvacuity_and_staged_cells",
+    "constrained_support_saturations_do_not_commute",
+    "scope_map_adjunctions_and_weighted_pushforward",
+    "partial_transition_dead_end_falsifier",
+    "relational_residual_adjunctions_and_modal_composition",
+    "bdd_relational_product_against_join_projection",
+    "finite_closure_and_inevitable_reachability",
+    "relational_product_environment_and_ambient_support",
+    "coup_uniform_action_residual_and_certain_cost",
+    "finite_action_fixed_points_against_policy_enumeration",
+    "structural_possibility_survives_zero_probability",
+    "same_marginals_different_event_answers",
+    "posterior_versus_likelihood_and_evidence_identity",
+    "revision_order_and_zero_support_guards",
+    "observable_coverage_duplicates_and_certain_expenditure",
+    "robust_dominance_uses_shared_source",
+    "observation_value_respects_visible_cases",
+    "exact_sensitivity_and_conditional_quotient"
+  ],
+  "group_count": 21,
+  "counts": {
+    "ite_cases": 6560,
+    "count_buckets": 26240,
+    "information_partitions": 15,
+    "residual_cases": 4096,
+    "closure_goal_cases": 4096,
+    "action_arena_goal_cases": 1024
+  },
+  "posterior_revision": "4/5",
+  "likelihood_update": "1/2",
+  "robust_expected_advantage": "6/5",
+  "perfect_observation_value": "1"
+}

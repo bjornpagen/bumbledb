@@ -1,0 +1,58 @@
+{
+  "scope": "Schema syntax and worked arithmetic only; no package typecheck or native admission.",
+  "initial_deal": {
+    "equally_likely_two_card_hands": 78,
+    "hands_with_duke": 23,
+    "probability": {
+      "exact": "23/78",
+      "percent": 29.487179487179485
+    }
+  },
+  "after_tax_assumed_rates": {
+    "truth_rate": "4/5",
+    "bluff_rate": "1/5",
+    "probability": {
+      "exact": "92/147",
+      "percent": 62.585034013605444
+    }
+  },
+  "after_tax_assumed_rate_rectangle": {
+    "truth_rate": [
+      "7/10",
+      "9/10"
+    ],
+    "bluff_rate": [
+      "1/10",
+      "3/10"
+    ],
+    "lower": {
+      "exact": "161/326",
+      "percent": 49.38650306748466
+    },
+    "upper": {
+      "exact": "207/262",
+      "percent": 79.00763358778626
+    }
+  },
+  "proof_replacement": {
+    "court_before_return": 9,
+    "dukes_before_return": 0,
+    "returned_dukes": 1,
+    "draw_options": 10,
+    "probability": {
+      "exact": "1/10",
+      "percent": 10.0
+    }
+  },
+  "syntax_checks": {
+    "command": "node --experimental-strip-types --check <file>",
+    "passed": [
+      "proposal/coup/vocabulary.ts",
+      "proposal/coup/schema.ts",
+      "proposal/coup/claims-schema.ts",
+      "proposal/examples/operations-schema.ts"
+    ],
+    "package_typecheck": "not run: dependencies not installed",
+    "native_admission": "not run"
+  }
+}

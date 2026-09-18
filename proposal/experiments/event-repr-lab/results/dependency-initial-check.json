@@ -1,0 +1,37 @@
+{
+  "passed": true,
+  "elapsed_s": 11.911162853240967,
+  "profile": "debug; not a performance measurement",
+  "lab_sources": {
+    "src/blocks.rs": "40d62e0fdb0e23b985dc23db3b93129c91938f6e1d16f1691f758b01cd7f1183",
+    "src/carrier.rs": "2e92fd77c0220bbcc3b49d78062eee260b8390e39a7fac3bcae2bebf5bd6303d",
+    "src/dependencies.rs": "262b0168c321ad7fec2e42e567c3dbf4783660f3fb43d164f06cd69a87820347",
+    "src/dependency_native.rs": "0b08cc84321e468dbdaa0c7dadd755d231e8a30027c448164fe917a6ca80a331",
+    "src/diagram.rs": "bbea0bc4f70d0caa43e2028ef666a7c9c634e852bf4f324ca0e7a2ab1dd5b9e8",
+    "src/finite.rs": "fe922ac357dd1c2625d1e40d2928bbf86ec7d252147936442b1eb5536a9bd0b9",
+    "src/law_bench.rs": "4eae914fa299f74781ff61f7f26a8a0dc3648a02a2313c2491f69bd39035a00a",
+    "src/lib.rs": "f2cf145326835a0fd8e5cd14af646741158bc352d2c7fdb526ef9a1a55268864",
+    "src/modal.rs": "6b64d5396b30e865298956e3f275c4fa5e75f373c36e8768a3df7e00691141d6",
+    "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+    "src/observation.rs": "4c0c4c6ef04ddc6892a08c3370c0339a78a2401a1e57e036ea1a81247bd6c047",
+    "src/observation_checks.rs": "4a5c55f2137e06904f9e4dd057d6dab83f6b5b4fe8e651678a8b6b58719612b7",
+    "src/packed.rs": "ee063385f883837a7248322fb10dcd2d4101a9c68309c949be758b9e7a160202",
+    "src/relational_core.rs": "c757b649a062f3b3eada667f166dc6afe40d4cc7c7c7ffce5adce438a638bbae",
+    "src/relations.rs": "bc01ce5a4d99cc1427f6c2c02bd83640b40f9ac6123d78f879e7ee09c94e5868",
+    "src/semantic_checks.rs": "0f01d78a377568135d714c7dd5073cee94a50c48bf52b5b93338c2778deceaff"
+  },
+  "shared_modules": [
+    "carrier",
+    "diagram",
+    "finite",
+    "packed",
+    "relational_core",
+    "semantic_checks",
+    "observation",
+    "observation_checks",
+    "dependencies",
+    "blocks"
+  ],
+  "packed_map": "local",
+  "log": "dependency-initial-check.log"
+}

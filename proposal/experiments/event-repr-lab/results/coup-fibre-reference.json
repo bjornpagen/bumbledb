@@ -1,0 +1,65 @@
+{
+  "passed": true,
+  "purpose": "Exact legal-hand fibres; a reference example, never a timing benchmark.",
+  "checker_sha256": "b34cc316732114a751792e6fcb14375a5f64140a8a8495364be57051ef96337f",
+  "available_cards": [
+    1,
+    2,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14
+  ],
+  "hands": 78,
+  "deals": 4290,
+  "known_alice_cards": [
+    0,
+    3
+  ],
+  "fibre_classes": {
+    "0": {
+      "bob_hands": 55,
+      "legal_completions": 55,
+      "cleo_duke_completions": 19
+    },
+    "1": {
+      "bob_hands": 22,
+      "legal_completions": 55,
+      "cleo_duke_completions": 10
+    },
+    "2": {
+      "bob_hands": 1,
+      "legal_completions": 55,
+      "cleo_duke_completions": 0
+    }
+  },
+  "pushforward_checks": 16,
+  "cleo_duke_deals": 1265,
+  "both_players_duke_deals": 220,
+  "bob_readouts": {
+    "possible_cleo_duke": 77,
+    "guaranteed_cleo_duke": 0,
+    "ambiguous_cleo_duke": 77
+  },
+  "bob_role_readouts": {
+    "readouts": 15,
+    "possible_cleo_duke": 14,
+    "guaranteed_cleo_duke": 0,
+    "ambiguous_cleo_duke": 14,
+    "fibre_cardinalities": [
+      55,
+      165,
+      220,
+      330,
+      495
+    ]
+  },
+  "boundary": "Exact finite counting and possibility; no independent-hand law is inferred. This is not a native readout workload."
+}

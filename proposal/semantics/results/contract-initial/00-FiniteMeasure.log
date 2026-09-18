@@ -1,0 +1,85 @@
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:39:28: error: Tactic `simp` failed with a nested error:
+maximum recursion depth has been reached
+use `set_option maxRecDepth <num>` to increase limit
+use `set_option diagnostics true` to get diagnostic information
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:58:75: error: unsolved goals
+case false
+W : Type
+ws : List W
+weight : W → Nat
+p : W → Bool
+w : W
+a✝ : w ∈ ws
+⊢ p w = true → 0 = weight w
+
+case true
+W : Type
+ws : List W
+weight : W → Nat
+p : W → Bool
+w : W
+a✝ : w ∈ ws
+⊢ p w = false → weight w = 0
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:68:26: error: unsolved goals
+case false.false
+W : Type
+ws : List W
+weight : W → Nat
+p g : W → Bool
+w : W
+a✝ : w ∈ ws
+⊢ (p w = true → g w = true → weight w = 0) ∧ (p w = false → g w = true → weight w = 0)
+
+case false.true
+W : Type
+ws : List W
+weight : W → Nat
+p g : W → Bool
+w : W
+a✝ : w ∈ ws
+⊢ ((if p w = true ∧ g w = true then weight w else 0) + if p w = false ∧ g w = true then weight w else 0) = weight w
+
+case true.false
+W : Type
+ws : List W
+weight : W → Nat
+p g : W → Bool
+w : W
+a✝ : w ∈ ws
+⊢ (p w = true → g w = true → weight w = 0) ∧ (p w = false → g w = true → weight w = 0)
+
+case true.true
+W : Type
+ws : List W
+weight : W → Nat
+p g : W → Bool
+w : W
+a✝ : w ∈ ws
+⊢ ((if p w = true ∧ g w = true then weight w else 0) + if p w = false ∧ g w = true then weight w else 0) = weight w
+/Users/bjorn/Documents/bumbledb/proposal/semantics/FiniteMeasure.lean:81:4: error: Tactic `generalize` failed: result is not type correct
+  ∀ (x : Bool),
+    ((if (x && g w) = true then weight w else 0) + sum ws fun w => if (p w && g w) = true then weight w else 0) ≤
+      (if g w = true then weight w else 0) + sum ws fun w => if g w = true then weight w else 0
+
+case cons
+W : Type
+weight : W → Nat
+p g : W → Bool
+w : W
+ws : List W
+ih : (sum ws fun w => if (p w && g w) = true then weight w else 0) ≤ sum ws fun w => if g w = true then weight w else 0
+⊢ ((if (p w && g w) = true then weight w else 0) + sum ws fun w => if (p w && g w) = true then weight w else 0) ≤
+    (if g w = true then weight w else 0) + sum ws fun w => if g w = true then weight w else 0
+'FiniteMeasure.sum_congr' depends on axioms: [propext]
+'FiniteMeasure.sum_add' depends on axioms: [propext, Quot.sound]
+'FiniteMeasure.sum_mul' depends on axioms: [propext]
+'FiniteMeasure.sum_swap' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.complement_mass' depends on axioms: [propext, sorryAx, Classical.choice, Quot.sound]
+'FiniteMeasure.conditional_complement' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.intersection_bound' depends on axioms: [sorryAx]
+'FiniteMeasure.partition_mass' depends on axioms: [propext, sorryAx, Quot.sound]
+'FiniteMeasure.repeated_evidence' depends on axioms: [Quot.sound]
+'FiniteMeasure.zero_evidence' depends on axioms: [propext]
+'FiniteMeasure.positive_evidence' depends on axioms: [propext]
+'FiniteMeasure.zero_mass_can_be_possible' depends on axioms: [propext]
+'FiniteMeasure.full_mass_need_not_be_full' depends on axioms: [propext]

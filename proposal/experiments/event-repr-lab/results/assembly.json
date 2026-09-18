@@ -1,0 +1,36 @@
+{
+  "current_binary_sha256": "35f35e796afcc25df41c68b20227fa7683c144ccef1b2fc93e1b7b767a0fb74c",
+  "prior_scalar_binary_sha256": "613ca36688b3e944d3091f97ce3533a7aabe327943dd10ee02873d04147440bb",
+  "symbols": [
+    {
+      "symbol": "__RNvXNtNtCscwNfrOFzE52_8bumbledb14event_repr_lab6finiteNtB2_5DenseNtB2_3Set6raw_opB6_",
+      "assembly": "dense-kernel-0-arm64.s",
+      "vector_boolean_instructions": []
+    }
+  ],
+  "dispatched": {
+    "assembly": "dense-dispatched-op-arm64.s",
+    "vector_boolean_instructions": [
+      "100653624:     \tbic.16b\tv0, v0, v4",
+      "100653628:     \tbic.16b\tv1, v1, v5",
+      "10065362c:     \tbic.16b\tv2, v2, v6",
+      "100653630:     \tbic.16b\tv3, v3, v7",
+      "100653688:     \teor.16b\tv0, v4, v0",
+      "10065368c:     \teor.16b\tv1, v5, v1",
+      "100653690:     \teor.16b\tv2, v6, v2",
+      "100653694:     \teor.16b\tv3, v7, v3",
+      "1006536ec:     \torr.16b\tv0, v4, v0",
+      "1006536f0:     \torr.16b\tv1, v5, v1",
+      "1006536f4:     \torr.16b\tv2, v6, v2",
+      "1006536f8:     \torr.16b\tv3, v7, v3",
+      "100653750:     \tbic.16b\tv0, v4, v0",
+      "100653754:     \tbic.16b\tv1, v5, v1",
+      "100653758:     \tbic.16b\tv2, v6, v2",
+      "10065375c:     \tbic.16b\tv3, v7, v3",
+      "1006537b4:     \tand.16b\tv0, v4, v0",
+      "1006537b8:     \tand.16b\tv1, v5, v1",
+      "1006537bc:     \tand.16b\tv2, v6, v2",
+      "1006537c0:     \tand.16b\tv3, v7, v3"
+    ]
+  }
+}

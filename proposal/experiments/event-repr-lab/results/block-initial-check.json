@@ -1,0 +1,28 @@
+{
+  "passed": true,
+  "elapsed_s": 3.4714510440826416,
+  "profile": "debug; not a performance measurement",
+  "lab_sources": {
+    "src/blocks.rs": "5f367fabbda846cf0be2637736419fae94fb7f76d2439ae9d40125486866ef46",
+    "src/carrier.rs": "796731feb6e8758207aad632e84fa1a93cee62377085a0a2de7b7dcd027b2faf",
+    "src/diagram.rs": "5d39d1fc2b5395f1b1666dca9c7b754ffcd7d4d4577130f8c4fc01483887be30",
+    "src/finite.rs": "fbfda2a96cf8f6105d592fb8a66c04052db2aacfc6fe470a041ee5e48eb802f3",
+    "src/lib.rs": "b73da65ae7cbc1d0fc1b3e9fbe5bf4cca755d7e107d3ee8f26205c89e032a08f",
+    "src/modal.rs": "5d51acab5d98d33747e069b50885e0a9926d2429975aedf69b5276554ede2986",
+    "src/native.rs": "b26a876b8c9a32be04abf5d984fda6bee92bc470e1117df0b66e048cfe4b3b5c",
+    "src/packed.rs": "214ecb137a144bb60461186efa1fd8e92bfeaa97788d6daa1954c92d2b210066",
+    "src/relational_core.rs": "88401d5b7cf1bb7c3195327ca8ba01f189dc48407563b35497fd0178b51e0e41",
+    "src/relations.rs": "b7840b402e1e590fa9169a26c468ba8c927c349a59b9c499b8f5b229c7b745a4",
+    "src/semantic_checks.rs": "6787c204b76f8449accd032eb4b66523e4b01fca8018e41f4badd913b8314b21"
+  },
+  "shared_modules": [
+    "carrier",
+    "diagram",
+    "finite",
+    "packed",
+    "relational_core",
+    "semantic_checks",
+    "blocks"
+  ],
+  "log": "block-initial-check.log"
+}

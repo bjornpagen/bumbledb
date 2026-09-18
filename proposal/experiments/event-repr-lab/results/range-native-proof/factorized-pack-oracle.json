@@ -1,0 +1,13 @@
+{
+  "passed": true,
+  "relations": 256,
+  "local_predicate_checks": 16384,
+  "factorable_relations": 28,
+  "source_hashes": {
+    "proposal/research/event-algebra/abo-khamis-ngo-rudra-2016-faq.txt": "1e183a13708bdc09eed2f0866bed448b246ac19ef8e26191c5ab189e2ee8ed1d",
+    "proposal/papers/abo-khamis-ngo-rudra-2016-faq.pdf": "e084e3cc57f11f4808bc9b38f8fd05b1974ceedbd572ed7dc86b2d58bc829dc0"
+  },
+  "checker_sha256": "3fb3a6e4561685cb453f10fddc0ef427145f719ec523ec4bfc07cd6bc1dce8ec",
+  "reading_scope": "FAQ section 1.2 definition/equation (1) and section 2.2 variable elimination/distributivity; native Free Join complete-binding callback and clover mappings.",
+  "boundary": "Finite semantic oracle for universal row-factorization condition. No timing or native implementation claim."
+}

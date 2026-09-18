@@ -1,0 +1,53 @@
+{
+  "passed": true,
+  "cases": {
+    "2": 19968,
+    "3": 137700
+  },
+  "counterexamples": {
+    "missing_output_gate": {
+      "bits": 2,
+      "support": 2,
+      "a": 2,
+      "b": 2,
+      "am": [
+        0,
+        1
+      ],
+      "bm": [
+        0,
+        1
+      ],
+      "output": [
+        1,
+        0
+      ],
+      "mask": 3,
+      "expected": 0,
+      "wrong": 2
+    },
+    "missing_witness_gate": {
+      "bits": 2,
+      "support": 2,
+      "a": 2,
+      "b": 2,
+      "am": [
+        1,
+        0
+      ],
+      "bm": [
+        1,
+        0
+      ],
+      "output": [
+        0,
+        1
+      ],
+      "mask": 3,
+      "expected": 0,
+      "wrong": 2
+    }
+  },
+  "checker_sha256": "dc7013fbefaf01efde7ccd6828d922ac7538e95e8fe947c36a38d34691af0400",
+  "boundary": "Finite set identity; independent of Rust and not a timing result. Two-bit cases exhaust distinct supported operand pairs. Three-bit cases test selected pairs on every nonempty support, including non-involutive maps."
+}

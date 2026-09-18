@@ -1,0 +1,672 @@
+{
+  "passed": true,
+  "binary": "/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/difference-prototype/target/release/event-difference-prototype",
+  "binary_sha256": "c9b44fa016d87a56bb38980a9e1d7c5928fa21f9c7567db70f8e1063831b518a",
+  "source_hashes": {
+    "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+    "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+    "difference-prototype/src/lib.rs": "89604e0095434a5d7f481a6af1d02eb3d14f562e57c76868209a6488b41ef331",
+    "difference-prototype/src/main.rs": "b3a9838b7211315587e389be99d9a46002463410e5da86e86fcbab84e39289d6",
+    "difference-prototype/src/tests.rs": "ce77c5571a8d15babd9f53deb3146ddf4c7db97838b46619fed66a4cb410b70d"
+  },
+  "checker_sha256": "2e53fe0b4d8a2666ba7eaf252d3b7690937f0faa4bad0721b280f2fbad4bd9c8",
+  "runs": [
+    {
+      "job": [
+        "bilinear",
+        "shannon",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 90,
+          "input_reachable": 89,
+          "input_bytes": 4708,
+          "final_records": 750,
+          "output_reachable": 669,
+          "live_union": 749,
+          "final_bytes": 77172,
+          "query_apply_misses": 586,
+          "query_cofactor_misses": 700,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 90,
+          "bytes": 4708
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/000-bilinear-shannon-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "negative",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "negative",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 50,
+          "input_reachable": 49,
+          "input_bytes": 2508,
+          "final_records": 1248,
+          "output_reachable": 291,
+          "live_union": 298,
+          "final_bytes": 158068,
+          "query_apply_misses": 2572,
+          "query_cofactor_misses": 688,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 50,
+          "bytes": 2508
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/001-bilinear-negative-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "positive",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "positive",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 31,
+          "input_reachable": 30,
+          "input_bytes": 1948,
+          "final_records": 14426,
+          "output_reachable": 330,
+          "live_union": 349,
+          "final_bytes": 1774852,
+          "query_apply_misses": 22537,
+          "query_cofactor_misses": 12652,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 31,
+          "bytes": 1948
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/002-bilinear-positive-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "negative",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "negative",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 50,
+          "input_reachable": 49,
+          "input_bytes": 2508,
+          "final_records": 1189,
+          "output_reachable": 291,
+          "live_union": 298,
+          "final_bytes": 158068,
+          "query_apply_misses": 3452,
+          "query_cofactor_misses": 862,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 50,
+          "bytes": 2508
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/003-bilinear-negative-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "mixed",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "mixed",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 46,
+          "input_reachable": 45,
+          "input_bytes": 2508,
+          "final_records": 1251,
+          "output_reachable": 647,
+          "live_union": 662,
+          "final_bytes": 158068,
+          "query_apply_misses": 3073,
+          "query_cofactor_misses": 700,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 46,
+          "bytes": 2508
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/004-bilinear-mixed-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "shannon",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "shannon",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 3070,
+          "input_reachable": 3069,
+          "input_bytes": 141060,
+          "final_records": 12210,
+          "output_reachable": 10036,
+          "live_union": 12209,
+          "final_bytes": 1230084,
+          "query_apply_misses": 12310,
+          "query_cofactor_misses": 12654,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 3070,
+          "bytes": 141060
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/005-bilinear-shannon-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "positive",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "positive",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 32,
+          "input_reachable": 31,
+          "input_bytes": 1996,
+          "final_records": 1066,
+          "output_reachable": 242,
+          "live_union": 249,
+          "final_bytes": 158068,
+          "query_apply_misses": 2804,
+          "query_cofactor_misses": 862,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 32,
+          "bytes": 1996
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/006-bilinear-positive-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "negative",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "negative",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 40,
+          "input_reachable": 39,
+          "input_bytes": 2460,
+          "final_records": 15526,
+          "output_reachable": 419,
+          "live_union": 439,
+          "final_bytes": 1774852,
+          "query_apply_misses": 23973,
+          "query_cofactor_misses": 12652,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 40,
+          "bytes": 2460
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/007-bilinear-negative-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "positive",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "positive",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 31,
+          "input_reachable": 30,
+          "input_bytes": 1948,
+          "final_records": 17058,
+          "output_reachable": 330,
+          "live_union": 349,
+          "final_bytes": 2768132,
+          "query_apply_misses": 41518,
+          "query_cofactor_misses": 18022,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 31,
+          "bytes": 1948
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/008-bilinear-positive-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "positive",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "positive",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 32,
+          "input_reachable": 31,
+          "input_bytes": 1996,
+          "final_records": 1064,
+          "output_reachable": 242,
+          "live_union": 249,
+          "final_bytes": 158068,
+          "query_apply_misses": 1842,
+          "query_cofactor_misses": 688,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 32,
+          "bytes": 1996
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/009-bilinear-positive-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "mixed",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "mixed",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 109,
+          "input_reachable": 108,
+          "input_bytes": 4660,
+          "final_records": 18186,
+          "output_reachable": 1326,
+          "live_union": 1411,
+          "final_bytes": 2524420,
+          "query_apply_misses": 34102,
+          "query_cofactor_misses": 12654,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 109,
+          "bytes": 4660
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/010-bilinear-mixed-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "shannon",
+        "face-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "shannon",
+          "layout": "face-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 3070,
+          "input_reachable": 3069,
+          "input_bytes": 141060,
+          "final_records": 12210,
+          "output_reachable": 10036,
+          "live_union": 12209,
+          "final_bytes": 1230084,
+          "query_apply_misses": 12310,
+          "query_cofactor_misses": 12654,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 3070,
+          "bytes": 141060
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/011-bilinear-shannon-face-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "mixed",
+        "bit-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "mixed",
+          "layout": "bit-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 46,
+          "input_reachable": 45,
+          "input_bytes": 2508,
+          "final_records": 1226,
+          "output_reachable": 647,
+          "live_union": 662,
+          "final_bytes": 218996,
+          "query_apply_misses": 4155,
+          "query_cofactor_misses": 814,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 46,
+          "bytes": 2508
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/012-bilinear-mixed-bit-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "shannon",
+        "bit-major",
+        "coefficients"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "shannon",
+          "layout": "bit-major",
+          "kernel": "coefficients",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 90,
+          "input_reachable": 89,
+          "input_bytes": 4708,
+          "final_records": 750,
+          "output_reachable": 669,
+          "live_union": 749,
+          "final_bytes": 77172,
+          "query_apply_misses": 586,
+          "query_cofactor_misses": 700,
+          "query_projection_misses": 410,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 90,
+          "bytes": 4708
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/013-bilinear-shannon-bit-major-coefficients.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "mixed",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "mixed",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 109,
+          "input_reachable": 108,
+          "input_bytes": 4660,
+          "final_records": 19442,
+          "output_reachable": 1326,
+          "live_union": 1411,
+          "final_bytes": 2768132,
+          "query_apply_misses": 55249,
+          "query_cofactor_misses": 16600,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 109,
+          "bytes": 4660
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/014-bilinear-mixed-face-major-cofactors.log"
+    },
+    {
+      "job": [
+        "bilinear",
+        "negative",
+        "face-major",
+        "cofactors"
+      ],
+      "status": "passed",
+      "rows": [
+        {
+          "passed": true,
+          "shape": "bilinear",
+          "basis": "negative",
+          "layout": "face-major",
+          "kernel": "cofactors",
+          "dimensions": 20,
+          "inputs": 2,
+          "outputs": 4,
+          "input_records": 40,
+          "input_reachable": 39,
+          "input_bytes": 2460,
+          "final_records": 17889,
+          "output_reachable": 419,
+          "live_union": 439,
+          "final_bytes": 2768132,
+          "query_apply_misses": 45537,
+          "query_cofactor_misses": 18022,
+          "query_projection_misses": 6520,
+          "checked_world_answers": 4194304,
+          "checksum": 3469056
+        }
+      ],
+      "phases": [
+        {
+          "phase": "inputs_verified",
+          "records": 40,
+          "bytes": 2460
+        }
+      ],
+      "log": "difference-bilinear-shapes-logs/015-bilinear-negative-face-major-cofactors.log"
+    }
+  ],
+  "boundary": "Operation/graph census in a standalone raw manager. Coup explicitly replays the clover binding formula; no native Free Join, normalized wire transport, law contraction or timings are claimed. Bytes estimate retained capacities and exclude allocator/temporary/oracle memory."
+}

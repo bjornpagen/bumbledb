@@ -1,0 +1,14 @@
+[
+  {
+    "arxiv": "1211.4475v1",
+    "file": "proposal/review-evidence/kimmig-vandenbroeck-deraedt-2012-algebraic-model-counting.txt",
+    "sha256": "2093ebea90fa5c811e447457d44c511974912c8cef4154631a100343ff120925",
+    "sections_read": "Algorithm 1, Theorems 2 and 4, skipped-variable and unit-cost qualifications"
+  },
+  {
+    "arxiv": "1802.09598v2",
+    "file": "proposal/review-evidence/staton-et-al-2018-beta-bernoulli-algebraic-effects.txt",
+    "sha256": "2208ca0da4b6ee77581796d80fdd079c355016889b2bfa844da19fdaa313251f",
+    "sections_read": "Introduction: ProcessFactory, BetaBern/Polya, exchangeability, discardability and conjugacy"
+  }
+]

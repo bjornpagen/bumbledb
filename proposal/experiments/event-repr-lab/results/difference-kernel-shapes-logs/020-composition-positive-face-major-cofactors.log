@@ -1,0 +1,3 @@
+DIFFERENCE_PHASE {"phase":"inputs_verified","records":73,"bytes":4556}
+DIFFERENCE_SHAPE {"passed":true,"shape":"composition","basis":"positive","layout":"face-major","kernel":"cofactors","dimensions":12,"inputs":2,"outputs":4,"input_records":73,"input_reachable":72,"input_bytes":4556,"final_records":659,"output_reachable":65,"live_union":131,"final_bytes":76236,"query_apply_misses":1098,"query_cofactor_misses":312,"query_projection_misses":87,"checked_world_answers":16384,"checksum":3072}
+

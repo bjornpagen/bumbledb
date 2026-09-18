@@ -1,0 +1,10 @@
+{
+  "unary-prototype/Cargo.toml": "3669934cd4c451a4bac2ca1ff36c347fa966b80494ec7492804e44ff1bc6c1e5",
+  "unary-prototype/Cargo.lock": "33874778d833595fcf3f52f775e5ccdead826ceb840289c6fd23cd33f419f112",
+  "unary-prototype/src/lib.rs": "fd1c7f8c9e53a89ca2b4570abf416ed89c0a156cae75e8cd9e549ac19d4be4fa",
+  "unary-prototype/src/main.rs": "1b141ffc8b5df17b5b6ae6c589e9d4e9b3f2489ad1c8aa64f1a7931c7c75784d",
+  "unary-prototype/src/tests.rs": "9b9e824269bee9e052916a4a26cf23627bf39f724968628f10d55715bb538cee",
+  "unary_check.py": "0f5be984f5b072aa72d085c5522657e463ae604e61ca4ea94f33ed19f49037bc",
+  "unary_shapes.py": "34a2723d9f88ba6f8ad15ca3bf28adb95f223612657ad08f818482c182cf998f",
+  "event-unary-prototype": "7536ad8e63bed62b38211dbfc26bd9321c5b603d4febdf9869bc11c5755b0ece"
+}

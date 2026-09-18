@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "source": "join-factorization/ParticipatingValidation.lean",
+  "source_sha256": "de9f8ea909b1f3d770e9800ce9a120e462be76e45f607bfee173fda15936544a",
+  "theorems": {
+    "all_joined_iff_participating": [],
+    "fault_set_exact": []
+  },
+  "log": "participating-validation-lean.log",
+  "command": [
+    "/Users/bjorn/.elan/toolchains/leanprover--lean4---v4.32.0/bin/lean",
+    "join-factorization/ParticipatingValidation.lean"
+  ],
+  "lean_binary_sha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+  "boundary": "Row-local validity and unordered fault sets over Cartesian bindings. Does not specify first-error order or verify the Rust executor."
+}

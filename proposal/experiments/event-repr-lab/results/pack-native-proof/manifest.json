@@ -1,0 +1,19 @@
+{
+  "FACTORIZED-PACK.md": "d3080cc0957d35fc83356623e67b509bd0ba9bf54c7ab657b74496c25659585c",
+  "FactorizedPack.lean": "bd8b9301a082073362a07ae4e11e7148bc365edf348b5af0dfa8ff0144078cec",
+  "PACK-CROSSOVER-MEASUREMENTS.md": "a93263b55ee1d98a8d16f13fd26893628f8d64a4a1325dfa6ff3080ba8e7befe",
+  "PACK-NATIVE-MEASUREMENTS.md": "58ebbc9ca5de1375668ca0039bdb01f19d07fd8aef04a0690386c076977fda3c",
+  "ParticipatingValidation.lean": "de9f8ea909b1f3d770e9800ce9a120e462be76e45f607bfee173fda15936544a",
+  "RelationPack.lean": "4fb58f3f0fe394f86a931bfee628e7fba103de90c0fe5bf1e764ac62972035a8",
+  "factorized-pack-lean.json": "980c2783e96760e4cc3541809449b8458b50db2a6584ec478119dcf4dab76457",
+  "factorized-pack-lean.log": "12c57f0fbbcb43f1002ee9558589d3f3a5336caf7b21d691574834e486934f21",
+  "factorized-pack-oracle.json": "5986b7b84eccdb8e4a81e3c48f1a35bd579adba9e4cc0d98b4beb453d78692b1",
+  "oracle.py": "3fb3a6e4561685cb453f10fddc0ef427145f719ec523ec4bfc07cd6bc1dce8ec",
+  "pack-native-analysis.json": "13b4c3ffbba3aaf4b2fefb8c6e2d3c3179f9a40d9ed55fa42b0c896b1154ac29",
+  "pack-native-crossover-analysis.json": "310b519261363fc845453612dff7c133a4251bfb788d8640690c263d3bbc7730",
+  "pack-native-reading.json": "005a8636071b915c725d86f4d005154b9c4c382afdeb0d3d24cd69069ec33b99",
+  "participating-validation-lean.json": "c2fb9359dc74066946315d6da43bd541fbab1b802356cc8df43a6266a38d8673",
+  "participating-validation-lean.log": "93240972b2dcbd9c89ae35040b13c56db6a819532bb4e96583ab5acb3f27a6ee",
+  "relation-pack-lean.json": "9f73980b1193004c3c1fdb80a6085a47d75676a24ec30a2a7aa2b4040f6d7de4",
+  "relation-pack-lean.log": "f54ffcf82467aaff4d10d02ceae91b92de811310acee28ef5cd8ee7fab403ece"
+}

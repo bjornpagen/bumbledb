@@ -1,0 +1,201 @@
+{
+  "passed": true,
+  "cases": [
+    {
+      "family": "counter",
+      "counter_bits": 1,
+      "states": 2,
+      "ordinary_preimages": 2,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 2,
+        "preimages": 4
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 1,
+      "states": 4,
+      "ordinary_preimages": 2,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 2,
+        "preimages": 4
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 2,
+      "states": 4,
+      "ordinary_preimages": 4,
+      "recursive": {
+        "nonterminal_calls": 2,
+        "cache_hits": 1,
+        "block_loops": 5,
+        "preimages": 10
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 2,
+      "states": 8,
+      "ordinary_preimages": 4,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 3,
+        "preimages": 6
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 3,
+      "states": 8,
+      "ordinary_preimages": 8,
+      "recursive": {
+        "nonterminal_calls": 3,
+        "cache_hits": 2,
+        "block_loops": 8,
+        "preimages": 16
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 3,
+      "states": 16,
+      "ordinary_preimages": 8,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 5,
+        "preimages": 10
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 4,
+      "states": 16,
+      "ordinary_preimages": 16,
+      "recursive": {
+        "nonterminal_calls": 4,
+        "cache_hits": 3,
+        "block_loops": 11,
+        "preimages": 22
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 4,
+      "states": 32,
+      "ordinary_preimages": 16,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 9,
+        "preimages": 18
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 5,
+      "states": 32,
+      "ordinary_preimages": 32,
+      "recursive": {
+        "nonterminal_calls": 5,
+        "cache_hits": 4,
+        "block_loops": 14,
+        "preimages": 28
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 5,
+      "states": 64,
+      "ordinary_preimages": 32,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 17,
+        "preimages": 34
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 6,
+      "states": 64,
+      "ordinary_preimages": 64,
+      "recursive": {
+        "nonterminal_calls": 6,
+        "cache_hits": 5,
+        "block_loops": 17,
+        "preimages": 34
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 6,
+      "states": 128,
+      "ordinary_preimages": 64,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 33,
+        "preimages": 66
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 7,
+      "states": 128,
+      "ordinary_preimages": 128,
+      "recursive": {
+        "nonterminal_calls": 7,
+        "cache_hits": 6,
+        "block_loops": 20,
+        "preimages": 40
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 7,
+      "states": 256,
+      "ordinary_preimages": 128,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 65,
+        "preimages": 130
+      }
+    },
+    {
+      "family": "counter",
+      "counter_bits": 8,
+      "states": 256,
+      "ordinary_preimages": 256,
+      "recursive": {
+        "nonterminal_calls": 8,
+        "cache_hits": 7,
+        "block_loops": 23,
+        "preimages": 46
+      }
+    },
+    {
+      "family": "alternating-leading-bit",
+      "counter_bits": 8,
+      "states": 512,
+      "ordinary_preimages": 256,
+      "recursive": {
+        "nonterminal_calls": 1,
+        "cache_hits": 0,
+        "block_loops": 129,
+        "preimages": 258
+      }
+    }
+  ],
+  "scope": "Explicit finite relations, same full reachable-state answer. Counts of semantic schedule operations, not graph visits or native timing.",
+  "checker_sha256": "b09bd28d3ab291b45b1656a9020b84d65488614ce1880ecde4693f109a5f5118",
+  "paper": "2212.03684v1",
+  "paper_sha256": "99108bc42737f92d3d7668669b772f87eb30f469432e8325f58ece0ca057c66c"
+}

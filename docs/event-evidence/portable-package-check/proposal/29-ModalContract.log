@@ -1,0 +1,15 @@
+'ModalContract.may_composition' does not depend on any axioms
+'ModalContract.all_composition' does not depend on any axioms
+'ModalContract.must_composition_exact' does not depend on any axioms
+'ModalContract.dead_end_distinction' does not depend on any axioms
+'ModalContract.must_composition_counterexample' does not depend on any axioms
+'ModalContract.left_adjunction' does not depend on any axioms
+'ModalContract.right_adjunction' does not depend on any axioms
+'ModalContract.permission_exact' does not depend on any axioms
+'ModalContract.permission_sound' does not depend on any axioms
+'ModalContract.permission_greatest' does not depend on any axioms
+'ModalContract.uniform_action_counterexample' does not depend on any axioms
+'ModalContract.star_transitive' does not depend on any axioms
+'ModalContract.star_least' does not depend on any axioms
+'ModalContract.star_may_unfold' does not depend on any axioms
+'ModalContract.star_all_unfold' does not depend on any axioms

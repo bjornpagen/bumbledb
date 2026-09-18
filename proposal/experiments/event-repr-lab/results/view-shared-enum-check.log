@@ -1,0 +1,194 @@
+
+running 15 tests
+test essential_raw::tests::canonical_small_tables_and_branches ... ok
+test essential_raw::tests::matched_kernels_preserve_resident_ids ... ok
+test essential_raw::tests::noncontiguous_sixty_coordinate_table ... ok
+test essential_raw::tests::slabs_collide_grow_clone_and_preserve_raw_ids ... ok
+test essential_raw::view_product::tests::all_small_predicates_maps_and_eliminations_match_exact_ids ... ok
+test essential_raw::view_product::tests::map_identity_is_part_of_the_product ... ok
+test essential_raw::view_product::tests::reordered_branches_retain_pending_pins ... ok
+test essential_raw::view_product::tests::scattered_multiword_maps_and_complements_match_materialization ... ok
+test occupancy::scratch::tests::reused_axis_buffers_match_allocated_and_pointwise_kernels ... ok
+test occupancy::scratch::tests::reused_planes_match_scattered_assignments_without_alignment_allocations ... ok
+test occupancy::tests::exact_signatures_and_symmetries_with_no_resident_growth ... ok
+test occupancy::tests::noncontiguous_sixty_coordinate_support_and_views ... OCCUPANCY_WORDS K=6 order_first=0 stats=Observation { signature: 13, subproblems: 31, local_assignments: 0, local_cubes: 16, word_batches: 16, borrowed_planes: 48, aligned_planes: 0, constant_planes: 0, alignment_allocations: 0, scratch_alignments: 0, memo_entries: 31 }
+OCCUPANCY_WORDS K=6 order_first=59 stats=Observation { signature: 13, subproblems: 31, local_assignments: 0, local_cubes: 16, word_batches: 16, borrowed_planes: 48, aligned_planes: 0, constant_planes: 0, alignment_allocations: 0, scratch_alignments: 0, memo_entries: 31 }
+OCCUPANCY_WORDS K=9 order_first=0 stats=Observation { signature: 13, subproblems: 3, local_assignments: 0, local_cubes: 2, word_batches: 16, borrowed_planes: 6, aligned_planes: 0, constant_planes: 0, alignment_allocations: 0, scratch_alignments: 0, memo_entries: 3 }
+OCCUPANCY_WORDS K=9 order_first=59 stats=Observation { signature: 13, subproblems: 3, local_assignments: 0, local_cubes: 2, word_batches: 16, borrowed_planes: 6, aligned_planes: 0, constant_planes: 0, alignment_allocations: 0, scratch_alignments: 0, memo_entries: 3 }
+ok
+test occupancy::words::tests::aligned_borrowed_views_match_scattered_assignments ... ok
+test occupancy::words::tests::broadcast_matches_pointwise_axis_insertion ... ok
+test shared_semantics ... EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"bdd-root","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"bdd-pair","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"mdd4-pair","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"bdd-anchored","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"signature_symbolic","candidate":"packed64","coordinates":60,"cases":36,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed64","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"signature_symbolic","candidate":"packed256","coordinates":60,"cases":36,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed256","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"signature_symbolic","candidate":"packed512","coordinates":60,"cases":36,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed512","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"signature_symbolic","candidate":"packed4096","coordinates":60,"cases":36,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"packed4096","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"block64","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"signature_symbolic","candidate":"essential64","coordinates":60,"cases":36,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"essential64","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"signature_symbolic","candidate":"essential512","coordinates":60,"cases":36,"passed":true}
+EVENT_LAB {"kind":"symbolic_relation_verification","candidate":"essential512","coordinates":60,"identity_worlds":1099511627776,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"dense","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"dense","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"dense-dispatched","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"dense-dispatched","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"sparse","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"sparse","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"roaring","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"roaring","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"runs","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"runs","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-root","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"bdd-root","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-pair","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"bdd-pair","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"mdd4-pair","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"mdd4-pair","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"bdd-anchored","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"bdd-anchored","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed64","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed64","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed256","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed256","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed512","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed512","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"packed4096","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"packed4096","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"block64","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"block64","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"essential64","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"essential64","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_finite","target":"essential512","source_packets":64,"passed":true}
+EVENT_LAB {"kind":"transfer_table_paths","candidate":"essential512","cases":192,"passed":true}
+EVENT_LAB {"kind":"transfer_support_maps","cases":3825,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed64","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed256","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed512","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_wide_tables","candidate":"packed4096","cases":24,"passed":true}
+EVENT_LAB {"kind":"transfer_symbolic","bits":40,"source_target_pairs":121,"packet_bytes":[1343, 1343, 1037, 1343, 1265, 1255, 1365, 1667, 2043, 1265, 1365],"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"dense","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"dense","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"dense-dispatched","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"dense-dispatched","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"dense-dispatched","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"dense-dispatched","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"sparse","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"sparse","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"sparse","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"sparse","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"roaring","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"roaring","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"roaring","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"roaring","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"runs","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"runs","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"runs","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"runs","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"bdd-root","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"bdd-root","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-root","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-root","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"bdd-pair","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"bdd-pair","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-pair","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"mdd4-pair","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"mdd4-pair","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"mdd4-pair","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"mdd4-pair","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"bdd-anchored","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"bdd-anchored","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"bdd-anchored","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"bdd-anchored","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"packed64","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"packed256","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed256","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed256","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed256","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"packed512","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"packed4096","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"packed4096","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"packed4096","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"packed4096","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"block64","cases":7788,"direct":false,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"block64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"block64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"block64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"mapped_product_verification","candidate":"essential64","cases":1080,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"essential64","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"essential64","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"essential64","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"essential64","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"mapped_product_verification","candidate":"essential512","cases":1080,"passed":true}
+EVENT_LAB {"kind":"signature_verification","candidate":"essential512","cases":7788,"direct":true,"passed":true}
+EVENT_LAB {"kind":"diagonal_verification","candidate":"essential512","support_cases":1530,"passed":true}
+EVENT_LAB {"kind":"dependency_contract","candidate":"essential512","cases":5062,"summary_triples":4096,"updates":512,"passed":true}
+EVENT_LAB {"kind":"verification","candidate":"essential512","boolean_cases":61440,"passed":true}
+EVENT_LAB {"kind":"high_coordinate_verification","bits":40,"candidates":11,"passed":true}
+EVENT_LAB {"kind":"coordinate_boundary_verification","candidates":16,"extra_orders_per_candidate":2,"face_layouts_per_candidate":3,"passed":true}
+EVENT_LAB {"kind":"observation_verification","candidates":16,"parameter_groups":[1,2,3],"high_coordinate_candidates":11,"passed":true}
+ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.67s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+   Compiling autocfg v1.5.1
+   Compiling byteorder v1.5.0
+   Compiling bytemuck v1.25.2
+   Compiling rustc-hash v2.1.0
+   Compiling roaring v0.10.12
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.47
+   Compiling num-bigint v0.4.8
+   Compiling num-rational v0.4.2
+   Compiling event-repr-checker v0.0.0 (/Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/.scratch/checker)
+warning: unused import: `view_product::Statistics as ViewProductStatistics`
+ --> /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/essential_raw.rs:9:9
+  |
+9 | pub use view_product::Statistics as ViewProductStatistics;
+  |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `event-repr-checker` (lib) generated 1 warning (run `cargo fix --lib -p event-repr-checker` to apply 1 suggestion)
+warning: `event-repr-checker` (lib test) generated 1 warning (1 duplicate)
+    Finished `release` profile [optimized] target(s) in 13.62s
+     Running unittests src/lib.rs (target/release/build/event-repr-checker/ba801357085ced12/out/event_repr_checker-ba801357085ced12)
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (9684390) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:75:9:
+assertion `left == right` failed: map dimension mismatch
+  left: 1
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (9684390) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:82:13:
+map must be a bijection
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (9684390) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:322:9:
+assertion `left == right` failed: elimination coordinate outside presentation
+  left: 1
+ right: 0
+
+thread 'essential_raw::view_product::tests::map_identity_is_part_of_the_product' (9684390) panicked at /Users/bjorn/Documents/bumbledb/proposal/experiments/event-repr-lab/src/view_product.rs:82:13:
+map must be a bijection
+   Doc-tests event_repr_checker

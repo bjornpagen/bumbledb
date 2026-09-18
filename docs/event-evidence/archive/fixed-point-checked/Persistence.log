@@ -1,0 +1,10 @@
+'Persistence.supported_identity' depends on axioms: [Quot.sound]
+'Persistence.exact_identity' depends on axioms: [Quot.sound]
+'Persistence.legal_decoder_erased' depends on axioms: [Quot.sound]
+'Persistence.arbitrary_completions_agree' depends on axioms: [Quot.sound]
+'Persistence.complement_is_relative' does not depend on any axioms
+'Persistence.empty_retains_source' depends on axioms: [Quot.sound]
+'Persistence.empty_retains_support' depends on axioms: [Quot.sound]
+'Persistence.inhabited_space_distinguishes_constants' depends on axioms: [Quot.sound]
+'Persistence.equal_mass_distinct_events' depends on axioms: [Quot.sound]
+'Persistence.registered_key_identity' does not depend on any axioms

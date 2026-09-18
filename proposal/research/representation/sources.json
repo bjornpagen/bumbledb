@@ -1,0 +1,23 @@
+[
+  {
+    "name": "cudd-internals",
+    "url": "https://www.cs.rice.edu/~lm30/RSynth/CUDD/cudd/doc/node4.html",
+    "file": "proposal/research/representation/cudd-internals.txt",
+    "sha256": "740f0e149c8dc6aaf7e519f3755b53c361763cd8539c6393a068667bb9e318e7",
+    "bytes": 43232
+  },
+  {
+    "name": "cudd-ite",
+    "url": "https://raw.githubusercontent.com/ivmai/cudd/master/cudd/cuddBddIte.c",
+    "file": "proposal/research/representation/cudd-ite.txt",
+    "sha256": "8eb8d53f6ee3d41a1a743d9c999a1d9aacf54a7738953e095b3f1b5103db69e5",
+    "bytes": 33952
+  },
+  {
+    "name": "arm-neon",
+    "url": "https://arm-software.github.io/acle/neon_intrinsics/advsimd.html",
+    "file": "proposal/research/representation/arm-neon.txt",
+    "sha256": "868ad22de123561f6ded50d773342869cb123f7bf690d26475de576e5ce6d333",
+    "bytes": 3587774
+  }
+]

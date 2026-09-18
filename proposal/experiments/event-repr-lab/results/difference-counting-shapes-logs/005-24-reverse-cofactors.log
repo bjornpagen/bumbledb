@@ -1,0 +1,6 @@
+
+COUNTING_PHASE {"phase":"input_verified","nodes":73,"bytes":5089,"terms":63}
+
+thread 'main' (10519586) panicked at src/lib.rs:80:13:
+RESOURCE_CAP: coefficient nodes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

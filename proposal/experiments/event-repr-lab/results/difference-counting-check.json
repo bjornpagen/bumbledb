@@ -1,0 +1,44 @@
+{
+  "passed": true,
+  "count_records": [
+    {
+      "passed": true,
+      "sparse_polynomials": 1536,
+      "uniform_function_counts": 12288,
+      "symbolic_width": 61
+    }
+  ],
+  "source_hashes": {
+    "difference-prototype/Cargo.toml": "f78787950506ea084042df0601c41798c517d9f7a4bb65478bf8fceaa3c2cb8f",
+    "difference-prototype/Cargo.lock": "1e60d7f8674bc5efbf55e64ada3ac17bcc5a0d126d944893485ac8fb59347fba",
+    "difference-prototype/src/bin/constraint_counting.rs": "f24f404c0f9dde5b7cda85797aa93651bf917a09167fd1deff25d792ced49fed",
+    "difference-prototype/src/lib.rs": "854c7d10d939cf10a8ee81a5c4f791a15e042029d5dbb2e186054007b4b89374",
+    "difference-prototype/src/main.rs": "b3a9838b7211315587e389be99d9a46002463410e5da86e86fcbab84e39289d6",
+    "difference-prototype/src/tests.rs": "466cac54bcb2cde3da242684f167930fcda68a2e588c0ba98e8a64d6c6438bc7"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--release",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "records": [
+    {
+      "passed": true,
+      "orders": 6,
+      "basis_schedules": 4,
+      "kernels": 2,
+      "functions_per_manager": 256,
+      "binary_cases": 50331648,
+      "projection_cases": 98304,
+      "map_cases": 356352,
+      "completed_projection_cases": 98304
+    }
+  ],
+  "log": "difference-counting-check.log",
+  "checker_sha256": "f6f184127e76460472f320468ffd9f9156d39234d65040ee240fffcd6126d9e6",
+  "boundary": "Raw fixed-basis diagrams and completed projection oracle; no production Event manager, common transport codec, source-law contraction or Free Join timing is established."
+}

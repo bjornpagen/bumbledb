@@ -1,0 +1,11 @@
+{
+  "files": {
+    "proposal/research/representation-search/bryant-2017-chain-reduction.txt": "795ccd57e017a49358c278ef6459097030aea526ac63c072bcf715b9b54345e3",
+    "proposal/research/representation/cudd-ite.txt": "8eb8d53f6ee3d41a1a743d9c999a1d9aacf54a7738953e095b3f1b5103db69e5"
+  },
+  "reading": [
+    "Bryant chain reduction, Section 6: k-argument APPLY including ternary ITE, cache and common Shannon split.",
+    "CUDD cuddBddIteRecur: terminal reductions, polarity canonicalization, common splitting variable, ternary cache."
+  ],
+  "boundary": "The algorithm is established decision-diagram machinery. The exact-essential-table local cutoff, legal decoder composition, graph census and measured database effects are this laboratory adaptation; no new representation or measured speedup follows from the papers."
+}

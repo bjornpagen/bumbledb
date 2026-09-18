@@ -1,0 +1,19 @@
+{
+  "files": {
+    "proposal/research/representation-search/nakamura-denzumi-nishino-2020-variable-shift.txt": "4121c1920361107bfa268073d6a884ee66f264b9f8b814aa5a9bb5719cba75b3",
+    "proposal/research/space-maps/abbadini-guffanti-beck-chevalley.txt": "0f4a32fb81da67871674cabbcf37c83a05b184f7ea35188a6d4c4079e3059aea"
+  },
+  "sources": [
+    {
+      "arxiv": "2004.02502v1",
+      "reading": "Theorem 6, identical-vtree rule, Section 7 Proposition 14, and its compression qualification",
+      "consequence": "A permitted common substitution can justify relative sharing; arbitrary coordinate/support maps cannot be removed from cache identity by analogy."
+    },
+    {
+      "arxiv": "2607.06386v1",
+      "reading": "Definition 2.10, Remark 2.11, Example 2.12; rechecked against the retained primary excerpt",
+      "consequence": "Commuting squares give an inclusion; pullbacks suffice for equality. The complete-fibre iff and duplicate-lift example are elementary derived results now checked in Lean."
+    }
+  ],
+  "boundary": "No performance theorem is imported. No probability-law preservation follows from structural base change."
+}

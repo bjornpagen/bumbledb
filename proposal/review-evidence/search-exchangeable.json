@@ -1,0 +1,4436 @@
+{
+  "meta": {
+    "count": 20,
+    "db_response_time_ms": 194,
+    "page": 1,
+    "per_page": 4,
+    "groups_count": null,
+    "x_query": {
+      "oql": "works where full text has (exchangeable lower previsions Bernstein polynomials)",
+      "oqo": {
+        "get_rows": "works",
+        "filter_rows": [
+          {
+            "column_id": "fulltext.search",
+            "value": "exchangeable lower previsions Bernstein polynomials",
+            "operator": "has"
+          }
+        ]
+      },
+      "url": "/works?filter=fulltext.search:exchangeable lower previsions Bernstein polynomials&per_page=4"
+    },
+    "cost_usd": 0.001
+  },
+  "results": [
+    {
+      "id": "https://openalex.org/W2065319853",
+      "doi": "https://doi.org/10.3150/09-bej182",
+      "title": "Exchangeable lower previsions",
+      "display_name": "Exchangeable lower previsions",
+      "relevance_score": 178.26862,
+      "publication_year": 2009,
+      "publication_date": "2009-08-01",
+      "ids": {
+        "openalex": "https://openalex.org/W2065319853",
+        "doi": "https://doi.org/10.3150/09-bej182",
+        "mag": "2065319853"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.3150/09-bej182",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.3150/09-bej182",
+        "pdf_url": "https://projecteuclid.org/journals/bernoulli/volume-15/issue-3/Exchangeable-lower-previsions/10.3150/09-BEJ182.pdf",
+        "source": {
+          "id": "https://openalex.org/S172538041",
+          "display_name": "Bernoulli",
+          "issn_l": "1350-7265",
+          "issn": [
+            "1350-7265",
+            "1573-9759"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310321043",
+          "host_organization_name": "Chapman and Hall London",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310321043",
+            "https://openalex.org/P4310320584"
+          ],
+          "host_organization_lineage_names": [
+            "Chapman and Hall London",
+            "CRC Press"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Bernoulli",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "arxiv",
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "bronze",
+        "oa_url": "https://projecteuclid.org/journals/bernoulli/volume-15/issue-3/Exchangeable-lower-previsions/10.3150/09-BEJ182.pdf",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5007090019",
+            "display_name": "Gert de Cooman",
+            "orcid": "https://orcid.org/0000-0002-0469-1422"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I124674891",
+              "display_name": "Ablynx (Belgium)",
+              "ror": "https://ror.org/05s030550",
+              "country_code": "BE",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I2801227569",
+              "display_name": "Ghent University Hospital",
+              "ror": "https://ror.org/00xmkp704",
+              "country_code": "BE",
+              "type": "healthcare",
+              "lineage": [
+                "https://openalex.org/I2801227569"
+              ]
+            }
+          ],
+          "countries": [
+            "BE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Gert de Cooman",
+          "raw_affiliation_strings": [
+            "Ghent University , SYSTeMS Research Group , Technologiepark-Zwijnaarde 914 , 9052 Zwijnaarde , Bel- gium",
+            "Ghent University"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University , SYSTeMS Research Group , Technologiepark-Zwijnaarde 914 , 9052 Zwijnaarde , Bel- gium",
+              "institution_ids": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Ghent University",
+              "institution_ids": [
+                "https://openalex.org/I2801227569"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5058264127",
+            "display_name": "Erik Quaeghebeur",
+            "orcid": "https://orcid.org/0000-0003-1462-401X"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I124674891",
+              "display_name": "Ablynx (Belgium)",
+              "ror": "https://ror.org/05s030550",
+              "country_code": "BE",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I2801227569",
+              "display_name": "Ghent University Hospital",
+              "ror": "https://ror.org/00xmkp704",
+              "country_code": "BE",
+              "type": "healthcare",
+              "lineage": [
+                "https://openalex.org/I2801227569"
+              ]
+            }
+          ],
+          "countries": [
+            "BE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Erik Quaeghebeur",
+          "raw_affiliation_strings": [
+            "Ghent University , SYSTeMS Research Group , Technologiepark-Zwijnaarde 914 , 9052 Zwijnaarde , Bel- gium",
+            "Ghent University"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University , SYSTeMS Research Group , Technologiepark-Zwijnaarde 914 , 9052 Zwijnaarde , Bel- gium",
+              "institution_ids": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Ghent University",
+              "institution_ids": [
+                "https://openalex.org/I2801227569"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5025386662",
+            "display_name": "Enrique Miranda",
+            "orcid": "https://orcid.org/0000-0001-7763-3779"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I165339363",
+              "display_name": "Universidad de Oviedo",
+              "ror": "https://ror.org/006gksa02",
+              "country_code": "ES",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I165339363"
+              ]
+            }
+          ],
+          "countries": [
+            "ES"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Enrique Miranda",
+          "raw_affiliation_strings": [
+            "University of Oviedo , Dept. of Statistics and Operations Research. C-Calvo Sotelo , s/n , 33007 , Oviedo , Spain",
+            "Universidad de Oviedo#TAB#"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "University of Oviedo , Dept. of Statistics and Operations Research. C-Calvo Sotelo , s/n , 33007 , Oviedo , Spain",
+              "institution_ids": [
+                "https://openalex.org/I165339363"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Universidad de Oviedo#TAB#",
+              "institution_ids": [
+                "https://openalex.org/I165339363"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 2,
+      "institutions_distinct_count": 3,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 3.1502,
+      "has_fulltext": true,
+      "cited_by_count": 20,
+      "citation_normalized_percentile": {
+        "value": 0.92265849,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 98
+      },
+      "biblio": {
+        "volume": "15",
+        "issue": "3",
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.9936000108718872,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.9936000108718872,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T10778",
+          "display_name": "Philosophy and History of Science",
+          "score": 0.993399977684021,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1207",
+            "display_name": "History and Philosophy of Science"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/12",
+            "display_name": "Arts and Humanities"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/2",
+            "display_name": "Social Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11901",
+          "display_name": "Bayesian Methods and Mixture Models",
+          "score": 0.9296000003814697,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.9140660166740417
+        },
+        {
+          "id": "https://openalex.org/keywords/countable-set",
+          "display_name": "Countable set",
+          "score": 0.874595582485199
+        },
+        {
+          "id": "https://openalex.org/keywords/representation",
+          "display_name": "Representation (politics)",
+          "score": 0.4557918310165405
+        },
+        {
+          "id": "https://openalex.org/keywords/finite-set",
+          "display_name": "Finite set",
+          "score": 0.45385345816612244
+        },
+        {
+          "id": "https://openalex.org/keywords/discrete-mathematics",
+          "display_name": "Discrete mathematics",
+          "score": 0.42129141092300415
+        },
+        {
+          "id": "https://openalex.org/keywords/combinatorics",
+          "display_name": "Combinatorics",
+          "score": 0.3884519636631012
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.36372458934783936
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematical-analysis",
+          "display_name": "Mathematical analysis",
+          "score": 0.11765438318252563
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.9140660166740417
+        },
+        {
+          "id": "https://openalex.org/C110729354",
+          "wikidata": "https://www.wikidata.org/wiki/Q185478",
+          "display_name": "Countable set",
+          "level": 2,
+          "score": 0.874595582485199
+        },
+        {
+          "id": "https://openalex.org/C2776359362",
+          "wikidata": "https://www.wikidata.org/wiki/Q2145286",
+          "display_name": "Representation (politics)",
+          "level": 3,
+          "score": 0.4557918310165405
+        },
+        {
+          "id": "https://openalex.org/C162392398",
+          "wikidata": "https://www.wikidata.org/wiki/Q272404",
+          "display_name": "Finite set",
+          "level": 2,
+          "score": 0.45385345816612244
+        },
+        {
+          "id": "https://openalex.org/C118615104",
+          "wikidata": "https://www.wikidata.org/wiki/Q121416",
+          "display_name": "Discrete mathematics",
+          "level": 1,
+          "score": 0.42129141092300415
+        },
+        {
+          "id": "https://openalex.org/C114614502",
+          "wikidata": "https://www.wikidata.org/wiki/Q76592",
+          "display_name": "Combinatorics",
+          "level": 1,
+          "score": 0.3884519636631012
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.36372458934783936
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.11765438318252563
+        },
+        {
+          "id": "https://openalex.org/C17744445",
+          "wikidata": "https://www.wikidata.org/wiki/Q36442",
+          "display_name": "Political science",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199539241",
+          "wikidata": "https://www.wikidata.org/wiki/Q7748",
+          "display_name": "Law",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C94625758",
+          "wikidata": "https://www.wikidata.org/wiki/Q7163",
+          "display_name": "Politics",
+          "level": 2,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 8,
+      "locations": [
+        {
+          "id": "doi:10.3150/09-bej182",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.3150/09-bej182",
+          "pdf_url": "https://projecteuclid.org/journals/bernoulli/volume-15/issue-3/Exchangeable-lower-previsions/10.3150/09-BEJ182.pdf",
+          "source": {
+            "id": "https://openalex.org/S172538041",
+            "display_name": "Bernoulli",
+            "issn_l": "1350-7265",
+            "issn": [
+              "1350-7265",
+              "1573-9759"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310321043",
+            "host_organization_name": "Chapman and Hall London",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310321043",
+              "https://openalex.org/P4310320584"
+            ],
+            "host_organization_lineage_names": [
+              "Chapman and Hall London",
+              "CRC Press"
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Bernoulli",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:arXiv.org:0909.1148",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/0909.1148",
+          "pdf_url": "https://arxiv.org/pdf/0909.1148",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.245.6743",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.245.6743",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://arxiv.org/pdf/0801.1265v1.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.246.2101",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.246.2101",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://arxiv.org/pdf/0909.1148v1.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.710.8101",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.710.8101",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://unimode.uniovi.es/articulos/09-bernouilli.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:CULeuclid:euclid.bj/1251463278",
+          "is_oa": false,
+          "landing_page_url": "https://projecteuclid.org/euclid.bj/1251463278",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400787",
+            "display_name": "Project Euclid (Cornell University)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "",
+          "raw_type": "Text"
+        },
+        {
+          "id": "pmh:oai:archive.ugent.be:498518",
+          "is_oa": true,
+          "landing_page_url": "http://hdl.handle.net/1854/LU-498518",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400478",
+            "display_name": "Ghent University Academic Bibliography (Ghent University)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I32597200",
+            "host_organization_name": "Ghent University",
+            "host_organization_lineage": [
+              "https://openalex.org/I32597200"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "other-oa",
+          "license_id": "https://openalex.org/licenses/other-oa",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "ISSN: 1350-7265",
+          "raw_type": "info:eu-repo/semantics/article"
+        },
+        {
+          "id": "pmh:oai:digibuo.uniovi.es:10651/6785",
+          "is_oa": true,
+          "landing_page_url": "http://hdl.handle.net/10651/6785",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306402334",
+            "display_name": "Consultation of the Doctoral Thesis Database (TESEO) (Ministerio de Educaci\u00f3n, Cultura y Deporte)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I2801976130",
+            "host_organization_name": "Ministerio de Educaci\u00f3n Cultura y Deporte",
+            "host_organization_lineage": [
+              "https://openalex.org/I2801976130"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by-nc-nd",
+          "license_id": "https://openalex.org/licenses/cc-by-nc-nd",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "SCOPUS",
+          "raw_type": "info:eu-repo/semantics/article"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.3150/09-bej182",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.3150/09-bej182",
+        "pdf_url": "https://projecteuclid.org/journals/bernoulli/volume-15/issue-3/Exchangeable-lower-previsions/10.3150/09-BEJ182.pdf",
+        "source": {
+          "id": "https://openalex.org/S172538041",
+          "display_name": "Bernoulli",
+          "issn_l": "1350-7265",
+          "issn": [
+            "1350-7265",
+            "1573-9759"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310321043",
+          "host_organization_name": "Chapman and Hall London",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310321043",
+            "https://openalex.org/P4310320584"
+          ],
+          "host_organization_lineage_names": [
+            "Chapman and Hall London",
+            "CRC Press"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Bernoulli",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [
+        {
+          "score": 0.44999998807907104,
+          "display_name": "Reduced inequalities",
+          "id": "https://metadata.un.org/sdg/10"
+        }
+      ],
+      "awards": [],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320321730",
+          "display_name": "Fonds Wetenschappelijk Onderzoek",
+          "ror": "https://ror.org/03qtxy027"
+        },
+        {
+          "id": "https://openalex.org/F4320327336",
+          "display_name": "Vlaamse regering",
+          "ror": null
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W2065319853.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W2065319853.grobid-xml"
+      },
+      "referenced_works_count": 30,
+      "referenced_works": [
+        "https://openalex.org/W613545293",
+        "https://openalex.org/W1527849298",
+        "https://openalex.org/W1548573677",
+        "https://openalex.org/W1580458868",
+        "https://openalex.org/W1602082651",
+        "https://openalex.org/W1968293352",
+        "https://openalex.org/W1989356645",
+        "https://openalex.org/W1995453127",
+        "https://openalex.org/W2009356899",
+        "https://openalex.org/W2017170340",
+        "https://openalex.org/W2022620695",
+        "https://openalex.org/W2029791679",
+        "https://openalex.org/W2049742719",
+        "https://openalex.org/W2054673836",
+        "https://openalex.org/W2055926425",
+        "https://openalex.org/W2079984339",
+        "https://openalex.org/W2081182199",
+        "https://openalex.org/W2094963988",
+        "https://openalex.org/W2101413186",
+        "https://openalex.org/W2115840187",
+        "https://openalex.org/W2130403609",
+        "https://openalex.org/W2130695933",
+        "https://openalex.org/W2151287082",
+        "https://openalex.org/W2172298389",
+        "https://openalex.org/W2328181201",
+        "https://openalex.org/W2751862591",
+        "https://openalex.org/W2963877086",
+        "https://openalex.org/W4210427261",
+        "https://openalex.org/W4237863912",
+        "https://openalex.org/W4292027056"
+      ],
+      "related_works": [
+        "https://openalex.org/W4391375266",
+        "https://openalex.org/W2012835417",
+        "https://openalex.org/W2790017930",
+        "https://openalex.org/W2147301465",
+        "https://openalex.org/W3125024600",
+        "https://openalex.org/W2541640833",
+        "https://openalex.org/W4206367340",
+        "https://openalex.org/W1606946808",
+        "https://openalex.org/W2083799093",
+        "https://openalex.org/W4298287189"
+      ],
+      "abstract_inverted_index": {
+        "We": [
+          0,
+          37
+        ],
+        "extend": [
+          1
+        ],
+        "de": [
+          2
+        ],
+        "Finetti\u2019s": [
+          3
+        ],
+        "[Ann.": [
+          4
+        ],
+        "Inst.": [
+          5
+        ],
+        "H.": [
+          6
+        ],
+        "Poincar\u00e9": [
+          7
+        ],
+        "7": [
+          8
+        ],
+        "(1937)": [
+          9
+        ],
+        "1\u201368]": [
+          10
+        ],
+        "notion": [
+          11
+        ],
+        "of": [
+          12,
+          19,
+          50
+        ],
+        "exchangeability": [
+          13
+        ],
+        "to": [
+          14
+        ],
+        "finite": [
+          15,
+          44
+        ],
+        "and": [
+          16,
+          45,
+          53
+        ],
+        "countable": [
+          17,
+          46
+        ],
+        "sequences": [
+          18
+        ],
+        "variables,": [
+          20
+        ],
+        "when": [
+          21
+        ],
+        "a": [
+          22
+        ],
+        "subject\u2019s": [
+          23
+        ],
+        "beliefs": [
+          24
+        ],
+        "about": [
+          25
+        ],
+        "them": [
+          26
+        ],
+        "are": [
+          27
+        ],
+        "modelled": [
+          28
+        ],
+        "using": [
+          29
+        ],
+        "coherent": [
+          30
+        ],
+        "lower": [
+          31
+        ],
+        "previsions": [
+          32
+        ],
+        "rather": [
+          33
+        ],
+        "than": [
+          34
+        ],
+        "(linear)": [
+          35
+        ],
+        "previsions.": [
+          36
+        ],
+        "derive": [
+          38
+        ],
+        "representation": [
+          39
+        ],
+        "theorems": [
+          40
+        ],
+        "in": [
+          41,
+          48
+        ],
+        "both": [
+          42
+        ],
+        "the": [
+          43
+        ],
+        "cases,": [
+          47
+        ],
+        "terms": [
+          49
+        ],
+        "sampling": [
+          51
+        ],
+        "without": [
+          52
+        ],
+        "with": [
+          54
+        ],
+        "replacement,": [
+          55
+        ],
+        "respectively.": [
+          56
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2022,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 4
+        },
+        {
+          "year": 2013,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-08-26T07:47:46.906454",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2164596421",
+      "doi": "https://doi.org/10.1016/j.ijar.2010.12.002",
+      "title": "Exchangeability and sets of desirable gambles",
+      "display_name": "Exchangeability and sets of desirable gambles",
+      "relevance_score": 120.69552,
+      "publication_year": 2010,
+      "publication_date": "2010-12-14",
+      "ids": {
+        "openalex": "https://openalex.org/W2164596421",
+        "doi": "https://doi.org/10.1016/j.ijar.2010.12.002",
+        "mag": "2164596421"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1016/j.ijar.2010.12.002",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1016/j.ijar.2010.12.002",
+        "pdf_url": "https://www.sciencedirect.com/science/article/pii/S0888613X10001593/pdf",
+        "source": {
+          "id": "https://openalex.org/S33368595",
+          "display_name": "International Journal of Approximate Reasoning",
+          "issn_l": "0888-613X",
+          "issn": [
+            "0888-613X",
+            "1873-4731"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310320990",
+          "host_organization_name": "Elsevier BV",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310320990"
+          ],
+          "host_organization_lineage_names": [
+            "Elsevier BV"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "International Journal of Approximate Reasoning",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "arxiv",
+        "crossref"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "bronze",
+        "oa_url": "https://www.sciencedirect.com/science/article/pii/S0888613X10001593/pdf",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5007090019",
+            "display_name": "Gert de Cooman",
+            "orcid": "https://orcid.org/0000-0002-0469-1422"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I32597200",
+              "display_name": "Ghent University",
+              "ror": "https://ror.org/00cv9y106",
+              "country_code": "BE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ],
+          "countries": [
+            "BE"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Gert de Cooman",
+          "raw_affiliation_strings": [
+            "Ghent University, SYSTeMS Research Group, Technologiepark-Zwijnaarde 914, 9052 Zwijnaarde, Belgium"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University, SYSTeMS Research Group, Technologiepark-Zwijnaarde 914, 9052 Zwijnaarde, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5058264127",
+            "display_name": "Erik Quaeghebeur",
+            "orcid": "https://orcid.org/0000-0003-1462-401X"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I32597200",
+              "display_name": "Ghent University",
+              "ror": "https://ror.org/00cv9y106",
+              "country_code": "BE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ],
+          "countries": [
+            "BE"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Erik Quaeghebeur",
+          "raw_affiliation_strings": [
+            "Ghent University, SYSTeMS Research Group, Technologiepark-Zwijnaarde 914, 9052 Zwijnaarde, Belgium"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University, SYSTeMS Research Group, Technologiepark-Zwijnaarde 914, 9052 Zwijnaarde, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5058264127"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I32597200"
+      ],
+      "apc_list": {
+        "value": 3050,
+        "currency": "USD",
+        "value_usd": 3050
+      },
+      "apc_paid": null,
+      "fwci": 5.636,
+      "has_fulltext": true,
+      "cited_by_count": 60,
+      "citation_normalized_percentile": {
+        "value": 0.95608536,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 89,
+        "max": 99
+      },
+      "biblio": {
+        "volume": "53",
+        "issue": "3",
+        "first_page": "363",
+        "last_page": "395"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.9850999712944031,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.9850999712944031,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T12135",
+          "display_name": "Fuzzy Systems and Optimization",
+          "score": 0.960099995136261,
+          "subfield": {
+            "id": "https://openalex.org/subfields/2613",
+            "display_name": "Statistics and Probability"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/26",
+            "display_name": "Mathematics"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11871",
+          "display_name": "Advanced Statistical Methods and Models",
+          "score": 0.9415000081062317,
+          "subfield": {
+            "id": "https://openalex.org/subfields/2613",
+            "display_name": "Statistics and Probability"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/26",
+            "display_name": "Mathematics"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/interpretation",
+          "display_name": "Interpretation (philosophy)",
+          "score": 0.8288979530334473
+        },
+        {
+          "id": "https://openalex.org/keywords/extension",
+          "display_name": "Extension (predicate logic)",
+          "score": 0.7650226354598999
+        },
+        {
+          "id": "https://openalex.org/keywords/representation",
+          "display_name": "Representation (politics)",
+          "score": 0.713536262512207
+        },
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.6965988874435425
+        },
+        {
+          "id": "https://openalex.org/keywords/representation-theorem",
+          "display_name": "Representation theorem",
+          "score": 0.6718619465827942
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.6303216814994812
+        },
+        {
+          "id": "https://openalex.org/keywords/basis",
+          "display_name": "Basis (linear algebra)",
+          "score": 0.5319783091545105
+        },
+        {
+          "id": "https://openalex.org/keywords/rationality",
+          "display_name": "Rationality",
+          "score": 0.4860101640224457
+        },
+        {
+          "id": "https://openalex.org/keywords/finite-set",
+          "display_name": "Finite set",
+          "score": 0.4258498251438141
+        },
+        {
+          "id": "https://openalex.org/keywords/algebra-over-a-field",
+          "display_name": "Algebra over a field",
+          "score": 0.41798728704452515
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematical-economics",
+          "display_name": "Mathematical economics",
+          "score": 0.38005292415618896
+        },
+        {
+          "id": "https://openalex.org/keywords/pure-mathematics",
+          "display_name": "Pure mathematics",
+          "score": 0.3764742612838745
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.24524208903312683
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.1697620451450348
+        },
+        {
+          "id": "https://openalex.org/keywords/epistemology",
+          "display_name": "Epistemology",
+          "score": 0.09622323513031006
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematical-analysis",
+          "display_name": "Mathematical analysis",
+          "score": 0.09155002236366272
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C527412718",
+          "wikidata": "https://www.wikidata.org/wiki/Q855395",
+          "display_name": "Interpretation (philosophy)",
+          "level": 2,
+          "score": 0.8288979530334473
+        },
+        {
+          "id": "https://openalex.org/C2778029271",
+          "wikidata": "https://www.wikidata.org/wiki/Q5421931",
+          "display_name": "Extension (predicate logic)",
+          "level": 2,
+          "score": 0.7650226354598999
+        },
+        {
+          "id": "https://openalex.org/C2776359362",
+          "wikidata": "https://www.wikidata.org/wiki/Q2145286",
+          "display_name": "Representation (politics)",
+          "level": 3,
+          "score": 0.713536262512207
+        },
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.6965988874435425
+        },
+        {
+          "id": "https://openalex.org/C2776230367",
+          "wikidata": "https://www.wikidata.org/wiki/Q7314222",
+          "display_name": "Representation theorem",
+          "level": 2,
+          "score": 0.6718619465827942
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.6303216814994812
+        },
+        {
+          "id": "https://openalex.org/C12426560",
+          "wikidata": "https://www.wikidata.org/wiki/Q189569",
+          "display_name": "Basis (linear algebra)",
+          "level": 2,
+          "score": 0.5319783091545105
+        },
+        {
+          "id": "https://openalex.org/C201717286",
+          "wikidata": "https://www.wikidata.org/wiki/Q938185",
+          "display_name": "Rationality",
+          "level": 2,
+          "score": 0.4860101640224457
+        },
+        {
+          "id": "https://openalex.org/C162392398",
+          "wikidata": "https://www.wikidata.org/wiki/Q272404",
+          "display_name": "Finite set",
+          "level": 2,
+          "score": 0.4258498251438141
+        },
+        {
+          "id": "https://openalex.org/C136119220",
+          "wikidata": "https://www.wikidata.org/wiki/Q1000660",
+          "display_name": "Algebra over a field",
+          "level": 2,
+          "score": 0.41798728704452515
+        },
+        {
+          "id": "https://openalex.org/C144237770",
+          "wikidata": "https://www.wikidata.org/wiki/Q747534",
+          "display_name": "Mathematical economics",
+          "level": 1,
+          "score": 0.38005292415618896
+        },
+        {
+          "id": "https://openalex.org/C202444582",
+          "wikidata": "https://www.wikidata.org/wiki/Q837863",
+          "display_name": "Pure mathematics",
+          "level": 1,
+          "score": 0.3764742612838745
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.24524208903312683
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.1697620451450348
+        },
+        {
+          "id": "https://openalex.org/C111472728",
+          "wikidata": "https://www.wikidata.org/wiki/Q9471",
+          "display_name": "Epistemology",
+          "level": 1,
+          "score": 0.09622323513031006
+        },
+        {
+          "id": "https://openalex.org/C134306372",
+          "wikidata": "https://www.wikidata.org/wiki/Q7754",
+          "display_name": "Mathematical analysis",
+          "level": 1,
+          "score": 0.09155002236366272
+        },
+        {
+          "id": "https://openalex.org/C94625758",
+          "wikidata": "https://www.wikidata.org/wiki/Q7163",
+          "display_name": "Politics",
+          "level": 2,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C17744445",
+          "wikidata": "https://www.wikidata.org/wiki/Q36442",
+          "display_name": "Political science",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C2524010",
+          "wikidata": "https://www.wikidata.org/wiki/Q8087",
+          "display_name": "Geometry",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C138885662",
+          "wikidata": "https://www.wikidata.org/wiki/Q5891",
+          "display_name": "Philosophy",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199539241",
+          "wikidata": "https://www.wikidata.org/wiki/Q7748",
+          "display_name": "Law",
+          "level": 1,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 4,
+      "locations": [
+        {
+          "id": "doi:10.1016/j.ijar.2010.12.002",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1016/j.ijar.2010.12.002",
+          "pdf_url": "https://www.sciencedirect.com/science/article/pii/S0888613X10001593/pdf",
+          "source": {
+            "id": "https://openalex.org/S33368595",
+            "display_name": "International Journal of Approximate Reasoning",
+            "issn_l": "0888-613X",
+            "issn": [
+              "0888-613X",
+              "1873-4731"
+            ],
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310320990",
+            "host_organization_name": "Elsevier BV",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310320990"
+            ],
+            "host_organization_lineage_names": [
+              "Elsevier BV"
+            ],
+            "type": "journal"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "International Journal of Approximate Reasoning",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:arXiv.org:0911.4727",
+          "is_oa": true,
+          "landing_page_url": "http://arxiv.org/abs/0911.4727",
+          "pdf_url": "https://arxiv.org/pdf/0911.4727",
+          "source": {
+            "id": "https://openalex.org/S4306400194",
+            "display_name": "arXiv (Cornell University)",
+            "issn_l": "2331-8422",
+            "issn": [
+              "2331-8422"
+            ],
+            "is_oa": true,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I205783295",
+            "host_organization_name": "Cornell University",
+            "host_organization_lineage": [
+              "https://openalex.org/I205783295"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:archive.ugent.be:1106209",
+          "is_oa": true,
+          "landing_page_url": "https://biblio.ugent.be/publication/1106209",
+          "pdf_url": "https://biblio.ugent.be/publication/1106209/file/2063930.pdf",
+          "source": {
+            "id": "https://openalex.org/S4306400478",
+            "display_name": "Ghent University Academic Bibliography (Ghent University)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I32597200",
+            "host_organization_name": "Ghent University",
+            "host_organization_lineage": [
+              "https://openalex.org/I32597200"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "other-oa",
+          "license_id": "https://openalex.org/licenses/other-oa",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "ISSN: 0888-613X",
+          "raw_type": "info:eu-repo/semantics/article"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.746.6214",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.746.6214",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://arxiv.org/pdf/0911.4727.pdf",
+          "raw_type": "text"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1016/j.ijar.2010.12.002",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1016/j.ijar.2010.12.002",
+        "pdf_url": "https://www.sciencedirect.com/science/article/pii/S0888613X10001593/pdf",
+        "source": {
+          "id": "https://openalex.org/S33368595",
+          "display_name": "International Journal of Approximate Reasoning",
+          "issn_l": "0888-613X",
+          "issn": [
+            "0888-613X",
+            "1873-4731"
+          ],
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310320990",
+          "host_organization_name": "Elsevier BV",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310320990"
+          ],
+          "host_organization_lineage_names": [
+            "Elsevier BV"
+          ],
+          "type": "journal"
+        },
+        "license": null,
+        "license_id": null,
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "International Journal of Approximate Reasoning",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320306621",
+          "display_name": "Belgian American Educational Foundation",
+          "ror": "https://ror.org/014rsed66"
+        },
+        {
+          "id": "https://openalex.org/F4320310207",
+          "display_name": "Carnegie Mellon University",
+          "ror": "https://ror.org/05x2bcf33"
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W2164596421.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W2164596421.grobid-xml"
+      },
+      "referenced_works_count": 45,
+      "referenced_works": [
+        "https://openalex.org/W92815160",
+        "https://openalex.org/W185930641",
+        "https://openalex.org/W295860382",
+        "https://openalex.org/W802906140",
+        "https://openalex.org/W1527849298",
+        "https://openalex.org/W1548573677",
+        "https://openalex.org/W1550809037",
+        "https://openalex.org/W1580458868",
+        "https://openalex.org/W1968293352",
+        "https://openalex.org/W1992651491",
+        "https://openalex.org/W1995453127",
+        "https://openalex.org/W2009356899",
+        "https://openalex.org/W2017170340",
+        "https://openalex.org/W2029791679",
+        "https://openalex.org/W2044122951",
+        "https://openalex.org/W2054673836",
+        "https://openalex.org/W2065319853",
+        "https://openalex.org/W2094963988",
+        "https://openalex.org/W2105088885",
+        "https://openalex.org/W2130695933",
+        "https://openalex.org/W2139733451",
+        "https://openalex.org/W2145896481",
+        "https://openalex.org/W2148777922",
+        "https://openalex.org/W2154587083",
+        "https://openalex.org/W2172298389",
+        "https://openalex.org/W2183701270",
+        "https://openalex.org/W2269881146",
+        "https://openalex.org/W2483215974",
+        "https://openalex.org/W2543269228",
+        "https://openalex.org/W2575007773",
+        "https://openalex.org/W2800921033",
+        "https://openalex.org/W2963877086",
+        "https://openalex.org/W3028353368",
+        "https://openalex.org/W3099959953",
+        "https://openalex.org/W3148930403",
+        "https://openalex.org/W4205256993",
+        "https://openalex.org/W4210427261",
+        "https://openalex.org/W4230142576",
+        "https://openalex.org/W4231137658",
+        "https://openalex.org/W4231953379",
+        "https://openalex.org/W4237863912",
+        "https://openalex.org/W4292027056",
+        "https://openalex.org/W6610587356",
+        "https://openalex.org/W6822826851",
+        "https://openalex.org/W6992628037"
+      ],
+      "related_works": [
+        "https://openalex.org/W4388260134",
+        "https://openalex.org/W2351341309",
+        "https://openalex.org/W2359095791",
+        "https://openalex.org/W2364973163",
+        "https://openalex.org/W2370332065",
+        "https://openalex.org/W2375421581",
+        "https://openalex.org/W2352025053",
+        "https://openalex.org/W2386975405",
+        "https://openalex.org/W2501307252",
+        "https://openalex.org/W2360169511"
+      ],
+      "abstract_inverted_index": null,
+      "counts_by_year": [
+        {
+          "year": 2026,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2025,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2023,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 6
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 7
+        },
+        {
+          "year": 2020,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2019,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 7
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2016,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 5
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 6
+        },
+        {
+          "year": 2013,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 5
+        }
+      ],
+      "updated_date": "2026-09-12T09:15:50.089291",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W802906140",
+      "doi": null,
+      "title": "Learning from samples using coherent lower previsions",
+      "display_name": "Learning from samples using coherent lower previsions",
+      "relevance_score": 88.8132,
+      "publication_year": 2009,
+      "publication_date": "2009-01-01",
+      "ids": {
+        "openalex": "https://openalex.org/W802906140",
+        "mag": "802906140"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "pmh:oai:archive.ugent.be:495650",
+        "is_oa": true,
+        "landing_page_url": "https://biblio.ugent.be/publication/495650",
+        "pdf_url": "https://biblio.ugent.be/publication/495650/file/4334907.pdf",
+        "source": {
+          "id": "https://openalex.org/S4306400478",
+          "display_name": "Ghent University Academic Bibliography (Ghent University)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I32597200",
+          "host_organization_name": "Ghent University",
+          "host_organization_lineage": [
+            "https://openalex.org/I32597200"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by-nc-sa",
+        "license_id": "https://openalex.org/licenses/cc-by-nc-sa",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "info:eu-repo/semantics/doctoralThesis"
+      },
+      "type": "dissertation",
+      "indexed_in": [],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "green",
+        "oa_url": "https://biblio.ugent.be/publication/495650/file/4334907.pdf",
+        "any_repository_has_fulltext": true
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5058264127",
+            "display_name": "Erik Quaeghebeur",
+            "orcid": "https://orcid.org/0000-0003-1462-401X"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I2801227569",
+              "display_name": "Ghent University Hospital",
+              "ror": "https://ror.org/00xmkp704",
+              "country_code": "BE",
+              "type": "healthcare",
+              "lineage": [
+                "https://openalex.org/I2801227569"
+              ]
+            }
+          ],
+          "countries": [
+            "BE"
+          ],
+          "is_corresponding": true,
+          "raw_author_name": "Erik Quaeghebeur",
+          "raw_affiliation_strings": [
+            "Ghent University"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University",
+              "institution_ids": [
+                "https://openalex.org/I2801227569"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 1,
+      "institutions_distinct_count": 1,
+      "corresponding_author_ids": [
+        "https://openalex.org/A5058264127"
+      ],
+      "corresponding_institution_ids": [
+        "https://openalex.org/I2801227569"
+      ],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": null,
+      "has_fulltext": true,
+      "cited_by_count": 12,
+      "citation_normalized_percentile": null,
+      "cited_by_percentile_year": null,
+      "biblio": {
+        "volume": null,
+        "issue": null,
+        "first_page": null,
+        "last_page": null
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T14351",
+        "display_name": "Statistical and Computational Modeling",
+        "score": 0.9559000134468079,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T14351",
+          "display_name": "Statistical and Computational Modeling",
+          "score": 0.9559000134468079,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/humanities",
+          "display_name": "Humanities",
+          "score": 0.6548957824707031
+        },
+        {
+          "id": "https://openalex.org/keywords/art",
+          "display_name": "Art",
+          "score": 0.49744561314582825
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.3767946660518646
+        },
+        {
+          "id": "https://openalex.org/keywords/theology",
+          "display_name": "Theology",
+          "score": 0.36286622285842896
+        },
+        {
+          "id": "https://openalex.org/keywords/philosophy",
+          "display_name": "Philosophy",
+          "score": 0.22908034920692444
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C15708023",
+          "wikidata": "https://www.wikidata.org/wiki/Q80083",
+          "display_name": "Humanities",
+          "level": 1,
+          "score": 0.6548957824707031
+        },
+        {
+          "id": "https://openalex.org/C142362112",
+          "wikidata": "https://www.wikidata.org/wiki/Q735",
+          "display_name": "Art",
+          "level": 0,
+          "score": 0.49744561314582825
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.3767946660518646
+        },
+        {
+          "id": "https://openalex.org/C27206212",
+          "wikidata": "https://www.wikidata.org/wiki/Q34178",
+          "display_name": "Theology",
+          "level": 1,
+          "score": 0.36286622285842896
+        },
+        {
+          "id": "https://openalex.org/C138885662",
+          "wikidata": "https://www.wikidata.org/wiki/Q5891",
+          "display_name": "Philosophy",
+          "level": 0,
+          "score": 0.22908034920692444
+        }
+      ],
+      "mesh": [],
+      "locations_count": 2,
+      "locations": [
+        {
+          "id": "pmh:oai:archive.ugent.be:495650",
+          "is_oa": true,
+          "landing_page_url": "https://biblio.ugent.be/publication/495650",
+          "pdf_url": "https://biblio.ugent.be/publication/495650/file/4334907.pdf",
+          "source": {
+            "id": "https://openalex.org/S4306400478",
+            "display_name": "Ghent University Academic Bibliography (Ghent University)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I32597200",
+            "host_organization_name": "Ghent University",
+            "host_organization_lineage": [
+              "https://openalex.org/I32597200"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": "cc-by-nc-sa",
+          "license_id": "https://openalex.org/licenses/cc-by-nc-sa",
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": null,
+          "raw_type": "info:eu-repo/semantics/doctoralThesis"
+        },
+        {
+          "id": "mag:802906140",
+          "is_oa": false,
+          "landing_page_url": "https://biblio.ugent.be/publication/495650/file/4334907.pdf",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": null,
+          "is_accepted": false,
+          "is_published": null,
+          "raw_source_name": null,
+          "raw_type": null
+        }
+      ],
+      "best_oa_location": {
+        "id": "pmh:oai:archive.ugent.be:495650",
+        "is_oa": true,
+        "landing_page_url": "https://biblio.ugent.be/publication/495650",
+        "pdf_url": "https://biblio.ugent.be/publication/495650/file/4334907.pdf",
+        "source": {
+          "id": "https://openalex.org/S4306400478",
+          "display_name": "Ghent University Academic Bibliography (Ghent University)",
+          "issn_l": null,
+          "issn": null,
+          "is_oa": false,
+          "is_in_doaj": false,
+          "is_core": false,
+          "host_organization": "https://openalex.org/I32597200",
+          "host_organization_name": "Ghent University",
+          "host_organization_lineage": [
+            "https://openalex.org/I32597200"
+          ],
+          "host_organization_lineage_names": [],
+          "type": "repository"
+        },
+        "license": "cc-by-nc-sa",
+        "license_id": "https://openalex.org/licenses/cc-by-nc-sa",
+        "version": "submittedVersion",
+        "is_accepted": false,
+        "is_published": false,
+        "raw_source_name": null,
+        "raw_type": "info:eu-repo/semantics/doctoralThesis"
+      },
+      "sustainable_development_goals": [],
+      "awards": [],
+      "funders": [],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W802906140.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W802906140.grobid-xml"
+      },
+      "referenced_works_count": 0,
+      "referenced_works": [],
+      "related_works": [
+        "https://openalex.org/W1968293352",
+        "https://openalex.org/W2098252893",
+        "https://openalex.org/W145333209",
+        "https://openalex.org/W1567290714",
+        "https://openalex.org/W2160898632",
+        "https://openalex.org/W2561250238",
+        "https://openalex.org/W1566764367",
+        "https://openalex.org/W322507357",
+        "https://openalex.org/W1504772464",
+        "https://openalex.org/W2167975264",
+        "https://openalex.org/W2122004888",
+        "https://openalex.org/W1493801150",
+        "https://openalex.org/W2103800038",
+        "https://openalex.org/W2126733957",
+        "https://openalex.org/W1597716353",
+        "https://openalex.org/W374208333",
+        "https://openalex.org/W2152330620",
+        "https://openalex.org/W1512962915",
+        "https://openalex.org/W176855466",
+        "https://openalex.org/W2114004318"
+      ],
+      "abstract_inverted_index": {
+        "Het": [
+          0,
+          145,
+          163
+        ],
+        "hoofdonderwerp": [
+          1
+        ],
+        "van": [
+          2,
+          11,
+          22,
+          33,
+          46,
+          49,
+          56,
+          96,
+          100,
+          103,
+          120,
+          141,
+          147,
+          197,
+          205,
+          224,
+          258,
+          271,
+          356
+        ],
+        "dit": [
+          3,
+          157
+        ],
+        "werk": [
+          4
+        ],
+        "is": [
+          5,
+          28,
+          84,
+          159,
+          183
+        ],
+        "het": [
+          6,
+          29,
+          37,
+          109,
+          185,
+          241,
+          246,
+          269,
+          274,
+          360,
+          367
+        ],
+        "afleiden,": [
+          7
+        ],
+        "voorstellen": [
+          8
+        ],
+        "en": [
+          9,
+          13,
+          31,
+          61,
+          77,
+          152,
+          245,
+          268,
+          293,
+          301,
+          306
+        ],
+        "bestuderen": [
+          10
+        ],
+        "voorspellende": [
+          12,
+          242,
+          307
+        ],
+        "parametrische": [
+          14,
+          247,
+          305
+        ],
+        "gevolgtrekkingsmodellen": [
+          15,
+          236,
+          322,
+          386
+        ],
+        "die": [
+          16,
+          124,
+          180
+        ],
+        "gebaseerd": [
+          17,
+          323,
+          371
+        ],
+        "zijn": [
+          18,
+          290,
+          352
+        ],
+        "op": [
+          19,
+          230,
+          266,
+          324,
+          368
+        ],
+        "de": [
+          20,
+          47,
+          62,
+          87,
+          97,
+          116,
+          148,
+          203,
+          284,
+          298,
+          302,
+          319,
+          332,
+          341,
+          346,
+          354,
+          384,
+          393
+        ],
+        "theorie": [
+          21,
+          48,
+          55,
+          69,
+          99
+        ],
+        "coherente": [
+          23,
+          50,
+          101
+        ],
+        "onderprevisies.": [
+          24
+        ],
+        "Een": [
+          25
+        ],
+        "belangrijk": [
+          26
+        ],
+        "nevenonderwerp": [
+          27
+        ],
+        "vinden": [
+          30,
+          123
+        ],
+        "bespreken": [
+          32
+        ],
+        "extreme": [
+          34,
+          118,
+          143
+        ],
+        "onderwaarschijnlijkheden.": [
+          35,
+          129
+        ],
+        "In": [
+          36,
+          273,
+          338
+        ],
+        "hoofdstuk": [
+          38,
+          110,
+          164
+        ],
+        "\u2018Modeling": [
+          39
+        ],
+        "uncertainty\u2019": [
+          40
+        ],
+        "geef": [
+          41,
+          194
+        ],
+        "ik": [
+          42,
+          181,
+          190,
+          264,
+          283,
+          297
+        ],
+        "een": [
+          43,
+          173,
+          191,
+          251,
+          310
+        ],
+        "inleidend": [
+          44
+        ],
+        "overzicht": [
+          45,
+          83
+        ],
+        "onderprevisies": [
+          51
+        ],
+        "\u2500": [
+          52,
+          60,
+          76,
+          79,
+          240,
+          250
+        ],
+        "ook": [
+          53
+        ],
+        "wel": [
+          54
+        ],
+        "imprecieze": [
+          57
+        ],
+        "waarschijnlijkheden": [
+          58
+        ],
+        "genoemd": [
+          59
+        ],
+        "idee\u00ebn": [
+          63
+        ],
+        "waarop": [
+          64
+        ],
+        "ze": [
+          65,
+          90
+        ],
+        "gestoeld": [
+          66
+        ],
+        "is.": [
+          67
+        ],
+        "Deze": [
+          68,
+          313
+        ],
+        "stelt": [
+          70
+        ],
+        "ons": [
+          71,
+          209
+        ],
+        "in": [
+          72,
+          86,
+          108,
+          139,
+          156,
+          195,
+          222,
+          318
+        ],
+        "staat": [
+          73
+        ],
+        "onzekerheid": [
+          74,
+          121,
+          214
+        ],
+        "expressiever": [
+          75
+        ],
+        "voorzichtiger": [
+          78,
+          350
+        ],
+        "te": [
+          80,
+          254,
+          351
+        ],
+        "beschrijven.": [
+          81
+        ],
+        "Dit": [
+          82
+        ],
+        "origineel": [
+          85
+        ],
+        "zin": [
+          88
+        ],
+        "dat": [
+          89,
+          184
+        ],
+        "meer": [
+          91
+        ],
+        "dan": [
+          92
+        ],
+        "andere": [
+          93,
+          131
+        ],
+        "inleidingen": [
+          94
+        ],
+        "vertrekt": [
+          95
+        ],
+        "intuitieve": [
+          98
+        ],
+        "verzamelingen": [
+          102
+        ],
+        "begeerlijke": [
+          104,
+          198
+        ],
+        "gokken.": [
+          105,
+          199
+        ],
+        "Ik": [
+          106,
+          227,
+          379
+        ],
+        "toon": [
+          107,
+          380
+        ],
+        "\u2018Extreme": [
+          111
+        ],
+        "lower": [
+          112
+        ],
+        "probabilities\u2019": [
+          113
+        ],
+        "hoe": [
+          114,
+          383
+        ],
+        "we": [
+          115
+        ],
+        "meest": [
+          117
+        ],
+        "vormen": [
+          119
+        ],
+        "kunnen": [
+          122,
+          126,
+          388
+        ],
+        "gemodelleerd": [
+          125,
+          220
+        ],
+        "worden": [
+          127,
+          138,
+          221,
+          316,
+          389
+        ],
+        "met": [
+          128,
+          134,
+          340
+        ],
+        "Elke": [
+          130
+        ],
+        "onzekerheidstoestand": [
+          132
+        ],
+        "beschrijfbaar": [
+          133
+        ],
+        "onderwaarschijnlijkheden": [
+          135
+        ],
+        "kan": [
+          136,
+          219
+        ],
+        "geformuleerd": [
+          137
+        ],
+        "termen": [
+          140,
+          196,
+          223
+        ],
+        "deze": [
+          142,
+          206,
+          261,
+          362,
+          369
+        ],
+        "modellen.": [
+          144
+        ],
+        "belang": [
+          146
+        ],
+        "door": [
+          149,
+          334,
+          366,
+          392
+        ],
+        "mij": [
+          150,
+          335
+        ],
+        "bekomen": [
+          151
+        ],
+        "uitgebreid": [
+          153
+        ],
+        "besproken": [
+          154
+        ],
+        "resultaten": [
+          155
+        ],
+        "domein": [
+          158
+        ],
+        "voorlopig": [
+          160
+        ],
+        "voornamelijk": [
+          161
+        ],
+        "theoretisch.": [
+          162
+        ],
+        "\u2018Inference": [
+          165,
+          277
+        ],
+        "models\u2019": [
+          166
+        ],
+        "behandelt": [
+          167
+        ],
+        "leren": [
+          168,
+          270
+        ],
+        "uit": [
+          169,
+          172
+        ],
+        "monsters": [
+          170,
+          218
+        ],
+        "komende": [
+          171
+        ],
+        "eindige,": [
+          174
+        ],
+        "categorische": [
+          175,
+          238
+        ],
+        "verzameling.": [
+          176
+        ],
+        "De": [
+          177
+        ],
+        "belangrijkste": [
+          178
+        ],
+        "basisveronderstelling": [
+          179
+        ],
+        "maak": [
+          182
+        ],
+        "bemonsteringsproces": [
+          186
+        ],
+        "omwisselbaar": [
+          187
+        ],
+        "is,": [
+          188
+        ],
+        "waarvoor": [
+          189
+        ],
+        "nieuwe": [
+          192
+        ],
+        "definitie": [
+          193
+        ],
+        "Mijn": [
+          200
+        ],
+        "onderzoek": [
+          201
+        ],
+        "naar": [
+          202,
+          210
+        ],
+        "gevolgen": [
+          204
+        ],
+        "veronderstelling": [
+          207
+        ],
+        "leidt": [
+          208
+        ],
+        "enkele": [
+          211,
+          259
+        ],
+        "belangrijke": [
+          212
+        ],
+        "representatiestellingen:": [
+          213
+        ],
+        "over": [
+          215,
+          359
+        ],
+        "(on)eindige": [
+          216
+        ],
+        "rijen": [
+          217
+        ],
+        "categorie-aantallen": [
+          225
+        ],
+        "(-frequenties).": [
+          226
+        ],
+        "bouw": [
+          228
+        ],
+        "hier": [
+          229
+        ],
+        "voort": [
+          231
+        ],
+        "om": [
+          232,
+          349
+        ],
+        "voor": [
+          233,
+          237,
+          331,
+          390
+        ],
+        "twee": [
+          234
+        ],
+        "populaire": [
+          235
+        ],
+        "data": [
+          239
+        ],
+        "imprecies": [
+          243,
+          248
+        ],
+        "Dirichlet-multinomiaalmodel": [
+          244
+        ],
+        "Dirichletmodel": [
+          249
+        ],
+        "verhelderende": [
+          252
+        ],
+        "afleiding": [
+          253
+        ],
+        "geven,": [
+          255
+        ],
+        "louter": [
+          256
+        ],
+        "vertrekkende": [
+          257
+        ],
+        "grondbeginselen;": [
+          260
+        ],
+        "modellen": [
+          262,
+          370
+        ],
+        "pas": [
+          263
+        ],
+        "toe": [
+          265,
+          348
+        ],
+        "speltheorie": [
+          267
+        ],
+        "Markov-ketens.": [
+          272
+        ],
+        "laatste": [
+          275
+        ],
+        "hoofdstuk,": [
+          276
+        ],
+        "models": [
+          278
+        ],
+        "for": [
+          279
+        ],
+        "exponential": [
+          280
+        ],
+        "families\u2019,": [
+          281
+        ],
+        "verbreed": [
+          282
+        ],
+        "blik": [
+          285
+        ],
+        "tot": [
+          286
+        ],
+        "niet-categorische": [
+          287
+        ],
+        "exponenti\u00eble-familie-bemonsteringsmodellen;": [
+          288
+        ],
+        "voorbeelden": [
+          289
+        ],
+        "normale": [
+          291
+        ],
+        "bemonstering": [
+          292
+        ],
+        "Poisson-bemonstering.": [
+          294
+        ],
+        "Eerst": [
+          295
+        ],
+        "onderwerp": [
+          296
+        ],
+        "exponenti\u00eble": [
+          299
+        ],
+        "families": [
+          300
+        ],
+        "aanverwante": [
+          303,
+          314
+        ],
+        "toegevoegde": [
+          304
+        ],
+        "previsies": [
+          308,
+          315
+        ],
+        "aan": [
+          309
+        ],
+        "grondig": [
+          311
+        ],
+        "onderzoek.": [
+          312
+        ],
+        "gebruikt": [
+          317,
+          387
+        ],
+        "klassieke": [
+          320,
+          342
+        ],
+        "Bayesiaanse": [
+          321,
+          343
+        ],
+        "toegevoegd": [
+          325
+        ],
+        "updaten.": [
+          326
+        ],
+        "Ze": [
+          327
+        ],
+        "dienen": [
+          328
+        ],
+        "als": [
+          329
+        ],
+        "grondslag": [
+          330
+        ],
+        "nieuwe,": [
+          333
+        ],
+        "voorgestelde": [
+          336,
+          385
+        ],
+        "imprecieze-waarschijnlijkheidsgevolgtrekkingsmodellen.": [
+          337
+        ],
+        "vergelijking": [
+          339
+        ],
+        "aanpak,": [
+          344
+        ],
+        "laat": [
+          345
+        ],
+        "mijne": [
+          347
+        ],
+        "bij": [
+          353
+        ],
+        "beschrijving": [
+          355
+        ],
+        "onze": [
+          357
+        ],
+        "kennis": [
+          358
+        ],
+        "bemonsteringsmodel;": [
+          361
+        ],
+        "voorzichtigheid": [
+          363
+        ],
+        "wordt": [
+          364
+        ],
+        "weerspiegeld": [
+          365
+        ],
+        "gedrag": [
+          372
+        ],
+        "(getrokken": [
+          373
+        ],
+        "besluiten,": [
+          374
+        ],
+        "gemaakte": [
+          375
+        ],
+        "voorspellingen,": [
+          376
+        ],
+        "genomen": [
+          377
+        ],
+        "beslissingen).": [
+          378
+        ],
+        "ten": [
+          381
+        ],
+        "slotte": [
+          382
+        ],
+        "classificatie": [
+          391
+        ],
+        "na\u00efeve": [
+          394
+        ],
+        "credale": [
+          395
+        ],
+        "classificator.": [
+          396
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2016,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 3
+        },
+        {
+          "year": 2013,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2012,
+          "cited_by_count": 2
+        }
+      ],
+      "updated_date": "2026-08-21T09:56:20.448147",
+      "created_date": "2025-10-10T00:00:00"
+    },
+    {
+      "id": "https://openalex.org/W2167096246",
+      "doi": "https://doi.org/10.1613/jair.4490",
+      "title": "Coherent Predictive Inference under Exchangeability with Imprecise Probabilities",
+      "display_name": "Coherent Predictive Inference under Exchangeability with Imprecise Probabilities",
+      "relevance_score": 50.3024,
+      "publication_year": 2015,
+      "publication_date": "2015-01-10",
+      "ids": {
+        "openalex": "https://openalex.org/W2167096246",
+        "doi": "https://doi.org/10.1613/jair.4490",
+        "mag": "2167096246"
+      },
+      "language": "en",
+      "primary_location": {
+        "id": "doi:10.1613/jair.4490",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1613/jair.4490",
+        "pdf_url": "https://jair.org/index.php/jair/article/download/10925/26042",
+        "source": {
+          "id": "https://openalex.org/S139930977",
+          "display_name": "Journal of Artificial Intelligence Research",
+          "issn_l": "1076-9757",
+          "issn": [
+            "1076-9757",
+            "1943-5037"
+          ],
+          "is_oa": true,
+          "is_in_doaj": true,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310315760",
+          "host_organization_name": "AI Access Foundation",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310315760"
+          ],
+          "host_organization_lineage_names": [
+            "AI Access Foundation"
+          ],
+          "type": "journal"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Journal of Artificial Intelligence Research",
+        "raw_type": "journal-article"
+      },
+      "type": "article",
+      "indexed_in": [
+        "crossref",
+        "doaj"
+      ],
+      "open_access": {
+        "is_oa": true,
+        "oa_status": "diamond",
+        "oa_url": "https://jair.org/index.php/jair/article/download/10925/26042",
+        "any_repository_has_fulltext": false
+      },
+      "authorships": [
+        {
+          "author_position": "first",
+          "author": {
+            "id": "https://openalex.org/A5007090019",
+            "display_name": "Gert de Cooman",
+            "orcid": "https://orcid.org/0000-0002-0469-1422"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I124674891",
+              "display_name": "Ablynx (Belgium)",
+              "ror": "https://ror.org/05s030550",
+              "country_code": "BE",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I177909021",
+              "display_name": "Universidade Federal de S\u00e3o Carlos",
+              "ror": "https://ror.org/00qdc6m37",
+              "country_code": "BR",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I32597200",
+              "display_name": "Ghent University",
+              "ror": "https://ror.org/00cv9y106",
+              "country_code": "BE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ],
+          "countries": [
+            "BE",
+            "BR"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Gert De Cooman",
+          "raw_affiliation_strings": [
+            "Ghent University , SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde , Belgium",
+            "Federal University of S\u00e3o Carlos, Department of Statistics Rod. Washington Luis, km 235 S\u00e3o Carlos, Brazil",
+            "Ghent University, SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde, Belgium"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University , SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde , Belgium",
+              "institution_ids": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Federal University of S\u00e3o Carlos, Department of Statistics Rod. Washington Luis, km 235 S\u00e3o Carlos, Brazil",
+              "institution_ids": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Ghent University, SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "middle",
+          "author": {
+            "id": "https://openalex.org/A5052699188",
+            "display_name": "Jasper De Bock",
+            "orcid": "https://orcid.org/0000-0003-1950-0059"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I124674891",
+              "display_name": "Ablynx (Belgium)",
+              "ror": "https://ror.org/05s030550",
+              "country_code": "BE",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I177909021",
+              "display_name": "Universidade Federal de S\u00e3o Carlos",
+              "ror": "https://ror.org/00qdc6m37",
+              "country_code": "BR",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I32597200",
+              "display_name": "Ghent University",
+              "ror": "https://ror.org/00cv9y106",
+              "country_code": "BE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ],
+          "countries": [
+            "BE",
+            "BR"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "Jasper De Bock",
+          "raw_affiliation_strings": [
+            "Ghent University , SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde , Belgium",
+            "Federal University of S\u00e3o Carlos, Department of Statistics Rod. Washington Luis, km 235 S\u00e3o Carlos, Brazil",
+            "Ghent University, SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde, Belgium"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Ghent University , SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde , Belgium",
+              "institution_ids": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Federal University of S\u00e3o Carlos, Department of Statistics Rod. Washington Luis, km 235 S\u00e3o Carlos, Brazil",
+              "institution_ids": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Ghent University, SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ]
+        },
+        {
+          "author_position": "last",
+          "author": {
+            "id": "https://openalex.org/A5103221141",
+            "display_name": "M\u00e1rcio Alves Diniz",
+            "orcid": "https://orcid.org/0000-0002-8239-4263"
+          },
+          "institutions": [
+            {
+              "id": "https://openalex.org/I124674891",
+              "display_name": "Ablynx (Belgium)",
+              "ror": "https://ror.org/05s030550",
+              "country_code": "BE",
+              "type": "company",
+              "lineage": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I177909021",
+              "display_name": "Universidade Federal de S\u00e3o Carlos",
+              "ror": "https://ror.org/00qdc6m37",
+              "country_code": "BR",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "id": "https://openalex.org/I32597200",
+              "display_name": "Ghent University",
+              "ror": "https://ror.org/00cv9y106",
+              "country_code": "BE",
+              "type": "education",
+              "lineage": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ],
+          "countries": [
+            "BE",
+            "BR"
+          ],
+          "is_corresponding": false,
+          "raw_author_name": "M\u00e1rcio Alves Diniz",
+          "raw_affiliation_strings": [
+            "Federal University of S\u00e3o Carlos , Department of Statistics Rod . Washington Luis , km 235 S\u00e3o Carlos , Brazil",
+            "Ghent University , SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde , Belgium",
+            "Federal University of S\u00e3o Carlos, Department of Statistics Rod. Washington Luis, km 235 S\u00e3o Carlos, Brazil",
+            "Ghent University, SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde, Belgium"
+          ],
+          "raw_orcid": null,
+          "affiliations": [
+            {
+              "raw_affiliation_string": "Federal University of S\u00e3o Carlos , Department of Statistics Rod . Washington Luis , km 235 S\u00e3o Carlos , Brazil",
+              "institution_ids": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Ghent University , SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde , Belgium",
+              "institution_ids": [
+                "https://openalex.org/I124674891"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Federal University of S\u00e3o Carlos, Department of Statistics Rod. Washington Luis, km 235 S\u00e3o Carlos, Brazil",
+              "institution_ids": [
+                "https://openalex.org/I177909021"
+              ]
+            },
+            {
+              "raw_affiliation_string": "Ghent University, SYSTeMS Research Group Technologiepark-Zwijnaarde 914 9052 Zwijnaarde, Belgium",
+              "institution_ids": [
+                "https://openalex.org/I32597200"
+              ]
+            }
+          ]
+        }
+      ],
+      "institutions": [],
+      "countries_distinct_count": 2,
+      "institutions_distinct_count": 3,
+      "corresponding_author_ids": [],
+      "corresponding_institution_ids": [],
+      "apc_list": null,
+      "apc_paid": null,
+      "fwci": 2.1345,
+      "has_fulltext": true,
+      "cited_by_count": 9,
+      "citation_normalized_percentile": {
+        "value": 0.91141383,
+        "is_in_top_1_percent": false,
+        "is_in_top_10_percent": true
+      },
+      "cited_by_percentile_year": {
+        "min": 88,
+        "max": 96
+      },
+      "biblio": {
+        "volume": "52",
+        "issue": null,
+        "first_page": "1",
+        "last_page": "95"
+      },
+      "is_retracted": false,
+      "is_paratext": false,
+      "is_xpac": false,
+      "primary_topic": {
+        "id": "https://openalex.org/T11303",
+        "display_name": "Bayesian Modeling and Causal Inference",
+        "score": 0.9991000294685364,
+        "subfield": {
+          "id": "https://openalex.org/subfields/1702",
+          "display_name": "Artificial Intelligence"
+        },
+        "field": {
+          "id": "https://openalex.org/fields/17",
+          "display_name": "Computer Science"
+        },
+        "domain": {
+          "id": "https://openalex.org/domains/3",
+          "display_name": "Physical Sciences"
+        }
+      },
+      "topics": [
+        {
+          "id": "https://openalex.org/T11303",
+          "display_name": "Bayesian Modeling and Causal Inference",
+          "score": 0.9991000294685364,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11010",
+          "display_name": "Logic, Reasoning, and Knowledge",
+          "score": 0.9781000018119812,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1702",
+            "display_name": "Artificial Intelligence"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        },
+        {
+          "id": "https://openalex.org/T11063",
+          "display_name": "Rough Sets and Fuzzy Logic",
+          "score": 0.9700999855995178,
+          "subfield": {
+            "id": "https://openalex.org/subfields/1703",
+            "display_name": "Computational Theory and Mathematics"
+          },
+          "field": {
+            "id": "https://openalex.org/fields/17",
+            "display_name": "Computer Science"
+          },
+          "domain": {
+            "id": "https://openalex.org/domains/3",
+            "display_name": "Physical Sciences"
+          }
+        }
+      ],
+      "keywords": [
+        {
+          "id": "https://openalex.org/keywords/inference",
+          "display_name": "Inference",
+          "score": 0.7951061725616455
+        },
+        {
+          "id": "https://openalex.org/keywords/mathematics",
+          "display_name": "Mathematics",
+          "score": 0.5890403389930725
+        },
+        {
+          "id": "https://openalex.org/keywords/predictive-inference",
+          "display_name": "Predictive inference",
+          "score": 0.5560083389282227
+        },
+        {
+          "id": "https://openalex.org/keywords/context",
+          "display_name": "Context (archaeology)",
+          "score": 0.5094388127326965
+        },
+        {
+          "id": "https://openalex.org/keywords/fiducial-inference",
+          "display_name": "Fiducial inference",
+          "score": 0.49340739846229553
+        },
+        {
+          "id": "https://openalex.org/keywords/set",
+          "display_name": "Set (abstract data type)",
+          "score": 0.4906443655490875
+        },
+        {
+          "id": "https://openalex.org/keywords/representation",
+          "display_name": "Representation (politics)",
+          "score": 0.4781245291233063
+        },
+        {
+          "id": "https://openalex.org/keywords/approximate-inference",
+          "display_name": "Approximate inference",
+          "score": 0.4220079183578491
+        },
+        {
+          "id": "https://openalex.org/keywords/frequentist-inference",
+          "display_name": "Frequentist inference",
+          "score": 0.38431647419929504
+        },
+        {
+          "id": "https://openalex.org/keywords/bayesian-inference",
+          "display_name": "Bayesian inference",
+          "score": 0.3689928352832794
+        },
+        {
+          "id": "https://openalex.org/keywords/algorithm",
+          "display_name": "Algorithm",
+          "score": 0.34918200969696045
+        },
+        {
+          "id": "https://openalex.org/keywords/computer-science",
+          "display_name": "Computer science",
+          "score": 0.3281813859939575
+        },
+        {
+          "id": "https://openalex.org/keywords/artificial-intelligence",
+          "display_name": "Artificial intelligence",
+          "score": 0.30797192454338074
+        },
+        {
+          "id": "https://openalex.org/keywords/bayesian-probability",
+          "display_name": "Bayesian probability",
+          "score": 0.2203313112258911
+        },
+        {
+          "id": "https://openalex.org/keywords/statistics",
+          "display_name": "Statistics",
+          "score": 0.08198752999305725
+        }
+      ],
+      "concepts": [
+        {
+          "id": "https://openalex.org/C2776214188",
+          "wikidata": "https://www.wikidata.org/wiki/Q408386",
+          "display_name": "Inference",
+          "level": 2,
+          "score": 0.7951061725616455
+        },
+        {
+          "id": "https://openalex.org/C33923547",
+          "wikidata": "https://www.wikidata.org/wiki/Q395",
+          "display_name": "Mathematics",
+          "level": 0,
+          "score": 0.5890403389930725
+        },
+        {
+          "id": "https://openalex.org/C917703",
+          "wikidata": "https://www.wikidata.org/wiki/Q7239668",
+          "display_name": "Predictive inference",
+          "level": 5,
+          "score": 0.5560083389282227
+        },
+        {
+          "id": "https://openalex.org/C2779343474",
+          "wikidata": "https://www.wikidata.org/wiki/Q3109175",
+          "display_name": "Context (archaeology)",
+          "level": 2,
+          "score": 0.5094388127326965
+        },
+        {
+          "id": "https://openalex.org/C95167961",
+          "wikidata": "https://www.wikidata.org/wiki/Q4483495",
+          "display_name": "Fiducial inference",
+          "level": 5,
+          "score": 0.49340739846229553
+        },
+        {
+          "id": "https://openalex.org/C177264268",
+          "wikidata": "https://www.wikidata.org/wiki/Q1514741",
+          "display_name": "Set (abstract data type)",
+          "level": 2,
+          "score": 0.4906443655490875
+        },
+        {
+          "id": "https://openalex.org/C2776359362",
+          "wikidata": "https://www.wikidata.org/wiki/Q2145286",
+          "display_name": "Representation (politics)",
+          "level": 3,
+          "score": 0.4781245291233063
+        },
+        {
+          "id": "https://openalex.org/C2777472644",
+          "wikidata": "https://www.wikidata.org/wiki/Q16968992",
+          "display_name": "Approximate inference",
+          "level": 3,
+          "score": 0.4220079183578491
+        },
+        {
+          "id": "https://openalex.org/C162376815",
+          "wikidata": "https://www.wikidata.org/wiki/Q2158281",
+          "display_name": "Frequentist inference",
+          "level": 4,
+          "score": 0.38431647419929504
+        },
+        {
+          "id": "https://openalex.org/C160234255",
+          "wikidata": "https://www.wikidata.org/wiki/Q812535",
+          "display_name": "Bayesian inference",
+          "level": 3,
+          "score": 0.3689928352832794
+        },
+        {
+          "id": "https://openalex.org/C11413529",
+          "wikidata": "https://www.wikidata.org/wiki/Q8366",
+          "display_name": "Algorithm",
+          "level": 1,
+          "score": 0.34918200969696045
+        },
+        {
+          "id": "https://openalex.org/C41008148",
+          "wikidata": "https://www.wikidata.org/wiki/Q21198",
+          "display_name": "Computer science",
+          "level": 0,
+          "score": 0.3281813859939575
+        },
+        {
+          "id": "https://openalex.org/C154945302",
+          "wikidata": "https://www.wikidata.org/wiki/Q11660",
+          "display_name": "Artificial intelligence",
+          "level": 1,
+          "score": 0.30797192454338074
+        },
+        {
+          "id": "https://openalex.org/C107673813",
+          "wikidata": "https://www.wikidata.org/wiki/Q812534",
+          "display_name": "Bayesian probability",
+          "level": 2,
+          "score": 0.2203313112258911
+        },
+        {
+          "id": "https://openalex.org/C105795698",
+          "wikidata": "https://www.wikidata.org/wiki/Q12483",
+          "display_name": "Statistics",
+          "level": 1,
+          "score": 0.08198752999305725
+        },
+        {
+          "id": "https://openalex.org/C94625758",
+          "wikidata": "https://www.wikidata.org/wiki/Q7163",
+          "display_name": "Politics",
+          "level": 2,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C86803240",
+          "wikidata": "https://www.wikidata.org/wiki/Q420",
+          "display_name": "Biology",
+          "level": 0,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C151730666",
+          "wikidata": "https://www.wikidata.org/wiki/Q7205",
+          "display_name": "Paleontology",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199360897",
+          "wikidata": "https://www.wikidata.org/wiki/Q9143",
+          "display_name": "Programming language",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C199539241",
+          "wikidata": "https://www.wikidata.org/wiki/Q7748",
+          "display_name": "Law",
+          "level": 1,
+          "score": 0.0
+        },
+        {
+          "id": "https://openalex.org/C17744445",
+          "wikidata": "https://www.wikidata.org/wiki/Q36442",
+          "display_name": "Political science",
+          "level": 0,
+          "score": 0.0
+        }
+      ],
+      "mesh": [],
+      "locations_count": 3,
+      "locations": [
+        {
+          "id": "doi:10.1613/jair.4490",
+          "is_oa": true,
+          "landing_page_url": "https://doi.org/10.1613/jair.4490",
+          "pdf_url": "https://jair.org/index.php/jair/article/download/10925/26042",
+          "source": {
+            "id": "https://openalex.org/S139930977",
+            "display_name": "Journal of Artificial Intelligence Research",
+            "issn_l": "1076-9757",
+            "issn": [
+              "1076-9757",
+              "1943-5037"
+            ],
+            "is_oa": true,
+            "is_in_doaj": true,
+            "is_core": true,
+            "host_organization": "https://openalex.org/P4310315760",
+            "host_organization_name": "AI Access Foundation",
+            "host_organization_lineage": [
+              "https://openalex.org/P4310315760"
+            ],
+            "host_organization_lineage_names": [
+              "AI Access Foundation"
+            ],
+            "type": "journal"
+          },
+          "license": "cc-by",
+          "license_id": "https://openalex.org/licenses/cc-by",
+          "version": "publishedVersion",
+          "is_accepted": true,
+          "is_published": true,
+          "raw_source_name": "Journal of Artificial Intelligence Research",
+          "raw_type": "journal-article"
+        },
+        {
+          "id": "pmh:oai:CiteSeerX.psu:10.1.1.662.7611",
+          "is_oa": false,
+          "landing_page_url": "http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.662.7611",
+          "pdf_url": null,
+          "source": null,
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "http://jair.org/media/4490/live-4490-8400-jair.pdf",
+          "raw_type": "text"
+        },
+        {
+          "id": "pmh:oai:archive.ugent.be:5930684",
+          "is_oa": false,
+          "landing_page_url": "https://biblio.ugent.be/publication/5930684",
+          "pdf_url": null,
+          "source": {
+            "id": "https://openalex.org/S4306400478",
+            "display_name": "Ghent University Academic Bibliography (Ghent University)",
+            "issn_l": null,
+            "issn": null,
+            "is_oa": false,
+            "is_in_doaj": false,
+            "is_core": false,
+            "host_organization": "https://openalex.org/I32597200",
+            "host_organization_name": "Ghent University",
+            "host_organization_lineage": [
+              "https://openalex.org/I32597200"
+            ],
+            "host_organization_lineage_names": [],
+            "type": "repository"
+          },
+          "license": null,
+          "license_id": null,
+          "version": "submittedVersion",
+          "is_accepted": false,
+          "is_published": false,
+          "raw_source_name": "ISSN: 1076-9757",
+          "raw_type": "info:eu-repo/semantics/article"
+        }
+      ],
+      "best_oa_location": {
+        "id": "doi:10.1613/jair.4490",
+        "is_oa": true,
+        "landing_page_url": "https://doi.org/10.1613/jair.4490",
+        "pdf_url": "https://jair.org/index.php/jair/article/download/10925/26042",
+        "source": {
+          "id": "https://openalex.org/S139930977",
+          "display_name": "Journal of Artificial Intelligence Research",
+          "issn_l": "1076-9757",
+          "issn": [
+            "1076-9757",
+            "1943-5037"
+          ],
+          "is_oa": true,
+          "is_in_doaj": true,
+          "is_core": true,
+          "host_organization": "https://openalex.org/P4310315760",
+          "host_organization_name": "AI Access Foundation",
+          "host_organization_lineage": [
+            "https://openalex.org/P4310315760"
+          ],
+          "host_organization_lineage_names": [
+            "AI Access Foundation"
+          ],
+          "type": "journal"
+        },
+        "license": "cc-by",
+        "license_id": "https://openalex.org/licenses/cc-by",
+        "version": "publishedVersion",
+        "is_accepted": true,
+        "is_published": true,
+        "raw_source_name": "Journal of Artificial Intelligence Research",
+        "raw_type": "journal-article"
+      },
+      "sustainable_development_goals": [],
+      "awards": [
+        {
+          "id": "https://openalex.org/G2396597961",
+          "display_name": null,
+          "funder_award_id": "3G012512",
+          "funder_id": "https://openalex.org/F4320321730",
+          "funder_display_name": "Fonds Wetenschappelijk Onderzoek"
+        }
+      ],
+      "funders": [
+        {
+          "id": "https://openalex.org/F4320321730",
+          "display_name": "Fonds Wetenschappelijk Onderzoek",
+          "ror": "https://ror.org/03qtxy027"
+        },
+        {
+          "id": "https://openalex.org/F4320327336",
+          "display_name": "Vlaamse regering",
+          "ror": null
+        }
+      ],
+      "has_content": {
+        "pdf": true,
+        "grobid_xml": true
+      },
+      "content_urls": {
+        "pdf": "https://content.openalex.org/works/W2167096246.pdf",
+        "grobid_xml": "https://content.openalex.org/works/W2167096246.grobid-xml"
+      },
+      "referenced_works_count": 90,
+      "referenced_works": [
+        "https://openalex.org/W92815160",
+        "https://openalex.org/W352468308",
+        "https://openalex.org/W613545293",
+        "https://openalex.org/W1494902407",
+        "https://openalex.org/W1502465432",
+        "https://openalex.org/W1509562192",
+        "https://openalex.org/W1525897429",
+        "https://openalex.org/W1548573677",
+        "https://openalex.org/W1558311027",
+        "https://openalex.org/W1579533269",
+        "https://openalex.org/W1580458868",
+        "https://openalex.org/W1884058963",
+        "https://openalex.org/W1964567319",
+        "https://openalex.org/W1968293352",
+        "https://openalex.org/W1973943855",
+        "https://openalex.org/W1974802461",
+        "https://openalex.org/W1974832471",
+        "https://openalex.org/W1976611840",
+        "https://openalex.org/W1978100641",
+        "https://openalex.org/W1985849796",
+        "https://openalex.org/W1989356645",
+        "https://openalex.org/W1992651491",
+        "https://openalex.org/W1992716160",
+        "https://openalex.org/W1997012965",
+        "https://openalex.org/W1998532195",
+        "https://openalex.org/W1998820820",
+        "https://openalex.org/W2009356899",
+        "https://openalex.org/W2012097495",
+        "https://openalex.org/W2018667718",
+        "https://openalex.org/W2020667941",
+        "https://openalex.org/W2036963684",
+        "https://openalex.org/W2046942789",
+        "https://openalex.org/W2065319853",
+        "https://openalex.org/W2069554490",
+        "https://openalex.org/W2081960825",
+        "https://openalex.org/W2094963988",
+        "https://openalex.org/W2101800692",
+        "https://openalex.org/W2117331689",
+        "https://openalex.org/W2122522863",
+        "https://openalex.org/W2126163471",
+        "https://openalex.org/W2130403609",
+        "https://openalex.org/W2130695933",
+        "https://openalex.org/W2133547295",
+        "https://openalex.org/W2137417388",
+        "https://openalex.org/W2139733451",
+        "https://openalex.org/W2145896481",
+        "https://openalex.org/W2164596421",
+        "https://openalex.org/W2166377463",
+        "https://openalex.org/W2172298389",
+        "https://openalex.org/W2315795831",
+        "https://openalex.org/W2318405211",
+        "https://openalex.org/W2322008416",
+        "https://openalex.org/W2905591380",
+        "https://openalex.org/W2963877086",
+        "https://openalex.org/W2985440518",
+        "https://openalex.org/W3101575638",
+        "https://openalex.org/W3180941683",
+        "https://openalex.org/W4210427261",
+        "https://openalex.org/W4229887127",
+        "https://openalex.org/W4230142576",
+        "https://openalex.org/W4230735682",
+        "https://openalex.org/W4232359393",
+        "https://openalex.org/W4240347719",
+        "https://openalex.org/W4245989126",
+        "https://openalex.org/W4285719527",
+        "https://openalex.org/W4300094464",
+        "https://openalex.org/W4300165915",
+        "https://openalex.org/W6603761545",
+        "https://openalex.org/W6604581042",
+        "https://openalex.org/W6606426077",
+        "https://openalex.org/W6610587356",
+        "https://openalex.org/W6611868668",
+        "https://openalex.org/W6618374568",
+        "https://openalex.org/W6630321736",
+        "https://openalex.org/W6634633244",
+        "https://openalex.org/W6643492574",
+        "https://openalex.org/W6644849834",
+        "https://openalex.org/W6646417956",
+        "https://openalex.org/W6648821378",
+        "https://openalex.org/W6649835913",
+        "https://openalex.org/W6662018282",
+        "https://openalex.org/W6675720048",
+        "https://openalex.org/W6678846543",
+        "https://openalex.org/W6679828278",
+        "https://openalex.org/W6681549627",
+        "https://openalex.org/W6699380113",
+        "https://openalex.org/W6724570213",
+        "https://openalex.org/W6770415922",
+        "https://openalex.org/W6814286032",
+        "https://openalex.org/W6822826851"
+      ],
+      "related_works": [
+        "https://openalex.org/W4235379902",
+        "https://openalex.org/W2478683457",
+        "https://openalex.org/W232830309",
+        "https://openalex.org/W4251525937",
+        "https://openalex.org/W4235385816",
+        "https://openalex.org/W2290754432",
+        "https://openalex.org/W4242294605",
+        "https://openalex.org/W88131178",
+        "https://openalex.org/W1996865119",
+        "https://openalex.org/W2764025266"
+      ],
+      "abstract_inverted_index": {
+        "Coherent": [
+          0
+        ],
+        "reasoning": [
+          1
+        ],
+        "under": [
+          2,
+          72
+        ],
+        "uncertainty": [
+          3
+        ],
+        "can": [
+          4,
+          74,
+          136
+        ],
+        "be": [
+          5,
+          75,
+          138,
+          232
+        ],
+        "represented": [
+          6,
+          76,
+          141
+        ],
+        "in": [
+          7,
+          133,
+          185
+        ],
+        "a": [
+          8,
+          19,
+          51,
+          64,
+          94,
+          114,
+          118
+        ],
+        "very": [
+          9
+        ],
+        "general": [
+          10,
+          53
+        ],
+        "manner": [
+          11
+        ],
+        "by": [
+          12,
+          88
+        ],
+        "coherent": [
+          13,
+          39,
+          56,
+          69,
+          79,
+          120,
+          251
+        ],
+        "sets": [
+          14
+        ],
+        "of": [
+          15,
+          81,
+          97,
+          122,
+          161,
+          173,
+          244
+        ],
+        "desirable": [
+          16
+        ],
+        "gambles.": [
+          17
+        ],
+        "In": [
+          18,
+          59
+        ],
+        "context": [
+          20
+        ],
+        "that": [
+          21,
+          32,
+          116,
+          168,
+          176,
+          222,
+          239,
+          247,
+          265
+        ],
+        "does": [
+          22
+        ],
+        "not": [
+          23
+        ],
+        "allow": [
+          24,
+          45
+        ],
+        "for": [
+          25,
+          46,
+          55,
+          63,
+          103,
+          274
+        ],
+        "indecision,": [
+          26,
+          47
+        ],
+        "this": [
+          27,
+          48,
+          60,
+          89
+        ],
+        "leads": [
+          28,
+          49
+        ],
+        "to": [
+          29,
+          36,
+          50,
+          196,
+          268
+        ],
+        "an": [
+          30,
+          110,
+          171,
+          242,
+          261
+        ],
+        "approach": [
+          31
+        ],
+        "is": [
+          33,
+          93,
+          170,
+          241
+        ],
+        "mathematically": [
+          34
+        ],
+        "equivalent": [
+          35
+        ],
+        "working": [
+          37
+        ],
+        "with": [
+          38,
+          124
+        ],
+        "conditional": [
+          40
+        ],
+        "probabilities.": [
+          41
+        ],
+        "If": [
+          42
+        ],
+        "we": [
+          43,
+          183,
+          259
+        ],
+        "do": [
+          44
+        ],
+        "more": [
+          52
+        ],
+        "foundation": [
+          54
+        ],
+        "(imprecise-)probabilistic": [
+          57
+        ],
+        "inference.": [
+          58
+        ],
+        "framework,": [
+          61
+        ],
+        "and": [
+          62,
+          106,
+          140,
+          202,
+          214
+        ],
+        "given": [
+          65
+        ],
+        "finite": [
+          66,
+          126
+        ],
+        "category": [
+          67,
+          90,
+          127
+        ],
+        "set,": [
+          68
+        ],
+        "predictive": [
+          70
+        ],
+        "inference": [
+          71,
+          111,
+          130,
+          155,
+          174,
+          190,
+          193,
+          212,
+          217,
+          263,
+          277
+        ],
+        "exchangeability": [
+          73
+        ],
+        "using": [
+          77,
+          234
+        ],
+        "Bernstein": [
+          78,
+          119
+        ],
+        "cones": [
+          80
+        ],
+        "multivariate": [
+          82
+        ],
+        "polynomials": [
+          83,
+          123
+        ],
+        "on": [
+          84,
+          145
+        ],
+        "the": [
+          85,
+          134,
+          187,
+          192,
+          209,
+          215,
+          223,
+          226,
+          249,
+          271,
+          275
+        ],
+        "simplex": [
+          86
+        ],
+        "generated": [
+          87
+        ],
+        "set.": [
+          91,
+          128
+        ],
+        "This": [
+          92
+        ],
+        "powerful": [
+          95
+        ],
+        "generalisation": [
+          96
+        ],
+        "de": [
+          98
+        ],
+        "Finetti's": [
+          99
+        ],
+        "Representation": [
+          100
+        ],
+        "Theorem": [
+          101
+        ],
+        "allowing": [
+          102
+        ],
+        "both": [
+          104
+        ],
+        "imprecision": [
+          105
+        ],
+        "indecision.": [
+          107
+        ],
+        "We": [
+          108,
+          148,
+          166,
+          219
+        ],
+        "define": [
+          109
+        ],
+        "system": [
+          112
+        ],
+        "as": [
+          113,
+          143,
+          150,
+          230,
+          254
+        ],
+        "map": [
+          115
+        ],
+        "associates": [
+          117
+        ],
+        "cone": [
+          121
+        ],
+        "every": [
+          125
+        ],
+        "Many": [
+          129
+        ],
+        "principles": [
+          131
+        ],
+        "encountered": [
+          132
+        ],
+        "literature": [
+          135
+        ],
+        "then": [
+          137
+        ],
+        "interpreted,": [
+          139
+        ],
+        "mathematically,": [
+          142
+        ],
+        "restrictions": [
+          144
+        ],
+        "such": [
+          146
+        ],
+        "maps.": [
+          147
+        ],
+        "discuss,": [
+          149
+        ],
+        "particular": [
+          151,
+          186
+        ],
+        "examples,": [
+          152
+        ],
+        "two": [
+          153,
+          179
+        ],
+        "important": [
+          154
+        ],
+        "principles:": [
+          156
+        ],
+        "representation": [
+          157,
+          163
+        ],
+        "insensitivity\u0097a": [
+          158
+        ],
+        "strengthened": [
+          159
+        ],
+        "version": [
+          160,
+          199
+        ],
+        "Walley's": [
+          162
+        ],
+        "invariance\u0097and": [
+          164
+        ],
+        "specificity.": [
+          165
+        ],
+        "show": [
+          167
+        ],
+        "there": [
+          169,
+          240
+        ],
+        "infinity": [
+          172,
+          243
+        ],
+        "systems": [
+          175,
+          194
+        ],
+        "satisfy": [
+          177
+        ],
+        "these": [
+          178
+        ],
+        "principles,": [
+          180
+        ],
+        "amongst": [
+          181
+        ],
+        "which": [
+          182
+        ],
+        "discuss": [
+          184
+        ],
+        "skeptically": [
+          188
+        ],
+        "cautious": [
+          189
+        ],
+        "system,": [
+          191
+        ],
+        "corresponding": [
+          195
+        ],
+        "(a": [
+          197
+        ],
+        "modified": [
+          198
+        ],
+        "of)": [
+          200
+        ],
+        "Walley": [
+          201
+        ],
+        "Bernard's": [
+          203
+        ],
+        "Imprecise": [
+          204
+        ],
+        "Dirichlet": [
+          205
+        ],
+        "Multinomial": [
+          206
+        ],
+        "Models": [
+          207
+        ],
+        "(IDMM),": [
+          208
+        ],
+        "skeptical": [
+          210
+        ],
+        "IDMM": [
+          211,
+          276
+        ],
+        "systems,": [
+          213
+        ],
+        "Haldane": [
+          216
+        ],
+        "system.": [
+          218
+        ],
+        "also": [
+          220
+        ],
+        "prove": [
+          221
+        ],
+        "latter": [
+          224
+        ],
+        "produces": [
+          225
+        ],
+        "same": [
+          227,
+          250
+        ],
+        "posterior": [
+          228,
+          252
+        ],
+        "inferences": [
+          229,
+          253
+        ],
+        "would": [
+          231
+        ],
+        "obtained": [
+          233
+        ],
+        "Haldane's": [
+          235,
+          255
+        ],
+        "improper": [
+          236,
+          256
+        ],
+        "prior,": [
+          237
+        ],
+        "implying": [
+          238
+        ],
+        "proper": [
+          245
+        ],
+        "priors": [
+          246
+        ],
+        "produce": [
+          248
+        ],
+        "one.": [
+          257
+        ],
+        "Finally,": [
+          258
+        ],
+        "impose": [
+          260
+        ],
+        "additional": [
+          262
+        ],
+        "principle": [
+          264
+        ],
+        "allows": [
+          266
+        ],
+        "us": [
+          267
+        ],
+        "characterise": [
+          269
+        ],
+        "uniquely": [
+          270
+        ],
+        "immediate": [
+          272
+        ],
+        "predictions": [
+          273
+        ],
+        "systems.": [
+          278
+        ]
+      },
+      "counts_by_year": [
+        {
+          "year": 2025,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2024,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2022,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2021,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2018,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2017,
+          "cited_by_count": 2
+        },
+        {
+          "year": 2015,
+          "cited_by_count": 1
+        },
+        {
+          "year": 2014,
+          "cited_by_count": 1
+        }
+      ],
+      "updated_date": "2026-09-08T07:41:39.490200",
+      "created_date": "2025-10-10T00:00:00"
+    }
+  ],
+  "group_by": []
+}

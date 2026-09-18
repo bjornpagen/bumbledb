@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "function_cases": 525888,
+  "shannon_reconstructions": 13120,
+  "boolean_cases": 59136,
+  "quantifier_cases": 46080,
+  "scope": "Finite independent reference, including all functions up to four coordinates, two physical orders and every table limit 1..width; sampled arbitrary Shannon reconstruction, all Boolean operators and all quantifier masks. One sixty-coordinate noncontiguous local-table case. Not Rust or performance evidence.",
+  "checker_sha256": "65523e8dba1321ac95d8e7cbe6d3545eb59eebf6d3059cc80dbb87810c7dde95"
+}

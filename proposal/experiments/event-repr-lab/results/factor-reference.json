@@ -1,0 +1,14 @@
+{
+  "passed": true,
+  "cases": {
+    "domains": 288,
+    "event_cases": 18432,
+    "fibre_replacements": 33408
+  },
+  "coupled_counterexample": {
+    "actual": 2,
+    "invalid_product_shortcut": 4
+  },
+  "checker_sha256": "2b0c6596aabbaec8e20744e0907675ae16f282998475906c79c07e38ab946c51",
+  "boundary": "Finite exact reference; no performance claim or probability-law independence inferred."
+}

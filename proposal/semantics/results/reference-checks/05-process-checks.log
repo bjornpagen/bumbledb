@@ -1,0 +1,68 @@
+{
+  "draft": "0.3",
+  "arithmetic": "stdlib Fraction and exact two-variable polynomials",
+  "groups_passed": 11,
+  "checks": [
+    {
+      "name": "source_vs_outcome_identity",
+      "status": "passed",
+      "detail": "Exact joint polynomials distinguish shared rate, copied outcome, and fresh rates; disagreement gives fair/shared, impossible/copied, [0,1]/fresh."
+    },
+    {
+      "name": "fairness_preserves_success_effect",
+      "status": "passed",
+      "detail": "Extractor posterior is fair, while success is 2p(1-p); exact extremum identity gives [8/25,1/2] on [1/5,4/5]."
+    },
+    {
+      "name": "early_normalization_falsifier",
+      "status": "passed",
+      "detail": "Keeping evidence gives posterior 2/11; replacing each row by its normalized output gives 1/10."
+    },
+    {
+      "name": "bernstein_exchangeability_and_elevation",
+      "status": "passed",
+      "detail": "Enumerated 511 paths through degree 8; count forms, partition of unity, and each degree-elevation identity agree as exact polynomials."
+    },
+    {
+      "name": "kernel_composition_laws",
+      "status": "passed",
+      "detail": "Symbolic associativity, units, and tensor interchange for shared-parameter filtering kernels; grid validity checks are examples, not the closure proof."
+    },
+    {
+      "name": "discard_and_repeated_evidence",
+      "status": "passed",
+      "detail": "Total draws discard to one; filtering retains its row likelihood. Reobserving one event is idempotent; two head trials have likelihood p\u00b2."
+    },
+    {
+      "name": "beta_binding_and_conjugacy",
+      "status": "passed",
+      "detail": "Checked 100 moment/conjugacy cases, including rational shapes; one shared uniform rate gives HH=1/3 versus 1/4 for fresh allocations; posterior predictive after a head is 2/3."
+    },
+    {
+      "name": "beta_evidence_before_normalization",
+      "status": "passed",
+      "detail": "Shared uniform-rate extractor integrates to weights (1/6,1/6), success 1/3, and fair posterior; evidence survives the bind."
+    },
+    {
+      "name": "convexification_and_domain_equality",
+      "status": "passed",
+      "detail": "Endpoint-law union and its hull share one-draw bounds but differ under reuse; p\u00b2=p on endpoint laws and fails on the full interval."
+    },
+    {
+      "name": "categorical_source",
+      "status": "passed",
+      "detail": "Three-outcome, three-draw path weights normalize symbolically after simplex-coordinate elimination; exchangeable path products agree."
+    },
+    {
+      "name": "assertions_are_all_couplings",
+      "status": "passed",
+      "detail": "Exact marginal family gives Frechet [1/2,7/10]; A implies B would require t=4/5 and makes another cell negative."
+    }
+  ],
+  "limits": [
+    "No engine implementation, tests, solver benchmarks, or assembly checks.",
+    "No general real-algebraic solver or canonical semialgebraic serialization implemented.",
+    "Openness, algebraic witnesses, closure, and universal completeness rely on laws.md and cited theorems."
+  ]
+}
+

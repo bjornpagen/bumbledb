@@ -1,0 +1,33 @@
+[
+  {
+    "arxiv": "1504.07999v2",
+    "title": "Average-case complexity versus approximate simulation of commuting quantum computations",
+    "authors": [
+      "Michael J. Bremner",
+      "Ashley Montanaro",
+      "Dan J. Shepherd"
+    ],
+    "file": "bremner-montanaro-shepherd-2015-counting.pdf",
+    "sha256": "bbbc308ca9f71e7486a00d0d8ca37f468242eba187ec9b9915b988db870c989e",
+    "text_file": "bremner-montanaro-shepherd-2015-counting.txt",
+    "text_sha256": "b3a4da62804652670125843f6ade0b7043266bbc2f45b21848d8a2b36bd5ef8d",
+    "url": "https://arxiv.org/abs/1504.07999v2",
+    "reading_scope": "Definition of gap and the explicit distinction between exact worst-case hardness and Conjecture 3; Appendix B character-sum identity; Appendix D Proposition 8 and circuit-reduction setup. No average-case or fine-grained conjecture is assumed by the Event argument."
+  },
+  {
+    "arxiv": "1805.05224v3",
+    "title": "How many qubits are needed for quantum computational supremacy?",
+    "authors": [
+      "Alexander M. Dalzell",
+      "Aram W. Harrow",
+      "Dax Enshan Koh",
+      "Rolando L. La Placa"
+    ],
+    "file": "dalzell-et-al-2018-polynomial.pdf",
+    "sha256": "e8d91bcf0b52c69a929584e7f6b67a41775ee6cf7841763b66eab141803682ea",
+    "text_file": "dalzell-et-al-2018-polynomial.txt",
+    "text_sha256": "dec59691b54e80656703047d0f2162b1089b4ef1e1a053fa784b26a6e31afa44",
+    "url": "https://arxiv.org/abs/1805.05224v3",
+    "reading_scope": "Section 2.1 equations (1)\u2013(3), Section 3.1 degree-three polynomial and nonbalance definitions, exact-complexity discussion. Fine-grained and average-case hypotheses are recorded as conjectures, not used as established bounds."
+  }
+]

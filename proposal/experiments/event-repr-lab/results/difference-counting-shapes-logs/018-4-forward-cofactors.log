@@ -1,0 +1,3 @@
+COUNTING_SHAPE {"passed":true,"gates":4,"dimensions":13,"reverse":false,"kernel":"Cofactors","terms":13,"input_nodes":17,"input_bytes":1269,"final_nodes":72,"final_bytes":10281,"apply_misses":84,"cofactor_misses":140,"circuit_solutions":4,"polynomial_ones":4032}
+
+COUNTING_PHASE {"phase":"input_verified","nodes":17,"bytes":1269,"terms":13}

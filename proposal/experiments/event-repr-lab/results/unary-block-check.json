@@ -1,0 +1,123 @@
+{
+  "passed": true,
+  "long_shapes": [
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Plain",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Chains",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Plain",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Chains",
+      "kernel": "Steps",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Plain",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": false,
+      "mode": "Chains",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Plain",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 62,
+      "compacted_bytes": 4108
+    },
+    {
+      "passed": true,
+      "dimensions": 61,
+      "reverse": true,
+      "mode": "Chains",
+      "kernel": "Blocks",
+      "constructed_records": 123,
+      "compacted_records": 10,
+      "compacted_bytes": 1282
+    }
+  ],
+  "source_hashes": {
+    "unary-prototype/Cargo.toml": "3669934cd4c451a4bac2ca1ff36c347fa966b80494ec7492804e44ff1bc6c1e5",
+    "unary-prototype/Cargo.lock": "33874778d833595fcf3f52f775e5ccdead826ceb840289c6fd23cd33f419f112",
+    "unary-prototype/src/lib.rs": "fd1c7f8c9e53a89ca2b4570abf416ed89c0a156cae75e8cd9e549ac19d4be4fa",
+    "unary-prototype/src/main.rs": "1b141ffc8b5df17b5b6ae6c589e9d4e9b3f2489ad1c8aa64f1a7931c7c75784d",
+    "unary-prototype/src/tests.rs": "9b9e824269bee9e052916a4a26cf23627bf39f724968628f10d55715bb538cee"
+  },
+  "command": [
+    "cargo",
+    "test",
+    "--offline",
+    "--release",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "records": [
+    {
+      "passed": true,
+      "binary": 25165824,
+      "projection": 49152,
+      "maps": 178176,
+      "completed_projection": 49152,
+      "orders": 6,
+      "modes": 2,
+      "kernels": 2
+    }
+  ],
+  "chain_records": [
+    {
+      "passed": true,
+      "world_checks": 19200,
+      "max_dimensions": 61
+    }
+  ],
+  "log": "unary-block-check.log",
+  "checker_sha256": "0f5be984f5b072aa72d085c5522657e463ae604e61ca4ea94f33ed19f49037bc",
+  "boundary": "Raw canonical managers, copied-live-graph compaction, full-cube uniform counting. No Event ownership/common packet/designated law or native Free Join claim."
+}

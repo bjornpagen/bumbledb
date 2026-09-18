@@ -1,0 +1,8 @@
+{
+  "files": {
+    "proposal/research/representation-search/nakamura-denzumi-nishino-2020-variable-shift.txt": "4121c1920361107bfa268073d6a884ee66f264b9f8b814aa5a9bb5719cba75b3"
+  },
+  "source": "arXiv:2004.02502v1",
+  "reading": "Theorem 6 and identical-vtree rule; Section 7 Apply, Proposition 14 and mandatory-compression qualification. Revisited for the mapped-product implementation.",
+  "consequence": "Common permitted substitutions can support relative cache reuse. Different operand maps or altered output/elimination contexts cannot be removed from this product key by analogy. The polynomial Apply guarantee does not cover mandatory canonical compression, arbitrary substitution, or this fused quantified kernel."
+}

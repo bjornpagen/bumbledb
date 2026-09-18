@@ -1,0 +1,28 @@
+
+running 1 test
+test event_repr_lab::experiment ... EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential64","bits":18,"states":64,"identity_mode":"native","input_s":[3.95e-5, 3.525e-5, 3.2375e-5, 3.5958e-5, 3.0667e-5],"program_setup_s":[1.475e-5, 1.05e-5, 1e-5, 1.1458e-5, 9.333e-6],"query_s":[0.00035575, 0.000273042, 0.0002655, 0.00026125, 0.000260417],"owned_compute_s":[0.000372833, 0.000284292, 0.000276167, 0.000273292, 0.000270292],"iterations":[7, 7, 7, 7, 7],"output_counts":[133120, 133120, 262144, 262144, 4096],"output_packet_bytes":611,"final_arena_bytes_est":65136,"new_classes":3,"input_storage":{"layout":"slab","record_bytes":1024,"table_bytes":512,"interner_bytes":1208,"metadata_bytes":656,"cache_bytes":2380,"records":57,"tables":36,"logical_words":36,"total_bytes_est":5780},"final_storage":{"layout":"slab","record_bytes":16384,"table_bytes":2048,"interner_bytes":19328,"metadata_bytes":8336,"cache_bytes":19040,"records":570,"tables":154,"logical_words":154,"total_bytes_est":65136},"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential64","bits":36,"states":4096,"identity_mode":"native","input_s":[6.1708e-5, 6.75e-5, 6.5542e-5, 6.4667e-5, 6.3208e-5],"program_setup_s":[2.1708e-5, 2.1625e-5, 2.2708e-5, 2.1084e-5, 2.0583e-5],"query_s":[0.001157417, 0.001111167, 0.001102375, 0.001104459, 0.001107125],"owned_compute_s":[0.001179875, 0.001133459, 0.001125792, 0.001126208, 0.001128334],"iterations":[13, 13, 13, 13, 13],"output_counts":[34368126976, 34368126976, 68719476736, 68719476736, 16777216],"output_packet_bytes":1415,"final_arena_bytes_est":242688,"new_classes":3,"input_storage":{"layout":"slab","record_bytes":4096,"table_bytes":512,"interner_bytes":4832,"metadata_bytes":2336,"cache_bytes":4760,"records":135,"tables":48,"logical_words":48,"total_bytes_est":16536},"final_storage":{"layout":"slab","record_bytes":65536,"table_bytes":2048,"interner_bytes":77312,"metadata_bytes":33056,"cache_bytes":64736,"records":2325,"tables":179,"logical_words":179,"total_bytes_est":242688},"verified":true}
+EVENT_LAB {"kind":"symbolic_relation_free_join","candidate":"essential64","bits":60,"states":1048576,"identity_mode":"native","input_s":[0.000108583, 0.000113125, 0.000114667, 0.000119042, 0.000118917],"program_setup_s":[3.5833e-5, 3.55e-5, 3.6125e-5, 3.5167e-5, 3.575e-5],"query_s":[0.003597542, 0.003574083, 0.003638208, 0.003687583, 0.003599792],"owned_compute_s":[0.003634042, 0.003610292, 0.003675083, 0.0037235, 0.003636167],"iterations":[21, 21, 21, 21, 21],"output_counts":[576461302059237376, 576461302059237376, 1152921504606846976, 1152921504606846976, 1099511627776],"output_packet_bytes":2487,"final_arena_bytes_est":483232,"new_classes":3,"input_storage":{"layout":"slab","record_bytes":4096,"table_bytes":512,"interner_bytes":8640,"metadata_bytes":2528,"cache_bytes":9520,"records":239,"tables":64,"logical_words":64,"total_bytes_est":25296},"final_storage":{"layout":"slab","record_bytes":131072,"table_bytes":2048,"interner_bytes":154624,"metadata_bytes":66016,"cache_bytes":129472,"records":6289,"tables":211,"logical_words":211,"total_bytes_est":483232},"verified":true}
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1366 filtered out; finished in 0.03s
+
+
+        0.03 real         0.02 user         0.00 sys
+             6766592  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+                 628  page reclaims
+                   0  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                   0  voluntary context switches
+                   8  involuntary context switches
+           461110540  instructions retired
+           101718025  cycles elapsed
+             4178304  peak memory footprint

@@ -1,0 +1,18 @@
+[
+  {
+    "arxiv": "2607.06386v1",
+    "url": "https://arxiv.org/pdf/2607.06386v1",
+    "file": "abbadini-guffanti-beck-chevalley.pdf",
+    "sha256": "628c9d6935eedb3c47b531d4d265f43dce68b70cd2590d292bc51cc8e2f88e0f",
+    "text_file": "abbadini-guffanti-beck-chevalley.txt",
+    "text_sha256": "0f4a32fb81da67871674cabbcf37c83a05b184f7ea35188a6d4c4079e3059aea"
+  },
+  {
+    "arxiv": "2605.03902v4",
+    "url": "https://arxiv.org/pdf/2605.03902v4",
+    "file": "pong-probability-schemes.pdf",
+    "sha256": "37203cb828321107c362dff9e716fae1e852d271871b05bf32ebb6a336c182fd",
+    "text_file": "pong-probability-schemes.txt",
+    "text_sha256": "ba6c5323ca86c149778fc80767a9a95aa37637b5089720b967a3c7a793e50388"
+  }
+]
